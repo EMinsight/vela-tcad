@@ -128,6 +128,101 @@ TEST_CASE("Edge avalanche directional weights follow quasi-Fermi gradient direct
     REQUIRE(sawVertical);
 }
 
+TEST_CASE("Density-gradient SG avalanche source defaults to symmetric edge partition",
+          "[impact][diagnostic]")
+{
+    DeviceMesh mesh = makePNMesh();
+    MaterialDatabase matdb;
+    const std::vector<RegionDopingSpec> specs = {
+        {"n_region", 5.0e22, 0.0},
+        {"p_region", 0.0, 5.0e22},
+    };
+    DopingModel doping = DopingModel::fromMeshAndRegions(mesh, specs);
+
+    const Real Vt = 0.025852;
+    VectorXd psi = VectorXd::LinSpaced(static_cast<int>(mesh.numNodes()), -0.02, 0.025);
+    VectorXd phin = VectorXd::LinSpaced(static_cast<int>(mesh.numNodes()), 0.05, -0.03);
+    VectorXd phip = VectorXd::LinSpaced(static_cast<int>(mesh.numNodes()), -0.04, 0.035);
+    VectorXd n(static_cast<int>(mesh.numNodes()));
+    VectorXd p(static_cast<int>(mesh.numNodes()));
+    const std::vector<Real> ni(static_cast<std::size_t>(mesh.numNodes()), 1.0e16);
+    for (int i = 0; i < static_cast<int>(mesh.numNodes()); ++i) {
+        n(i) = ni[static_cast<std::size_t>(i)] * std::exp((psi(i) - phin(i)) / Vt);
+        p(i) = ni[static_cast<std::size_t>(i)] * std::exp((phip(i) - psi(i)) / Vt);
+    }
+
+    ImpactIonizationModelConfig impactConfig;
+    impactConfig.model = "selberherr";
+    impactConfig.drivingForce = "quasi_fermi_gradient";
+    impactConfig.generation = "current_density";
+    impactConfig.currentApproximation = "density_gradient";
+    impactConfig.electronA = 1.0;
+    impactConfig.electronB = 1.0e-30;
+    impactConfig.holeA = 1.0;
+    impactConfig.holeB = 1.0e-30;
+    const auto impact = makeImpactIonizationModel(impactConfig);
+
+    const MobilityModelConfig mobilityConfig = mobilityModelConfig("constant");
+    const auto mobility = makeMobilityModel(mobilityConfig);
+    const auto edgeCells = detail::buildEdgeCellMap(mesh);
+    const auto cellMaterials = detail::buildCellMaterials(mesh, matdb, constants::T0);
+
+    const auto records = detail::sgEdgeCurrentAvalancheSourceRecords(
+        impactConfig,
+        *impact,
+        mobilityConfig,
+        *mobility,
+        edgeCells,
+        mesh,
+        doping,
+        cellMaterials,
+        psi,
+        phin,
+        phip,
+        n,
+        p,
+        ni,
+        Vt);
+
+    bool sawPositiveSource = false;
+    for (const auto& record : records) {
+        if (record.electronSourceIntegral > 0.0) {
+            sawPositiveSource = true;
+            REQUIRE(record.electronNode0SourceIntegral ==
+                    Catch::Approx(0.5 * record.electronSourceIntegral).margin(1.0e-18));
+            REQUIRE(record.electronNode1SourceIntegral ==
+                    Catch::Approx(0.5 * record.electronSourceIntegral).margin(1.0e-18));
+        }
+        if (record.holeSourceIntegral > 0.0) {
+            sawPositiveSource = true;
+            REQUIRE(record.holeNode0SourceIntegral ==
+                    Catch::Approx(0.5 * record.holeSourceIntegral).margin(1.0e-18));
+            REQUIRE(record.holeNode1SourceIntegral ==
+                    Catch::Approx(0.5 * record.holeSourceIntegral).margin(1.0e-18));
+        }
+        REQUIRE(record.node0SourceIntegral ==
+                Catch::Approx(0.5 * record.edgeSourceIntegral).margin(1.0e-18));
+        REQUIRE(record.node1SourceIntegral ==
+                Catch::Approx(0.5 * record.edgeSourceIntegral).margin(1.0e-18));
+    }
+    REQUIRE(sawPositiveSource);
+}
+TEST_CASE("Edge-source partition is directional only for grad-QF or explicit switch",
+          "[impact][diagnostic]")
+{
+    ImpactIonizationModelConfig densityGradient;
+    densityGradient.generation = "current_density";
+    densityGradient.currentApproximation = "density_gradient";
+    REQUIRE_FALSE(detail::usesDirectionalEdgeAvalancheSourcePartition(densityGradient));
+
+    ImpactIonizationModelConfig explicitDirectional = densityGradient;
+    explicitDirectional.edgeSourcePartition = "qf_gradient";
+    REQUIRE(detail::usesDirectionalEdgeAvalancheSourcePartition(explicitDirectional));
+
+    ImpactIonizationModelConfig gradQf = densityGradient;
+    gradQf.currentApproximation = "grad_qf";
+    REQUIRE(detail::usesDirectionalEdgeAvalancheSourcePartition(gradQf));
+}
 TEST_CASE("Cached edge avalanche directional weights match direct cell-gradient weights",
           "[impact][diagnostic]")
 {
@@ -852,40 +947,28 @@ TEST_CASE("SG edge-current avalanche records sum to assembled nodal source",
     Real totalElectronEdgeSource = 0.0;
     Real totalHoleEdgeSource = 0.0;
     for (const auto& record : records) {
-        const auto weights = detail::edgeAvalancheDirectionalWeights(
-            edgeCells,
-            mesh,
-            record.edgeId,
-            [&](Index node) { return phin(static_cast<int>(node)); },
-            [&](Index node) { return phip(static_cast<int>(node)); });
-        const Real electronNode0Weight = weights.electronNode0;
-        const Real electronNode1Weight = weights.electronNode1;
-        const Real holeNode0Weight = weights.holeNode0;
-        const Real holeNode1Weight = weights.holeNode1;
-        const Real expectedNode0 =
-            electronNode0Weight * record.electronSourceIntegral +
-            holeNode0Weight * record.holeSourceIntegral;
-        const Real expectedNode1 =
-            electronNode1Weight * record.electronSourceIntegral +
-            holeNode1Weight * record.holeSourceIntegral;
 
         REQUIRE(record.edgeAreaProxy > 0.0);
         REQUIRE(record.edgeSourceIntegral >= 0.0);
         REQUIRE(record.edgeSourceIntegral ==
                 Catch::Approx(record.electronSourceIntegral + record.holeSourceIntegral)
                     .margin(1.0e-18));
-        REQUIRE(record.node0SourceIntegral == Catch::Approx(expectedNode0));
-        REQUIRE(record.node1SourceIntegral == Catch::Approx(expectedNode1));
+        REQUIRE(record.node0SourceIntegral ==
+                Catch::Approx(record.electronNode0SourceIntegral +
+                              record.holeNode0SourceIntegral).margin(1.0e-18));
+        REQUIRE(record.node1SourceIntegral ==
+                Catch::Approx(record.electronNode1SourceIntegral +
+                              record.holeNode1SourceIntegral).margin(1.0e-18));
         fromRecords[static_cast<std::size_t>(record.node0)] += record.node0SourceIntegral;
         fromRecords[static_cast<std::size_t>(record.node1)] += record.node1SourceIntegral;
         electronFromRecords[static_cast<std::size_t>(record.node0)] +=
-            electronNode0Weight * record.electronSourceIntegral;
+            record.electronNode0SourceIntegral;
         electronFromRecords[static_cast<std::size_t>(record.node1)] +=
-            electronNode1Weight * record.electronSourceIntegral;
+            record.electronNode1SourceIntegral;
         holeFromRecords[static_cast<std::size_t>(record.node0)] +=
-            holeNode0Weight * record.holeSourceIntegral;
+            record.holeNode0SourceIntegral;
         holeFromRecords[static_cast<std::size_t>(record.node1)] +=
-            holeNode1Weight * record.holeSourceIntegral;
+            record.holeNode1SourceIntegral;
         totalEdgeSource += record.edgeSourceIntegral;
         totalElectronEdgeSource += record.electronSourceIntegral;
         totalHoleEdgeSource += record.holeSourceIntegral;
@@ -1246,6 +1329,7 @@ TEST_CASE("Genius-style avalanche source volume truncates obtuse Tri3 edge suppo
 TEST_CASE("JSON solver config selects impact ionization model", "[impact][json]")
 {
     REQUIRE(ImpactIonizationModelConfig{}.sourceVolumePolicy == "genius_truncated");
+    REQUIRE(ImpactIonizationModelConfig{}.edgeSourcePartition == "symmetric");
 
     const GummelConfig cfg = gummelConfigFromJson(nlohmann::json{
         {"impact_ionization", {
@@ -1424,11 +1508,13 @@ TEST_CASE("JSON solver config selects impact ionization model", "[impact][json]"
             {"generation", "current_density"},
             {"current_approximation", "density_gradient"},
             {"source_geometry_scale", 4.0},
+            {"edge_source_partition", "qf_gradient"},
             {"quasi_fermi_carrier_truncation", 1.0e-2},
         }}
     });
     REQUIRE(sourceGeometryCfg.impactIonization.sourceGeometryScale == Catch::Approx(4.0));
     REQUIRE(sourceGeometryCfg.impactIonization.sourceVolumePolicy == "genius_truncated");
+    REQUIRE(sourceGeometryCfg.impactIonization.edgeSourcePartition == "qf_gradient");
 
     auto geniusVolumePolicyCfg = newtonConfigFromJson({
         {"impact_ionization", {
@@ -1549,6 +1635,22 @@ TEST_CASE("JSON solver config selects impact ionization model", "[impact][json]"
             {"generation", "current_density"},
             {"current_approximation", "density_gradient"},
             {"source_volume_policy", "unsupported"},
+        }}
+    }), std::invalid_argument);
+    REQUIRE_THROWS_AS(newtonConfigFromJson({
+        {"impact_ionization", {
+            {"model", "van_overstraeten"},
+            {"generation", "current_density"},
+            {"current_approximation", "density_gradient"},
+            {"edge_source_partition", "unsupported"},
+        }}
+    }), std::invalid_argument);
+    REQUIRE_THROWS_AS(gummelConfigFromJson({
+        {"impact_ionization", {
+            {"model", "van_overstraeten"},
+            {"generation", "current_density"},
+            {"current_approximation", "density_gradient"},
+            {"edge_source_partition", "unsupported"},
         }}
     }), std::invalid_argument);
     REQUIRE_THROWS_AS(newtonConfigFromJson({

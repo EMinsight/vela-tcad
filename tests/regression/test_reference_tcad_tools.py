@@ -441,6 +441,14 @@ Ionization
             solver["impact_ionization"]["current_approximation"],
             "density_gradient",
         )
+        self.assertNotIn(
+            "edge_source_partition",
+            solver["impact_ionization"],
+        )
+        low_bias_probe = bv["low_bias_three_point_probe"]
+        self.assertIs(low_bias_probe["enabled"], False)
+        self.assertEqual(low_bias_probe["bias_points"], [-0.1, -0.2, -0.3])
+        self.assertEqual(low_bias_probe["edge_source_partition"], "symmetric")
         self.assertEqual(bv["vela_stop"], -0.05)
         self.assertEqual(bv["vela_step"], -0.05)
         self.assertNotIn("candidate_bias_scale", bv["comparison"])

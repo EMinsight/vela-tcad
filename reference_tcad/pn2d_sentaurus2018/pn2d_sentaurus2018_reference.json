@@ -158,6 +158,15 @@
         "require_trend_match": false,
         "min_points": 1
       },
+      "low_bias_three_point_probe": {
+        "enabled": false,
+        "bias_points": [
+          -0.1,
+          -0.2,
+          -0.3
+        ],
+        "edge_source_partition": "symmetric"
+      },
       "runtime_diagnostic": {
         "enabled": false,
         "doping_scale": 0.0001,

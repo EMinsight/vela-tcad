@@ -1063,6 +1063,12 @@ inline void validateImpactIonizationDrivingForce(const ImpactIonizationModelConf
             ": impact_ionization.source_mapping_mode must be 'node_F_node_alpha_node_G', "
             "'edge_F_edge_alpha_edge_G_to_node', or 'cell_F_cell_alpha_cell_G_to_node'.");
     }
+    if (config.edgeSourcePartition != "symmetric" &&
+        config.edgeSourcePartition != "qf_gradient") {
+        throw std::invalid_argument(
+            std::string(context) +
+            ": impact_ionization.edge_source_partition must be 'symmetric' or 'qf_gradient'.");
+    }
     if (!std::isfinite(config.quasiFermiCarrierTruncation) ||
         config.quasiFermiCarrierTruncation < 0.0) {
         throw std::invalid_argument(
@@ -1196,6 +1202,14 @@ inline bool usesEdgeCurrentAvalancheSource(
             config.currentApproximation == "cell_current_reconstructed" ||
             config.currentApproximation == "cell_vector_current_reconstructed" ||
             config.currentApproximation == "conserved_total_current");
+}
+
+inline bool usesDirectionalEdgeAvalancheSourcePartition(
+    const ImpactIonizationModelConfig& config)
+{
+    return usesEdgeCurrentAvalancheSource(config) &&
+           (config.currentApproximation == "grad_qf" ||
+            config.edgeSourcePartition == "qf_gradient");
 }
 
 inline bool usesQuasiFermiCarrierTruncation(const ImpactIonizationModelConfig& config)
@@ -1774,6 +1788,7 @@ inline std::vector<SgEdgeCurrentAvalancheSourceRecord> sgEdgeCurrentAvalancheSou
     const bool conservedTotalCurrent = usesConservedTotalCurrentAvalancheCurrent(config);
     const bool dualFaceVectorCurrentMagnitude = config.currentMagnitudeMode == "dual_face_vector_mag";
     const bool usesReconstructedSgCurrent = cellCurrentReconstructedCurrent || cellVectorCurrentReconstructedCurrent || dualFaceVectorCurrentMagnitude;
+    const bool directionalEdgePartition = usesDirectionalEdgeAvalancheSourcePartition(config);
     const bool qfMobility = mobilityConfig.highFieldDrivingForce == "quasi_fermi_gradient";
     const std::vector<bool> contactNodes = contactNodeMask(mesh);
     const CellScalarGradientCache electronQfGradientCache = computeCellScalarGradientCache(
@@ -2019,12 +2034,15 @@ inline std::vector<SgEdgeCurrentAvalancheSourceRecord> sgEdgeCurrentAvalancheSou
             record.edgeSourceIntegral += record.holeSourceIntegral;
         }
 
-        const EdgeAvalancheDirectionalWeights weights = edgeAvalancheDirectionalWeights(
-            edgeCells,
-            mesh,
-            e,
-            electronQfGradientCache,
-            holeQfGradientCache);
+        EdgeAvalancheDirectionalWeights weights;
+        if (directionalEdgePartition) {
+            weights = edgeAvalancheDirectionalWeights(
+                edgeCells,
+                mesh,
+                e,
+                electronQfGradientCache,
+                holeQfGradientCache);
+        }
         record.electronNode0SourceIntegral =
             weights.electronNode0 * record.electronSourceIntegral;
         record.electronNode1SourceIntegral =

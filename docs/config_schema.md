@@ -556,6 +556,10 @@ Field meanings (Selberherr prototype):
   magnitude `|F_n + F_p|` (divergence-free in the converged state, so the
   avalanche source does not collapse on the depleted side of a reverse-biased
   junction).
+- `edge_source_partition`: SG edge-current source split. The default
+  `symmetric` assigns each carrier source 50/50 to the edge endpoints. Use
+  `qf_gradient` only for `grad_qf` or explicit experimental probes that need
+  quasi-Fermi-gradient directional endpoint weights.
 - `quasi_fermi_gradient_discretization`: `edge_difference` (default) preserves
   the existing Vela GradQf behavior. `cell_gradient` is Genius-compatible for
   `II.Force=GradQf`: Vela rebuilds electron/hole quasi-Fermi potentials from

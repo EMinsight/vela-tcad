@@ -857,6 +857,8 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
     const bool transportMobilityDerivative = transportMobilityDependsOnPotentials(mobilityConfig_);
     const bool sgCurrentAvalanche = impactIonizationEnabled_ &&
         detail::usesEdgeCurrentAvalancheSource(impactIonizationConfig_);
+    const bool directionalEdgePartition =
+        detail::usesDirectionalEdgeAvalancheSourcePartition(impactIonizationConfig_);
 
     std::vector<bool> constrainedRows(static_cast<std::size_t>(3 * N), false);
     for (const auto& [node, value] : bcs.psi) {
@@ -903,8 +905,8 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
 
     // Scharfetter-Gummel edge-current avalanche source for one edge, evaluated
     // directly from the endpoint potentials. This mirrors
-    // detail::sgEdgeCurrentAvalancheSourceRecords and returns the directionally
-    // partitioned nodal source used by the continuity residuals.
+    // detail::sgEdgeCurrentAvalancheSourceRecords and returns the configured
+    // nodal source partition used by the continuity residuals.
     auto edgeAvalancheNodeSources =
         [&](Index e, int i, int j, Real h,
             Real psi_i, Real psi_j,
@@ -1157,8 +1159,9 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
             holeSource = alphaP * fluxP * edgeArea;
         }
 
-        const detail::EdgeAvalancheDirectionalWeights weights =
-            detail::edgeAvalancheDirectionalWeights(
+        detail::EdgeAvalancheDirectionalWeights weights;
+        if (directionalEdgePartition) {
+            weights = detail::edgeAvalancheDirectionalWeights(
                 edgeCells_,
                 mesh_,
                 e,
@@ -1178,6 +1181,7 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
                     return detail::holeQfForAvalancheGradient(
                         psiNode, phipNode, pNode, ni_[node], Vt_, impactIonizationConfig_);
                 });
+        }
         sources.node0 = weights.electronNode0 * electronSource + weights.holeNode0 * holeSource;
         sources.node1 = weights.electronNode1 * electronSource + weights.holeNode1 * holeSource;
         return sources;

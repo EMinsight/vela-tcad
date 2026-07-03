@@ -702,6 +702,8 @@ NewtonConfig newtonConfigFromJson(const nlohmann::json& json, UnitScalingConfig 
                 "source_volume_factor", cfg.impactIonization.sourceVolumeFactor);
             cfg.impactIonization.sourceMappingMode = value.value(
                 "source_mapping_mode", cfg.impactIonization.sourceMappingMode);
+            cfg.impactIonization.edgeSourcePartition = value.value(
+                "edge_source_partition", cfg.impactIonization.edgeSourcePartition);
             cfg.impactIonization.quasiFermiCarrierTruncation = value.value(
                 "quasi_fermi_carrier_truncation",
                 cfg.impactIonization.quasiFermiCarrierTruncation);
