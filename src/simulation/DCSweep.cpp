@@ -1734,6 +1734,115 @@ ContactConfig contactConfigFromJson(const nlohmann::json& cfg)
     return out;
 }
 
+std::string lowercaseAscii(std::string value)
+{
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return value;
+}
+
+std::string canonicalContactName(const DeviceMesh& mesh,
+                                 const std::string& requested,
+                                 const std::string& context)
+{
+    for (const Contact& contact : mesh.contacts()) {
+        if (contact.name == requested)
+            return requested;
+    }
+
+    const std::string requestedLower = lowercaseAscii(requested);
+    std::optional<std::string> match;
+    for (const Contact& contact : mesh.contacts()) {
+        if (lowercaseAscii(contact.name) != requestedLower)
+            continue;
+        if (match.has_value()) {
+            throw std::runtime_error(
+                "DCSweep: " + context + " contact '" + requested +
+                "' matches multiple mesh contacts by case-insensitive name.");
+        }
+        match = contact.name;
+    }
+    if (match.has_value())
+        return *match;
+
+    throw std::runtime_error(
+        "DCSweep: " + context + " references unknown contact '" + requested + "'.");
+}
+
+void canonicalizeContactNameInPlace(const DeviceMesh& mesh,
+                                    std::string& contactName,
+                                    const std::string& context)
+{
+    contactName = canonicalContactName(mesh, contactName, context);
+}
+
+void canonicalizeContactListInPlace(const DeviceMesh& mesh,
+                                    std::vector<std::string>& contacts,
+                                    const std::string& context)
+{
+    for (std::string& contactName : contacts)
+        canonicalizeContactNameInPlace(mesh, contactName, context);
+}
+
+void canonicalizeContactConfigInPlace(const DeviceMesh& mesh,
+                                      ContactConfig& contactConfig)
+{
+    std::unordered_map<std::string, Real> canonicalBiases;
+    for (const auto& [name, bias] : contactConfig.biases) {
+        const std::string canonicalName =
+            canonicalContactName(mesh, name, "contacts[]");
+        if (canonicalBiases.contains(canonicalName)) {
+            throw std::runtime_error(
+                "DCSweep: contacts[] contains duplicate aliases for mesh contact '" +
+                canonicalName + "'.");
+        }
+        canonicalBiases.emplace(canonicalName, bias);
+    }
+    contactConfig.biases = std::move(canonicalBiases);
+
+    ContactSpecsMap canonicalSpecs;
+    for (auto& [name, spec] : contactConfig.specs) {
+        const std::string canonicalName =
+            canonicalContactName(mesh, name, "contacts[]");
+        if (canonicalSpecs.contains(canonicalName)) {
+            throw std::runtime_error(
+                "DCSweep: contacts[] contains duplicate Schottky aliases for mesh contact '" +
+                canonicalName + "'.");
+        }
+        spec.name = canonicalName;
+        canonicalSpecs.emplace(canonicalName, std::move(spec));
+    }
+    contactConfig.specs = std::move(canonicalSpecs);
+}
+
+void canonicalizeSweepContactsInPlace(const DeviceMesh& mesh,
+                                      DCSweepConfig& sweep)
+{
+    canonicalizeContactNameInPlace(mesh, sweep.contact, "sweep.contact");
+    canonicalizeContactNameInPlace(mesh, sweep.currentContact, "sweep.current_contact");
+    canonicalizeContactNameInPlace(mesh, sweep.chargeContact, "sweep.terminal_charge.contact");
+    for (TerminalChargeConfig& terminalCharge : sweep.terminalCharges) {
+        canonicalizeContactNameInPlace(
+            mesh, terminalCharge.contact, "sweep.terminal_charges.contact");
+    }
+    canonicalizeContactListInPlace(
+        mesh, sweep.diagnostics.terminalBalance.contacts,
+        "sweep.diagnostics.terminal_balance.contacts");
+    canonicalizeContactListInPlace(
+        mesh, sweep.diagnostics.contactEdge.contacts,
+        "sweep.diagnostics.contact_edge.contacts");
+    canonicalizeContactListInPlace(
+        mesh, sweep.diagnostics.continuityBalance.contacts,
+        "sweep.diagnostics.continuity_balance.contacts");
+    canonicalizeContactListInPlace(
+        mesh, sweep.diagnostics.terminalCurrentMethodCompare.contacts,
+        "sweep.diagnostics.terminal_current_method_compare.contacts");
+    canonicalizeContactListInPlace(
+        mesh, sweep.diagnostics.contactCurrentQfFloor.contacts,
+        "sweep.diagnostics.contact_current_qf_floor.contacts");
+}
+
 
 std::string vtkFilename(const std::string& prefix, int index, Real voltage)
 {
@@ -1881,9 +1990,11 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
     std::vector<InterfaceSheetChargeSpec> sheetChargeSpecs =
         parseInterfaceSheetChargeSpecs(cfg, scaling);
     ContactConfig contactConfig = contactConfigFromJson(cfg);
+    DCSweepConfig sweep = dcSweepConfigFromJson(cfg, cfgDir, scaling);
+    canonicalizeContactConfigInPlace(mesh, contactConfig);
+    canonicalizeSweepContactsInPlace(mesh, sweep);
     std::unordered_map<std::string, Real>& baseBiases = contactConfig.biases;
     ContactSpecsMap& contactSpecs = contactConfig.specs;
-    DCSweepConfig sweep = dcSweepConfigFromJson(cfg, cfgDir, scaling);
 
     const nlohmann::json solverCfg = cfg.value("solver", nlohmann::json::object());
     const SolverMethod solverMethod = solverMethodFromJson(cfg);
@@ -1950,7 +2061,7 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
             "DCSweep: sweep.diagnostics.sg_avalanche_edges requires "
             "impact_ionization.generation='current_density' and "
             "impact_ionization.current_approximation='density_gradient', 'grad_qf', "
-            "'cell_reconstructed', 'cell_current_reconstructed', "
+            "'cell_reconstructed', 'psi_gradient_proxy', 'cell_current_reconstructed', "
             "'cell_vector_current_reconstructed', or 'conserved_total_current'.");
     }
     if (sweep.diagnostics.avalancheInternalSourceCurrentAudit.enabled &&
@@ -3506,6 +3617,9 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
 
         if (converged && sweep.writeVtk) {
             point.outputVtk = vtkFilename(sweep.vtkPrefix, vtkIndex++, voltage);
+            const std::filesystem::path vtkPath(point.outputVtk);
+            if (!vtkPath.parent_path().empty())
+                std::filesystem::create_directories(vtkPath.parent_path());
             writeDDSolutionVTK(point.outputVtk,
                                mesh,
                                matdb,

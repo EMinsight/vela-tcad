@@ -967,6 +967,7 @@ inline void validateImpactIonizationDrivingForce(const ImpactIonizationModelConf
         config.currentApproximation != "density_gradient" &&
         config.currentApproximation != "grad_qf" &&
         config.currentApproximation != "cell_reconstructed" &&
+        config.currentApproximation != "psi_gradient_proxy" &&
         config.currentApproximation != "cell_current_reconstructed" &&
         config.currentApproximation != "cell_vector_current_reconstructed" &&
         config.currentApproximation != "conserved_total_current") {
@@ -974,7 +975,7 @@ inline void validateImpactIonizationDrivingForce(const ImpactIonizationModelConf
             std::string(context) +
             ": impact_ionization.current_approximation must be "
             "'mobility_density_gradient', 'density_gradient', 'grad_qf', "
-            "'cell_reconstructed', 'cell_current_reconstructed', "
+            "'cell_reconstructed', 'psi_gradient_proxy', 'cell_current_reconstructed', "
             "'cell_vector_current_reconstructed', or 'conserved_total_current'.");
     }
     if (config.currentMagnitudeMode != "edge_scalar_abs" &&
@@ -1114,6 +1115,13 @@ inline bool usesCellReconstructedAvalancheCurrent(
            config.currentApproximation == "cell_reconstructed";
 }
 
+inline bool usesPsiGradientProxyAvalancheCurrent(
+    const ImpactIonizationModelConfig& config)
+{
+    return config.generation == "current_density" &&
+           config.currentApproximation == "psi_gradient_proxy";
+}
+
 inline bool usesCellCurrentReconstructedAvalancheCurrent(
     const ImpactIonizationModelConfig& config)
 {
@@ -1184,6 +1192,7 @@ inline bool usesEdgeCurrentAvalancheSource(
            (config.currentApproximation == "density_gradient" ||
             config.currentApproximation == "grad_qf" ||
             config.currentApproximation == "cell_reconstructed" ||
+            config.currentApproximation == "psi_gradient_proxy" ||
             config.currentApproximation == "cell_current_reconstructed" ||
             config.currentApproximation == "cell_vector_current_reconstructed" ||
             config.currentApproximation == "conserved_total_current");
@@ -1759,6 +1768,7 @@ inline std::vector<SgEdgeCurrentAvalancheSourceRecord> sgEdgeCurrentAvalancheSou
     const bool currentAlignedImpact =
         !config.debugRawVanOverstraeten && usesCurrentAlignedAvalancheDrivingForce(config);
     const bool cellReconstructedCurrent = usesCellReconstructedAvalancheCurrent(config);
+    const bool psiGradientProxyCurrent = usesPsiGradientProxyAvalancheCurrent(config);
     const bool cellCurrentReconstructedCurrent = usesCellCurrentReconstructedAvalancheCurrent(config);
     const bool cellVectorCurrentReconstructedCurrent = usesCellVectorCurrentReconstructedAvalancheCurrent(config);
     const bool conservedTotalCurrent = usesConservedTotalCurrentAvalancheCurrent(config);
@@ -1960,12 +1970,15 @@ inline std::vector<SgEdgeCurrentAvalancheSourceRecord> sgEdgeCurrentAvalancheSou
                 : record.electronRawFluxProxy;
             record.electronFluxProxy = usesReconstructedSgCurrent
                 ? record.electronReconstructedFluxProxy
-                : (cellReconstructedCurrent
+                : (psiGradientProxyCurrent
                     ? reconstructedAvalancheCurrentDensityMagnitude(
-                        mun, nMid, record.electronImpactField)
-                    : (conservedTotalCurrent
-                        ? conservedTotalFluxMagnitude
-                        : record.electronRawFluxProxy));
+                        mun, nMid, electricField)
+                    : (cellReconstructedCurrent
+                        ? reconstructedAvalancheCurrentDensityMagnitude(
+                            mun, nMid, record.electronImpactField)
+                        : (conservedTotalCurrent
+                            ? conservedTotalFluxMagnitude
+                            : record.electronRawFluxProxy)));
             record.electronFinalOverRawFluxProxy = record.electronRawFluxProxy > 0.0
                 ? record.electronFluxProxy / record.electronRawFluxProxy
                 : 0.0;
@@ -1988,12 +2001,15 @@ inline std::vector<SgEdgeCurrentAvalancheSourceRecord> sgEdgeCurrentAvalancheSou
                 : record.holeRawFluxProxy;
             record.holeFluxProxy = usesReconstructedSgCurrent
                 ? record.holeReconstructedFluxProxy
-                : (cellReconstructedCurrent
+                : (psiGradientProxyCurrent
                     ? reconstructedAvalancheCurrentDensityMagnitude(
-                        mup, pMid, record.holeImpactField)
-                    : (conservedTotalCurrent
-                        ? conservedTotalFluxMagnitude
-                        : record.holeRawFluxProxy));
+                        mup, pMid, electricField)
+                    : (cellReconstructedCurrent
+                        ? reconstructedAvalancheCurrentDensityMagnitude(
+                            mup, pMid, record.holeImpactField)
+                        : (conservedTotalCurrent
+                            ? conservedTotalFluxMagnitude
+                            : record.holeRawFluxProxy)));
             record.holeFinalOverRawFluxProxy = record.holeRawFluxProxy > 0.0
                 ? record.holeFluxProxy / record.holeRawFluxProxy
                 : 0.0;

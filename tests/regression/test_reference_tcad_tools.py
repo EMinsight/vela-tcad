@@ -880,6 +880,92 @@ Data {
             self.assertEqual(report["biases"], [-0.5])
             self.assertEqual(report["rows"][0]["classification"], "terminal_extraction_consistent")
 
+    def test_pn2d_bv_terminal_reference_extractor_writes_nonempty_current_with_units(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="vela_bv_terminal_ref_") as tmp:
+            root = Path(tmp)
+            plt = root / "pn2d_bv.plt"
+            out = root / "reference_curves" / "pn2d_bv_reference.csv"
+            meta = root / "reference_curves" / "pn2d_bv_reference.meta.json"
+            plt.write_text(
+                """
+DF-ISE text
+Info { datasets = ["time" "Anode OuterVoltage" "Anode TotalCurrent" "Cathode TotalCurrent"] }
+Data {
+0 0.0 -1.0e-18 1.0e-18
+1 -1.0 -2.0e-17 2.0e-17
+2 -20.0 -8.0e-12 8.0e-12
+}
+""".lstrip(),
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO / "scripts" / "extract_pn2d_bv_terminal_reference.py"),
+                    "--sentaurus-plt",
+                    str(plt),
+                    "--out-csv",
+                    str(out),
+                    "--out-meta",
+                    str(meta),
+                    "--contact",
+                    "Anode",
+                    "--expected-min-bias",
+                    "-20",
+                ],
+                cwd=REPO,
+                text=True,
+                capture_output=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+            rows = self._read_csv(out)
+            self.assertEqual(rows[0]["current_total_unit"], "A")
+            self.assertEqual(rows[0]["current_total_A_per_um"], "")
+            self.assertEqual([row["bias_V"] for row in rows], ["0", "-1", "-20"])
+            self.assertAlmostEqual(float(rows[-1]["current_total"]), -8.0e-12)
+            payload = json.loads(meta.read_text(encoding="utf-8"))
+            self.assertEqual(payload["schema"], "vela.pn2d_bv_terminal_reference.v1")
+            self.assertEqual(payload["current_total_unit"], "A")
+            self.assertEqual(payload["bias_range_V"], [-20.0, 0.0])
+
+    def test_pn2d_bv_terminal_reference_extractor_rejects_empty_current_column(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="vela_bv_terminal_ref_empty_") as tmp:
+            root = Path(tmp)
+            plt = root / "pn2d_bv.plt"
+            out = root / "reference_curves" / "pn2d_bv_reference.csv"
+            plt.write_text(
+                """
+DF-ISE text
+Info { datasets = ["time" "Anode OuterVoltage" "Cathode TotalCurrent"] }
+Data {
+0 0.0 1.0e-18
+}
+""".lstrip(),
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO / "scripts" / "extract_pn2d_bv_terminal_reference.py"),
+                    "--sentaurus-plt",
+                    str(plt),
+                    "--out-csv",
+                    str(out),
+                    "--contact",
+                    "Anode",
+                    "--expected-min-bias",
+                    "-20",
+                ],
+                cwd=REPO,
+                text=True,
+                capture_output=True,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("PLT current column not found", result.stderr)
+
     def test_pn2d_bv_contact_current_extraction_aligns_sentaurus_nearest_fields(self) -> None:
         with tempfile.TemporaryDirectory(prefix="vela_bv_contact_current_sentaurus_") as tmp:
             root = Path(tmp)

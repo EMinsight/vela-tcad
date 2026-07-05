@@ -444,6 +444,57 @@ TEST_CASE("DCSweep: PN diode forward sweep writes CSV and finite monotonic IV da
                                                      "newton_failure_diagnostics_json"});
 }
 
+TEST_CASE("DCSweep: contact names in config match mesh contacts case-insensitively",
+          "[dc_sweep][contacts][gummel_newton]")
+{
+    const auto dir = makeUniqueSweepDir();
+    const ScopedDirectoryCleanup cleanup{dir};
+    std::filesystem::create_directories(dir);
+    const auto meshPath = writePNMesh(dir);
+    const auto csvPath = dir / "case_insensitive_contacts.csv";
+
+    nlohmann::json cfg = baseSweepConfig(dir, meshPath, csvPath);
+    for (auto& contact : cfg["contacts"]) {
+        const std::string name = contact.at("name").get<std::string>();
+        if (name == "anode")
+            contact["name"] = "Anode";
+        else if (name == "cathode")
+            contact["name"] = "Cathode";
+    }
+    cfg["sweep"]["contact"] = "Anode";
+    cfg["sweep"]["current_contact"] = "Anode";
+    cfg["sweep"]["start"] = 0.0;
+    cfg["sweep"]["stop"] = 0.0;
+    cfg["sweep"]["step"] = 0.25;
+    cfg["sweep"]["write_vtk"] = false;
+    cfg["solver"] = {
+        {"method", "gummel_newton"},
+        {"max_iter", 12},
+        {"reltol", 1.0e-8},
+        {"abstol", 1.0e-18},
+        {"damping_psi", 0.35},
+        {"damping_factor", 1.0},
+        {"line_search", true},
+        {"verbose", false}
+    };
+
+    const auto cfgPath = dir / "case_insensitive_contacts.json";
+    std::ofstream(cfgPath) << cfg.dump(2);
+
+    DCSweep sweep;
+    const DCSweepResult result = sweep.runWithResult(cfgPath.string());
+
+    REQUIRE(result.points.size() == 1);
+    const DCSweepPoint& point = result.points.front();
+    REQUIRE(point.converged);
+    REQUIRE(point.solverMethod == "gummel_newton");
+
+    const auto rows = readCsvRows(csvPath);
+    REQUIRE(rows.size() == 2);
+    REQUIRE(rows.at(1).at(csvColumnIndex(rows.front(), "bias_contact")) == "anode");
+    REQUIRE(rows.at(1).at(csvColumnIndex(rows.front(), "current_contact")) == "anode");
+}
+
 TEST_CASE("DCSweep: unit_scaling CSV appends per-micron currents and V-per-cm field",
           "[dc_sweep][scaling]")
 {

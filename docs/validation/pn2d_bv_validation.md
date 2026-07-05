@@ -1,5 +1,16 @@
 # PN2D BV Validation Methodology
 
+## High-Bias Branch And Source-Support Diagnostic Pass
+
+Artifacts for this pass are under `build-release/reference_tcad/pn2d_sentaurus2018/sentaurus_multibias_highbias_20260705/` and `build-release/reference_tcad/pn2d_sentaurus2018/reports/bv_branch_source_support_20260705/`. The Sentaurus high-bias export covers `-15 V` through `-20 V`, and the Vela side uses the curated `vela_highbias_vtk` manifest so the duplicate exact-bias VTK files in the original output directory do not affect the comparison.
+
+Branch/state offsets grow monotonically in the impact-active region. The impact-active median `delta_psi_minus_phin_V` moves from `-0.009976 V` at `-15 V` to `-0.047226 V` at `-20 V`, while median `delta_phip_minus_psi_V` moves from `-0.013415 V` to `-0.055581 V`. The corresponding median carrier ratios worsen from `log10(n_Vela/n_Sentaurus)=-0.333177` and `log10(p_Vela/p_Sentaurus)=-0.391128` at `-15 V` to `-0.958858` and `-1.099048` at `-20 V`. A `-20 V` transition-edge replay was not produced because the available path-edge CSVs are for approximately `-12.9078 V` and `-13.2 V`, not `-20 V`.
+
+Contact and neutral-region evidence does not support contact anchoring as the primary cause. At `-20 V`, the 34 contact nodes have branch offsets of only about `+/-1.5e-6 V` and electron/hole density ratios of `-0.165505 dex`, while the 1161 impact-active nodes have electron and hole density ratios of `-0.958858 dex` and `-1.099048 dex`. The noncontact inactive aggregate is much closer to Sentaurus (`-0.059827 dex` electron, `-0.150591 dex` hole), and neutral inactive n/p groups mainly show minority-carrier deficits around `0.33 dex` with majority carriers near aligned.
+
+Source-support replay is consistent with an active carrier-state feedback problem, but a uniform qF shift is not a fix. At `-20 V`, the SG edge reconstruction gives total source `3.541060e8` versus VTK total source `2.470707e8` (`0.433217` relative error), with `96.37%` of reconstructed source on `interior_bulk` edges and `3.63%` on `boundary_noncontact` edges. On the active support, median Vela edge avalanche is only `0.070718` of Sentaurus generation and Vela VTK avalanche is only `0.048503`; median electron and hole densities are `0.107322` and `0.077064` of Sentaurus. The residual proxy shows full Sentaurus-state replay near target (`0.058` electron and `0.097` hole residual medians), but applying the measured qF shifts only to support nodes overshoots (`-1.869997` electron residual median and `9.062147` hole residual median on overlap support). Optional source-ownership replay was skipped and recorded in `source_ownership_replay_m20_skip.json` because no matching `edge_local_source_replay*.csv` was available.
+
+Classification: the primary suspect is active-region branch/state feedback, not contact qF enforcement or neutral-region supply. Source-support/current-row feedback remains a secondary suspect because the active-support Vela avalanche is only about `5-7%` of Sentaurus generation, but the simple qF-shift replay demonstrates that the follow-up should target localized carrier-row state and feedback rather than changing Van Overstraeten coefficients, `alpha |J| / q` scaling, or contact boundary enforcement.
 ## Source Of Truth
 
 The source deck is

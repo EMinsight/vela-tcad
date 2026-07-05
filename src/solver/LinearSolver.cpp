@@ -6,9 +6,13 @@
 #include <unsupported/Eigen/IterativeSolvers>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
+#include <limits>
+#include <sstream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace vela {
 
@@ -22,6 +26,90 @@ std::string backendFromEnvironment()
     return std::string(env);
 }
 
+std::string sparseMatrixDiagnostics(const SparseMatrixd& A, const VectorXd& b)
+{
+    std::vector<double> rowAbs(static_cast<std::size_t>(A.rows()), 0.0);
+    std::vector<double> colAbs(static_cast<std::size_t>(A.cols()), 0.0);
+    std::vector<int> rowNonzeroCount(static_cast<std::size_t>(A.rows()), 0);
+    std::vector<int> rowOffdiagNonzeroCount(static_cast<std::size_t>(A.rows()), 0);
+    int nonfiniteEntries = 0;
+    for (int outer = 0; outer < A.outerSize(); ++outer) {
+        for (SparseMatrixd::InnerIterator it(A, outer); it; ++it) {
+            const double value = it.value();
+            if (!std::isfinite(value)) {
+                ++nonfiniteEntries;
+                continue;
+            }
+            if (value != 0.0) {
+                ++rowNonzeroCount[static_cast<std::size_t>(it.row())];
+                if (it.row() != it.col())
+                    ++rowOffdiagNonzeroCount[static_cast<std::size_t>(it.row())];
+            }
+            const double absValue = std::abs(value);
+            rowAbs[static_cast<std::size_t>(it.row())] += absValue;
+            colAbs[static_cast<std::size_t>(it.col())] += absValue;
+        }
+    }
+
+    int zeroRows = 0;
+    int zeroCols = 0;
+    for (double value : rowAbs) {
+        if (value == 0.0)
+            ++zeroRows;
+    }
+    for (double value : colAbs) {
+        if (value == 0.0)
+            ++zeroCols;
+    }
+
+    double diagMinAbs = std::numeric_limits<double>::infinity();
+    double diagMaxAbs = 0.0;
+    int zeroDiagonal = 0;
+    int nonfiniteDiagonal = 0;
+    int singletonDiagonalRows = 0;
+    for (int i = 0; i < A.rows(); ++i) {
+        const double diag = A.coeff(i, i);
+        if (!std::isfinite(diag)) {
+            ++nonfiniteDiagonal;
+            continue;
+        }
+        const double absDiag = std::abs(diag);
+        diagMinAbs = std::min(diagMinAbs, absDiag);
+        diagMaxAbs = std::max(diagMaxAbs, absDiag);
+        if (absDiag == 0.0)
+            ++zeroDiagonal;
+
+        const bool onlyUnitDiagonal = std::abs(diag - 1.0) <= 1.0e-14 &&
+            rowNonzeroCount[static_cast<std::size_t>(i)] == 1 &&
+            rowOffdiagNonzeroCount[static_cast<std::size_t>(i)] == 0;
+        if (onlyUnitDiagonal)
+            ++singletonDiagonalRows;
+    }
+    if (!std::isfinite(diagMinAbs))
+        diagMinAbs = 0.0;
+
+    int rhsNonfinite = 0;
+    for (int i = 0; i < b.size(); ++i) {
+        if (!std::isfinite(b(i)))
+            ++rhsNonfinite;
+    }
+
+    std::ostringstream out;
+    out << " matrix_diagnostics={rows=" << A.rows()
+        << ", cols=" << A.cols()
+        << ", nnz=" << A.nonZeros()
+        << ", nonfinite_entries=" << nonfiniteEntries
+        << ", rhs_nonfinite=" << rhsNonfinite
+        << ", zero_rows=" << zeroRows
+        << ", zero_cols=" << zeroCols
+        << ", diag_min_abs=" << diagMinAbs
+        << ", diag_max_abs=" << diagMaxAbs
+        << ", zero_diagonal=" << zeroDiagonal
+        << ", nonfinite_diagonal=" << nonfiniteDiagonal
+        << ", singleton_unit_diagonal_rows=" << singletonDiagonalRows
+        << '}';
+    return out.str();
+}
 VectorXd solveWithAlternateBackend(const std::string& backend,
                                    const SparseMatrixd& A,
                                    const VectorXd& b)
@@ -100,13 +188,15 @@ VectorXd LinearSolver::solve(const SparseMatrixd& A, const VectorXd& b)
     if (solver_.info() != Eigen::Success)
         throw std::runtime_error(
             "LinearSolver: SparseLU factorisation failed. "
-            "Matrix may be singular or ill-conditioned.");
+            "Matrix may be singular or ill-conditioned." +
+            sparseMatrixDiagnostics(*matrix, b));
 
     VectorXd x = solver_.solve(b);
 
     if (solver_.info() != Eigen::Success)
         throw std::runtime_error(
-            "LinearSolver: SparseLU back-substitution failed.");
+            "LinearSolver: SparseLU back-substitution failed." +
+            sparseMatrixDiagnostics(*matrix, b));
 
     return x;
 }
@@ -171,7 +261,9 @@ void LinearSolver::analyzePatternIfNeeded(const SparseMatrixd& A)
     solver_.analyzePattern(A);
     if (!solver_.analysisIsOk()) {
         clearPatternCache();
-        throw std::runtime_error("LinearSolver: SparseLU symbolic analysis failed.");
+        throw std::runtime_error(
+            "LinearSolver: SparseLU symbolic analysis failed." +
+            sparseMatrixDiagnostics(A, VectorXd::Zero(A.rows())));
     }
 
     cachePattern(A);

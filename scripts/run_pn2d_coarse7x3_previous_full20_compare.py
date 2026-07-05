@@ -257,6 +257,12 @@ def write_previous_full20_config(
     solver["contact_boundary_reconstruction"] = "dominant_signed_contact_mean"
     solver["contact_boundary_minority_electron_relaxation"] = False
     solver["quasi_fermi_update_limit_V"] = 0.1
+    solver["handoff"] = {
+        "fallback": "none",
+        "require_gummel_convergence": False,
+        "gummel_max_iter": 0,
+        "newton_max_iter": solver["max_iter"],
+    }
     solver["mobility"] = {
         "model": "masetti_field",
         "high_field_driving_force": "quasi_fermi_gradient",
@@ -773,6 +779,29 @@ def current_support_compare(
             vals = [values[node] for node in (node0, node1) if node in values]
             return sum(vals) / len(vals) if vals else None
 
+        def edge_value(*names: str) -> str:
+            for name in names:
+                value = edge.get(name, "")
+                if value not in (None, ""):
+                    return str(value)
+            return ""
+
+        electric_field = edge_value("electric_field_V_m", "electric_field_V_per_m")
+        electron_qf_field = edge_value(
+            "electron_qf_field_V_m",
+            "electron_qf_field_V_per_m",
+            "electron_field_V_m",
+            "electron_impact_field_V_per_m",
+            "electron_impact_field_V_m",
+        )
+        hole_qf_field = edge_value(
+            "hole_qf_field_V_m",
+            "hole_qf_field_V_per_m",
+            "hole_field_V_m",
+            "hole_impact_field_V_per_m",
+            "hole_impact_field_V_m",
+        )
+
         electron_source = optional_float(edge.get("electron_source_integral"))
         hole_source = optional_float(edge.get("hole_source_integral"))
         source_total = optional_float(edge.get("source_integral_total"))
@@ -791,6 +820,9 @@ def current_support_compare(
             "electron_source_integral": electron_source,
             "hole_source_integral": hole_source,
             "current_comparison_basis": "edge_flux_magnitude",
+            "electric_field_V_m": electric_field,
+            "electron_qf_field_V_m": electron_qf_field,
+            "hole_qf_field_V_m": hole_qf_field,
             "electron_flux_abs": edge.get("electron_flux_abs", edge.get("electron_flux_proxy", "")),
             "hole_flux_abs": edge.get("hole_flux_abs", edge.get("hole_flux_proxy", "")),
             "electron_alpha_m_inv": edge.get("electron_alpha_m_inv", ""),
@@ -1250,6 +1282,7 @@ def main(argv: list[str] | None = None) -> int:
         "bias_V", "nearest_sentaurus_bias_V", "edge_id", "node0", "node1", "edge_class",
         "source_integral_total", "electron_source_integral", "hole_source_integral",
         "current_comparison_basis",
+        "electric_field_V_m", "electron_qf_field_V_m", "hole_qf_field_V_m",
         "electron_flux_abs", "hole_flux_abs", "electron_alpha_m_inv", "hole_alpha_m_inv",
         "sent_e_velocity", "sent_h_velocity", "sent_e_alpha", "sent_h_alpha",
         "sent_e_ion_integral", "sent_h_ion_integral", "sent_mean_ion_integral",

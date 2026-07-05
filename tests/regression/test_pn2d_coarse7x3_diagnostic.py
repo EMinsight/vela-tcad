@@ -124,7 +124,7 @@ class Pn2dCoarse7x3DiagnosticTest(unittest.TestCase):
             self.assertEqual(data["sweep"]["bias_points"], [0.0, -1.0, -5.0, -10.0, -16.0, -18.0, -20.0])
             self.assertEqual(data["sweep"]["vtk_prefix"], "vtk_aligned/dc_sweep")
             self.assertTrue(data["sweep"]["diagnostics"]["sg_avalanche_edges"]["csv_file"].endswith("sg_avalanche_edges_aligned.csv"))
-    def test_previous_full20_patch_requires_materials_and_grad_qf_cell_gradient(self) -> None:
+    def test_previous_full20_patch_requires_materials_and_cell_reconstructed_edge_difference(self) -> None:
         module = load_module(REPO / "scripts" / "run_pn2d_coarse7x3_previous_full20_compare.py")
         with tempfile.TemporaryDirectory(prefix="vela_coarse7x3_patch_") as tmp:
             root = Path(tmp)
@@ -172,10 +172,16 @@ class Pn2dCoarse7x3DiagnosticTest(unittest.TestCase):
             self.assertEqual(Path(data["materials_file"]).name, materials.name)
             self.assertTrue(data["sweep"]["write_vtk"])
             impact = data["solver"]["impact_ionization"]
-            self.assertEqual(impact["current_approximation"], "grad_qf")
-            self.assertEqual(impact["quasi_fermi_gradient_discretization"], "cell_gradient")
+            self.assertEqual(impact["current_approximation"], "cell_reconstructed")
+            self.assertEqual(impact["quasi_fermi_gradient_discretization"], "edge_difference")
             self.assertEqual(data["solver"]["quasi_fermi_update_limit_V"], 0.1)
             self.assertEqual(data["solver"]["max_update"], 0)
+            self.assertEqual(data["solver"]["handoff"], {
+                "fallback": "none",
+                "require_gummel_convergence": False,
+                "gummel_max_iter": 0,
+                "newton_max_iter": data["solver"]["max_iter"],
+            })
 
     def test_multibias_compare_knows_sentaurus_alpha_velocity_and_ion_integrals(self) -> None:
         module = load_module(REPO / "scripts" / "compare_pn2d_bv_multibias_fields.py")
@@ -510,8 +516,8 @@ class Pn2dCoarse7x3DiagnosticTest(unittest.TestCase):
             root = Path(tmp)
             edges = root / "sg_edges.csv"
             edges.write_text(
-                "bias_V,edge_id,node0,node1,edge_class,electron_source_integral,hole_source_integral,electron_flux_abs,hole_flux_abs\n"
-                "-1,7,0,1,interior,2.5,3.5,10,20\n",
+                "bias_V,edge_id,node0,node1,edge_class,electric_field_V_per_m,electron_impact_field_V_per_m,hole_impact_field_V_per_m,electron_source_integral,hole_source_integral,electron_flux_abs,hole_flux_abs\n"
+                "-1,7,0,1,interior,3e7,2e7,1e7,2.5,3.5,10,20\n",
                 encoding="utf-8",
             )
             rows = module.current_support_compare(sg_edges_csv=edges, sentaurus_exports={})
@@ -520,6 +526,154 @@ class Pn2dCoarse7x3DiagnosticTest(unittest.TestCase):
             self.assertEqual(rows[0]["source_integral_total"], 6.0)
             self.assertEqual(rows[0]["current_comparison_basis"], "edge_flux_magnitude")
             self.assertNotIn("source_integral", rows[0])
+            self.assertEqual(rows[0]["electric_field_V_m"], "3e7")
+            self.assertEqual(rows[0]["electron_qf_field_V_m"], "2e7")
+            self.assertEqual(rows[0]["hole_qf_field_V_m"], "1e7")
+
+    def test_active_region_reader_strips_padded_headers_and_values(self) -> None:
+        module = load_module(REPO / "scripts" / "diagnose_pn2d_active_region_branch_feedback.py")
+        with tempfile.TemporaryDirectory(prefix="vela_active_region_reader_") as tmp:
+            path = Path(tmp) / "padded.csv"
+            path.write_text(" bias_V , quantity , value \n -18.0 , electron_qf ,  1.25 \n", encoding="utf-8")
+
+            rows = module.read_csv_rows(path)
+
+        self.assertEqual(rows, [{"bias_V": "-18.0", "quantity": "electron_qf", "value": "1.25"}])
+
+    def test_active_region_branch_delta_uses_absolute_branch_offsets(self) -> None:
+        module = load_module(REPO / "scripts" / "diagnose_pn2d_active_region_branch_feedback.py")
+
+        delta = module.branch_delta(
+            vela_psi=1.0,
+            vela_phin=0.25,
+            vela_phip=1.4,
+            sent_psi=0.8,
+            sent_phin=0.7,
+            sent_phip=1.1,
+        )
+
+        self.assertAlmostEqual(delta["vela_psi_minus_phin_V"], 0.75)
+        self.assertAlmostEqual(delta["sent_psi_minus_phin_V"], 0.1)
+        self.assertAlmostEqual(delta["delta_psi_minus_phin_V"], 0.65)
+        self.assertAlmostEqual(delta["vela_phip_minus_psi_V"], 0.4)
+        self.assertAlmostEqual(delta["sent_phip_minus_psi_V"], 0.3)
+        self.assertAlmostEqual(delta["delta_phip_minus_psi_V"], 0.1)
+
+    def test_active_region_alpha_flux_combines_electron_and_hole_support(self) -> None:
+        module = load_module(REPO / "scripts" / "diagnose_pn2d_active_region_branch_feedback.py")
+
+        self.assertAlmostEqual(module.alpha_flux(2.0, 3.0, 5.0, 7.0), 31.0)
+
+    def test_active_region_support_rows_collapse_to_nearest_vela_bias_for_sentaurus_bias(self) -> None:
+        module = load_module(REPO / "scripts" / "diagnose_pn2d_active_region_branch_feedback.py")
+        rows = [
+            {"nearest_sentaurus_bias_V": "-20", "bias_V": "-19.8", "edge_id": "1"},
+            {"nearest_sentaurus_bias_V": "-20", "bias_V": "-20.0", "edge_id": "2"},
+            {"nearest_sentaurus_bias_V": "-20", "bias_V": "-20.0", "edge_id": "3"},
+            {"nearest_sentaurus_bias_V": "-18", "bias_V": "-18.0", "edge_id": "4"},
+        ]
+
+        selected_bias, selected = module.select_support_rows_for_sentaurus_bias(rows, -20.0)
+
+        self.assertAlmostEqual(selected_bias, -20.0)
+        self.assertEqual([row["edge_id"] for row in selected], ["2", "3"])
+
+    def test_active_region_replay_decomposition_separates_alpha_and_flux_limits(self) -> None:
+        module = load_module(REPO / "scripts" / "diagnose_pn2d_active_region_branch_feedback.py")
+        row = {
+            "sent_e_current": str(module.ELEMENTARY_CHARGE_C / 1.0e4),
+            "sent_h_current": "0.0",
+            "sent_e_alpha": "1.0",
+            "sent_h_alpha": "0.0",
+            "electron_flux_abs": "1.0e-9",
+            "hole_flux_abs": "0.0",
+            "electron_alpha_m_inv": "1.0e-9",
+            "hole_alpha_m_inv": "0.0",
+        }
+
+        replay = module.replay_decomposition(row)
+
+        self.assertAlmostEqual(replay["sent_full"], 1.0)
+        self.assertAlmostEqual(replay["baseline_vela_over_sent"], 1.0e-18)
+        self.assertAlmostEqual(replay["sent_alpha_vela_flux_over_sent"], 1.0e-9)
+        self.assertAlmostEqual(replay["vela_alpha_sent_flux_over_sent"], 1.0e-9)
+        self.assertEqual(
+            module.limiting_factor(
+                replay["sent_alpha_vela_flux_over_sent"],
+                replay["vela_alpha_sent_flux_over_sent"],
+                threshold=1.0e-6,
+            ),
+            "mixed_alpha_and_flux",
+        )
+
+    def test_active_region_field_ratio_histogram_and_alpha_flux_correlation(self) -> None:
+        module = load_module(REPO / "scripts" / "diagnose_pn2d_active_region_branch_feedback.py")
+        rows = [
+            {
+                "bias_V": "-18", "nearest_sentaurus_bias_V": "-18", "edge_id": "1",
+                "node0": "0", "node1": "1", "edge_class": "interior",
+                "electric_field_V_per_m": "100",
+                "electron_qf_field_V_m": "1",
+                "hole_qf_field_V_m": "200",
+                "electron_flux_abs": "1000", "hole_flux_abs": "10",
+                "electron_alpha_m_inv": "1", "hole_alpha_m_inv": "1",
+                "sent_e_current": str(module.ELEMENTARY_CHARGE_C / 1.0e4),
+                "sent_h_current": "0", "sent_e_alpha": "1", "sent_h_alpha": "0",
+            },
+            {
+                "bias_V": "-18", "nearest_sentaurus_bias_V": "-18", "edge_id": "2",
+                "node0": "1", "node1": "2", "edge_class": "interior",
+                "electric_field_V_per_m": "100",
+                "electron_qf_field_V_m": "100",
+                "hole_qf_field_V_m": "100",
+                "electron_flux_abs": "10", "hole_flux_abs": "10",
+                "electron_alpha_m_inv": "1000", "hole_alpha_m_inv": "1",
+                "sent_e_current": str(module.ELEMENTARY_CHARGE_C / 1.0e4),
+                "sent_h_current": "0", "sent_e_alpha": "1", "sent_h_alpha": "0",
+            },
+        ]
+        membership, raw = module.build_support_membership(rows, [-18.0], top_limit=2)
+
+        field_rows, hist_rows = module.build_active_edge_field_ratio_diagnostics(
+            membership, raw, [-18.0], minimum_field_v_m=50.0)
+        scatter_rows, corr_rows = module.build_alpha_flux_scatter_diagnostics(
+            membership, raw, [-18.0])
+
+        electron_edges = [row for row in field_rows if row["carrier"] == "electron"]
+        self.assertEqual([row["minimum_field_cutoff_hit"] for row in electron_edges], [1, 0])
+        self.assertAlmostEqual(electron_edges[0]["qf_over_electric_field"], 0.01)
+        electron_summary = next(
+            row for row in hist_rows
+            if row["carrier"] == "electron" and row["bin"] == "summary")
+        self.assertAlmostEqual(electron_summary["minimum_field_cutoff_hit_rate"], 0.5)
+        self.assertEqual(len(scatter_rows), 2)
+        self.assertLess(corr_rows[0]["pearson_log_alpha_log_flux"], 0.0)
+
+    def test_active_region_cutline_state_rows_include_five_quantities(self) -> None:
+        module = load_module(REPO / "scripts" / "diagnose_pn2d_active_region_branch_feedback.py")
+        node_rows = []
+        for quantity, sent, vela in [
+            ("potential", 0.0, 0.1),
+            ("electron_qf", 0.2, 0.3),
+            ("hole_qf", 0.4, 0.5),
+            ("electron_density", 1.0e10, 2.0e10),
+            ("hole_density", 3.0e10, 4.0e10),
+        ]:
+            node_rows.append({
+                "bias_V": "-5", "vela_bias_V": "-5", "node_id": "7",
+                "x_um": "1.0", "y_um": "0.25", "quantity": quantity,
+                "sentaurus_value": str(sent),
+                "vela_value_scaled_to_sentaurus_units": str(vela),
+            })
+
+        records = module.load_node_compare_records(node_rows)
+        rows = module.cutline_state_rows(
+            records, [-5.0], axis="horizontal_y", axis_value_um=0.25, tolerance_um=1.0e-9)
+
+        self.assertEqual({row["quantity"] for row in rows}, {"psi", "phin", "phip", "n", "p"})
+        density = next(row for row in rows if row["quantity"] == "n")
+        self.assertAlmostEqual(density["sentaurus_value"], 1.0e10)
+        self.assertAlmostEqual(density["vela_value"], 2.0e10)
     def test_vm_dry_run_accepts_coarse_source_dir(self) -> None:
         with tempfile.TemporaryDirectory(prefix="vela_coarse7x3_vm_dry_") as tmp:
             result = subprocess.run(
