@@ -22,6 +22,39 @@
 
 namespace vela {
 
+struct NewtonCarrierRowConvergenceConfig {
+    std::string mode = "off"; ///< "off", "report", or "enforce".
+    Real epsRow = 1.0e-3;
+    Real scaleFloor = 1.0e-300;
+    int minEnforceMaxIter = 200;
+    std::string diagnosticCsvFile;
+    std::string traceCsvFile;
+    std::vector<Index> traceNodes;
+    int traceFirstIterations = 10;
+    int traceEveryIterations = 10;
+};
+
+struct NewtonCarrierRowConvergenceViolation {
+    Index nodeId = 0;
+    std::string carrier;
+    Real residual = 0.0;
+    Real scale = 0.0;
+    Real ratio = 0.0;
+    Real flux = 0.0;
+    Real recombination = 0.0;
+    Real impact = 0.0;
+};
+
+struct NewtonCarrierRowConvergenceEvaluation {
+    bool enabled = false;
+    bool enforced = false;
+    bool satisfied = true;
+    Real epsRow = 0.0;
+    Real maxRatio = 0.0;
+    Index maxRatioNode = -1;
+    std::string maxRatioCarrier;
+    std::vector<NewtonCarrierRowConvergenceViolation> violations;
+};
 struct NewtonConfig {
     int maxIter = 20;
     Real reltol = 1.0e-8;
@@ -38,6 +71,7 @@ struct NewtonConfig {
     Real stallResidualFloor = 1.0e-9; ///< Residual floor for accepting line-search stalls as solved.
     Real carrierRegularizationScale = 0.0; ///< Optional carrier-row diagonal regularization scale.
     CarrierDiagonalFloorRegularizationConfig carrierDiagonalFloor{}; ///< Optional absolute floor for depleted minority carrier-row diagonals.
+    NewtonCarrierRowConvergenceConfig carrierRowConvergence{}; ///< Optional per-carrier-row local residual convergence check.
     Real finiteDifferenceStep = 1.0e-6;
     std::string jacobian = "analytic"; ///< "analytic" or "finite_difference"
     std::string residualNorm = "block"; ///< "block" or "l2" convergence/line-search norm
@@ -72,6 +106,7 @@ struct NewtonBlockResidualInfo {
     Real combined = 0.0;
 };
 
+
 struct NewtonIterationInfo {
     int iter = 0;
     Real residualNorm = 0.0;
@@ -82,6 +117,7 @@ struct NewtonIterationInfo {
     int lineSearchAttempts = 0;
     bool lineSearchAccepted = false;
     NewtonBlockResidualInfo blockResiduals;
+    NewtonCarrierRowConvergenceEvaluation carrierRowConvergence;
     std::vector<LineSearchIterationInfo> lineSearchHistory;
 };
 
@@ -127,6 +163,9 @@ struct NewtonResult {
     int iters = 0;
     Real initialResidualNorm = 0.0;
     Real finalResidualNorm = 0.0;
+    std::string convergenceReason;
+    NewtonBlockResidualInfo finalBlockNorms;
+    NewtonCarrierRowConvergenceEvaluation finalCarrierRowConvergence;
     std::vector<NewtonIterationInfo> history;
     NewtonFailureDiagnostics failureDiagnostics;
 };
@@ -306,6 +345,10 @@ private:
 NewtonConfig newtonConfigFromJson(
     const nlohmann::json& cfg,
     UnitScalingConfig scaling = {});
+
+NewtonCarrierRowConvergenceEvaluation evaluateCarrierRowConvergence(
+    const std::vector<CoupledDDCarrierTermDiagnostic>& rows,
+    const NewtonCarrierRowConvergenceConfig& cfg);
 
 NewtonResult runNewton(const DeviceMesh& mesh,
                        const MaterialDatabase& matdb,

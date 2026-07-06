@@ -2007,3 +2007,51 @@ TEST_CASE("NewtonSolver: high-bias ohmic contacts keep quasi-Fermi boundary targ
         REQUIRE(result.solution.phip(ii) == Catch::Approx(0.0).margin(1.0e-10));
     }
 }
+
+TEST_CASE("NewtonSolver: carrier row convergence reports unbalanced generation rows", "[newton][carrier_row_convergence]")
+{
+    CoupledDDCarrierTermDiagnostic row;
+    row.nodeId = 7;
+    row.electronFlux = 0.0;
+    row.electronRecombination = -1.0;
+    row.electronImpact = 0.0;
+    row.electronResidual = -1.0;
+
+    NewtonCarrierRowConvergenceConfig cfg;
+    cfg.mode = "report";
+    cfg.epsRow = 1.0e-3;
+    cfg.scaleFloor = 1.0e-30;
+
+    const NewtonCarrierRowConvergenceEvaluation evaluation =
+        evaluateCarrierRowConvergence({row}, cfg);
+
+    REQUIRE(evaluation.enabled);
+    REQUIRE_FALSE(evaluation.enforced);
+    REQUIRE_FALSE(evaluation.satisfied);
+    REQUIRE(evaluation.violations.size() == 1);
+    CHECK(evaluation.violations.front().nodeId == 7);
+    CHECK(evaluation.violations.front().carrier == "electron");
+    CHECK(evaluation.violations.front().ratio == Catch::Approx(1.0));
+}
+
+TEST_CASE("NewtonSolver: carrier row convergence ignores balanced local rows", "[newton][carrier_row_convergence]")
+{
+    CoupledDDCarrierTermDiagnostic row;
+    row.nodeId = 3;
+    row.electronFlux = 1.0;
+    row.electronRecombination = -1.0;
+    row.electronResidual = 0.0;
+
+    NewtonCarrierRowConvergenceConfig cfg;
+    cfg.mode = "enforce";
+    cfg.epsRow = 1.0e-3;
+    cfg.scaleFloor = 1.0e-30;
+
+    const NewtonCarrierRowConvergenceEvaluation evaluation =
+        evaluateCarrierRowConvergence({row}, cfg);
+
+    REQUIRE(evaluation.enabled);
+    REQUIRE(evaluation.enforced);
+    REQUIRE(evaluation.satisfied);
+    CHECK(evaluation.violations.empty());
+}

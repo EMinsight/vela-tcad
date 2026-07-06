@@ -183,6 +183,9 @@ struct DCSweepPoint {
     int gummelIterations = 0;
     int newtonIterations = 0;
     std::string handoffStage;
+    std::string newtonConvergenceReason;
+    int carrierRowViolations = 0;
+    Real carrierRowMaxRatio = 0.0;
     Real attemptedStep = 0.0;
     Real acceptedStep = 0.0;
     int retryCount = 0;

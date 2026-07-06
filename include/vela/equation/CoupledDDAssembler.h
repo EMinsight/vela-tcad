@@ -33,6 +33,8 @@ struct CoupledDDCarrierTermDiagnostic {
     Index nodeId = 0;
     Real electronFlux = 0.0;
     Real holeFlux = 0.0;
+    Real electronFluxAbsSum = 0.0;
+    Real holeFluxAbsSum = 0.0;
     Real electronRecombination = 0.0;
     Real holeRecombination = 0.0;
     Real electronImpact = 0.0;

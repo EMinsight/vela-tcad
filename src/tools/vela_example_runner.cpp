@@ -96,6 +96,44 @@ struct NewtonCliResult {
     vela::DeviceMesh mesh;
     vela::NewtonResult result;
 };
+nlohmann::json carrierRowConvergenceJson(
+    const vela::NewtonCarrierRowConvergenceEvaluation& evaluation)
+{
+    nlohmann::json violations = nlohmann::json::array();
+    for (const auto& row : evaluation.violations) {
+        violations.push_back({
+            {"node_id", row.nodeId},
+            {"carrier", row.carrier},
+            {"residual", row.residual},
+            {"scale", row.scale},
+            {"ratio", row.ratio},
+            {"flux", row.flux},
+            {"srh", row.recombination},
+            {"impact", row.impact},
+        });
+    }
+    return {
+        {"enabled", evaluation.enabled},
+        {"enforced", evaluation.enforced},
+        {"satisfied", evaluation.satisfied},
+        {"eps_row", evaluation.epsRow},
+        {"violation_count", evaluation.violations.size()},
+        {"max_ratio", evaluation.maxRatio},
+        {"max_ratio_node", evaluation.maxRatioNode},
+        {"max_ratio_carrier", evaluation.maxRatioCarrier},
+        {"violations", std::move(violations)},
+    };
+}
+
+nlohmann::json blockResidualsJson(const vela::NewtonBlockResidualInfo& blocks)
+{
+    return {
+        {"psi", blocks.psi},
+        {"phin", blocks.phin},
+        {"phip", blocks.phip},
+        {"combined", blocks.combined},
+    };
+}
 
 struct NewtonProblem {
     vela::DeviceMesh mesh;
@@ -242,6 +280,10 @@ nlohmann::json runNewtonSolveFromState(const std::string& configFile,
         {"iterations", result.iters},
         {"initial_residual", result.initialResidualNorm},
         {"final_residual", result.finalResidualNorm},
+        {"convergence_reason", result.convergenceReason},
+        {"failure_reason", result.failureDiagnostics.failureReason},
+        {"final_block_residuals", blockResidualsJson(result.finalBlockNorms)},
+        {"carrier_row_convergence", carrierRowConvergenceJson(result.finalCarrierRowConvergence)},
         {"contact_currents_A_per_um", contactCurrentsJson},
         {"current_total_A_per_um", drivenCurrentPerMicron},
     };
@@ -1483,6 +1525,11 @@ int main(int argc, char** argv)
             status["iterations"] = result.result.iters;
             status["initial_residual"] = result.result.initialResidualNorm;
             status["final_residual"] = result.result.finalResidualNorm;
+            status["convergence_reason"] = result.result.convergenceReason;
+            status["failure_reason"] = result.result.failureDiagnostics.failureReason;
+            status["final_block_residuals"] = blockResidualsJson(result.result.finalBlockNorms);
+            status["carrier_row_convergence"] =
+                carrierRowConvergenceJson(result.result.finalCarrierRowConvergence);
             if (includeMeshReport)
                 status["mesh_report"] = meshReportJson(result.mesh.lastGeometryBuildReport());
         } else if (type == "newton_solve_from_state") {

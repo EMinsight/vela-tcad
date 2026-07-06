@@ -10,6 +10,9 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <limits>
 #include <memory>
@@ -576,6 +579,57 @@ Real maxIntrinsicDensityAcrossRegions(const DeviceMesh& mesh,
 
 } // namespace
 
+NewtonCarrierRowConvergenceEvaluation evaluateCarrierRowConvergence(
+    const std::vector<CoupledDDCarrierTermDiagnostic>& rows,
+    const NewtonCarrierRowConvergenceConfig& cfg)
+{
+    NewtonCarrierRowConvergenceEvaluation evaluation;
+    evaluation.enabled = cfg.mode != "off";
+    evaluation.enforced = cfg.mode == "enforce";
+    evaluation.epsRow = cfg.epsRow;
+    if (!evaluation.enabled)
+        return evaluation;
+
+    const Real eps = cfg.epsRow;
+    const Real floor = std::max<Real>(cfg.scaleFloor, 0.0);
+    auto checkCarrier = [&](const CoupledDDCarrierTermDiagnostic& row,
+                            const std::string& carrier,
+                            Real residual,
+                            Real flux,
+                            Real fluxAbsSum,
+                            Real recombination,
+                            Real impact) {
+        const Real scale = std::max({std::abs(fluxAbsSum), std::abs(recombination),
+                                     std::abs(impact), floor});
+        const Real ratio = scale > 0.0 ? std::abs(residual) / scale : 0.0;
+        if (ratio > evaluation.maxRatio) {
+            evaluation.maxRatio = ratio;
+            evaluation.maxRatioNode = row.nodeId;
+            evaluation.maxRatioCarrier = carrier;
+        }
+        if (ratio > eps) {
+            NewtonCarrierRowConvergenceViolation violation;
+            violation.nodeId = row.nodeId;
+            violation.carrier = carrier;
+            violation.residual = residual;
+            violation.scale = scale;
+            violation.ratio = ratio;
+            violation.flux = flux;
+            violation.recombination = recombination;
+            violation.impact = impact;
+            evaluation.violations.push_back(std::move(violation));
+        }
+    };
+
+    for (const CoupledDDCarrierTermDiagnostic& row : rows) {
+        checkCarrier(row, "electron", row.electronResidual, row.electronFlux,
+                     row.electronFluxAbsSum, row.electronRecombination, row.electronImpact);
+        checkCarrier(row, "hole", row.holeResidual, row.holeFlux,
+                     row.holeFluxAbsSum, row.holeRecombination, row.holeImpact);
+    }
+    evaluation.satisfied = evaluation.violations.empty();
+    return evaluation;
+}
 
 NewtonConfig newtonConfigFromJson(const nlohmann::json& json, UnitScalingConfig scaling)
 {
@@ -622,6 +676,56 @@ NewtonConfig newtonConfigFromJson(const nlohmann::json& json, UnitScalingConfig 
         parseCarrierDiagonalFloor(json.at("carrier_diagonal_floor_regularization"));
     if (json.contains("carrier_diagonal_floor"))
         parseCarrierDiagonalFloor(json.at("carrier_diagonal_floor"));
+    if (json.contains("carrier_row_convergence")) {
+        const auto& value = json.at("carrier_row_convergence");
+        if (value.is_boolean()) {
+            cfg.carrierRowConvergence.mode = value.get<bool>() ? "report" : "off";
+        } else if (value.is_object()) {
+            cfg.carrierRowConvergence.mode = value.value(
+                "mode", cfg.carrierRowConvergence.mode);
+            if (value.contains("enabled") && !value.at("enabled").get<bool>())
+                cfg.carrierRowConvergence.mode = "off";
+            cfg.carrierRowConvergence.epsRow = value.value(
+                "eps_row", cfg.carrierRowConvergence.epsRow);
+            cfg.carrierRowConvergence.scaleFloor = value.value(
+                "scale_floor", cfg.carrierRowConvergence.scaleFloor);
+            cfg.carrierRowConvergence.minEnforceMaxIter = value.value(
+                "min_newton_max_iter", cfg.carrierRowConvergence.minEnforceMaxIter);
+            cfg.carrierRowConvergence.diagnosticCsvFile = value.value(
+                "diagnostic_csv", cfg.carrierRowConvergence.diagnosticCsvFile);
+            cfg.carrierRowConvergence.traceCsvFile = value.value(
+                "trace_csv", cfg.carrierRowConvergence.traceCsvFile);
+            cfg.carrierRowConvergence.traceNodes = value.value(
+                "trace_nodes", cfg.carrierRowConvergence.traceNodes);
+            cfg.carrierRowConvergence.traceFirstIterations = value.value(
+                "trace_first_iterations", cfg.carrierRowConvergence.traceFirstIterations);
+            cfg.carrierRowConvergence.traceEveryIterations = value.value(
+                "trace_every_iterations", cfg.carrierRowConvergence.traceEveryIterations);
+        } else {
+            throw std::invalid_argument(
+                "newtonConfigFromJson: carrier_row_convergence must be a boolean or object.");
+        }
+        if (cfg.carrierRowConvergence.mode != "off" &&
+            cfg.carrierRowConvergence.mode != "report" &&
+            cfg.carrierRowConvergence.mode != "enforce") {
+            throw std::invalid_argument(
+                "newtonConfigFromJson: carrier_row_convergence.mode must be 'off', 'report', or 'enforce'.");
+        }
+        if (!(cfg.carrierRowConvergence.epsRow > 0.0) ||
+            !std::isfinite(cfg.carrierRowConvergence.epsRow)) {
+            throw std::invalid_argument(
+                "newtonConfigFromJson: carrier_row_convergence.eps_row must be positive and finite.");
+        }
+        if (cfg.carrierRowConvergence.scaleFloor < 0.0 ||
+            !std::isfinite(cfg.carrierRowConvergence.scaleFloor)) {
+            throw std::invalid_argument(
+                "newtonConfigFromJson: carrier_row_convergence.scale_floor must be finite and nonnegative.");
+        }
+        if (cfg.carrierRowConvergence.mode == "enforce" &&
+            cfg.maxIter < cfg.carrierRowConvergence.minEnforceMaxIter) {
+            cfg.maxIter = cfg.carrierRowConvergence.minEnforceMaxIter;
+        }
+    }
     cfg.finiteDifferenceStep = json.value("finite_difference_step", cfg.finiteDifferenceStep);
     cfg.jacobian = json.value("jacobian", cfg.jacobian);
     cfg.residualNorm = json.value("residual_norm", cfg.residualNorm);
@@ -1960,6 +2064,108 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
     result.solution = initial;
     result.initialResidualNorm = initialNorm;
     result.finalResidualNorm = initialNorm;
+    result.finalBlockNorms = blockResidualInfo(r, mesh_.numNodes());
+
+    auto carrierRowEval = [&](const VectorXd& state) {
+        if (cfg_.carrierRowConvergence.mode == "off")
+            return NewtonCarrierRowConvergenceEvaluation{};
+        return evaluateCarrierRowConvergence(
+            assembler.carrierContinuityTermDiagnostics(state, bcs),
+            cfg_.carrierRowConvergence);
+    };
+    auto carrierRowsAcceptConvergence = [](const NewtonCarrierRowConvergenceEvaluation& evaluation) {
+        return !evaluation.enforced || evaluation.satisfied;
+    };
+    auto writeCarrierRowDiagnosticCsv = [&](const NewtonCarrierRowConvergenceEvaluation& evaluation,
+                                            int iteration,
+                                            const std::string& event) {
+        if (!evaluation.enabled || cfg_.carrierRowConvergence.diagnosticCsvFile.empty())
+            return;
+        const std::filesystem::path path(cfg_.carrierRowConvergence.diagnosticCsvFile);
+        if (!path.parent_path().empty())
+            std::filesystem::create_directories(path.parent_path());
+        const bool writeHeader = !std::filesystem::exists(path);
+        std::ofstream out(path, std::ios::app);
+        if (writeHeader) {
+            out << "event,iteration,node_id,carrier,residual,scale,ratio,flux,srh,impact\n";
+        }
+        out << std::setprecision(17);
+        for (const auto& row : evaluation.violations) {
+            out << event << ',' << iteration << ',' << row.nodeId << ',' << row.carrier << ','
+                << row.residual << ',' << row.scale << ',' << row.ratio << ','
+                << row.flux << ',' << row.recombination << ',' << row.impact << '\n';
+        }
+    };
+    auto shouldWriteCarrierRowTrace = [&](int iteration) {
+        if (cfg_.carrierRowConvergence.traceCsvFile.empty() ||
+            cfg_.carrierRowConvergence.traceNodes.empty())
+            return false;
+        if (iteration <= cfg_.carrierRowConvergence.traceFirstIterations)
+            return true;
+        const int every = std::max(1, cfg_.carrierRowConvergence.traceEveryIterations);
+        return iteration % every == 0;
+    };
+    auto writeCarrierRowTraceCsv = [&](const VectorXd& state,
+                                       const NewtonCarrierRowConvergenceEvaluation& evaluation,
+                                       int iteration,
+                                       Real residualNorm,
+                                       const std::string& event) {
+        if (!evaluation.enabled || !shouldWriteCarrierRowTrace(iteration))
+            return;
+        const std::filesystem::path path(cfg_.carrierRowConvergence.traceCsvFile);
+        if (!path.parent_path().empty())
+            std::filesystem::create_directories(path.parent_path());
+        const bool writeHeader = !std::filesystem::exists(path);
+        std::ofstream out(path, std::ios::app);
+        if (writeHeader) {
+            out << "event,iteration,residual_norm,node_id,psi_V,phin_V,phip_V,n_m3,p_m3,"
+                << "electron_residual,electron_scale,electron_ratio,electron_flux,electron_srh,electron_impact,"
+                << "hole_residual,hole_scale,hole_ratio,hole_flux,hole_srh,hole_impact\n";
+        }
+        const auto terms = assembler.carrierContinuityTermDiagnostics(state, bcs);
+        const VectorXd n = assembler.electronDensity(state);
+        const VectorXd p = assembler.holeDensity(state);
+        const CoupledDDState unpacked = assembler.unpack(state);
+        auto scaleFor = [&](Real flux, Real recombination, Real impact) {
+            return std::max({std::abs(flux), std::abs(recombination), std::abs(impact),
+                             std::max<Real>(cfg_.carrierRowConvergence.scaleFloor, 0.0)});
+        };
+        out << std::setprecision(17);
+        for (Index node : cfg_.carrierRowConvergence.traceNodes) {
+            if (node < 0 || node >= mesh_.numNodes())
+                continue;
+            const auto& term = terms[static_cast<std::size_t>(node)];
+            const Real eScale = scaleFor(term.electronFluxAbsSum, term.electronRecombination, term.electronImpact);
+            const Real hScale = scaleFor(term.holeFluxAbsSum, term.holeRecombination, term.holeImpact);
+            const Real eRatio = eScale > 0.0 ? std::abs(term.electronResidual) / eScale : 0.0;
+            const Real hRatio = hScale > 0.0 ? std::abs(term.holeResidual) / hScale : 0.0;
+            out << event << ',' << iteration << ',' << residualNorm << ',' << node << ','
+                << unpacked.psi(static_cast<int>(node)) * potentialScale << ','
+                << unpacked.phin(static_cast<int>(node)) * potentialScale << ','
+                << unpacked.phip(static_cast<int>(node)) * potentialScale << ','
+                << n(static_cast<int>(node)) << ',' << p(static_cast<int>(node)) << ','
+                << term.electronResidual << ',' << eScale << ',' << eRatio << ','
+                << term.electronFlux << ',' << term.electronRecombination << ',' << term.electronImpact << ','
+                << term.holeResidual << ',' << hScale << ',' << hRatio << ','
+                << term.holeFlux << ',' << term.holeRecombination << ',' << term.holeImpact << '\n';
+        }
+    };
+    auto finishConverged = [&](const std::string& reason,
+                               const VectorXd& state,
+                               const VectorXd& residual,
+                               int iterations,
+                               Real norm,
+                               const NewtonCarrierRowConvergenceEvaluation& rowEval) {
+        result.converged = true;
+        result.iters = iterations;
+        result.finalResidualNorm = norm;
+        result.convergenceReason = reason;
+        result.finalBlockNorms = blockResidualInfo(residual, mesh_.numNodes());
+        result.finalCarrierRowConvergence = rowEval;
+        result.solution = makeSolution(assembler, state, iterations);
+        writeCarrierRowDiagnosticCsv(rowEval, iterations, reason);
+        writeCarrierRowTraceCsv(state, rowEval, iterations, norm, reason);
+    };
 
     if (cfg_.verbose) {
         const ResidualBlockNormValue blocks = ResidualNorm::computeBlocks(r, mesh_.numNodes());
@@ -1969,9 +2175,10 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
                   << blocks.phip << ")\n";
     }
 
-    if (initialNorm <= cfg_.abstol) {
-        result.converged = true;
-        result.solution = makeSolution(assembler, x, 0);
+    NewtonCarrierRowConvergenceEvaluation initialRowEval = carrierRowEval(x);
+    writeCarrierRowTraceCsv(x, initialRowEval, 0, initialNorm, "initial");
+    if (initialNorm <= cfg_.abstol && carrierRowsAcceptConvergence(initialRowEval)) {
+        finishConverged("initial_abstol", x, r, 0, initialNorm, initialRowEval);
         return result;
     }
 
@@ -2050,15 +2257,26 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
             // numerical floor, so the rejected step is only fighting noise.
             // Declaring convergence here avoids spurious failures when the
             // Newton iterate has already reached the achievable precision.
-            if (stalledNorm <= stallResidualFloor) {
-                result.converged = true;
-                result.iters = acceptedIters;
-                result.finalResidualNorm = stalledNorm;
-                result.solution = makeSolution(assembler, acceptedX, acceptedIters);
+            const NewtonCarrierRowConvergenceEvaluation stalledRowEval = carrierRowEval(acceptedX);
+            if (stalledNorm <= stallResidualFloor &&
+                carrierRowsAcceptConvergence(stalledRowEval)) {
+                finishConverged("stall_residual_floor", acceptedX, acceptedR,
+                                acceptedIters, stalledNorm, stalledRowEval);
                 return result;
+            }
+            if (stalledNorm <= stallResidualFloor && stalledRowEval.enforced &&
+                !stalledRowEval.satisfied) {
+                writeCarrierRowDiagnosticCsv(
+                    stalledRowEval, acceptedIters,
+                    "carrier_row_convergence_line_search_rejected");
+                writeCarrierRowTraceCsv(
+                    acceptedX, stalledRowEval, acceptedIters, stalledNorm,
+                    "carrier_row_convergence_line_search_rejected");
             }
             result.finalResidualNorm = stalledNorm;
             result.iters = acceptedIters;
+            result.finalBlockNorms = blockResidualInfo(acceptedR, mesh_.numNodes());
+            result.finalCarrierRowConvergence = stalledRowEval;
             result.solution = makeSolution(assembler, acceptedX, acceptedIters);
             result.failureDiagnostics = buildFailureDiagnostics(
                 mesh_,
@@ -2066,7 +2284,9 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
                 assembler,
                 acceptedX,
                 acceptedR,
-                ls.failureReason.empty() ? std::string("line_search_rejected") : ls.failureReason,
+                (stalledNorm <= stallResidualFloor && stalledRowEval.enforced && !stalledRowEval.satisfied)
+                    ? std::string("carrier_row_convergence_line_search_rejected")
+                    : (ls.failureReason.empty() ? std::string("line_search_rejected") : ls.failureReason),
                 iter,
                 result.finalResidualNorm,
                 stepNorm,
@@ -2106,6 +2326,8 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
         info.lineSearchAttempts = ls.attempts;
         info.lineSearchAccepted = ls.accepted;
         info.blockResiduals = blockResidualInfo(r, mesh_.numNodes());
+        info.carrierRowConvergence = carrierRowEval(x);
+        writeCarrierRowTraceCsv(x, info.carrierRowConvergence, iter, residualNorm, "iteration");
         if (cfg_.diagnostics)
             info.lineSearchHistory = std::move(ls.history);
         result.history.push_back(std::move(info));
@@ -2120,11 +2342,19 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
         }
 
         const Real rel = result.history.back().relativeResidualNorm;
-        if (residualNorm <= cfg_.abstol || rel <= cfg_.reltol) {
-            result.converged = true;
-            result.iters = iter;
-            result.finalResidualNorm = residualNorm;
-            result.solution = makeSolution(assembler, x, iter);
+        const bool absoluteConverged = residualNorm <= cfg_.abstol;
+        const bool relativeConverged = rel <= cfg_.reltol;
+        const NewtonCarrierRowConvergenceEvaluation& rowEval =
+            result.history.back().carrierRowConvergence;
+        if ((absoluteConverged || relativeConverged) &&
+            carrierRowsAcceptConvergence(rowEval)) {
+            finishConverged(
+                absoluteConverged ? "abstol" : "reltol",
+                x,
+                r,
+                iter,
+                residualNorm,
+                rowEval);
             return result;
         }
     }
@@ -2132,19 +2362,31 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
     result.iters = acceptedIters;
     result.finalResidualNorm = residualNormFn(acceptedR);
     result.solution = makeSolution(assembler, acceptedX, acceptedIters);
-    if (result.finalResidualNorm <= stallResidualFloor) {
-        result.converged = true;
+    const NewtonCarrierRowConvergenceEvaluation finalRowEval = carrierRowEval(acceptedX);
+    result.finalBlockNorms = blockResidualInfo(acceptedR, mesh_.numNodes());
+    result.finalCarrierRowConvergence = finalRowEval;
+    if (result.finalResidualNorm <= stallResidualFloor &&
+        carrierRowsAcceptConvergence(finalRowEval)) {
+        finishConverged("max_iter_stall_residual_floor", acceptedX, acceptedR,
+                        acceptedIters, result.finalResidualNorm, finalRowEval);
         return result;
     }
 
     result.converged = false;
+    const std::string finalFailureReason =
+        (finalRowEval.enforced && !finalRowEval.satisfied)
+            ? std::string("carrier_row_convergence")
+            : std::string("max_iterations");
+    writeCarrierRowDiagnosticCsv(finalRowEval, acceptedIters, finalFailureReason);
+    writeCarrierRowTraceCsv(acceptedX, finalRowEval, acceptedIters,
+                            result.finalResidualNorm, finalFailureReason);
     result.failureDiagnostics = buildFailureDiagnostics(
         mesh_,
         doping_,
         assembler,
         acceptedX,
         acceptedR,
-        "max_iterations",
+        finalFailureReason,
         cfg_.maxIter,
         result.finalResidualNorm,
         result.history.empty() ? 0.0 : result.history.back().stepNorm,

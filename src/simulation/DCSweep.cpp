@@ -2162,7 +2162,8 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
         "current_electron_diffusion", "current_hole", "current_hole_drift",
         "current_hole_diffusion", "current_total",
         "converged", "iterations", "solver_method", "gummel_iterations",
-        "newton_iterations", "handoff_stage", "step_diagnostics",
+        "newton_iterations", "handoff_stage", "newton_convergence_reason",
+        "carrier_row_violations", "carrier_row_max_ratio", "step_diagnostics",
         "validation_diagnostics", "qf_bounds_violations", "failure_reason", "newton_failure_class",
         "newton_failure_diagnostics_json"};
     const bool writeUnitScaledColumns = sweep.scaling.isUnitScaling();
@@ -2537,7 +2538,9 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
             "block_psi",
             "block_phin",
             "block_phip",
-            "block_combined"});
+            "block_combined",
+            "carrier_row_violations",
+            "carrier_row_max_ratio"});
     }
 
     std::unique_ptr<CSVWriter> qfBoundsCsv;
@@ -2580,6 +2583,9 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
         int gummelIterations = 0;
         int newtonIterations = 0;
         std::string handoffStage;
+        std::string newtonConvergenceReason;
+        int carrierRowViolations = 0;
+        Real carrierRowMaxRatio = 0.0;
         NewtonFailureDiagnostics newtonFailureDiagnostics;
         std::vector<NewtonIterationInfo> newtonHistory;
         bool predictedInitialState = false;
@@ -2640,6 +2646,10 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                 attempt.handoffStage = solverConverged ? "newton" : "newton_failed";
                 attempt.newtonFailureDiagnostics = result.failureDiagnostics;
                 attempt.newtonHistory = result.history;
+                attempt.newtonConvergenceReason = result.convergenceReason;
+                attempt.carrierRowViolations = static_cast<int>(
+                    result.finalCarrierRowConvergence.violations.size());
+                attempt.carrierRowMaxRatio = result.finalCarrierRowConvergence.maxRatio;
                 if (!solverConverged) {
                     attempt.failureReason = result.failureDiagnostics.failureReason.empty()
                         ? "newton_non_convergence"
@@ -2653,6 +2663,10 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                 handoffNewton.warmStart = true;
                 if (hybrid.newtonMaxIter >= 0)
                     handoffNewton.maxIter = hybrid.newtonMaxIter;
+                if (handoffNewton.carrierRowConvergence.mode == "enforce" &&
+                    handoffNewton.maxIter < handoffNewton.carrierRowConvergence.minEnforceMaxIter) {
+                    handoffNewton.maxIter = handoffNewton.carrierRowConvergence.minEnforceMaxIter;
+                }
 
                 DDSolution gummelInitial;
                 DDSolutionValidationResult gummelValidation;
@@ -2666,6 +2680,10 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                                     handoffNewton, fixedChargeSpecs, sheetChargeSpecs);
                     attempt.newtonFailureDiagnostics = result.failureDiagnostics;
                     attempt.newtonHistory = result.history;
+                    attempt.newtonConvergenceReason = result.convergenceReason;
+                    attempt.carrierRowViolations = static_cast<int>(
+                        result.finalCarrierRowConvergence.violations.size());
+                    attempt.carrierRowMaxRatio = result.finalCarrierRowConvergence.maxRatio;
                 } else {
                     GummelConfig initializerGummel = gummel;
                     if (hybrid.gummelMaxIter >= 0)
@@ -2699,6 +2717,10 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                                        handoffNewton, fixedChargeSpecs, sheetChargeSpecs);
                     attempt.newtonFailureDiagnostics = result.failureDiagnostics;
                     attempt.newtonHistory = result.history;
+                    attempt.newtonConvergenceReason = result.convergenceReason;
+                    attempt.carrierRowViolations = static_cast<int>(
+                        result.finalCarrierRowConvergence.violations.size());
+                    attempt.carrierRowMaxRatio = result.finalCarrierRowConvergence.maxRatio;
                     const bool acceptedNewton =
                         result.converged && !(hybrid.newtonMaxIter == 0 && result.iters == 0);
                     if (!acceptedNewton && hybrid.fallbackToGummelOnNewtonFailure) {
@@ -3051,6 +3073,9 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
         point.gummelIterations = attempt.gummelIterations;
         point.newtonIterations = attempt.newtonIterations;
         point.handoffStage = attempt.handoffStage;
+        point.newtonConvergenceReason = attempt.newtonConvergenceReason;
+        point.carrierRowViolations = attempt.carrierRowViolations;
+        point.carrierRowMaxRatio = attempt.carrierRowMaxRatio;
         point.attemptedStep = attemptedStep;
         point.acceptedStep = acceptedStep;
         point.retryCount = retryCount;
@@ -3236,6 +3261,9 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
             std::to_string(point.gummelIterations),
             std::to_string(point.newtonIterations),
             point.handoffStage,
+            point.newtonConvergenceReason,
+            std::to_string(point.carrierRowViolations),
+            formatReal(point.carrierRowMaxRatio),
             stepDiagnostics(point),
             point.validationDiagnostics,
             std::to_string(point.qfBoundsViolations),
@@ -3439,7 +3467,9 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                     formatReal(info.blockResiduals.psi),
                     formatReal(info.blockResiduals.phin),
                     formatReal(info.blockResiduals.phip),
-                    formatReal(info.blockResiduals.combined)});
+                    formatReal(info.blockResiduals.combined),
+                    std::to_string(info.carrierRowConvergence.violations.size()),
+                    formatReal(info.carrierRowConvergence.maxRatio)});
             }
         }
 

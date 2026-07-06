@@ -573,6 +573,8 @@ CoupledDDAssembler::carrierContinuityTermDiagnostics(
                 bgnEnabled_);
             terms[static_cast<Index>(i)].electronFlux += nFlux;
             terms[static_cast<Index>(j)].electronFlux -= nFlux;
+            terms[static_cast<Index>(i)].electronFluxAbsSum += std::abs(nFlux);
+            terms[static_cast<Index>(j)].electronFluxAbsSum += std::abs(nFlux);
         }
 
         const Real mup = detail::edgeMobility(
@@ -596,6 +598,8 @@ CoupledDDAssembler::carrierContinuityTermDiagnostics(
                 bgnEnabled_);
             terms[static_cast<Index>(i)].holeFlux += pFlux;
             terms[static_cast<Index>(j)].holeFlux -= pFlux;
+            terms[static_cast<Index>(i)].holeFluxAbsSum += std::abs(pFlux);
+            terms[static_cast<Index>(j)].holeFluxAbsSum += std::abs(pFlux);
         }
     }
 
@@ -666,6 +670,8 @@ CoupledDDAssembler::carrierContinuityTermDiagnostics(
         for (auto& term : terms) {
             term.electronFlux /= continuityScale;
             term.holeFlux /= continuityScale;
+            term.electronFluxAbsSum /= continuityScale;
+            term.holeFluxAbsSum /= continuityScale;
             term.electronRecombination /= continuityScale;
             term.holeRecombination /= continuityScale;
             term.electronImpact /= continuityScale;
@@ -698,6 +704,7 @@ CoupledDDAssembler::carrierContinuityTermDiagnostics(
     auto applyElectronBoundary = [&](Index node, Real value) {
         CoupledDDCarrierTermDiagnostic& term = terms[node];
         term.electronFlux = 0.0;
+        term.electronFluxAbsSum = 0.0;
         term.electronRecombination = 0.0;
         term.electronImpact = 0.0;
         term.impactElectronSource = 0.0;
@@ -710,6 +717,7 @@ CoupledDDAssembler::carrierContinuityTermDiagnostics(
     auto applyHoleBoundary = [&](Index node, Real value) {
         CoupledDDCarrierTermDiagnostic& term = terms[node];
         term.holeFlux = 0.0;
+        term.holeFluxAbsSum = 0.0;
         term.holeRecombination = 0.0;
         term.holeImpact = 0.0;
         term.impactElectronSource = 0.0;
