@@ -189,6 +189,9 @@ struct DCSweepPoint {
     bool carrierRowRecoveryAttempted = false;
     int carrierRowRecoveryElectronRows = 0;
     int carrierRowRecoveryHoleRows = 0;
+    int carrierRowRecoveryDensityPasses = 0;
+    int carrierRowRecoveryCycles = 0;
+    Real carrierRowRecoveryMaxDensityRelativeChange = 0.0;
     Real carrierRowRecoveryMaxPsiDelta_V = 0.0;
     Real carrierRowRecoveryMaxDensityRatio = 0.0;
     Real attemptedStep = 0.0;

@@ -26,6 +26,7 @@ struct NewtonCarrierRowConvergenceConfig {
     std::string mode = "off"; ///< "off", "report", or "enforce".
     Real epsRow = 1.0e-3;
     Real scaleFloor = 1.0e-300;
+    Real minSourceScaleFraction = 1.0e-3;
     int minEnforceMaxIter = 200;
     std::string diagnosticCsvFile;
     std::string traceCsvFile;
@@ -58,7 +59,9 @@ struct NewtonCarrierRowConvergenceEvaluation {
 
 struct NewtonCarrierRowRecoveryConfig {
     std::string mode = "off"; ///< "off" or "gummel_density".
-    int maxAttempts = 1;
+    int maxAttempts = 1; ///< Maximum density passes per recovery cycle.
+    int maxCycles = 1; ///< Maximum Newton/recovery cycles at one bias point.
+    Real densityChangeReltol = 1.0e-8; ///< Stop density passes when max relative density change falls below this value.
 };
 
 struct NewtonCarrierRowRecoveryResult {
@@ -67,6 +70,10 @@ struct NewtonCarrierRowRecoveryResult {
     std::string mode;
     int electronRowsUpdated = 0;
     int holeRowsUpdated = 0;
+    int densityPasses = 0;
+    int cyclesAttempted = 0;
+    bool densityConverged = false;
+    Real maxDensityRelativeChange = 0.0;
     Real maxPsiDelta_V = 0.0;
     Real maxCarrierDensityRatio = 0.0;
 };

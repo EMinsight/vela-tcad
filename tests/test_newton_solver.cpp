@@ -2056,6 +2056,32 @@ TEST_CASE("NewtonSolver: carrier row convergence ignores balanced local rows", "
     CHECK(evaluation.violations.empty());
 }
 
+TEST_CASE("NewtonSolver: carrier row convergence ignores flux-only rows",
+          "[newton][carrier_row_convergence]")
+{
+    CoupledDDCarrierTermDiagnostic row;
+    row.nodeId = 4;
+    row.holeFlux = 5.0e-2;
+    row.holeFluxAbsSum = 1.0;
+    row.holeRecombination = -1.0e-8;
+    row.holeImpact = 0.0;
+    row.holeResidual = 5.0e-2;
+
+    NewtonCarrierRowConvergenceConfig cfg;
+    cfg.mode = "enforce";
+    cfg.epsRow = 1.0e-3;
+    cfg.scaleFloor = 1.0e-30;
+    cfg.minSourceScaleFraction = 1.0e-3;
+
+    const NewtonCarrierRowConvergenceEvaluation evaluation =
+        evaluateCarrierRowConvergence({row}, cfg);
+
+    REQUIRE(evaluation.enabled);
+    REQUIRE(evaluation.enforced);
+    REQUIRE(evaluation.satisfied);
+    CHECK(evaluation.violations.empty());
+}
+
 TEST_CASE("NewtonSolver: Gummel density recovery jumps a dead carrier row",
           "[newton][carrier_row_recovery]")
 {
@@ -2096,4 +2122,57 @@ TEST_CASE("NewtonSolver: Gummel density recovery jumps a dead carrier row",
     CHECK(recovered.solution.n(4) > 1.0e8);
     CHECK(recovered.solution.phin(4) < 1.0);
     CHECK(recovered.maxPsiDelta_V == Catch::Approx(0.0));
+}
+
+TEST_CASE("NewtonSolver: Gummel density recovery uses Ohmic contact densities",
+          "[newton][carrier_row_recovery][contact_bc]")
+{
+    DeviceMesh mesh = makePNMesh();
+    MaterialDatabase matdb;
+    DopingModel doping = makePNDoping(mesh);
+
+    NewtonConfig cfg = newtonConfig();
+    cfg.recombination = {"srh"};
+    cfg.mobility.model = "constant";
+
+    const int n = static_cast<int>(mesh.numNodes());
+    DDSolution clean;
+    clean.psi = VectorXd::Zero(n);
+    clean.phin = VectorXd::Zero(n);
+    clean.phip = VectorXd::Zero(n);
+    clean.n = VectorXd::Constant(n, 1.0e4);
+    clean.p = VectorXd::Constant(n, 1.0e4);
+    clean.phin(4) = 8.0;
+    clean.n(4) = 1.0e-120;
+
+    DDSolution polluted = clean;
+    polluted.n(0) = 1.0e60;
+    polluted.p(0) = 1.0e-60;
+    polluted.n(1) = 1.0e-60;
+    polluted.p(1) = 1.0e60;
+    polluted.n(2) = 1.0e-60;
+    polluted.p(2) = 1.0e60;
+    polluted.n(3) = 1.0e60;
+    polluted.p(3) = 1.0e-60;
+
+    NewtonCarrierRowConvergenceViolation violation;
+    violation.nodeId = 4;
+    violation.carrier = "electron";
+    violation.residual = -1.0;
+    violation.scale = 1.0;
+    violation.ratio = 1.0;
+
+    NewtonCarrierRowRecoveryConfig recovery;
+    recovery.mode = "gummel_density";
+
+    const NewtonCarrierRowRecoveryResult fromClean =
+        recoverCarrierRowsWithGummelDensity(
+            mesh, matdb, doping, zeroBias(), cfg, clean, {violation}, recovery);
+    const NewtonCarrierRowRecoveryResult fromPolluted =
+        recoverCarrierRowsWithGummelDensity(
+            mesh, matdb, doping, zeroBias(), cfg, polluted, {violation}, recovery);
+
+    REQUIRE(fromClean.attempted);
+    REQUIRE(fromPolluted.attempted);
+    CHECK(fromPolluted.solution.n(4) == Catch::Approx(fromClean.solution.n(4)).epsilon(1.0e-12));
 }

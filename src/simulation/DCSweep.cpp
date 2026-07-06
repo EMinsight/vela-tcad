@@ -2165,6 +2165,8 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
         "newton_iterations", "handoff_stage", "newton_convergence_reason",
         "carrier_row_violations", "carrier_row_max_ratio", "carrier_row_recovery_attempted",
         "carrier_row_recovery_electron_rows", "carrier_row_recovery_hole_rows",
+        "carrier_row_recovery_density_passes", "carrier_row_recovery_cycles",
+        "carrier_row_recovery_max_density_relative_change",
         "carrier_row_recovery_max_psi_delta_V", "carrier_row_recovery_max_density_ratio",
         "step_diagnostics",
         "validation_diagnostics", "qf_bounds_violations", "failure_reason", "newton_failure_class",
@@ -2592,6 +2594,9 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
         bool carrierRowRecoveryAttempted = false;
         int carrierRowRecoveryElectronRows = 0;
         int carrierRowRecoveryHoleRows = 0;
+        int carrierRowRecoveryDensityPasses = 0;
+        int carrierRowRecoveryCycles = 0;
+        Real carrierRowRecoveryMaxDensityRelativeChange = 0.0;
         Real carrierRowRecoveryMaxPsiDelta_V = 0.0;
         Real carrierRowRecoveryMaxDensityRatio = 0.0;
         NewtonFailureDiagnostics newtonFailureDiagnostics;
@@ -2661,6 +2666,9 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                 attempt.carrierRowRecoveryAttempted = result.carrierRowRecovery.attempted;
                 attempt.carrierRowRecoveryElectronRows = result.carrierRowRecovery.electronRowsUpdated;
                 attempt.carrierRowRecoveryHoleRows = result.carrierRowRecovery.holeRowsUpdated;
+                attempt.carrierRowRecoveryDensityPasses = result.carrierRowRecovery.densityPasses;
+                attempt.carrierRowRecoveryCycles = result.carrierRowRecovery.cyclesAttempted;
+                attempt.carrierRowRecoveryMaxDensityRelativeChange = result.carrierRowRecovery.maxDensityRelativeChange;
                 attempt.carrierRowRecoveryMaxPsiDelta_V = result.carrierRowRecovery.maxPsiDelta_V;
                 attempt.carrierRowRecoveryMaxDensityRatio = result.carrierRowRecovery.maxCarrierDensityRatio;
                 if (!solverConverged) {
@@ -2700,6 +2708,9 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                 attempt.carrierRowRecoveryAttempted = result.carrierRowRecovery.attempted;
                 attempt.carrierRowRecoveryElectronRows = result.carrierRowRecovery.electronRowsUpdated;
                 attempt.carrierRowRecoveryHoleRows = result.carrierRowRecovery.holeRowsUpdated;
+                attempt.carrierRowRecoveryDensityPasses = result.carrierRowRecovery.densityPasses;
+                attempt.carrierRowRecoveryCycles = result.carrierRowRecovery.cyclesAttempted;
+                attempt.carrierRowRecoveryMaxDensityRelativeChange = result.carrierRowRecovery.maxDensityRelativeChange;
                 attempt.carrierRowRecoveryMaxPsiDelta_V = result.carrierRowRecovery.maxPsiDelta_V;
                 attempt.carrierRowRecoveryMaxDensityRatio = result.carrierRowRecovery.maxCarrierDensityRatio;
                 } else {
@@ -2742,6 +2753,9 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                 attempt.carrierRowRecoveryAttempted = result.carrierRowRecovery.attempted;
                 attempt.carrierRowRecoveryElectronRows = result.carrierRowRecovery.electronRowsUpdated;
                 attempt.carrierRowRecoveryHoleRows = result.carrierRowRecovery.holeRowsUpdated;
+                attempt.carrierRowRecoveryDensityPasses = result.carrierRowRecovery.densityPasses;
+                attempt.carrierRowRecoveryCycles = result.carrierRowRecovery.cyclesAttempted;
+                attempt.carrierRowRecoveryMaxDensityRelativeChange = result.carrierRowRecovery.maxDensityRelativeChange;
                 attempt.carrierRowRecoveryMaxPsiDelta_V = result.carrierRowRecovery.maxPsiDelta_V;
                 attempt.carrierRowRecoveryMaxDensityRatio = result.carrierRowRecovery.maxCarrierDensityRatio;
                     const bool acceptedNewton =
@@ -3102,6 +3116,9 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
         point.carrierRowRecoveryAttempted = attempt.carrierRowRecoveryAttempted;
         point.carrierRowRecoveryElectronRows = attempt.carrierRowRecoveryElectronRows;
         point.carrierRowRecoveryHoleRows = attempt.carrierRowRecoveryHoleRows;
+        point.carrierRowRecoveryDensityPasses = attempt.carrierRowRecoveryDensityPasses;
+        point.carrierRowRecoveryCycles = attempt.carrierRowRecoveryCycles;
+        point.carrierRowRecoveryMaxDensityRelativeChange = attempt.carrierRowRecoveryMaxDensityRelativeChange;
         point.carrierRowRecoveryMaxPsiDelta_V = attempt.carrierRowRecoveryMaxPsiDelta_V;
         point.carrierRowRecoveryMaxDensityRatio = attempt.carrierRowRecoveryMaxDensityRatio;
         point.attemptedStep = attemptedStep;
@@ -3295,6 +3312,9 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
             point.carrierRowRecoveryAttempted ? "1" : "0",
             std::to_string(point.carrierRowRecoveryElectronRows),
             std::to_string(point.carrierRowRecoveryHoleRows),
+            std::to_string(point.carrierRowRecoveryDensityPasses),
+            std::to_string(point.carrierRowRecoveryCycles),
+            formatReal(point.carrierRowRecoveryMaxDensityRelativeChange),
             formatReal(point.carrierRowRecoveryMaxPsiDelta_V),
             formatReal(point.carrierRowRecoveryMaxDensityRatio),
             stepDiagnostics(point),

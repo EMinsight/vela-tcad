@@ -132,6 +132,10 @@ nlohmann::json carrierRowRecoveryJson(
         {"mode", recovery.mode},
         {"electron_rows_updated", recovery.electronRowsUpdated},
         {"hole_rows_updated", recovery.holeRowsUpdated},
+        {"density_passes", recovery.densityPasses},
+        {"cycles_attempted", recovery.cyclesAttempted},
+        {"density_converged", recovery.densityConverged},
+        {"max_density_relative_change", recovery.maxDensityRelativeChange},
         {"max_psi_delta_V", recovery.maxPsiDelta_V},
         {"max_carrier_density_ratio", recovery.maxCarrierDensityRatio},
     };

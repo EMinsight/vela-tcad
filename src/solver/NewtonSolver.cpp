@@ -600,15 +600,17 @@ NewtonCarrierRowConvergenceEvaluation evaluateCarrierRowConvergence(
                             Real fluxAbsSum,
                             Real recombination,
                             Real impact) {
-        const Real scale = std::max({std::abs(fluxAbsSum), std::abs(recombination),
-                                     std::abs(impact), floor});
+        const Real sourceScale = std::max(std::abs(recombination), std::abs(impact));
+        const Real scale = std::max({std::abs(fluxAbsSum), sourceScale, floor});
+        const bool sourceQualified = scale > 0.0 &&
+            sourceScale >= cfg.minSourceScaleFraction * scale;
         const Real ratio = scale > 0.0 ? std::abs(residual) / scale : 0.0;
-        if (ratio > evaluation.maxRatio) {
+        if (sourceQualified && ratio > evaluation.maxRatio) {
             evaluation.maxRatio = ratio;
             evaluation.maxRatioNode = row.nodeId;
             evaluation.maxRatioCarrier = carrier;
         }
-        if (ratio > eps) {
+        if (sourceQualified && ratio > eps) {
             NewtonCarrierRowConvergenceViolation violation;
             violation.nodeId = row.nodeId;
             violation.carrier = carrier;
@@ -700,6 +702,7 @@ NewtonCarrierRowRecoveryResult recoverCarrierRowsWithGummelDensity(
     if (recovery.mode != "gummel_density" || violations.empty())
         return result;
     result.attempted = true;
+    result.cyclesAttempted = 1;
 
     const double Vt = thermalVoltage(cfg.temperature_K);
     MobilityModelConfig mobilityConfig = cfg.mobility;
@@ -749,14 +752,21 @@ NewtonCarrierRowRecoveryResult recoverCarrierRowsWithGummelDensity(
 
     std::unordered_map<Index, Real> nBC;
     std::unordered_map<Index, Real> pBC;
+    const auto& ni = qfAssembler.intrinsicDensity();
+    const bool dominantSignedContactMean =
+        cfg.contactBoundaryReconstruction == "dominant_signed_contact_mean";
     for (Index c = 0; c < mesh.numContacts(); ++c) {
         const Contact& contact = mesh.getContact(c);
         if (!hasContactBiasForRecovery(contactBiases, contact.name))
             continue;
         for (Index node : contact.node_ids) {
-            const int ii = static_cast<int>(node);
-            nBC[node] = nOld(ii);
-            pBC[node] = pOld(ii);
+            const Real niNode = ni[static_cast<std::size_t>(node)];
+            const Real ndop = ohmicContactNetDoping(
+                mesh, doping, contact, node, dominantSignedContactMean);
+            const Real nEqValue = nEq(ndop, niNode);
+            const Real pEqValue = nEqValue > 0.0 ? (niNode * niNode / nEqValue) : 0.0;
+            nBC[node] = scaling.enabled ? (nEqValue / scaling.C0) : nEqValue;
+            pBC[node] = scaling.enabled ? (pEqValue / scaling.C0) : pEqValue;
         }
     }
 
@@ -764,7 +774,10 @@ NewtonCarrierRowRecoveryResult recoverCarrierRowsWithGummelDensity(
     VectorXd nNew = nOld;
     VectorXd pNew = pOld;
     const int densityPasses = std::max(1, recovery.maxAttempts);
+    const Real densityChangeReltol = std::max<Real>(0.0, recovery.densityChangeReltol);
     for (int pass = 0; pass < densityPasses; ++pass) {
+        const VectorXd nBefore = nNew;
+        const VectorXd pBefore = pNew;
         densityAssembler.assembleElectronContinuity(psi, nNew, pNew);
         densityAssembler.applyDirichlet(nBC);
         VectorXd nCandidate = linearSolver.solve(densityAssembler.matrix(), densityAssembler.rhs());
@@ -780,8 +793,22 @@ NewtonCarrierRowRecoveryResult recoverCarrierRowsWithGummelDensity(
             if (pBC.find(static_cast<Index>(i)) == pBC.end() && pCandidate(i) <= 0.0)
                 pCandidate(i) = std::numeric_limits<Real>::min();
         }
+
+        Real maxRelChange = 0.0;
+        for (int i = 0; i < nNodes; ++i) {
+            const Real nDenom = std::max({std::abs(nBefore(i)), std::abs(nCandidate(i)), std::numeric_limits<Real>::min()});
+            const Real pDenom = std::max({std::abs(pBefore(i)), std::abs(pCandidate(i)), std::numeric_limits<Real>::min()});
+            maxRelChange = std::max(maxRelChange, std::abs(nCandidate(i) - nBefore(i)) / nDenom);
+            maxRelChange = std::max(maxRelChange, std::abs(pCandidate(i) - pBefore(i)) / pDenom);
+        }
         nNew = std::move(nCandidate);
         pNew = std::move(pCandidate);
+        result.maxDensityRelativeChange = maxRelChange;
+        result.densityPasses = pass + 1;
+        if (maxRelChange <= densityChangeReltol) {
+            result.densityConverged = true;
+            break;
+        }
     }
 
     bool recoverElectrons = false;
@@ -795,7 +822,6 @@ NewtonCarrierRowRecoveryResult recoverCarrierRowsWithGummelDensity(
             recoverHoles = true;
     }
 
-    const auto& ni = qfAssembler.intrinsicDensity();
     for (int i = 0; i < nNodes; ++i) {
         const Index node = static_cast<Index>(i);
         const Real psiSi = state.psi(i);
@@ -884,6 +910,8 @@ NewtonConfig newtonConfigFromJson(const nlohmann::json& json, UnitScalingConfig 
                 "eps_row", cfg.carrierRowConvergence.epsRow);
             cfg.carrierRowConvergence.scaleFloor = value.value(
                 "scale_floor", cfg.carrierRowConvergence.scaleFloor);
+            cfg.carrierRowConvergence.minSourceScaleFraction = value.value(
+                "min_source_scale_fraction", cfg.carrierRowConvergence.minSourceScaleFraction);
             cfg.carrierRowConvergence.minEnforceMaxIter = value.value(
                 "min_newton_max_iter", cfg.carrierRowConvergence.minEnforceMaxIter);
             cfg.carrierRowConvergence.diagnosticCsvFile = value.value(
@@ -905,6 +933,10 @@ NewtonConfig newtonConfigFromJson(const nlohmann::json& json, UnitScalingConfig 
                         "mode", cfg.carrierRowRecovery.mode);
                     cfg.carrierRowRecovery.maxAttempts = recovery.value(
                         "max_attempts", cfg.carrierRowRecovery.maxAttempts);
+                    cfg.carrierRowRecovery.maxCycles = recovery.value(
+                        "max_cycles", cfg.carrierRowRecovery.maxCycles);
+                    cfg.carrierRowRecovery.densityChangeReltol = recovery.value(
+                        "density_change_reltol", cfg.carrierRowRecovery.densityChangeReltol);
                 } else if (recovery.is_boolean()) {
                     cfg.carrierRowRecovery.mode = recovery.get<bool>() ? "gummel_density" : "off";
                 } else {
@@ -932,6 +964,11 @@ NewtonConfig newtonConfigFromJson(const nlohmann::json& json, UnitScalingConfig 
             throw std::invalid_argument(
                 "newtonConfigFromJson: carrier_row_convergence.scale_floor must be finite and nonnegative.");
         }
+        if (cfg.carrierRowConvergence.minSourceScaleFraction < 0.0 ||
+            !std::isfinite(cfg.carrierRowConvergence.minSourceScaleFraction)) {
+            throw std::invalid_argument(
+                "newtonConfigFromJson: carrier_row_convergence.min_source_scale_fraction must be finite and nonnegative.");
+        }
         if (cfg.carrierRowRecovery.mode != "off" &&
             cfg.carrierRowRecovery.mode != "gummel_density") {
             throw std::invalid_argument(
@@ -940,6 +977,15 @@ NewtonConfig newtonConfigFromJson(const nlohmann::json& json, UnitScalingConfig 
         if (cfg.carrierRowRecovery.maxAttempts < 0) {
             throw std::invalid_argument(
                 "newtonConfigFromJson: carrier_row_convergence.recovery.max_attempts must be nonnegative.");
+        }
+        if (cfg.carrierRowRecovery.maxCycles < 0) {
+            throw std::invalid_argument(
+                "newtonConfigFromJson: carrier_row_convergence.recovery.max_cycles must be nonnegative.");
+        }
+        if (cfg.carrierRowRecovery.densityChangeReltol < 0.0 ||
+            !std::isfinite(cfg.carrierRowRecovery.densityChangeReltol)) {
+            throw std::invalid_argument(
+                "newtonConfigFromJson: carrier_row_convergence.recovery.density_change_reltol must be finite and nonnegative.");
         }
         if (cfg.carrierRowConvergence.mode == "enforce" &&
             cfg.maxIter < cfg.carrierRowConvergence.minEnforceMaxIter) {
@@ -2392,7 +2438,8 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
                                             const NewtonCarrierRowConvergenceEvaluation& rowEval)
         -> std::optional<NewtonResult> {
         if (cfg_.carrierRowRecovery.mode == "off" || cfg_.carrierRowRecovery.maxAttempts <= 0 ||
-            !rowEval.enabled || rowEval.satisfied || rowEval.violations.empty()) {
+            cfg_.carrierRowRecovery.maxCycles <= 0 || !rowEval.enabled || rowEval.satisfied ||
+            rowEval.violations.empty()) {
             return std::nullopt;
         }
         DDSolution base = makeSolution(assembler, state, iterations);
@@ -2404,11 +2451,29 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
             return std::nullopt;
         }
         NewtonConfig retryCfg = cfg_;
-        retryCfg.carrierRowRecovery.mode = "off";
+        retryCfg.carrierRowRecovery.maxCycles = cfg_.carrierRowRecovery.maxCycles - 1;
         retryCfg.warmStart = true;
         NewtonSolver retrySolver(
             mesh_, matdb_, doping_, contactBiases_, retryCfg, fixedCharges_, sheetCharges_);
         NewtonResult retried = retrySolver.solve(recovery.solution);
+        if (retried.carrierRowRecovery.attempted) {
+            recovery.electronRowsUpdated += retried.carrierRowRecovery.electronRowsUpdated;
+            recovery.holeRowsUpdated += retried.carrierRowRecovery.holeRowsUpdated;
+            recovery.densityPasses += retried.carrierRowRecovery.densityPasses;
+            recovery.cyclesAttempted += retried.carrierRowRecovery.cyclesAttempted;
+            recovery.densityConverged = recovery.densityConverged &&
+                retried.carrierRowRecovery.densityConverged;
+            recovery.maxDensityRelativeChange = std::max(
+                recovery.maxDensityRelativeChange,
+                retried.carrierRowRecovery.maxDensityRelativeChange);
+            recovery.maxCarrierDensityRatio = std::max(
+                recovery.maxCarrierDensityRatio,
+                retried.carrierRowRecovery.maxCarrierDensityRatio);
+            recovery.maxPsiDelta_V = std::max(
+                recovery.maxPsiDelta_V,
+                retried.carrierRowRecovery.maxPsiDelta_V);
+            recovery.solution = retried.carrierRowRecovery.solution;
+        }
         retried.carrierRowRecovery = recovery;
         return retried;
     };
