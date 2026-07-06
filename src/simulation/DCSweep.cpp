@@ -2163,7 +2163,10 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
         "current_hole_diffusion", "current_total",
         "converged", "iterations", "solver_method", "gummel_iterations",
         "newton_iterations", "handoff_stage", "newton_convergence_reason",
-        "carrier_row_violations", "carrier_row_max_ratio", "step_diagnostics",
+        "carrier_row_violations", "carrier_row_max_ratio", "carrier_row_recovery_attempted",
+        "carrier_row_recovery_electron_rows", "carrier_row_recovery_hole_rows",
+        "carrier_row_recovery_max_psi_delta_V", "carrier_row_recovery_max_density_ratio",
+        "step_diagnostics",
         "validation_diagnostics", "qf_bounds_violations", "failure_reason", "newton_failure_class",
         "newton_failure_diagnostics_json"};
     const bool writeUnitScaledColumns = sweep.scaling.isUnitScaling();
@@ -2586,6 +2589,11 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
         std::string newtonConvergenceReason;
         int carrierRowViolations = 0;
         Real carrierRowMaxRatio = 0.0;
+        bool carrierRowRecoveryAttempted = false;
+        int carrierRowRecoveryElectronRows = 0;
+        int carrierRowRecoveryHoleRows = 0;
+        Real carrierRowRecoveryMaxPsiDelta_V = 0.0;
+        Real carrierRowRecoveryMaxDensityRatio = 0.0;
         NewtonFailureDiagnostics newtonFailureDiagnostics;
         std::vector<NewtonIterationInfo> newtonHistory;
         bool predictedInitialState = false;
@@ -2650,6 +2658,11 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                 attempt.carrierRowViolations = static_cast<int>(
                     result.finalCarrierRowConvergence.violations.size());
                 attempt.carrierRowMaxRatio = result.finalCarrierRowConvergence.maxRatio;
+                attempt.carrierRowRecoveryAttempted = result.carrierRowRecovery.attempted;
+                attempt.carrierRowRecoveryElectronRows = result.carrierRowRecovery.electronRowsUpdated;
+                attempt.carrierRowRecoveryHoleRows = result.carrierRowRecovery.holeRowsUpdated;
+                attempt.carrierRowRecoveryMaxPsiDelta_V = result.carrierRowRecovery.maxPsiDelta_V;
+                attempt.carrierRowRecoveryMaxDensityRatio = result.carrierRowRecovery.maxCarrierDensityRatio;
                 if (!solverConverged) {
                     attempt.failureReason = result.failureDiagnostics.failureReason.empty()
                         ? "newton_non_convergence"
@@ -2684,6 +2697,11 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                     attempt.carrierRowViolations = static_cast<int>(
                         result.finalCarrierRowConvergence.violations.size());
                     attempt.carrierRowMaxRatio = result.finalCarrierRowConvergence.maxRatio;
+                attempt.carrierRowRecoveryAttempted = result.carrierRowRecovery.attempted;
+                attempt.carrierRowRecoveryElectronRows = result.carrierRowRecovery.electronRowsUpdated;
+                attempt.carrierRowRecoveryHoleRows = result.carrierRowRecovery.holeRowsUpdated;
+                attempt.carrierRowRecoveryMaxPsiDelta_V = result.carrierRowRecovery.maxPsiDelta_V;
+                attempt.carrierRowRecoveryMaxDensityRatio = result.carrierRowRecovery.maxCarrierDensityRatio;
                 } else {
                     GummelConfig initializerGummel = gummel;
                     if (hybrid.gummelMaxIter >= 0)
@@ -2721,6 +2739,11 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                     attempt.carrierRowViolations = static_cast<int>(
                         result.finalCarrierRowConvergence.violations.size());
                     attempt.carrierRowMaxRatio = result.finalCarrierRowConvergence.maxRatio;
+                attempt.carrierRowRecoveryAttempted = result.carrierRowRecovery.attempted;
+                attempt.carrierRowRecoveryElectronRows = result.carrierRowRecovery.electronRowsUpdated;
+                attempt.carrierRowRecoveryHoleRows = result.carrierRowRecovery.holeRowsUpdated;
+                attempt.carrierRowRecoveryMaxPsiDelta_V = result.carrierRowRecovery.maxPsiDelta_V;
+                attempt.carrierRowRecoveryMaxDensityRatio = result.carrierRowRecovery.maxCarrierDensityRatio;
                     const bool acceptedNewton =
                         result.converged && !(hybrid.newtonMaxIter == 0 && result.iters == 0);
                     if (!acceptedNewton && hybrid.fallbackToGummelOnNewtonFailure) {
@@ -3076,6 +3099,11 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
         point.newtonConvergenceReason = attempt.newtonConvergenceReason;
         point.carrierRowViolations = attempt.carrierRowViolations;
         point.carrierRowMaxRatio = attempt.carrierRowMaxRatio;
+        point.carrierRowRecoveryAttempted = attempt.carrierRowRecoveryAttempted;
+        point.carrierRowRecoveryElectronRows = attempt.carrierRowRecoveryElectronRows;
+        point.carrierRowRecoveryHoleRows = attempt.carrierRowRecoveryHoleRows;
+        point.carrierRowRecoveryMaxPsiDelta_V = attempt.carrierRowRecoveryMaxPsiDelta_V;
+        point.carrierRowRecoveryMaxDensityRatio = attempt.carrierRowRecoveryMaxDensityRatio;
         point.attemptedStep = attemptedStep;
         point.acceptedStep = acceptedStep;
         point.retryCount = retryCount;
@@ -3264,6 +3292,11 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
             point.newtonConvergenceReason,
             std::to_string(point.carrierRowViolations),
             formatReal(point.carrierRowMaxRatio),
+            point.carrierRowRecoveryAttempted ? "1" : "0",
+            std::to_string(point.carrierRowRecoveryElectronRows),
+            std::to_string(point.carrierRowRecoveryHoleRows),
+            formatReal(point.carrierRowRecoveryMaxPsiDelta_V),
+            formatReal(point.carrierRowRecoveryMaxDensityRatio),
             stepDiagnostics(point),
             point.validationDiagnostics,
             std::to_string(point.qfBoundsViolations),

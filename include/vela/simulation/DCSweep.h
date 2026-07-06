@@ -186,6 +186,11 @@ struct DCSweepPoint {
     std::string newtonConvergenceReason;
     int carrierRowViolations = 0;
     Real carrierRowMaxRatio = 0.0;
+    bool carrierRowRecoveryAttempted = false;
+    int carrierRowRecoveryElectronRows = 0;
+    int carrierRowRecoveryHoleRows = 0;
+    Real carrierRowRecoveryMaxPsiDelta_V = 0.0;
+    Real carrierRowRecoveryMaxDensityRatio = 0.0;
     Real attemptedStep = 0.0;
     Real acceptedStep = 0.0;
     int retryCount = 0;

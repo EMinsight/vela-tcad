@@ -16,6 +16,7 @@
 #include <iostream>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -631,6 +632,200 @@ NewtonCarrierRowConvergenceEvaluation evaluateCarrierRowConvergence(
     return evaluation;
 }
 
+namespace {
+
+DDScalingSpec buildRecoveryScalingSpec(const DeviceMesh& mesh,
+                                       const MaterialDatabase& matdb,
+                                       const DopingModel& doping,
+                                       const NewtonConfig& cfg)
+{
+    DDScalingSpec scaling;
+    if (!cfg.inputScaling.isUnitScaling())
+        return scaling;
+
+    const Real epsRef = constants::eps0 *
+        maxRelativePermittivityAcrossRegions(mesh, matdb, cfg.temperature_K);
+    const Real niFloor =
+        maxIntrinsicDensityAcrossRegions(mesh, matdb, cfg.temperature_K);
+    const UnitScalingSystem::AutoInputs autoInputs =
+        UnitScalingSystem::autoInputsFrom(mesh, doping, matdb, niFloor);
+    const UnitScalingSystem sc = UnitScalingSystem::fromInputs(
+        cfg.temperature_K, epsRef, autoInputs, cfg.unitScalingRefs);
+
+    scaling.enabled = true;
+    scaling.V0 = sc.V0();
+    scaling.C0 = sc.C0();
+    scaling.mu0 = sc.mu0();
+    scaling.D0 = sc.D0();
+    scaling.L0 = sc.L0();
+    scaling.permittivityReference_F_per_m = epsRef;
+    return scaling;
+}
+
+bool hasContactBiasForRecovery(const std::unordered_map<std::string, Real>& biases,
+                               const std::string& name)
+{
+    if (biases.find(name) != biases.end())
+        return true;
+    auto lower = [](std::string s) {
+        std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+        });
+        return s;
+    };
+    const std::string target = lower(name);
+    for (const auto& [key, value] : biases) {
+        (void)value;
+        if (lower(key) == target)
+            return true;
+    }
+    return false;
+}
+
+} // namespace
+
+NewtonCarrierRowRecoveryResult recoverCarrierRowsWithGummelDensity(
+    const DeviceMesh& mesh,
+    const MaterialDatabase& matdb,
+    const DopingModel& doping,
+    const std::unordered_map<std::string, Real>& contactBiases,
+    const NewtonConfig& cfg,
+    const DDSolution& state,
+    const std::vector<NewtonCarrierRowConvergenceViolation>& violations,
+    const NewtonCarrierRowRecoveryConfig& recovery)
+{
+    NewtonCarrierRowRecoveryResult result;
+    result.solution = state;
+    result.mode = recovery.mode;
+    if (recovery.mode != "gummel_density" || violations.empty())
+        return result;
+    result.attempted = true;
+
+    const double Vt = thermalVoltage(cfg.temperature_K);
+    MobilityModelConfig mobilityConfig = cfg.mobility;
+    RecombinationModelConfig recombinationConfig =
+        recombinationModelConfig(cfg.recombination, cfg.taun, cfg.taup);
+    recombinationConfig.augerCn = cfg.augerCn;
+    recombinationConfig.augerCp = cfg.augerCp;
+    const DDScalingSpec scaling = buildRecoveryScalingSpec(mesh, matdb, doping, cfg);
+
+    DDAssembler densityAssembler(
+        mesh,
+        matdb,
+        doping,
+        Vt,
+        mobilityConfig,
+        recombinationConfig,
+        cfg.bandgapNarrowing,
+        cfg.impactIonization,
+        {},
+        {},
+        scaling);
+    CoupledDDAssembler qfAssembler(
+        mesh,
+        matdb,
+        doping,
+        Vt,
+        mobilityConfig,
+        recombinationConfig,
+        cfg.bandgapNarrowing,
+        cfg.impactIonization,
+        {},
+        {},
+        scaling,
+        cfg.carrierDiagonalFloor);
+
+    const int nNodes = static_cast<int>(mesh.numNodes());
+    if (state.psi.size() != nNodes || state.phin.size() != nNodes ||
+        state.phip.size() != nNodes || state.n.size() != nNodes ||
+        state.p.size() != nNodes) {
+        throw std::invalid_argument(
+            "recoverCarrierRowsWithGummelDensity: state size does not match mesh.");
+    }
+
+    VectorXd psi = scaling.enabled ? (state.psi / scaling.V0) : state.psi;
+    VectorXd nOld = scaling.enabled ? (state.n / scaling.C0) : state.n;
+    VectorXd pOld = scaling.enabled ? (state.p / scaling.C0) : state.p;
+
+    std::unordered_map<Index, Real> nBC;
+    std::unordered_map<Index, Real> pBC;
+    for (Index c = 0; c < mesh.numContacts(); ++c) {
+        const Contact& contact = mesh.getContact(c);
+        if (!hasContactBiasForRecovery(contactBiases, contact.name))
+            continue;
+        for (Index node : contact.node_ids) {
+            const int ii = static_cast<int>(node);
+            nBC[node] = nOld(ii);
+            pBC[node] = pOld(ii);
+        }
+    }
+
+    LinearSolver linearSolver;
+    VectorXd nNew = nOld;
+    VectorXd pNew = pOld;
+    const int densityPasses = std::max(1, recovery.maxAttempts);
+    for (int pass = 0; pass < densityPasses; ++pass) {
+        densityAssembler.assembleElectronContinuity(psi, nNew, pNew);
+        densityAssembler.applyDirichlet(nBC);
+        VectorXd nCandidate = linearSolver.solve(densityAssembler.matrix(), densityAssembler.rhs());
+        for (int i = 0; i < nNodes; ++i) {
+            if (nBC.find(static_cast<Index>(i)) == nBC.end() && nCandidate(i) <= 0.0)
+                nCandidate(i) = std::numeric_limits<Real>::min();
+        }
+
+        densityAssembler.assembleHoleContinuity(psi, nCandidate, pNew);
+        densityAssembler.applyDirichlet(pBC);
+        VectorXd pCandidate = linearSolver.solve(densityAssembler.matrix(), densityAssembler.rhs());
+        for (int i = 0; i < nNodes; ++i) {
+            if (pBC.find(static_cast<Index>(i)) == pBC.end() && pCandidate(i) <= 0.0)
+                pCandidate(i) = std::numeric_limits<Real>::min();
+        }
+        nNew = std::move(nCandidate);
+        pNew = std::move(pCandidate);
+    }
+
+    bool recoverElectrons = false;
+    bool recoverHoles = false;
+    for (const auto& violation : violations) {
+        if (violation.nodeId >= mesh.numNodes())
+            continue;
+        if (violation.carrier == "electron")
+            recoverElectrons = true;
+        else if (violation.carrier == "hole")
+            recoverHoles = true;
+    }
+
+    const auto& ni = qfAssembler.intrinsicDensity();
+    for (int i = 0; i < nNodes; ++i) {
+        const Index node = static_cast<Index>(i);
+        const Real psiSi = state.psi(i);
+        const Real niNode = ni[static_cast<std::size_t>(i)];
+        if (recoverElectrons && nBC.find(node) == nBC.end() && niNode > 0.0) {
+            const Real recoveredN = scaling.enabled ? (nNew(i) * scaling.C0) : nNew(i);
+            if (recoveredN > 0.0 && std::isfinite(recoveredN)) {
+                const Real before = std::max(std::abs(state.n(i)), std::numeric_limits<Real>::min());
+                result.solution.n(i) = recoveredN;
+                result.solution.phin(i) = psiSi - Vt * std::log(recoveredN / niNode);
+                result.maxCarrierDensityRatio = std::max(
+                    result.maxCarrierDensityRatio, recoveredN / before);
+                ++result.electronRowsUpdated;
+            }
+        }
+        if (recoverHoles && pBC.find(node) == pBC.end() && niNode > 0.0) {
+            const Real recoveredP = scaling.enabled ? (pNew(i) * scaling.C0) : pNew(i);
+            if (recoveredP > 0.0 && std::isfinite(recoveredP)) {
+                const Real before = std::max(std::abs(state.p(i)), std::numeric_limits<Real>::min());
+                result.solution.p(i) = recoveredP;
+                result.solution.phip(i) = psiSi + Vt * std::log(recoveredP / niNode);
+                result.maxCarrierDensityRatio = std::max(
+                    result.maxCarrierDensityRatio, recoveredP / before);
+                ++result.holeRowsUpdated;
+            }
+        }
+    }
+    result.maxPsiDelta_V = 0.0;
+    return result;
+}
 NewtonConfig newtonConfigFromJson(const nlohmann::json& json, UnitScalingConfig scaling)
 {
     NewtonConfig cfg;
@@ -701,6 +896,22 @@ NewtonConfig newtonConfigFromJson(const nlohmann::json& json, UnitScalingConfig 
                 "trace_first_iterations", cfg.carrierRowConvergence.traceFirstIterations);
             cfg.carrierRowConvergence.traceEveryIterations = value.value(
                 "trace_every_iterations", cfg.carrierRowConvergence.traceEveryIterations);
+            if (value.contains("recovery")) {
+                const auto& recovery = value.at("recovery");
+                if (recovery.is_string()) {
+                    cfg.carrierRowRecovery.mode = recovery.get<std::string>();
+                } else if (recovery.is_object()) {
+                    cfg.carrierRowRecovery.mode = recovery.value(
+                        "mode", cfg.carrierRowRecovery.mode);
+                    cfg.carrierRowRecovery.maxAttempts = recovery.value(
+                        "max_attempts", cfg.carrierRowRecovery.maxAttempts);
+                } else if (recovery.is_boolean()) {
+                    cfg.carrierRowRecovery.mode = recovery.get<bool>() ? "gummel_density" : "off";
+                } else {
+                    throw std::invalid_argument(
+                        "newtonConfigFromJson: carrier_row_convergence.recovery must be a string, boolean, or object.");
+                }
+            }
         } else {
             throw std::invalid_argument(
                 "newtonConfigFromJson: carrier_row_convergence must be a boolean or object.");
@@ -720,6 +931,15 @@ NewtonConfig newtonConfigFromJson(const nlohmann::json& json, UnitScalingConfig 
             !std::isfinite(cfg.carrierRowConvergence.scaleFloor)) {
             throw std::invalid_argument(
                 "newtonConfigFromJson: carrier_row_convergence.scale_floor must be finite and nonnegative.");
+        }
+        if (cfg.carrierRowRecovery.mode != "off" &&
+            cfg.carrierRowRecovery.mode != "gummel_density") {
+            throw std::invalid_argument(
+                "newtonConfigFromJson: carrier_row_convergence.recovery.mode must be 'off' or 'gummel_density'.");
+        }
+        if (cfg.carrierRowRecovery.maxAttempts < 0) {
+            throw std::invalid_argument(
+                "newtonConfigFromJson: carrier_row_convergence.recovery.max_attempts must be nonnegative.");
         }
         if (cfg.carrierRowConvergence.mode == "enforce" &&
             cfg.maxIter < cfg.carrierRowConvergence.minEnforceMaxIter) {
@@ -2167,6 +2387,32 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
         writeCarrierRowTraceCsv(state, rowEval, iterations, norm, reason);
     };
 
+    auto retryAfterCarrierRowRecovery = [&](const VectorXd& state,
+                                            int iterations,
+                                            const NewtonCarrierRowConvergenceEvaluation& rowEval)
+        -> std::optional<NewtonResult> {
+        if (cfg_.carrierRowRecovery.mode == "off" || cfg_.carrierRowRecovery.maxAttempts <= 0 ||
+            !rowEval.enabled || rowEval.satisfied || rowEval.violations.empty()) {
+            return std::nullopt;
+        }
+        DDSolution base = makeSolution(assembler, state, iterations);
+        NewtonCarrierRowRecoveryResult recovery = recoverCarrierRowsWithGummelDensity(
+            mesh_, matdb_, doping_, contactBiases_, cfg_, base, rowEval.violations,
+            cfg_.carrierRowRecovery);
+        if (!recovery.attempted ||
+            (recovery.electronRowsUpdated == 0 && recovery.holeRowsUpdated == 0)) {
+            return std::nullopt;
+        }
+        NewtonConfig retryCfg = cfg_;
+        retryCfg.carrierRowRecovery.mode = "off";
+        retryCfg.warmStart = true;
+        NewtonSolver retrySolver(
+            mesh_, matdb_, doping_, contactBiases_, retryCfg, fixedCharges_, sheetCharges_);
+        NewtonResult retried = retrySolver.solve(recovery.solution);
+        retried.carrierRowRecovery = recovery;
+        return retried;
+    };
+
     if (cfg_.verbose) {
         const ResidualBlockNormValue blocks = ResidualNorm::computeBlocks(r, mesh_.numNodes());
         std::cout << "Newton iter 0 residual=" << initialNorm
@@ -2272,6 +2518,9 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
                 writeCarrierRowTraceCsv(
                     acceptedX, stalledRowEval, acceptedIters, stalledNorm,
                     "carrier_row_convergence_line_search_rejected");
+                if (auto recovered =
+                        retryAfterCarrierRowRecovery(acceptedX, acceptedIters, stalledRowEval))
+                    return *recovered;
             }
             result.finalResidualNorm = stalledNorm;
             result.iters = acceptedIters;
@@ -2380,6 +2629,10 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
     writeCarrierRowDiagnosticCsv(finalRowEval, acceptedIters, finalFailureReason);
     writeCarrierRowTraceCsv(acceptedX, finalRowEval, acceptedIters,
                             result.finalResidualNorm, finalFailureReason);
+    if (finalRowEval.enforced && !finalRowEval.satisfied) {
+        if (auto recovered = retryAfterCarrierRowRecovery(acceptedX, acceptedIters, finalRowEval))
+            return *recovered;
+    }
     result.failureDiagnostics = buildFailureDiagnostics(
         mesh_,
         doping_,

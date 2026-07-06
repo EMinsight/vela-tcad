@@ -55,6 +55,21 @@ struct NewtonCarrierRowConvergenceEvaluation {
     std::string maxRatioCarrier;
     std::vector<NewtonCarrierRowConvergenceViolation> violations;
 };
+
+struct NewtonCarrierRowRecoveryConfig {
+    std::string mode = "off"; ///< "off" or "gummel_density".
+    int maxAttempts = 1;
+};
+
+struct NewtonCarrierRowRecoveryResult {
+    DDSolution solution;
+    bool attempted = false;
+    std::string mode;
+    int electronRowsUpdated = 0;
+    int holeRowsUpdated = 0;
+    Real maxPsiDelta_V = 0.0;
+    Real maxCarrierDensityRatio = 0.0;
+};
 struct NewtonConfig {
     int maxIter = 20;
     Real reltol = 1.0e-8;
@@ -72,6 +87,7 @@ struct NewtonConfig {
     Real carrierRegularizationScale = 0.0; ///< Optional carrier-row diagonal regularization scale.
     CarrierDiagonalFloorRegularizationConfig carrierDiagonalFloor{}; ///< Optional absolute floor for depleted minority carrier-row diagonals.
     NewtonCarrierRowConvergenceConfig carrierRowConvergence{}; ///< Optional per-carrier-row local residual convergence check.
+    NewtonCarrierRowRecoveryConfig carrierRowRecovery{}; ///< Optional recovery pass for locally unbalanced carrier rows.
     Real finiteDifferenceStep = 1.0e-6;
     std::string jacobian = "analytic"; ///< "analytic" or "finite_difference"
     std::string residualNorm = "block"; ///< "block" or "l2" convergence/line-search norm
@@ -166,6 +182,7 @@ struct NewtonResult {
     std::string convergenceReason;
     NewtonBlockResidualInfo finalBlockNorms;
     NewtonCarrierRowConvergenceEvaluation finalCarrierRowConvergence;
+    NewtonCarrierRowRecoveryResult carrierRowRecovery;
     std::vector<NewtonIterationInfo> history;
     NewtonFailureDiagnostics failureDiagnostics;
 };
@@ -349,6 +366,16 @@ NewtonConfig newtonConfigFromJson(
 NewtonCarrierRowConvergenceEvaluation evaluateCarrierRowConvergence(
     const std::vector<CoupledDDCarrierTermDiagnostic>& rows,
     const NewtonCarrierRowConvergenceConfig& cfg);
+
+NewtonCarrierRowRecoveryResult recoverCarrierRowsWithGummelDensity(
+    const DeviceMesh& mesh,
+    const MaterialDatabase& matdb,
+    const DopingModel& doping,
+    const std::unordered_map<std::string, Real>& contactBiases,
+    const NewtonConfig& cfg,
+    const DDSolution& state,
+    const std::vector<NewtonCarrierRowConvergenceViolation>& violations,
+    const NewtonCarrierRowRecoveryConfig& recovery);
 
 NewtonResult runNewton(const DeviceMesh& mesh,
                        const MaterialDatabase& matdb,

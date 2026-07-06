@@ -2055,3 +2055,45 @@ TEST_CASE("NewtonSolver: carrier row convergence ignores balanced local rows", "
     REQUIRE(evaluation.satisfied);
     CHECK(evaluation.violations.empty());
 }
+
+TEST_CASE("NewtonSolver: Gummel density recovery jumps a dead carrier row",
+          "[newton][carrier_row_recovery]")
+{
+    DeviceMesh mesh = makePNMesh();
+    MaterialDatabase matdb;
+    DopingModel doping = makePNDoping(mesh);
+
+    NewtonConfig cfg = newtonConfig();
+    cfg.recombination = {"srh"};
+    cfg.mobility.model = "constant";
+
+    const int n = static_cast<int>(mesh.numNodes());
+    DDSolution dead;
+    dead.psi = VectorXd::Zero(n);
+    dead.phin = VectorXd::Zero(n);
+    dead.phip = VectorXd::Zero(n);
+    dead.n = VectorXd::Constant(n, 1.0e4);
+    dead.p = VectorXd::Constant(n, 1.0e4);
+    dead.phin(4) = 8.0;
+    dead.n(4) = 1.0e-120;
+
+    NewtonCarrierRowConvergenceViolation violation;
+    violation.nodeId = 4;
+    violation.carrier = "electron";
+    violation.residual = -1.0;
+    violation.scale = 1.0;
+    violation.ratio = 1.0;
+
+    NewtonCarrierRowRecoveryConfig recovery;
+    recovery.mode = "gummel_density";
+
+    const NewtonCarrierRowRecoveryResult recovered =
+        recoverCarrierRowsWithGummelDensity(
+            mesh, matdb, doping, zeroBias(), cfg, dead, {violation}, recovery);
+
+    REQUIRE(recovered.attempted);
+    CHECK(recovered.electronRowsUpdated >= 1);
+    CHECK(recovered.solution.n(4) > 1.0e8);
+    CHECK(recovered.solution.phin(4) < 1.0);
+    CHECK(recovered.maxPsiDelta_V == Catch::Approx(0.0));
+}

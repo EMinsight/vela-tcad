@@ -124,6 +124,18 @@ nlohmann::json carrierRowConvergenceJson(
         {"violations", std::move(violations)},
     };
 }
+nlohmann::json carrierRowRecoveryJson(
+    const vela::NewtonCarrierRowRecoveryResult& recovery)
+{
+    return {
+        {"attempted", recovery.attempted},
+        {"mode", recovery.mode},
+        {"electron_rows_updated", recovery.electronRowsUpdated},
+        {"hole_rows_updated", recovery.holeRowsUpdated},
+        {"max_psi_delta_V", recovery.maxPsiDelta_V},
+        {"max_carrier_density_ratio", recovery.maxCarrierDensityRatio},
+    };
+}
 
 nlohmann::json blockResidualsJson(const vela::NewtonBlockResidualInfo& blocks)
 {
@@ -284,6 +296,7 @@ nlohmann::json runNewtonSolveFromState(const std::string& configFile,
         {"failure_reason", result.failureDiagnostics.failureReason},
         {"final_block_residuals", blockResidualsJson(result.finalBlockNorms)},
         {"carrier_row_convergence", carrierRowConvergenceJson(result.finalCarrierRowConvergence)},
+        {"carrier_row_recovery", carrierRowRecoveryJson(result.carrierRowRecovery)},
         {"contact_currents_A_per_um", contactCurrentsJson},
         {"current_total_A_per_um", drivenCurrentPerMicron},
     };
@@ -1530,6 +1543,8 @@ int main(int argc, char** argv)
             status["final_block_residuals"] = blockResidualsJson(result.result.finalBlockNorms);
             status["carrier_row_convergence"] =
                 carrierRowConvergenceJson(result.result.finalCarrierRowConvergence);
+            status["carrier_row_recovery"] =
+                carrierRowRecoveryJson(result.result.carrierRowRecovery);
             if (includeMeshReport)
                 status["mesh_report"] = meshReportJson(result.mesh.lastGeometryBuildReport());
         } else if (type == "newton_solve_from_state") {
