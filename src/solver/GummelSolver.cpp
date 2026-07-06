@@ -215,6 +215,9 @@ GummelConfig gummelConfigFromJson(const nlohmann::json& json, UnitScalingConfig 
                 "current_approximation", cfg.impactIonization.currentApproximation);
             cfg.impactIonization.currentMagnitudeMode = value.value(
                 "current_magnitude_mode", cfg.impactIonization.currentMagnitudeMode);
+            cfg.impactIonization.cellReconstructedMidpointDensity = value.value(
+                "cell_reconstructed_midpoint_density",
+                cfg.impactIonization.cellReconstructedMidpointDensity);
             cfg.impactIonization.quasiFermiGradientDiscretization = value.value(
                 "quasi_fermi_gradient_discretization",
                 cfg.impactIonization.quasiFermiGradientDiscretization);

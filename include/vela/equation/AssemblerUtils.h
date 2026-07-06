@@ -985,6 +985,13 @@ inline void validateImpactIonizationDrivingForce(const ImpactIonizationModelConf
             ": impact_ionization.current_magnitude_mode must be "
             "'edge_scalar_abs' or 'dual_face_vector_mag'.");
     }
+    if (config.cellReconstructedMidpointDensity != "bernoulli" &&
+        config.cellReconstructedMidpointDensity != "arithmetic") {
+        throw std::invalid_argument(
+            std::string(context) +
+            ": impact_ionization.cell_reconstructed_midpoint_density must be "
+            "'bernoulli' or 'arithmetic'.");
+    }
     if (config.drivingForceInterpolation != "none" &&
         config.drivingForceInterpolation != "quasi_fermi_to_electric_field") {
         throw std::invalid_argument(
@@ -1189,6 +1196,19 @@ inline Real bernoulliWeightedMidpointDensity(Real density_i,
     const Real weight_i = avalancheMidpointAux2(arg);
     const Real weight_j = avalancheMidpointAux2(-arg);
     return density_i * weight_i + density_j * weight_j;
+}
+
+inline Real cellReconstructedAvalancheMidpointDensity(
+    const ImpactIonizationModelConfig& config,
+    Real density_i,
+    Real density_j,
+    Real potential_i,
+    Real potential_j,
+    Real Vt)
+{
+    if (config.cellReconstructedMidpointDensity == "arithmetic")
+        return 0.5 * (density_i + density_j);
+    return bernoulliWeightedMidpointDensity(density_i, density_j, potential_i, potential_j, Vt);
 }
 
 inline bool usesEdgeCurrentAvalancheSource(
@@ -1919,10 +1939,10 @@ inline std::vector<SgEdgeCurrentAvalancheSourceRecord> sgEdgeCurrentAvalancheSou
 
         const Real nAvg = 0.5 * (n(i) + n(j));
         const Real pAvg = 0.5 * (p(i) + p(j));
-        const Real nMid = bernoulliWeightedMidpointDensity(
-            n(i), n(j), psi_i, psi_j, Vt);
-        const Real pMid = bernoulliWeightedMidpointDensity(
-            p(i), p(j), psi_j, psi_i, Vt);
+        const Real nMid = cellReconstructedAvalancheMidpointDensity(
+            config, n(i), n(j), psi_i, psi_j, Vt);
+        const Real pMid = cellReconstructedAvalancheMidpointDensity(
+            config, p(i), p(j), psi_j, psi_i, Vt);
         const Real signedElectricField01 = -(psi_j - psi_i) / h;
 
         const Real edgeArea = avalancheSourceEdgeArea(config, edgeCells, mesh, e);

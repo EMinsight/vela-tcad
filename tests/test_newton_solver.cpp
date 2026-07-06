@@ -1101,6 +1101,95 @@ TEST_CASE("NewtonSolver: cell-reconstructed SG avalanche Jacobian matches midpoi
     REQUIRE(rows.front().relDiff < 5.0e-3);
 }
 
+TEST_CASE("NewtonSolver: arithmetic cell-reconstructed SG avalanche Jacobian matches residual",
+          "[newton][diagnostics][impact]")
+{
+    DeviceMesh mesh = makePNMesh();
+    MaterialDatabase matdb;
+    DopingModel doping = makePNDoping(mesh);
+    std::unordered_map<std::string, Real> biases = {
+        {"anode", -1.0},
+        {"cathode", 0.0},
+    };
+
+    NewtonConfig cfg;
+    cfg.inputScaling.mode = UnitScalingMode::UnitScaling;
+    cfg.recombination = {"none"};
+    cfg.warmStart = true;
+    cfg.mobility.model = "constant";
+    cfg.mobility.highFieldDrivingForce = "quasi_fermi_gradient";
+    cfg.impactIonization.model = "selberherr";
+    cfg.impactIonization.drivingForce = "quasi_fermi_gradient";
+    cfg.impactIonization.generation = "current_density";
+    cfg.impactIonization.currentApproximation = "cell_reconstructed";
+    cfg.impactIonization.cellReconstructedMidpointDensity = "arithmetic";
+    cfg.impactIonization.sourceVolumePolicy = "edge_box";
+    cfg.impactIonization.electronA = 1.0;
+    cfg.impactIonization.electronB = 1.0e-30;
+    cfg.impactIonization.holeA = 1.0;
+    cfg.impactIonization.holeB = 1.0e-30;
+
+    DDSolution state;
+    const int N = static_cast<int>(mesh.numNodes());
+    state.psi = VectorXd::LinSpaced(N, 0.0, -0.8);
+    state.phin = VectorXd::LinSpaced(N, 0.0, -1.4);
+    state.phip = VectorXd::LinSpaced(N, -0.2, -0.9);
+
+    NewtonSolver solver(mesh, matdb, doping, biases, cfg);
+    const auto rows = solver.evaluateJacobianBlockAudit(
+        state, 1.0e-7, std::vector<std::string>{"sg_avalanche"});
+
+    REQUIRE(rows.size() == 1);
+    REQUIRE(rows.front().block == "sg_avalanche");
+    REQUIRE(rows.front().fdNorm > 0.0);
+    REQUIRE(rows.front().analyticNorm > 0.0);
+    REQUIRE(rows.front().relDiff < 5.0e-3);
+}
+
+TEST_CASE("NewtonSolver: conserved-total-current SG avalanche Jacobian matches residual",
+          "[newton][diagnostics][impact]")
+{
+    DeviceMesh mesh = makePNMesh();
+    MaterialDatabase matdb;
+    DopingModel doping = makePNDoping(mesh);
+    std::unordered_map<std::string, Real> biases = {
+        {"anode", -1.0},
+        {"cathode", 0.0},
+    };
+
+    NewtonConfig cfg;
+    cfg.inputScaling.mode = UnitScalingMode::UnitScaling;
+    cfg.recombination = {"none"};
+    cfg.warmStart = true;
+    cfg.mobility.model = "constant";
+    cfg.mobility.highFieldDrivingForce = "quasi_fermi_gradient";
+    cfg.impactIonization.model = "selberherr";
+    cfg.impactIonization.drivingForce = "quasi_fermi_gradient";
+    cfg.impactIonization.generation = "current_density";
+    cfg.impactIonization.currentApproximation = "conserved_total_current";
+    cfg.impactIonization.sourceVolumePolicy = "edge_box";
+    cfg.impactIonization.electronA = 1.0;
+    cfg.impactIonization.electronB = 1.0e-30;
+    cfg.impactIonization.holeA = 1.0;
+    cfg.impactIonization.holeB = 1.0e-30;
+
+    DDSolution state;
+    const int N = static_cast<int>(mesh.numNodes());
+    state.psi = VectorXd::LinSpaced(N, 0.0, -0.8);
+    state.phin = VectorXd::LinSpaced(N, 0.0, -1.4);
+    state.phip = VectorXd::LinSpaced(N, -0.2, -0.9);
+
+    NewtonSolver solver(mesh, matdb, doping, biases, cfg);
+    const auto rows = solver.evaluateJacobianBlockAudit(
+        state, 1.0e-7, std::vector<std::string>{"sg_avalanche"});
+
+    REQUIRE(rows.size() == 1);
+    REQUIRE(rows.front().block == "sg_avalanche");
+    REQUIRE(rows.front().fdNorm > 0.0);
+    REQUIRE(rows.front().analyticNorm > 0.0);
+    REQUIRE(rows.front().relDiff < 5.0e-3);
+}
+
 TEST_CASE("NewtonSolver: evaluateBlockStep freezes complementary unknown blocks",
           "[newton][diagnostics]")
 {

@@ -114,6 +114,73 @@ TEST_CASE("Cell reconstructed avalanche support uses local current density magni
     REQUIRE(it->holeFluxProxy == Catch::Approx(expectedHoleFlux).epsilon(1.0e-12));
 }
 
+
+TEST_CASE("Cell reconstructed avalanche support can use arithmetic midpoint density",
+          "[impact][cell_reconstructed]")
+{
+    DeviceMesh mesh = makeSingleCellMesh();
+    const auto edgeCells = detail::buildEdgeCellMap(mesh);
+    MaterialDatabase matdb;
+    const auto doping = DopingModel::fromMeshAndRegions(
+        mesh, {RegionDopingSpec{"si", 1.0e21, 0.0}});
+    const auto cellMaterials = detail::buildCellMaterials(mesh, matdb, constants::T0);
+
+    ImpactIonizationModelConfig impactConfig;
+    impactConfig.model = "van_overstraeten";
+    impactConfig.drivingForce = "quasi_fermi_gradient";
+    impactConfig.generation = "current_density";
+    impactConfig.currentApproximation = "cell_reconstructed";
+    impactConfig.cellReconstructedMidpointDensity = "arithmetic";
+    impactConfig.sourceVolumePolicy = "edge_box";
+    REQUIRE_NOTHROW(detail::validateImpactIonizationDrivingForce(impactConfig, "test"));
+
+    MobilityModelConfig mobilityConfig = mobilityModelConfig("constant");
+    const auto mobility = makeMobilityModel(mobilityConfig);
+    const auto impact = makeImpactIonizationModel(impactConfig);
+
+    VectorXd psi(mesh.numNodes());
+    VectorXd phin(mesh.numNodes());
+    VectorXd phip(mesh.numNodes());
+    VectorXd n(mesh.numNodes());
+    VectorXd p(mesh.numNodes());
+    std::vector<Real> ni(static_cast<std::size_t>(mesh.numNodes()), 1.0e16);
+    psi << 0.0, -0.20, 0.0;
+    phin << 0.0, -0.40, 0.0;
+    phip << 0.0, 0.30, 0.0;
+    n << 1.0e20, 3.0e20, 1.0e20;
+    p << 2.0e20, 6.0e20, 2.0e20;
+
+    const auto records = detail::sgEdgeCurrentAvalancheSourceRecords(
+        impactConfig,
+        *impact,
+        mobilityConfig,
+        *mobility,
+        edgeCells,
+        mesh,
+        doping,
+        cellMaterials,
+        psi,
+        phin,
+        phip,
+        n,
+        p,
+        ni,
+        constants::kb * constants::T0 / constants::q);
+
+    const auto it = std::find_if(records.begin(), records.end(), [](const auto& record) {
+        return record.node0 == 0 && record.node1 == 1;
+    });
+    REQUIRE(it != records.end());
+
+    const Real expectedElectronFlux =
+        it->electronMobility * 0.5 * (n(0) + n(1)) * std::abs((phin(1) - phin(0)) / it->edgeLength);
+    const Real expectedHoleFlux =
+        it->holeMobility * 0.5 * (p(0) + p(1)) * std::abs((phip(1) - phip(0)) / it->edgeLength);
+
+    REQUIRE(it->electronFluxProxy == Catch::Approx(expectedElectronFlux).epsilon(1.0e-12));
+    REQUIRE(it->holeFluxProxy == Catch::Approx(expectedHoleFlux).epsilon(1.0e-12));
+}
+
 TEST_CASE("Psi-gradient proxy avalanche support uses edge electrostatic potential gradient for current density",
           "[impact][psi_gradient_proxy]")
 {
