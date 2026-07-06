@@ -524,11 +524,85 @@ class Pn2dCoarse7x3DiagnosticTest(unittest.TestCase):
 
             self.assertEqual(len(rows), 1)
             self.assertEqual(rows[0]["source_integral_total"], 6.0)
-            self.assertEqual(rows[0]["current_comparison_basis"], "edge_flux_magnitude")
+            self.assertEqual(rows[0]["current_comparison_basis"], "raw_sg_particle_flux")
             self.assertNotIn("source_integral", rows[0])
             self.assertEqual(rows[0]["electric_field_V_m"], "3e7")
             self.assertEqual(rows[0]["electron_qf_field_V_m"], "2e7")
             self.assertEqual(rows[0]["hole_qf_field_V_m"], "1e7")
+
+    def test_current_support_compare_uses_raw_sg_flux_not_visualization_proxy(self) -> None:
+        module = load_module(REPO / "scripts" / "run_pn2d_coarse7x3_previous_full20_compare.py")
+        with tempfile.TemporaryDirectory(prefix="vela_coarse7x3_raw_flux_") as tmp:
+            root = Path(tmp)
+            edges = root / "sg_edges.csv"
+            edges.write_text(
+                "bias_V,edge_id,node0,node1,edge_class,electron_raw_flux_proxy,hole_raw_flux_proxy,electron_flux_proxy,hole_flux_proxy,electron_alpha_m_inv,hole_alpha_m_inv\n"
+                "-18,24,12,13,contact_edge,6,7,6000,7000,2,3\n",
+                encoding="utf-8",
+            )
+
+            rows = module.current_support_compare(sg_edges_csv=edges, sentaurus_exports={})
+
+            self.assertEqual(rows[0]["electron_flux_abs"], "6")
+            self.assertEqual(rows[0]["hole_flux_abs"], "7")
+            self.assertEqual(rows[0]["electron_flux_proxy_visualization"], "6000")
+            self.assertEqual(rows[0]["hole_flux_proxy_visualization"], "7000")
+            self.assertIn("raw_sg_particle_flux", rows[0]["current_comparison_basis"])
+
+    def test_replay_ratio_rows_uses_raw_flux_and_splits_bulk_contact_edges(self) -> None:
+        module = load_module(REPO / "scripts" / "rebaseline_pn2d_post_contact_handoff_fix.py")
+        support_rows = [
+            {
+                "bias_V": "-18", "nearest_sentaurus_bias_V": "-18", "edge_id": "1",
+                "edge_class": "interior_bulk",
+                "electron_flux_abs": "2", "hole_flux_abs": "3",
+                "electron_flux_proxy_visualization": "2000", "hole_flux_proxy_visualization": "3000",
+                "electron_alpha_m_inv": "5", "hole_alpha_m_inv": "7",
+                "sent_e_current": str(module.Q_C / 1.0e4),
+                "sent_h_current": str(2.0 * module.Q_C / 1.0e4),
+                "sent_e_alpha": "11", "sent_h_alpha": "13",
+            },
+            {
+                "bias_V": "-18", "nearest_sentaurus_bias_V": "-18", "edge_id": "24",
+                "edge_class": "contact_edge",
+                "electron_flux_abs": "0.5", "hole_flux_abs": "0.25",
+                "electron_flux_proxy_visualization": "5000", "hole_flux_proxy_visualization": "2500",
+                "electron_alpha_m_inv": "0", "hole_alpha_m_inv": "1",
+                "sent_e_current": str(3.0 * module.Q_C / 1.0e4),
+                "sent_h_current": str(4.0 * module.Q_C / 1.0e4),
+                "sent_e_alpha": "17", "sent_h_alpha": "19",
+            },
+        ]
+
+        rows = module.replay_ratio_rows(support_rows)
+
+        minus18 = [row for row in rows if row["bias_V"] == -18.0]
+        self.assertEqual([row["edge_subset"] for row in minus18], ["all", "bulk", "contact"])
+        all_row = minus18[0]
+        bulk_row = minus18[1]
+        contact_row = minus18[2]
+        self.assertAlmostEqual(all_row["vela_alpha_vela_flux"], 31.25)
+        self.assertAlmostEqual(bulk_row["vela_alpha_vela_flux"], 31.0)
+        self.assertAlmostEqual(contact_row["vela_alpha_vela_flux"], 0.25)
+        self.assertAlmostEqual(all_row["sent_full"], 164.0)
+        self.assertAlmostEqual(all_row["sentaurus_alpha_vela_flux_over_sentaurus_full"], 74.25 / 164.0)
+        self.assertEqual(all_row["flux_basis"], "raw_sg_particle_flux")
+
+    def test_rebaseline_alpha_flux_scatter_allows_empty_positive_support(self) -> None:
+        module = load_module(REPO / "scripts" / "rebaseline_pn2d_post_contact_handoff_fix.py")
+        with tempfile.TemporaryDirectory(prefix="vela_rebaseline_empty_scatter_") as tmp:
+            out = Path(tmp) / "empty_scatter.png"
+            module.save_alpha_flux_scatter([
+                {
+                    "bias_V": "-18", "nearest_sentaurus_bias_V": "-18",
+                    "electron_flux_abs": "0", "hole_flux_abs": "0",
+                    "electron_alpha_m_inv": "0", "hole_alpha_m_inv": "0",
+                    "sent_e_current": "0", "sent_h_current": "0",
+                    "sent_e_alpha": "0", "sent_h_alpha": "0",
+                }
+            ], -18.0, out)
+
+            self.assertTrue(out.is_file())
 
     def test_active_region_reader_strips_padded_headers_and_values(self) -> None:
         module = load_module(REPO / "scripts" / "diagnose_pn2d_active_region_branch_feedback.py")

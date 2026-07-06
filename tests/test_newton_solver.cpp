@@ -535,6 +535,82 @@ TEST_CASE("CoupledDDAssembler: analytic pinned rows suppress zero-rate recombina
     }
 }
 
+static Real triangleArea(const DeviceMesh& mesh, const Cell& cell)
+{
+    const Node& a = mesh.getNode(cell.node_ids[0]);
+    const Node& b = mesh.getNode(cell.node_ids[1]);
+    const Node& c = mesh.getNode(cell.node_ids[2]);
+    return 0.5 * std::abs(
+        (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x));
+}
+
+static Real nodeVolume(const DeviceMesh& mesh, Index node)
+{
+    Real volume = 0.0;
+    for (const Cell& cell : mesh.cells()) {
+        if (std::find(cell.node_ids.begin(), cell.node_ids.end(), node) != cell.node_ids.end())
+            volume += triangleArea(mesh, cell) / static_cast<Real>(cell.node_ids.size());
+    }
+    return volume;
+}
+
+TEST_CASE("CoupledDDAssembler: carrier diagonal floor anchors depleted minority row", "[newton][coupled]")
+{
+    DeviceMesh mesh = makePNMesh();
+    MaterialDatabase matdb;
+    DopingModel doping = makePNDoping(mesh);
+
+    RecombinationModelConfig recombinationConfig = recombinationModelConfig({"srh"}, 1.0e-7, 1.0e-7);
+    CarrierDiagonalFloorRegularizationConfig floorConfig;
+    floorConfig.enabled = true;
+
+    CoupledDDAssembler baseline(
+        mesh,
+        matdb,
+        doping,
+        constants::Vt_300,
+        MobilityModelConfig{},
+        recombinationConfig);
+    CoupledDDAssembler regularized(
+        mesh,
+        matdb,
+        doping,
+        constants::Vt_300,
+        MobilityModelConfig{},
+        recombinationConfig,
+        BandgapNarrowingConfig{},
+        ImpactIonizationModelConfig{},
+        {},
+        {},
+        {},
+        floorConfig);
+
+    const int N = static_cast<int>(mesh.numNodes());
+    CoupledDDState state;
+    state.psi = VectorXd::Zero(N);
+    state.phin = VectorXd::Zero(N);
+    state.phip = VectorXd::Zero(N);
+    const Index depletedNode = 4;
+    state.phin(static_cast<int>(depletedNode)) = 600.0 * constants::Vt_300;
+    const VectorXd x = baseline.pack(state);
+
+    CoupledDDBoundaryConditions bcs;
+    const SparseMatrixd J0 = baseline.assembleJacobian(x, bcs);
+    const SparseMatrixd J1 = regularized.assembleJacobian(x, bcs);
+
+    const int electronRow = N + static_cast<int>(depletedNode);
+    const Real ni = baseline.intrinsicDensity().at(static_cast<std::size_t>(depletedNode));
+    const Real expectedFloor =
+        nodeVolume(mesh, depletedNode) * ni / ((recombinationConfig.taun + recombinationConfig.taup) * constants::Vt_300);
+
+    REQUIRE(std::abs(J0.coeff(electronRow, electronRow)) < expectedFloor);
+    REQUIRE(std::abs(J1.coeff(electronRow, electronRow)) ==
+            Catch::Approx(expectedFloor).epsilon(1.0e-12));
+
+    const int normalElectronRow = N;
+    REQUIRE(J1.coeff(normalElectronRow, normalElectronRow) ==
+            Catch::Approx(J0.coeff(normalElectronRow, normalElectronRow)));
+}
 TEST_CASE("CoupledDDAssembler: analytic Jacobian matches finite differences on small mesh", "[newton][coupled]")
 {
     DeviceMesh mesh = makePNMesh();
@@ -1159,6 +1235,7 @@ TEST_CASE("NewtonSolver: defaults to analytic Jacobian", "[newton]")
     REQUIRE(cfg.quasiFermiUpdateLimit_V == Catch::Approx(0.0));
     REQUIRE(cfg.quasiFermiUpdateLimitMinority_V == Catch::Approx(0.0));
     REQUIRE(cfg.carrierRegularizationScale == Catch::Approx(0.0));
+    REQUIRE_FALSE(cfg.carrierDiagonalFloor.enabled);
     REQUIRE(cfg.contactBoundaryReconstruction == "dominant_signed_contact_mean");
         REQUIRE(cfg.contactBoundaryMinorityElectronRelaxation);
         REQUIRE(cfg.contactBoundaryMinorityElectronRelaxationBiasThreshold_V ==
@@ -1172,6 +1249,7 @@ TEST_CASE("NewtonSolver: defaults to analytic Jacobian", "[newton]")
         {"quasi_fermi_update_limit_V", 0.0259},
         {"quasi_fermi_update_limit_minority_V", 0.01},
         {"carrier_regularization_scale", 3.0},
+        {"carrier_diagonal_floor", nlohmann::json{{"enabled", true}, {"scale", 2.0}, {"minority_density_ratio", 0.25}}},
         {"contact_boundary_reconstruction", "legacy_node_local"},
     });
     REQUIRE(debugCfg.jacobian == "finite_difference");
@@ -1179,6 +1257,9 @@ TEST_CASE("NewtonSolver: defaults to analytic Jacobian", "[newton]")
     REQUIRE(debugCfg.quasiFermiUpdateLimit_V == Catch::Approx(0.0259));
     REQUIRE(debugCfg.quasiFermiUpdateLimitMinority_V == Catch::Approx(0.01));
     REQUIRE(debugCfg.carrierRegularizationScale == Catch::Approx(3.0));
+    REQUIRE(debugCfg.carrierDiagonalFloor.enabled);
+    REQUIRE(debugCfg.carrierDiagonalFloor.scale == Catch::Approx(2.0));
+    REQUIRE(debugCfg.carrierDiagonalFloor.minorityDensityRatio == Catch::Approx(0.25));
     REQUIRE(debugCfg.contactBoundaryReconstruction == "legacy_node_local");
 }
 
@@ -1394,6 +1475,11 @@ TEST_CASE("NewtonSolver: parses block residual norm controls", "[newton][config]
         std::invalid_argument);
     REQUIRE_THROWS_AS(
         newtonConfigFromJson(nlohmann::json{{"carrier_regularization_scale", -1.0}}),
+        std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        newtonConfigFromJson(nlohmann::json{
+            {"carrier_diagonal_floor", nlohmann::json{{"enabled", true}, {"scale", -1.0}}}
+        }),
         std::invalid_argument);
     REQUIRE_THROWS_AS(
         newtonConfigFromJson(nlohmann::json{{

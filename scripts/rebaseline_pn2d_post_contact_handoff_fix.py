@@ -44,6 +44,15 @@ LEGACY_SENT_EXPORT = (
     / "coarse_vm_vector_compare"
     / "sentaurus_multibias"
 )
+FALLBACK_SENT_EXPORT = (
+    REPO
+    / "build-release"
+    / "reference_tcad"
+    / "pn2d_sentaurus2018_coarse7x3"
+    / "reports"
+    / "coarse_previous_full20"
+    / "sentaurus_multibias"
+)
 RUNNER = REPO / "build-release" / ("vela_example_runner.exe" if os.name == "nt" else "vela_example_runner")
 ANCHOR_BIASES = [0.0, -1.0, -5.0, -10.0, -18.0, -20.0]
 NODE_COMPARE_BIASES = [-1.0, -5.0, -10.0, -18.0, -20.0]
@@ -116,14 +125,15 @@ def full_bias_ladder() -> list[float]:
 def ensure_sentaurus_exports(out_dir: Path) -> tuple[dict[float, Path], dict[str, Any]]:
     export_root = out_dir / "sentaurus_multibias"
     exports: dict[float, Path] = {}
+    source_root = LEGACY_SENT_EXPORT if LEGACY_SENT_EXPORT.exists() else FALLBACK_SENT_EXPORT
     source_note: dict[str, Any] = {
-        "source": "legacy_raw_sentaurus_multibias_copy",
+        "source": "legacy_raw_sentaurus_multibias_copy" if source_root == LEGACY_SENT_EXPORT else "coarse_previous_full20_sentaurus_multibias_copy",
         "reason": "source fixture has no pn2d_bv_multibias_*.tdr files; derived CSV/PNG/JSON are recomputed in this directory",
-        "legacy_source_dir": str(LEGACY_SENT_EXPORT),
+        "legacy_source_dir": str(source_root),
     }
     for bias in NODE_COMPARE_BIASES:
         name = f"sentaurus_{compare.signed_bias_token(bias)}v"
-        src = LEGACY_SENT_EXPORT / name
+        src = source_root / name
         dst = export_root / name
         if not src.exists():
             continue
@@ -231,47 +241,15 @@ def sent_flux_from_current_a_cm2(value: float | None) -> float | None:
 
 
 def replay_ratio_rows(support_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    for bias in (-18.0, -20.0):
-        sums = {
-            "vela_alpha_vela_flux": 0.0,
-            "sent_alpha_vela_flux": 0.0,
-            "vela_alpha_sent_flux": 0.0,
-            "sent_full": 0.0,
-            "vela_flux": 0.0,
-            "sent_flux": 0.0,
-        }
-        edge_count = 0
-        for row in support_rows:
-            if not bias_close(row.get("bias_V"), bias) or not bias_close(row.get("nearest_sentaurus_bias_V"), bias):
-                continue
-            e_flux = fnum(row.get("electron_flux_abs")) or 0.0
-            h_flux = fnum(row.get("hole_flux_abs")) or 0.0
-            e_alpha = fnum(row.get("electron_alpha_m_inv")) or 0.0
-            h_alpha = fnum(row.get("hole_alpha_m_inv")) or 0.0
-            sent_e_alpha = fnum(row.get("sent_e_alpha")) or 0.0
-            sent_h_alpha = fnum(row.get("sent_h_alpha")) or 0.0
-            sent_e_flux = sent_flux_from_current_a_cm2(fnum(row.get("sent_e_current"))) or 0.0
-            sent_h_flux = sent_flux_from_current_a_cm2(fnum(row.get("sent_h_current"))) or 0.0
-            sums["vela_alpha_vela_flux"] += e_alpha * e_flux + h_alpha * h_flux
-            sums["sent_alpha_vela_flux"] += sent_e_alpha * e_flux + sent_h_alpha * h_flux
-            sums["vela_alpha_sent_flux"] += e_alpha * sent_e_flux + h_alpha * sent_h_flux
-            sums["sent_full"] += sent_e_alpha * sent_e_flux + sent_h_alpha * sent_h_flux
-            sums["vela_flux"] += e_flux + h_flux
-            sums["sent_flux"] += sent_e_flux + sent_h_flux
-            edge_count += 1
-        sent_full = sums["sent_full"]
-        rows.append({
-            "bias_V": bias,
-            "edge_count": edge_count,
-            "vela_alpha_vela_flux_over_sentaurus_full": sums["vela_alpha_vela_flux"] / sent_full if sent_full else None,
-            "sentaurus_alpha_vela_flux_over_sentaurus_full": sums["sent_alpha_vela_flux"] / sent_full if sent_full else None,
-            "vela_alpha_sentaurus_flux_over_sentaurus_full": sums["vela_alpha_sent_flux"] / sent_full if sent_full else None,
-            "vela_flux_over_sentaurus_flux": sums["vela_flux"] / sums["sent_flux"] if sums["sent_flux"] else None,
-            **sums,
-            "old_18v_vela_alpha_vela_flux_over_sentaurus_full": OLD_VELA_ALPHA_FLUX_OVER_SENT_FULL_18V if bias == -18.0 else None,
-            "old_18v_vela_flux_over_sentaurus_flux": OLD_FLUX_EXPANSION_18V if bias == -18.0 else None,
-        })
+    rows = compare.replay_ratio_rows(support_rows, biases=(-18.0, -20.0))
+    for row in rows:
+        bias = fnum(row.get("bias_V"))
+        if row.get("edge_subset") == "all" and bias == -18.0:
+            row["old_18v_vela_alpha_vela_flux_over_sentaurus_full"] = OLD_VELA_ALPHA_FLUX_OVER_SENT_FULL_18V
+            row["old_18v_vela_flux_over_sentaurus_flux"] = OLD_FLUX_EXPANSION_18V
+        else:
+            row["old_18v_vela_alpha_vela_flux_over_sentaurus_full"] = None
+            row["old_18v_vela_flux_over_sentaurus_flux"] = None
     return rows
 
 
@@ -511,13 +489,16 @@ def save_alpha_flux_scatter(support_rows: list[dict[str, Any]], bias: float, pat
             xs.append(sent_full)
             ys.append(vela_full)
     fig, ax = plt.subplots(figsize=(7.8, 5.2), constrained_layout=True)
-    ax.scatter(xs, ys, s=72, color="#A3BEFA", edgecolors="#2E4780", linewidths=0.8, alpha=0.8)
     if xs and ys:
+        ax.scatter(xs, ys, s=72, color="#A3BEFA", edgecolors="#2E4780", linewidths=0.8, alpha=0.8)
         lo = min(min(xs), min(ys))
         hi = max(max(xs), max(ys))
         ax.plot([lo, hi], [lo, hi], color="#464C55", linestyle=":", linewidth=1.0)
-    ax.set_xscale("log")
-    ax.set_yscale("log")
+        ax.set_xscale("log")
+        ax.set_yscale("log")
+    else:
+        ax.set_xlim(0.0, 1.0)
+        ax.set_ylim(0.0, 1.0)
     ax.set_xlabel("Sentaurus alpha x Sentaurus flux")
     ax.set_ylabel("Vela alpha x Vela flux")
     ax.set_title(f"Edge alpha-flux scatter at {bias:g} V")
@@ -562,6 +543,7 @@ def main() -> int:
     sentaurus_exports, sentaurus_source_note = ensure_sentaurus_exports(OUT_DIR)
     ladder = full_bias_ladder()
 
+    (OUT_DIR / "vtk_rebaseline").mkdir(parents=True, exist_ok=True)
     config_path = compare.write_previous_full20_config(
         base_config=IMPORT_DIR / "vela" / "simulation_bv.json",
         out_dir=OUT_DIR,
@@ -596,10 +578,12 @@ def main() -> int:
     support_csv = OUT_DIR / "coarse_current_support_compare_rebaseline.csv"
     compare.write_csv_rows(support_csv, support_rows, [
         "bias_V", "nearest_sentaurus_bias_V", "edge_id", "node0", "node1", "edge_class",
+        "contact_proximity", "contact_names",
         "source_integral_total", "electron_source_integral", "hole_source_integral",
-        "current_comparison_basis",
+        "current_comparison_basis", "flux_note",
         "electric_field_V_m", "electron_qf_field_V_m", "hole_qf_field_V_m",
-        "electron_flux_abs", "hole_flux_abs", "electron_alpha_m_inv", "hole_alpha_m_inv",
+        "electron_flux_abs", "hole_flux_abs", "electron_flux_proxy_visualization", "hole_flux_proxy_visualization",
+        "electron_alpha_m_inv", "hole_alpha_m_inv",
         "sent_e_velocity", "sent_h_velocity", "sent_e_alpha", "sent_h_alpha",
         "sent_e_ion_integral", "sent_h_ion_integral", "sent_mean_ion_integral",
         "sent_e_current", "sent_h_current",
@@ -622,7 +606,7 @@ def main() -> int:
     replay_rows = replay_ratio_rows(support_rows)
     replay_csv = OUT_DIR / "rebaseline_replay_ratios.csv"
     write_csv(replay_csv, replay_rows, [
-        "bias_V", "edge_count",
+        "bias_V", "edge_subset", "edge_count", "flux_basis", "flux_note",
         "vela_alpha_vela_flux_over_sentaurus_full",
         "sentaurus_alpha_vela_flux_over_sentaurus_full",
         "vela_alpha_sentaurus_flux_over_sentaurus_full",

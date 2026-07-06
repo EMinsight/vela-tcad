@@ -5,6 +5,7 @@
 #include "vela/equation/AssemblerUtils.h"
 #include "vela/simulation/DCSweepPredictor.h"
 #include "vela/simulation/DCSweepStepControl.h"
+#include "vela/simulation/QfBoundsGuard.h"
 #include "vela/simulation/ConfigParsing.h"
 #include "vela/io/CSVWriter.h"
 #include "vela/io/CsvUtils.h"
@@ -1427,6 +1428,30 @@ DCSweepConfig dcSweepConfigFromJson(const nlohmann::json& cfg,
         sweep.diagnostics.newtonHistory.csvFile =
             newtonHistoryCfg.value("csv_file", std::string{});
     }
+    if (diagnosticsCfg.contains("qf_bounds")) {
+        const auto& qfBoundsCfg = diagnosticsCfg.at("qf_bounds");
+        if (!qfBoundsCfg.is_object())
+            throw std::invalid_argument(
+                "DCSweep: sweep.diagnostics.qf_bounds must be an object.");
+        sweep.diagnostics.qfBounds.enabled =
+            qfBoundsCfg.value("enabled", sweep.diagnostics.qfBounds.enabled);
+        sweep.diagnostics.qfBounds.mode = qfBoundsViolationModeFromString(
+            qfBoundsCfg.value(
+                "mode",
+                toString(sweep.diagnostics.qfBounds.mode)));
+        sweep.diagnostics.qfBounds.margin_V =
+            qfBoundsCfg.value("margin_V", sweep.diagnostics.qfBounds.margin_V);
+        sweep.diagnostics.qfBounds.checkBandBending =
+            qfBoundsCfg.value(
+                "check_band_bending",
+                sweep.diagnostics.qfBounds.checkBandBending);
+        sweep.diagnostics.qfBounds.builtInPotential_V =
+            qfBoundsCfg.value(
+                "built_in_potential_V",
+                sweep.diagnostics.qfBounds.builtInPotential_V);
+        sweep.diagnostics.qfBounds.csvFile =
+            qfBoundsCfg.value("csv_file", std::string{});
+    }
     if (diagnosticsCfg.contains("contact_current_qf_floor")) {
         const auto& qfFloorCfg = diagnosticsCfg.at("contact_current_qf_floor");
         if (!qfFloorCfg.is_object())
@@ -1589,6 +1614,16 @@ DCSweepConfig dcSweepConfigFromJson(const nlohmann::json& cfg,
         }
     }
 
+    if (sweep.diagnostics.qfBounds.enabled) {
+        if (sweep.diagnostics.qfBounds.csvFile.empty()) {
+            const std::filesystem::path csvPath(sweep.csvFile);
+            sweep.diagnostics.qfBounds.csvFile =
+                (csvPath.parent_path() / (csvPath.stem().string() + "_qf_bounds.csv")).string();
+        } else {
+            sweep.diagnostics.qfBounds.csvFile =
+                resolve(sweep.diagnostics.qfBounds.csvFile);
+        }
+    }
     if (sweep.step == 0.0)
         throw std::invalid_argument("DCSweep: sweep.step must be non-zero.");
     if ((sweep.stop - sweep.start) * sweep.step < 0.0)
@@ -1611,6 +1646,10 @@ DCSweepConfig dcSweepConfigFromJson(const nlohmann::json& cfg,
         throw std::invalid_argument("DCSweep: sweep terminal charge depth_m must be positive.");
     if (sweep.storedChargeEnabled && !sweep.storedCharge.perMeter && sweep.storedCharge.depth_m <= 0.0)
         throw std::invalid_argument("DCSweep: sweep stored_charge depth_m must be positive.");
+    if (!std::isfinite(sweep.diagnostics.qfBounds.margin_V) || sweep.diagnostics.qfBounds.margin_V < 0.0)
+        throw std::invalid_argument("DCSweep: sweep.diagnostics.qf_bounds.margin_V must be finite and non-negative.");
+    if (!std::isfinite(sweep.diagnostics.qfBounds.builtInPotential_V) || sweep.diagnostics.qfBounds.builtInPotential_V < 0.0)
+        throw std::invalid_argument("DCSweep: sweep.diagnostics.qf_bounds.built_in_potential_V must be finite and non-negative.");
     return sweep;
 }
 
@@ -1855,9 +1894,13 @@ std::string vtkFilename(const std::string& prefix, int index, Real voltage)
 
 std::string stepDiagnostics(const DCSweepPoint& point)
 {
-    return "attempted_step=" + formatReal(point.attemptedStep) +
-           ";accepted_step=" + formatReal(point.acceptedStep) +
-           ";retry_count=" + std::to_string(point.retryCount);
+    std::string diagnostics = "attempted_step=" + formatReal(point.attemptedStep) +
+        ";accepted_step=" + formatReal(point.acceptedStep) +
+        ";retry_count=" + std::to_string(point.retryCount) +
+        ";qf_bounds_violations=" + std::to_string(point.qfBoundsViolations);
+    if (point.qfBoundsRecovered)
+        diagnostics += ";qf_bounds_recovered=1";
+    return diagnostics;
 }
 
 nlohmann::json residualBlockJson(const NewtonBlockResidualInfo& blocks)
@@ -2120,7 +2163,7 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
         "current_hole_diffusion", "current_total",
         "converged", "iterations", "solver_method", "gummel_iterations",
         "newton_iterations", "handoff_stage", "step_diagnostics",
-        "validation_diagnostics", "failure_reason", "newton_failure_class",
+        "validation_diagnostics", "qf_bounds_violations", "failure_reason", "newton_failure_class",
         "newton_failure_diagnostics_json"};
     const bool writeUnitScaledColumns = sweep.scaling.isUnitScaling();
     if (writeUnitScaledColumns) {
@@ -2497,6 +2540,28 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
             "block_combined"});
     }
 
+    std::unique_ptr<CSVWriter> qfBoundsCsv;
+    if (sweep.diagnostics.qfBounds.enabled) {
+        const std::filesystem::path diagPath(sweep.diagnostics.qfBounds.csvFile);
+        if (!diagPath.parent_path().empty())
+            std::filesystem::create_directories(diagPath.parent_path());
+        qfBoundsCsv = std::make_unique<CSVWriter>(diagPath.string());
+        qfBoundsCsv->writeHeader({
+            "point_index",
+            "bias_V",
+            "mode",
+            "action",
+            "node_id",
+            "x_m",
+            "y_m",
+            "x_um",
+            "y_um",
+            "variable",
+            "value_V",
+            "lower_bound_V",
+            "upper_bound_V",
+            "margin_V"});
+    }
     std::vector<DCSweepPoint> points;
     DDSolution previousSolution;
     DDSolution predictorPreviousSolution;
@@ -2527,6 +2592,8 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
         Real electronDensityJumpMaxAbsDex = 0.0;
         Index electronDensityJumpMaxNode = -1;
         ContactCurrentEdgeOverrides contactCurrentOverrides;
+        QfBoundsEvaluation qfBoundsEvaluation;
+        bool qfBoundsRecovered = false;
     };
 
     if ((solverMethod == SolverMethod::Newton ||
@@ -2797,6 +2864,102 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
         return attempt;
     };
 
+    auto qfContactBiasesForVoltage = [&](Real voltage) {
+        auto biases = baseBiases;
+        biases[sweep.contact] = voltage;
+        return biases;
+    };
+
+    auto appendQfBoundsDiagnostics = [](std::string diagnostics,
+                                        const QfBoundsEvaluation& eval) {
+        if (eval.violations.empty())
+            return diagnostics;
+        if (!diagnostics.empty())
+            diagnostics += "; ";
+        diagnostics += "qf_bounds_violations=" + std::to_string(eval.violations.size());
+        return diagnostics;
+    };
+
+    auto writeQfBoundsDiagnostics = [&](std::size_t pointIndex,
+                                        Real voltage,
+                                        const std::string& action,
+                                        const QfBoundsEvaluation& eval) {
+        if (qfBoundsCsv == nullptr || eval.violations.empty())
+            return;
+        for (const QfBoundsViolation& violation : eval.violations) {
+            qfBoundsCsv->writeRow({
+                std::to_string(pointIndex),
+                formatReal(voltage),
+                toString(sweep.diagnostics.qfBounds.mode),
+                action,
+                std::to_string(violation.nodeId),
+                formatReal(violation.x),
+                formatReal(violation.y),
+                formatReal(violation.x * 1.0e6),
+                formatReal(violation.y * 1.0e6),
+                violation.variable,
+                formatReal(violation.value),
+                formatReal(violation.lowerBound),
+                formatReal(violation.upperBound),
+                formatReal(eval.margin_V)});
+        }
+    };
+
+    auto evaluateAttemptQfBounds = [&](Real voltage, SolvePointAttempt& attempt) {
+        attempt.qfBoundsEvaluation = QfBoundsEvaluation{};
+        if (!attempt.ok || !sweep.diagnostics.qfBounds.enabled)
+            return;
+        attempt.qfBoundsEvaluation = evaluateQfBounds(
+            mesh,
+            attempt.solution,
+            qfContactBiasesForVoltage(voltage),
+            sweep.diagnostics.qfBounds,
+            voltage);
+        attempt.validationDiagnostics = appendQfBoundsDiagnostics(
+            attempt.validationDiagnostics,
+            attempt.qfBoundsEvaluation);
+    };
+
+    auto enforceQfBounds = [&](Real voltage,
+                               const DDSolution* initial,
+                               bool allowContactCurrentQfFloorCapture,
+                               int retryCount,
+                               SolvePointAttempt attempt,
+                               std::size_t pointIndex) -> SolvePointAttempt {
+        evaluateAttemptQfBounds(voltage, attempt);
+        if (!attempt.ok || attempt.qfBoundsEvaluation.valid())
+            return attempt;
+
+        if (sweep.diagnostics.qfBounds.mode == QfBoundsViolationMode::Warn) {
+            writeQfBoundsDiagnostics(pointIndex, voltage, "warn", attempt.qfBoundsEvaluation);
+            return attempt;
+        }
+
+        writeQfBoundsDiagnostics(pointIndex, voltage, "recover_reset", attempt.qfBoundsEvaluation);
+        DDSolution resetInitial = resetQfBoundsViolationsToNearestContactBias(
+            attempt.solution,
+            attempt.qfBoundsEvaluation);
+        SolvePointAttempt recovered = solvePoint(
+            voltage,
+            &resetInitial,
+            allowContactCurrentQfFloorCapture && initial != nullptr && retryCount == 0);
+        applyBranchAcceptance(recovered);
+        recovered.qfBoundsRecovered = true;
+        evaluateAttemptQfBounds(voltage, recovered);
+        if (!recovered.ok || !recovered.qfBoundsEvaluation.valid()) {
+            if (!recovered.qfBoundsEvaluation.valid()) {
+                writeQfBoundsDiagnostics(
+                    pointIndex,
+                    voltage,
+                    "recover_failed",
+                    recovered.qfBoundsEvaluation);
+                recovered.failureReason = "qf_bounds_violation";
+                recovered.ok = false;
+            }
+            return recovered;
+        }
+        return recovered;
+    };
     auto acceptPredictorHistory = [&](const DDSolution& previous,
                                       Real              previousBias,
                                       Real              acceptedBias) {
@@ -2892,6 +3055,9 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
         point.acceptedStep = acceptedStep;
         point.retryCount = retryCount;
         point.validationDiagnostics = validationDiagnostics;
+        point.qfBoundsViolations =
+            static_cast<int>(attempt.qfBoundsEvaluation.violations.size());
+        point.qfBoundsRecovered = attempt.qfBoundsRecovered;
         point.newtonFailureDiagnostics = attempt.newtonFailureDiagnostics;
         point.predictorMode = continuationDiagnosticsEnabled
             ? sweep.continuation.predictor.mode
@@ -3072,6 +3238,7 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
             point.handoffStage,
             stepDiagnostics(point),
             point.validationDiagnostics,
+            std::to_string(point.qfBoundsViolations),
             point.failureReason,
             point.newtonFailureClass,
             point.failureDiagnosticsJson};
@@ -3698,6 +3865,13 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                 if (!havePreviousBias) {
                     attempt = solvePointWithContinuation(
                         bias, initial, initial != nullptr && initial == initialState.get());
+                    attempt = enforceQfBounds(
+                        bias,
+                        initial,
+                        initial != nullptr && initial == initialState.get(),
+                        0,
+                        std::move(attempt),
+                        points.size());
                     ok = attempt.ok;
                     acceptedStep = ok ? attemptedStep : 0.0;
                     failureReason = attempt.failureReason;
@@ -3730,6 +3904,13 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                                 SolvePointAttempt pointAttempt =
                                     solvePointWithContinuation(
                                         voltage, &localPreviousSolution, false, stepRetryCount);
+                                pointAttempt = enforceQfBounds(
+                                    voltage,
+                                    &localPreviousSolution,
+                                    false,
+                                    stepRetryCount,
+                                    std::move(pointAttempt),
+                                    points.size());
                                 const bool pointOk = pointAttempt.ok;
                                 lastPointAttempt = std::move(pointAttempt);
                                 lastPointFailureReason = pointOk
@@ -3814,6 +3995,13 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
     try {
         startAttempt = solvePointWithContinuation(
             sweep.start, initialState.get(), initialState != nullptr);
+        startAttempt = enforceQfBounds(
+            sweep.start,
+            initialState.get(),
+            initialState != nullptr,
+            0,
+            std::move(startAttempt),
+            points.size());
         startOk = startAttempt.ok;
         startFailureReason = startAttempt.failureReason;
         startValidationDiagnostics = startAttempt.validationDiagnostics;
@@ -3943,6 +4131,13 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
             }
 
             applyBranchAcceptance(attempt);
+            attempt = enforceQfBounds(
+                stepResult.state.lambda,
+                &previousSolution,
+                false,
+                stepResult.retries,
+                std::move(attempt),
+                points.size());
             if (!attempt.ok) {
                 const Real shrunkStep = stepResult.arclengthStep *
                     sweep.continuation.arclength.core.shrinkFactor;
@@ -4008,6 +4203,13 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
             try {
                 SolvePointAttempt attempt = solvePointWithContinuation(
                     voltage, &previousSolution, false, stepRetryCount);
+                attempt = enforceQfBounds(
+                    voltage,
+                    &previousSolution,
+                    false,
+                    stepRetryCount,
+                    std::move(attempt),
+                    points.size());
                 lastStepAttempt = std::move(attempt);
                 lastStepFailureReason = lastStepAttempt.ok ? std::string() : lastStepAttempt.failureReason;
                 lastStepValidationDiagnostics = lastStepAttempt.validationDiagnostics;

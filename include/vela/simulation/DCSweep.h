@@ -8,6 +8,7 @@
 #include "vela/post/TerminalCharge.h"
 #include "vela/post/StoredCharge.h"
 #include "vela/simulation/PseudoArclength.h"
+#include "vela/simulation/QfBoundsGuard.h"
 #include "vela/solver/GummelSolver.h"
 #include "vela/solver/NewtonSolver.h"
 #include <limits>
@@ -94,6 +95,7 @@ struct SweepDiagnosticsConfig {
     ReleaseBVConfigAuditConfig releaseBVConfigAudit;
     TerminalCurrentMethodCompareDiagnosticsConfig terminalCurrentMethodCompare;
     NewtonHistoryDiagnosticsConfig newtonHistory;
+    QfBoundsDiagnosticsConfig qfBounds;
     ContactCurrentQfFloorDiagnosticsConfig contactCurrentQfFloor;
 };
 
@@ -202,6 +204,8 @@ struct DCSweepPoint {
     std::string failureDiagnosticsJson;
     NewtonFailureDiagnostics newtonFailureDiagnostics;
     std::string validationDiagnostics;
+    int qfBoundsViolations = 0;
+    bool qfBoundsRecovered = false;
     std::string predictorMode;
     bool predictedInitialState = false;
     std::string branchAcceptanceStatus;

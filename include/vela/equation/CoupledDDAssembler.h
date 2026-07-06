@@ -76,6 +76,12 @@ struct CoupledDDEdgeFluxDiagnostic {
     Real holeFlux = 0.0;
 };
 
+struct CarrierDiagonalFloorRegularizationConfig {
+    bool enabled = false;
+    Real scale = 1.0;
+    Real minorityDensityRatio = 1.0;
+};
+
 class CoupledDDAssembler {
 public:
     CoupledDDAssembler(const DeviceMesh& mesh,
@@ -104,7 +110,8 @@ public:
                        const ImpactIonizationModelConfig& impactIonizationConfig = {},
                        std::vector<RegionFixedChargeSpec> fixedCharges = {},
                        std::vector<InterfaceSheetChargeSpec> sheetCharges = {},
-                       DDScalingSpec scaling = {});
+                       DDScalingSpec scaling = {},
+                       CarrierDiagonalFloorRegularizationConfig carrierDiagonalFloor = {});
 
     VectorXd pack(const CoupledDDState& state) const;
     CoupledDDState unpack(const VectorXd& x) const;
@@ -150,6 +157,7 @@ private:
     double Vt_;
     MobilityModelConfig mobilityConfig_;
     std::unique_ptr<MobilityModel> mobility_;
+    RecombinationModelConfig recombinationConfig_;
     RecombinationModel recombination_;
     ImpactIonizationModelConfig impactIonizationConfig_;
     std::unique_ptr<ImpactIonizationModel> impactIonization_;
@@ -165,6 +173,7 @@ private:
     std::vector<Real> couple_;
     VectorXd fixedInterfaceChargeRhs_;
     DDScalingSpec scaling_;
+    CarrierDiagonalFloorRegularizationConfig carrierDiagonalFloor_;
 };
 
 } // namespace vela

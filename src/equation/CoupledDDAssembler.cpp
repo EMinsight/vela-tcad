@@ -88,13 +88,15 @@ CoupledDDAssembler::CoupledDDAssembler(
     const ImpactIonizationModelConfig& impactIonizationConfig,
     std::vector<RegionFixedChargeSpec> fixedCharges,
     std::vector<InterfaceSheetChargeSpec> sheetCharges,
-    DDScalingSpec scaling)
+    DDScalingSpec scaling,
+    CarrierDiagonalFloorRegularizationConfig carrierDiagonalFloor)
     : mesh_(mesh)
     , matdb_(matdb)
     , doping_(doping)
     , Vt_(Vt)
     , mobilityConfig_(mobilityConfig)
     , mobility_(makeMobilityModel(mobilityConfig))
+    , recombinationConfig_(recombinationConfig)
     , recombination_(recombinationConfig)
     , impactIonizationConfig_(impactIonizationConfig)
     , impactIonization_(makeImpactIonizationModel(impactIonizationConfig))
@@ -118,6 +120,7 @@ CoupledDDAssembler::CoupledDDAssembler(
     , fixedInterfaceChargeRhs_(detail::computeFixedAndInterfaceChargeRhs(
           mesh, edgeCells_, fixedCharges, sheetCharges, "CoupledDDAssembler"))
     , scaling_(scaling)
+    , carrierDiagonalFloor_(carrierDiagonalFloor)
 {
     if (scaling_.enabled) {
         const auto isPositiveFinite = [](Real value) {
@@ -131,6 +134,18 @@ CoupledDDAssembler::CoupledDDAssembler(
             !isPositiveFinite(scaling_.permittivityReference_F_per_m)) {
             throw std::invalid_argument(
                 "CoupledDDAssembler: scaling references must be positive and finite when scaling is enabled.");
+        }
+    }
+    if (carrierDiagonalFloor_.enabled) {
+        if (carrierDiagonalFloor_.scale < 0.0 ||
+            !std::isfinite(carrierDiagonalFloor_.scale)) {
+            throw std::invalid_argument(
+                "CoupledDDAssembler: carrier diagonal floor scale must be non-negative and finite.");
+        }
+        if (carrierDiagonalFloor_.minorityDensityRatio < 0.0 ||
+            !std::isfinite(carrierDiagonalFloor_.minorityDensityRatio)) {
+            throw std::invalid_argument(
+                "CoupledDDAssembler: carrier diagonal floor minority density ratio must be non-negative and finite.");
         }
     }
 }
@@ -876,6 +891,7 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
 
     std::vector<Eigen::Triplet<double>> triplets;
     triplets.reserve(static_cast<std::size_t>(N) * 27);
+    std::vector<Real> assembledDiagonal(static_cast<std::size_t>(3 * N), 0.0);
     auto scaleDerivative = [&](int row, int, Real value) {
         if (!scaling_.enabled)
             return value;
@@ -886,13 +902,20 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
     };
 
     auto add = [&](int row, int col, Real value) {
-        if (value != 0.0 && !constrainedRows[static_cast<std::size_t>(row)])
-            triplets.emplace_back(row, col, scaleDerivative(row, col, value));
+        if (value != 0.0 && !constrainedRows[static_cast<std::size_t>(row)]) {
+            const Real scaled = scaleDerivative(row, col, value);
+            triplets.emplace_back(row, col, scaled);
+            if (row == col)
+                assembledDiagonal[static_cast<std::size_t>(row)] += scaled;
+        }
     };
 
     auto addGauge = [&](int row, int col, Real value) {
-        if (value != 0.0 && !constrainedRows[static_cast<std::size_t>(row)])
+        if (value != 0.0 && !constrainedRows[static_cast<std::size_t>(row)]) {
             triplets.emplace_back(row, col, value);
+            if (row == col)
+                assembledDiagonal[static_cast<std::size_t>(row)] += value;
+        }
     };
 
     std::vector<bool> hasElectronContribution(static_cast<std::size_t>(N), false);
@@ -1662,6 +1685,41 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
             addGauge(phinOffset() + ii, phinOffset() + ii, 1.0);
         if (!hasHoleContribution[static_cast<std::size_t>(ii)])
             addGauge(phipOffset() + ii, phipOffset() + ii, 1.0);
+    }
+
+    if (carrierDiagonalFloor_.enabled &&
+        carrierDiagonalFloor_.scale > 0.0 &&
+        recombination_.srhEnabled()) {
+        const Real tauSum = recombinationConfig_.taun + recombinationConfig_.taup;
+        if (tauSum > 0.0 && std::isfinite(tauSum)) {
+            auto addCarrierFloor = [&](int row, Real carrierDensity, Real ni, Real volume, Real fallbackSign) {
+                if (constrainedRows[static_cast<std::size_t>(row)] || ni <= 0.0 || volume <= 0.0)
+                    return;
+                if (!(carrierDensity < carrierDiagonalFloor_.minorityDensityRatio * ni))
+                    return;
+                const Real rawFloor = carrierDiagonalFloor_.scale * volume * ni / (tauSum * Vt_);
+                const Real floor = scaleDerivative(row, row, rawFloor);
+                if (!(floor > 0.0) || !std::isfinite(floor))
+                    return;
+                const Real diagonal = assembledDiagonal[static_cast<std::size_t>(row)];
+                const Real absDiagonal = std::abs(diagonal);
+                if (!(absDiagonal < floor))
+                    return;
+                const Real sign = diagonal < 0.0 ? -1.0 : (diagonal > 0.0 ? 1.0 : fallbackSign);
+                const Real addition = sign * (floor - absDiagonal);
+                triplets.emplace_back(row, row, addition);
+                assembledDiagonal[static_cast<std::size_t>(row)] += addition;
+            };
+
+            for (Index i = 0; i < Nidx; ++i) {
+                const int ii = static_cast<int>(i);
+                const Real ni = ni_[i];
+                // In a depleted SRH generation row, dR/dqF is O(ni / ((taun + taup) Vt));
+                // multiplying by nodal volume gives an absolute Jacobian scale.
+                addCarrierFloor(phinOffset() + ii, n(ii), ni, vol_[i], -1.0);
+                addCarrierFloor(phipOffset() + ii, p(ii), ni, vol_[i], 1.0);
+            }
+        }
     }
 
     for (const auto& [node, value] : bcs.psi) {

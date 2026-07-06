@@ -5,6 +5,7 @@
 #include "vela/io/DDSolutionCsv.h"
 #include "vela/simulation/DCSweep.h"
 #include "vela/simulation/DCSweepPredictor.h"
+#include "vela/simulation/QfBoundsGuard.h"
 #include "vela/simulation/DCSweepStepControl.h"
 #include "vela/post/TerminalCharge.h"
 
@@ -361,6 +362,66 @@ DDSolution uniformCarrierSolution(Index numNodes, Real electrons, Real holes)
     return solution;
 }
 
+TEST_CASE("QfBoundsGuard detects quasi-Fermi values outside contact bias envelope",
+          "[dc_sweep][qf_bounds]")
+{
+    const DeviceMesh mesh = makeTwoRegionUnitSquareMesh();
+    DDSolution solution = uniformCarrierSolution(mesh.numNodes(), 1.0e16, 1.0e16);
+    solution.psi(2) = -9.0;
+    solution.phin(2) = 5.48;
+    solution.phip(3) = -18.75;
+
+    QfBoundsDiagnosticsConfig config;
+    config.margin_V = 0.5;
+
+    const auto eval = evaluateQfBounds(
+        mesh,
+        solution,
+        {{"anode", 0.0}, {"cathode", -18.0}},
+        config,
+        -18.0);
+
+    REQUIRE(eval.checked);
+    REQUIRE_FALSE(eval.valid());
+    REQUIRE(eval.violations.size() == 2);
+    REQUIRE(eval.contactLower_V == Catch::Approx(-18.5));
+    REQUIRE(eval.contactUpper_V == Catch::Approx(0.5));
+    CHECK(eval.violations.at(0).nodeId == 2);
+    CHECK(eval.violations.at(0).variable == "phin");
+    CHECK(eval.violations.at(0).value == Catch::Approx(5.48));
+    CHECK(eval.violations.at(0).upperBound == Catch::Approx(0.5));
+    CHECK(eval.violations.at(1).nodeId == 3);
+    CHECK(eval.violations.at(1).variable == "phip");
+    CHECK(eval.violations.at(1).value == Catch::Approx(-18.75));
+    CHECK(eval.violations.at(1).lowerBound == Catch::Approx(-18.5));
+}
+
+TEST_CASE("QfBoundsGuard recovery reset only changes violating quasi-Fermi fields",
+          "[dc_sweep][qf_bounds]")
+{
+    const DeviceMesh mesh = makeTwoRegionUnitSquareMesh();
+    DDSolution solution = uniformCarrierSolution(mesh.numNodes(), 1.0e16, 1.0e16);
+    solution.phin(1) = 3.0;
+    solution.phip(1) = -17.0;
+    solution.phip(2) = -24.0;
+
+    QfBoundsDiagnosticsConfig config;
+    config.margin_V = 0.5;
+    const auto eval = evaluateQfBounds(
+        mesh,
+        solution,
+        {{"anode", 0.0}, {"cathode", -18.0}},
+        config,
+        -18.0);
+
+    DDSolution reset = resetQfBoundsViolationsToNearestContactBias(solution, eval);
+
+    REQUIRE(eval.violations.size() == 2);
+    CHECK(reset.phin(1) == Catch::Approx(0.0));
+    CHECK(reset.phip(2) == Catch::Approx(-18.0));
+    CHECK(reset.phip(1) == Catch::Approx(-17.0));
+    CHECK(reset.psi(1) == Catch::Approx(solution.psi(1)));
+}
 Real runMosExampleDrainCurrentAtGate(const std::string& exampleName, Real gateBias, Real drainBias)
 {
     const auto dir = makeUniqueSweepDir();
@@ -440,7 +501,7 @@ TEST_CASE("DCSweep: PN diode forward sweep writes CSV and finite monotonic IV da
                                                      "current_hole_diffusion", "current_total", "converged", "iterations",
                                                      "solver_method", "gummel_iterations", "newton_iterations",
                                                      "handoff_stage", "step_diagnostics", "validation_diagnostics",
-                                                     "failure_reason", "newton_failure_class",
+                                                     "qf_bounds_violations", "failure_reason", "newton_failure_class",
                                                      "newton_failure_diagnostics_json"});
 }
 
@@ -2303,7 +2364,7 @@ TEST_CASE("DCSweep: curve output schemas distinguish IV, CV, and BV modes", "[dc
                                                          "solver_method", "gummel_iterations", "newton_iterations",
                                                          "handoff_stage",
                                                          "step_diagnostics", "validation_diagnostics",
-                                                         "failure_reason", "newton_failure_class",
+                                                         "qf_bounds_violations", "failure_reason", "newton_failure_class",
                                                          "newton_failure_diagnostics_json", "charge_C_per_m",
                                                          "capacitance_F_per_m"});
         REQUIRE(rows.at(1).at(0) == "cv_quasistatic");
@@ -2357,7 +2418,7 @@ TEST_CASE("DCSweep: curve output schemas distinguish IV, CV, and BV modes", "[dc
                                                          "solver_method", "gummel_iterations", "newton_iterations",
                                                          "handoff_stage",
                                                          "step_diagnostics", "validation_diagnostics",
-                                                         "failure_reason", "newton_failure_class",
+                                                         "qf_bounds_violations", "failure_reason", "newton_failure_class",
                                                          "newton_failure_diagnostics_json", "charge_C_per_m",
                                                          "capacitance_F_per_m", "charge_gate_C_per_m",
                                                          "capacitance_Canode_gate_F_per_m", "charge_source_C_per_m",
@@ -2413,7 +2474,7 @@ TEST_CASE("DCSweep: curve output schemas distinguish IV, CV, and BV modes", "[dc
                                                          "solver_method", "gummel_iterations", "newton_iterations",
                                                          "handoff_stage",
                                                          "step_diagnostics", "validation_diagnostics",
-                                                         "failure_reason", "newton_failure_class",
+                                                         "qf_bounds_violations", "failure_reason", "newton_failure_class",
                                                          "newton_failure_diagnostics_json", "max_electric_field_V_per_m",
                                                          "current_jump_ratio", "breakdown_detected",
                                                          "breakdown_voltage", "criterion", "last_stable_bias",
@@ -2455,7 +2516,7 @@ TEST_CASE("DCSweep: LDMOS BV diagnostic deck writes complete schema", "[dc_sweep
                                                      "solver_method", "gummel_iterations", "newton_iterations",
                                                      "handoff_stage",
                                                      "step_diagnostics", "validation_diagnostics",
-                                                     "failure_reason", "newton_failure_class",
+                                                     "qf_bounds_violations", "failure_reason", "newton_failure_class",
                                                      "newton_failure_diagnostics_json", "max_electric_field_V_per_m",
                                                      "current_jump_ratio", "breakdown_detected",
                                                      "breakdown_voltage", "criterion", "last_stable_bias",
@@ -2516,7 +2577,7 @@ TEST_CASE("DCSweep: BV reverse start failure records failed diagnostic row", "[d
                                                      "solver_method", "gummel_iterations", "newton_iterations",
                                                      "handoff_stage",
                                                      "step_diagnostics", "validation_diagnostics",
-                                                     "failure_reason", "newton_failure_class",
+                                                     "qf_bounds_violations", "failure_reason", "newton_failure_class",
                                                      "newton_failure_diagnostics_json", "max_electric_field_V_per_m",
                                                      "current_jump_ratio", "breakdown_detected",
                                                      "breakdown_voltage", "criterion", "last_stable_bias",

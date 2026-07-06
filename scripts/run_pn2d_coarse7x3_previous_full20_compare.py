@@ -742,6 +742,108 @@ def nearest_export(sentaurus_exports: dict[float, Path], bias: float) -> tuple[f
     return key, sentaurus_exports[key]
 
 
+RAW_SG_FLUX_BASIS = "raw_sg_particle_flux"
+RAW_SG_FLUX_NOTE = (
+    "Vela quantitative replay flux uses raw SG particle flux from "
+    "electron_raw_flux_proxy/hole_raw_flux_proxy or electron_flux_abs/hole_flux_abs "
+    "from Python sg_avalanche_edges. *_flux_proxy_visualization columns are retained "
+    "only for plots and must not be used for quantitative Sentaurus comparison."
+)
+
+
+def edge_value(edge: dict[str, str], *names: str) -> str:
+    for name in names:
+        value = edge.get(name, "")
+        if value not in (None, ""):
+            return str(value)
+    return ""
+
+
+def raw_sg_flux_value(edge: dict[str, str], carrier: str) -> str:
+    raw = edge_value(edge, f"{carrier}_raw_flux_proxy", f"{carrier}_flux_abs")
+    if raw:
+        return raw
+    signed = edge_value(edge, f"{carrier}_raw_signed_flux_proxy")
+    parsed = optional_float(signed)
+    return str(abs(parsed)) if parsed is not None else ""
+
+
+def visualization_flux_value(edge: dict[str, str], carrier: str) -> str:
+    return edge_value(edge, f"{carrier}_flux_proxy", f"{carrier}_reconstructed_flux_proxy")
+
+
+def is_contact_edge(row: dict[str, Any]) -> bool:
+    edge_class = str(row.get("edge_class", "")).lower()
+    contact_proximity = str(row.get("contact_proximity", "")).lower()
+    contact_names = str(row.get("contact_names", "")).strip()
+    return "contact" in edge_class or contact_proximity == "contact_endpoint" or bool(contact_names)
+
+
+def sent_flux_from_current_a_cm2(value: float | None) -> float | None:
+    return abs(value) * 1.0e4 / ELEMENTARY_CHARGE_C if value is not None else None
+
+
+def replay_ratio_rows(
+    support_rows: list[dict[str, Any]],
+    *,
+    biases: tuple[float, ...] = (-18.0, -20.0),
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    subset_specs = (
+        ("all", lambda row: True),
+        ("bulk", lambda row: not is_contact_edge(row)),
+        ("contact", is_contact_edge),
+    )
+    for bias in biases:
+        for subset_name, include_row in subset_specs:
+            sums = {
+                "vela_alpha_vela_flux": 0.0,
+                "sent_alpha_vela_flux": 0.0,
+                "vela_alpha_sent_flux": 0.0,
+                "sent_full": 0.0,
+                "vela_flux": 0.0,
+                "sent_flux": 0.0,
+            }
+            edge_count = 0
+            for row in support_rows:
+                if not include_row(row):
+                    continue
+                row_bias = optional_float(row.get("bias_V"))
+                sent_bias = optional_float(row.get("nearest_sentaurus_bias_V"))
+                if row_bias is None or sent_bias is None:
+                    continue
+                if abs(row_bias - bias) > 1.0e-6 or abs(sent_bias - bias) > 1.0e-6:
+                    continue
+                e_flux = optional_float(row.get("electron_flux_abs")) or 0.0
+                h_flux = optional_float(row.get("hole_flux_abs")) or 0.0
+                e_alpha = optional_float(row.get("electron_alpha_m_inv")) or 0.0
+                h_alpha = optional_float(row.get("hole_alpha_m_inv")) or 0.0
+                sent_e_alpha = optional_float(row.get("sent_e_alpha")) or 0.0
+                sent_h_alpha = optional_float(row.get("sent_h_alpha")) or 0.0
+                sent_e_flux = sent_flux_from_current_a_cm2(optional_float(row.get("sent_e_current"))) or 0.0
+                sent_h_flux = sent_flux_from_current_a_cm2(optional_float(row.get("sent_h_current"))) or 0.0
+                sums["vela_alpha_vela_flux"] += e_alpha * e_flux + h_alpha * h_flux
+                sums["sent_alpha_vela_flux"] += sent_e_alpha * e_flux + sent_h_alpha * h_flux
+                sums["vela_alpha_sent_flux"] += e_alpha * sent_e_flux + h_alpha * sent_h_flux
+                sums["sent_full"] += sent_e_alpha * sent_e_flux + sent_h_alpha * sent_h_flux
+                sums["vela_flux"] += e_flux + h_flux
+                sums["sent_flux"] += sent_e_flux + sent_h_flux
+                edge_count += 1
+            sent_full = sums["sent_full"]
+            rows.append({
+                "bias_V": bias,
+                "edge_subset": subset_name,
+                "edge_count": edge_count,
+                "flux_basis": RAW_SG_FLUX_BASIS,
+                "flux_note": RAW_SG_FLUX_NOTE,
+                "vela_alpha_vela_flux_over_sentaurus_full": sums["vela_alpha_vela_flux"] / sent_full if sent_full else None,
+                "sentaurus_alpha_vela_flux_over_sentaurus_full": sums["sent_alpha_vela_flux"] / sent_full if sent_full else None,
+                "vela_alpha_sentaurus_flux_over_sentaurus_full": sums["vela_alpha_sent_flux"] / sent_full if sent_full else None,
+                "vela_flux_over_sentaurus_flux": sums["vela_flux"] / sums["sent_flux"] if sums["sent_flux"] else None,
+                **sums,
+            })
+    return rows
+
 def current_support_compare(
     *,
     sg_edges_csv: Path,
@@ -816,15 +918,20 @@ def current_support_compare(
             "node0": node0,
             "node1": node1,
             "edge_class": edge.get("edge_class", ""),
+            "contact_proximity": edge.get("contact_proximity", ""),
+            "contact_names": edge.get("contact_names", ""),
             "source_integral_total": source_total,
             "electron_source_integral": electron_source,
             "hole_source_integral": hole_source,
-            "current_comparison_basis": "edge_flux_magnitude",
+            "current_comparison_basis": RAW_SG_FLUX_BASIS,
+            "flux_note": RAW_SG_FLUX_NOTE,
             "electric_field_V_m": electric_field,
             "electron_qf_field_V_m": electron_qf_field,
             "hole_qf_field_V_m": hole_qf_field,
-            "electron_flux_abs": edge.get("electron_flux_abs", edge.get("electron_flux_proxy", "")),
-            "hole_flux_abs": edge.get("hole_flux_abs", edge.get("hole_flux_proxy", "")),
+            "electron_flux_abs": raw_sg_flux_value(edge, "electron"),
+            "hole_flux_abs": raw_sg_flux_value(edge, "hole"),
+            "electron_flux_proxy_visualization": visualization_flux_value(edge, "electron"),
+            "hole_flux_proxy_visualization": visualization_flux_value(edge, "hole"),
             "electron_alpha_m_inv": edge.get("electron_alpha_m_inv", ""),
             "hole_alpha_m_inv": edge.get("hole_alpha_m_inv", ""),
         }
@@ -1280,16 +1387,29 @@ def main(argv: list[str] | None = None) -> int:
     support_csv = args.out_dir / f"coarse_current_support_compare{run_suffix}.csv"
     write_csv_rows(support_csv, support_rows, [
         "bias_V", "nearest_sentaurus_bias_V", "edge_id", "node0", "node1", "edge_class",
+        "contact_proximity", "contact_names",
         "source_integral_total", "electron_source_integral", "hole_source_integral",
-        "current_comparison_basis",
+        "current_comparison_basis", "flux_note",
         "electric_field_V_m", "electron_qf_field_V_m", "hole_qf_field_V_m",
-        "electron_flux_abs", "hole_flux_abs", "electron_alpha_m_inv", "hole_alpha_m_inv",
+        "electron_flux_abs", "hole_flux_abs", "electron_flux_proxy_visualization", "hole_flux_proxy_visualization",
+        "electron_alpha_m_inv", "hole_alpha_m_inv",
         "sent_e_velocity", "sent_h_velocity", "sent_e_alpha", "sent_h_alpha",
         "sent_e_ion_integral", "sent_h_ion_integral", "sent_mean_ion_integral",
         "sent_e_current", "sent_h_current",
     ])
     write_json(args.out_dir / f"coarse_current_support_compare{run_suffix}.json", {"rows": support_rows[:1000], "row_count": len(support_rows)})
 
+    replay_rows = replay_ratio_rows(support_rows, biases=tuple(biases))
+    replay_csv = args.out_dir / f"coarse_replay_ratios{run_suffix}.csv"
+    write_csv_rows(replay_csv, replay_rows, [
+        "bias_V", "edge_subset", "edge_count", "flux_basis", "flux_note",
+        "vela_alpha_vela_flux_over_sentaurus_full",
+        "sentaurus_alpha_vela_flux_over_sentaurus_full",
+        "vela_alpha_sentaurus_flux_over_sentaurus_full",
+        "vela_flux_over_sentaurus_flux",
+        "vela_alpha_vela_flux", "sent_alpha_vela_flux", "vela_alpha_sent_flux",
+        "sent_full", "vela_flux", "sent_flux",
+    ])
     active_top_rows = build_active_edge_top_tables(support_rows, biases=biases, per_bias_limit=30)
     active_top_csv = args.out_dir / f"coarse_active_edge_top{run_suffix}.csv"
     write_csv_rows(active_top_csv, active_top_rows, [
@@ -1325,6 +1445,7 @@ def main(argv: list[str] | None = None) -> int:
         "curve_plot": curve,
         "node_field_compare_csv": str(node_csv),
         "current_support_compare_csv": str(support_csv),
+        "replay_ratios_csv": str(replay_csv),
         "active_edge_top_csv": str(active_top_csv),
     }
     write_json(args.out_dir / f"coarse_diagnostic_summary{run_suffix}.json", summary)

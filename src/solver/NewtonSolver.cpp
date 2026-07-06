@@ -602,6 +602,26 @@ NewtonConfig newtonConfigFromJson(const nlohmann::json& json, UnitScalingConfig 
     cfg.carrierRegularizationScale = json.value(
         "carrier_regularization_scale",
         cfg.carrierRegularizationScale);
+    auto parseCarrierDiagonalFloor = [&](const nlohmann::json& value) {
+        if (value.is_boolean()) {
+            cfg.carrierDiagonalFloor.enabled = value.get<bool>();
+            return;
+        }
+        if (!value.is_object()) {
+            throw std::invalid_argument(
+                "newtonConfigFromJson: carrier_diagonal_floor must be a boolean or object.");
+        }
+        cfg.carrierDiagonalFloor.enabled = value.value(
+            "enabled", cfg.carrierDiagonalFloor.enabled);
+        cfg.carrierDiagonalFloor.scale = value.value(
+            "scale", cfg.carrierDiagonalFloor.scale);
+        cfg.carrierDiagonalFloor.minorityDensityRatio = value.value(
+            "minority_density_ratio", cfg.carrierDiagonalFloor.minorityDensityRatio);
+    };
+    if (json.contains("carrier_diagonal_floor_regularization"))
+        parseCarrierDiagonalFloor(json.at("carrier_diagonal_floor_regularization"));
+    if (json.contains("carrier_diagonal_floor"))
+        parseCarrierDiagonalFloor(json.at("carrier_diagonal_floor"));
     cfg.finiteDifferenceStep = json.value("finite_difference_step", cfg.finiteDifferenceStep);
     cfg.jacobian = json.value("jacobian", cfg.jacobian);
     cfg.residualNorm = json.value("residual_norm", cfg.residualNorm);
@@ -805,6 +825,14 @@ NewtonConfig newtonConfigFromJson(const nlohmann::json& json, UnitScalingConfig 
     if (cfg.carrierRegularizationScale < 0.0 || !std::isfinite(cfg.carrierRegularizationScale))
         throw std::invalid_argument(
             "newtonConfigFromJson: carrier_regularization_scale must be non-negative and finite.");
+    if (cfg.carrierDiagonalFloor.scale < 0.0 ||
+        !std::isfinite(cfg.carrierDiagonalFloor.scale))
+        throw std::invalid_argument(
+            "newtonConfigFromJson: carrier_diagonal_floor scale must be non-negative and finite.");
+    if (cfg.carrierDiagonalFloor.minorityDensityRatio < 0.0 ||
+        !std::isfinite(cfg.carrierDiagonalFloor.minorityDensityRatio))
+        throw std::invalid_argument(
+            "newtonConfigFromJson: carrier_diagonal_floor minority_density_ratio must be non-negative and finite.");
     if (cfg.finiteDifferenceStep <= 0.0 || !std::isfinite(cfg.finiteDifferenceStep))
         throw std::invalid_argument(
             "newtonConfigFromJson: finite_difference_step must be positive and finite.");
@@ -867,6 +895,16 @@ NewtonSolver::NewtonSolver(
         !std::isfinite(cfg_.carrierRegularizationScale)) {
         throw std::invalid_argument(
             "NewtonSolver: carrier_regularization_scale must be non-negative and finite.");
+    }
+    if (cfg_.carrierDiagonalFloor.scale < 0.0 ||
+        !std::isfinite(cfg_.carrierDiagonalFloor.scale)) {
+        throw std::invalid_argument(
+            "NewtonSolver: carrier_diagonal_floor scale must be non-negative and finite.");
+    }
+    if (cfg_.carrierDiagonalFloor.minorityDensityRatio < 0.0 ||
+        !std::isfinite(cfg_.carrierDiagonalFloor.minorityDensityRatio)) {
+        throw std::invalid_argument(
+            "NewtonSolver: carrier_diagonal_floor minority_density_ratio must be non-negative and finite.");
     }
     validateResidualWeights(
         cfg_.residualWeightPsi,
@@ -1056,7 +1094,8 @@ std::shared_ptr<CoupledDDAssembler> NewtonSolver::makeArclengthAssembler() const
         cfg_.impactIonization,
         fixedCharges_,
         sheetCharges_,
-        scaling);
+        scaling,
+        cfg_.carrierDiagonalFloor);
 }
 
 ArclengthSystem NewtonSolver::makeArclengthSystem(const std::string& activeContact,
@@ -1168,7 +1207,8 @@ NewtonResidualEvaluation NewtonSolver::evaluateResidual(const DDSolution& state)
         cfg_.impactIonization,
         fixedCharges_,
         sheetCharges_,
-        scaling);
+        scaling,
+        cfg_.carrierDiagonalFloor);
     const CoupledDDBoundaryConditions bcs = buildBoundaryConditions(assembler);
     const Real potentialScale =
         assembler.usesScaledState() ? assembler.potentialScale() : 1.0;
@@ -1208,7 +1248,8 @@ NewtonStepEvaluation NewtonSolver::evaluateStep(const DDSolution& state) const
         cfg_.impactIonization,
         fixedCharges_,
         sheetCharges_,
-        scaling);
+        scaling,
+        cfg_.carrierDiagonalFloor);
     const CoupledDDBoundaryConditions bcs = buildBoundaryConditions(assembler);
     const Real potentialScale =
         assembler.usesScaledState() ? assembler.potentialScale() : 1.0;
@@ -1284,7 +1325,8 @@ NewtonDirectionalDerivativeEvaluation NewtonSolver::evaluateDirectionalDerivativ
         cfg_.impactIonization,
         fixedCharges_,
         sheetCharges_,
-        scaling);
+        scaling,
+        cfg_.carrierDiagonalFloor);
     const CoupledDDBoundaryConditions bcs = buildBoundaryConditions(assembler);
     const Real potentialScale =
         assembler.usesScaledState() ? assembler.potentialScale() : 1.0;
@@ -1352,7 +1394,8 @@ NewtonBlockStepEvaluation NewtonSolver::evaluateBlockStep(
         cfg_.impactIonization,
         fixedCharges_,
         sheetCharges_,
-        scaling);
+        scaling,
+        cfg_.carrierDiagonalFloor);
     const CoupledDDBoundaryConditions bcs = buildBoundaryConditions(assembler);
     const Real potentialScale =
         assembler.usesScaledState() ? assembler.potentialScale() : 1.0;
@@ -1434,7 +1477,8 @@ NewtonRegularizedCarrierStepEvaluation NewtonSolver::evaluateRegularizedCarrierS
         cfg_.impactIonization,
         fixedCharges_,
         sheetCharges_,
-        scaling);
+        scaling,
+        cfg_.carrierDiagonalFloor);
     const CoupledDDBoundaryConditions bcs = buildBoundaryConditions(assembler);
     const Real potentialScale =
         assembler.usesScaledState() ? assembler.potentialScale() : 1.0;
@@ -1521,7 +1565,8 @@ NewtonCarrierRowDiagnosticsEvaluation NewtonSolver::evaluateCarrierRowDiagnostic
         cfg_.impactIonization,
         fixedCharges_,
         sheetCharges_,
-        scaling);
+        scaling,
+        cfg_.carrierDiagonalFloor);
     const CoupledDDBoundaryConditions bcs = buildBoundaryConditions(assembler);
     const Real potentialScale =
         assembler.usesScaledState() ? assembler.potentialScale() : 1.0;
@@ -1622,7 +1667,8 @@ NewtonCarrierTermDiagnosticsEvaluation NewtonSolver::evaluateCarrierTermDiagnost
         cfg_.impactIonization,
         fixedCharges_,
         sheetCharges_,
-        scaling);
+        scaling,
+        cfg_.carrierDiagonalFloor);
     const CoupledDDBoundaryConditions bcs = buildBoundaryConditions(assembler);
     const Real potentialScale =
         assembler.usesScaledState() ? assembler.potentialScale() : 1.0;
@@ -1689,7 +1735,8 @@ std::vector<NewtonJacobianBlockAuditRow> NewtonSolver::evaluateJacobianBlockAudi
                 impact,
                 fixedCharges_,
                 sheetCharges_,
-                scaling);
+                scaling,
+        cfg_.carrierDiagonalFloor);
         };
 
     CoupledDDAssembler baseAssembler =
@@ -1799,7 +1846,8 @@ std::vector<CoupledDDEdgeFluxDiagnostic> NewtonSolver::evaluateSgEdgeFluxDiagnos
         cfg_.impactIonization,
         fixedCharges_,
         sheetCharges_,
-        scaling);
+        scaling,
+        cfg_.carrierDiagonalFloor);
     const CoupledDDBoundaryConditions bcs = buildBoundaryConditions(assembler);
     const Real potentialScale =
         assembler.usesScaledState() ? assembler.potentialScale() : 1.0;
@@ -1830,7 +1878,8 @@ NewtonResult NewtonSolver::solve() const
         cfg_.impactIonization,
         fixedCharges_,
         sheetCharges_,
-        scaling);
+        scaling,
+        cfg_.carrierDiagonalFloor);
     const CoupledDDBoundaryConditions bcs = buildBoundaryConditions(assembler);
     return solve(buildInitialGuess(assembler, bcs));
 }
@@ -1855,7 +1904,8 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
         cfg_.impactIonization,
         fixedCharges_,
         sheetCharges_,
-        scaling);
+        scaling,
+        cfg_.carrierDiagonalFloor);
     const CoupledDDBoundaryConditions bcs = buildBoundaryConditions(assembler);
 
     // By default Newton uses a conservative cold start for quasi-Fermi

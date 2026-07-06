@@ -316,7 +316,11 @@ class SentaurusSampleIntegrationTest(unittest.TestCase):
 
     def _pn2d_2018_source_and_config_or_skip(self) -> tuple[Path, Path]:
         value = os.environ.get(PN2D_2018_ENV)
-        case_root = Path(value) if value else REPO / "reference_tcad" / "pn2d_sentaurus2018"
+        if not value:
+            self.skipTest(
+                f"{PN2D_2018_ENV} is not set; pn2d Sentaurus 2018 .tdr artifacts are external"
+            )
+        case_root = Path(value)
         if (case_root / "source").is_dir():
             source_root = case_root / "source"
             config_path = case_root / "pn2d_sentaurus2018_reference.json"
@@ -326,7 +330,7 @@ class SentaurusSampleIntegrationTest(unittest.TestCase):
             if not config_path.is_file():
                 config_path = case_root.parent / "pn2d_sentaurus2018_reference.json"
         if not source_root.is_dir():
-            self.skipTest(f"{PN2D_2018_ENV} is not set and bundled pn2d Sentaurus 2018 source is missing")
+            self.skipTest(f"{PN2D_2018_ENV} does not point to a Sentaurus source directory")
         self.assertTrue(config_path.is_file(), f"missing pn2d Sentaurus 2018 config: {config_path}")
         return source_root, config_path
 
