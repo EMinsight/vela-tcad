@@ -221,10 +221,17 @@ RunnerOutput runCase(const std::filesystem::path& config)
     const std::filesystem::path dir = config.parent_path();
     const std::filesystem::path out = dir / "runner.stdout";
     const std::filesystem::path err = dir / "runner.stderr";
+#ifdef _WIN32
     const std::string command = std::string("cd /D \"") + dir.string() +
         "\" && \"" + VELA_EXAMPLE_RUNNER_EXE + "\" --config \"" +
         config.filename().string() + "\" > \"" + out.filename().string() +
         "\" 2> \"" + err.filename().string() + "\"";
+#else
+    const std::string command = std::string("cd \"") + dir.string() +
+        "\" && \"" + VELA_EXAMPLE_RUNNER_EXE + "\" --config \"" +
+        config.filename().string() + "\" > \"" + out.filename().string() +
+        "\" 2> \"" + err.filename().string() + "\"";
+#endif
     RunnerOutput result;
     result.exitCode = std::system(command.c_str());
     result.out = readFile(out);
