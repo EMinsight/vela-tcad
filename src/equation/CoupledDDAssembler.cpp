@@ -1002,6 +1002,10 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
         const Real holeMobilityField = qfMobility ? holeQfField : electricField;
         const Real nAvg = 0.5 * (n_i + n_j);
         const Real pAvg = 0.5 * (p_i + p_j);
+        const Real nMid = detail::bernoulliWeightedMidpointDensity(
+            n_i, n_j, psi_i, psi_j, Vt_);
+        const Real pMid = detail::bernoulliWeightedMidpointDensity(
+            p_i, p_j, psi_j, psi_i, Vt_);
         const Real signedElectricField01 = -(psi_j - psi_i) / h;
         const Real edgeArea = detail::avalancheSourceEdgeArea(
             impactIonizationConfig_, edgeCells_, mesh_, e);
@@ -1158,7 +1162,7 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
                     ? cellCurrentReconstructedFlux(signedElectronFluxForEdge)
                     : (cellReconstructedCurrent
                     ? detail::reconstructedAvalancheCurrentDensityMagnitude(
-                        mun, nAvg, electronImpactField)
+                        mun, nMid, electronImpactField)
                     : rawFluxN)));
             const Real alphaN = impactIonization_->electronCoefficient(electronImpactField);
             electronSource = alphaN * fluxN * edgeArea;
@@ -1184,7 +1188,7 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
                     ? cellCurrentReconstructedFlux(signedHoleFluxForEdge)
                     : (cellReconstructedCurrent
                     ? detail::reconstructedAvalancheCurrentDensityMagnitude(
-                        mup, pAvg, holeImpactField)
+                        mup, pMid, holeImpactField)
                     : rawFluxP)));
             const Real alphaP = impactIonization_->holeCoefficient(holeImpactField);
             holeSource = alphaP * fluxP * edgeArea;
