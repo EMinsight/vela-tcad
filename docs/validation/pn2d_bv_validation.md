@@ -1175,3 +1175,25 @@ Focused regression for the new gate passed:
 ctest --preset windows-ucrt64-debug -R "newton|csv|external" --output-on-failure
 100% tests passed, 0 tests failed out of 8
 ```
+
+## PN2D Explicit Poisson Block Initialization (2026-07-07)
+
+The coarse7x3 BV recommended deck now uses `sweep.initialization.mode="poisson_block"` for the first bias point. This performs one Newton Poisson block solve from the same cold initial state used by the coupled Newton solver, then hands the trial state to the existing coupled Newton path. The coupled handoff remains `gummel_max_iter=0`, `require_gummel_convergence=false`; `gummel_max_iter=1` is not recommended for this case because the controlled handoff experiment fails at 0 V with `linear_solve_failed`.
+
+The new initializer replaces manual restart/probe CSV generation for the first point. It is default-off in solver/runtime behavior unless the sweep config opts into `poisson_block`; explicit `sweep.initialization.mode="none"` reproduces the baseline path.
+
+Controlled experiment artifacts are under `build-release/reference_tcad/pn2d_sentaurus2018_coarse7x3/reports/poisson_block_initialization_validation_20260707/`.
+
+| metric | explicit none baseline | poisson_block |
+|---|---:|---:|
+| cold initial 0 V combined block residual | `2.704409e+1` | `2.704409e+1` |
+| Poisson-block initial 0 V combined block residual | n/a | `5.510267e-1` |
+| first recorded 0 V Newton residual | `2.037512e-2` | `2.415913e-4` |
+| 0 V Newton iterations | 3 | 2 |
+| cell_reconstructed convergence | `55/55` | `55/55` |
+| `-18 V` current (`A/um`) | `-3.038558e-17` | `-3.038532e-17` |
+| `-20 V` current (`A/um`) | `-5.158981e-17` | `-5.158981e-17` |
+
+The `grad_qf` control still fails at the same transition after the same last converged point: last converged bias `-15.2432189285 V`, failed bias `-15.569175793280028 V`, failure `carrier_row_convergence_line_search_rejected`. This confirms that the `grad_qf` high-field blocker is not caused by the 0 V initialization path.
+
+Full release regression after the validation run passed: `ctest --test-dir build-release --output-on-failure` reported `428/428` tests passing.
