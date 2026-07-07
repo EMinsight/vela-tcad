@@ -2896,13 +2896,13 @@ TEST_CASE("DCSweep: poisson_block initialization writes runtime artifacts", "[dc
     const auto dir = makeUniqueSweepDir();
     const ScopedDirectoryCleanup cleanup{dir};
     std::filesystem::create_directories(dir);
-    const auto meshPath = writePNMesh(dir);
+    const auto meshPath = writePNMeshWithInterior(dir);
     const auto csvPath = dir / "poisson_block_init.csv";
     const auto initDiagPath = dir / "init.csv";
     const auto initStatePath = dir / "init_state.csv";
     const auto cfgPath = writeSweepConfig(dir, meshPath, csvPath, {
-        {"start", 0.0},
-        {"stop", 0.0},
+        {"start", 0.01},
+        {"stop", 0.01},
         {"step", 0.25},
         {"write_vtk", false},
         {"initialization", {
@@ -2928,7 +2928,12 @@ TEST_CASE("DCSweep: poisson_block initialization writes runtime artifacts", "[dc
         "mode", "raw_step_norm", "step_norm", "cold_block_psi", "cold_block_phin",
         "cold_block_phip", "cold_block_combined", "poisson_block_psi",
         "poisson_block_phin", "poisson_block_phip", "poisson_block_combined"});
+    const std::size_t rawStepCol = csvColumnIndex(initRows.front(), "raw_step_norm");
+    const std::size_t coldCombinedCol = csvColumnIndex(initRows.front(), "cold_block_combined");
+    const std::size_t poissonCombinedCol = csvColumnIndex(initRows.front(), "poisson_block_combined");
     REQUIRE(initRows[1][0] == "poisson_block");
+    REQUIRE(csvReal(initRows[1], rawStepCol) > 0.0);
+    REQUIRE(csvReal(initRows[1], coldCombinedCol) > csvReal(initRows[1], poissonCombinedCol));
 
     const auto sweepRows = readCsvRows(csvPath);
     REQUIRE(sweepRows.size() == 2);
