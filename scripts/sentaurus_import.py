@@ -935,6 +935,11 @@ def patch_reference_deck(deck_path: Path,
     if "vela_step" in sim:
         deck["sweep"]["step"] = float(sim["vela_step"])
     deck["sweep"]["write_vtk"] = False
+    sweep_initialization = sim.get("vela_sweep_initialization")
+    if sweep_initialization is not None:
+        if not isinstance(sweep_initialization, dict):
+            raise ValueError("vela_sweep_initialization must be an object")
+        deck["sweep"]["initialization"] = json.loads(json.dumps(sweep_initialization))
     if kind == "bv":
         deck["sweep"].setdefault("breakdown", {
             "max_electric_field_V_per_m": 1.0e12,

@@ -38,6 +38,7 @@ class Nmos2dReferenceFixtureTest(unittest.TestCase):
         self.assertAlmostEqual(iv["vela_step"], 0.02)
         self.assertEqual(iv["comparison"]["candidate_column"], "current_total_A_per_um")
         self.assertEqual(iv["comparison"]["interpolation"], "log_current")
+        self.assertEqual(iv["vela_sweep_initialization"]["mode"], "none")
 
         gate_override = next(
             item for item in iv["vela_contact_overrides"] if item["name"] == "Gate"

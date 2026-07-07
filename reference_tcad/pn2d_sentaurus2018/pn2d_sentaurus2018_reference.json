@@ -126,6 +126,11 @@
       "vela_stop": -0.05,
       "vela_step": -0.05,
       "vela_materials_file": "pn2d_sentaurus2018_iv_materials.json",
+      "vela_sweep_initialization": {
+        "mode": "poisson_block",
+        "diagnostic_csv": "poisson_block_initialization.csv",
+        "write_state_file": "poisson_block_initial_state.csv"
+      },
       "comparison_kind": "iv",
       "vela_solver": {
         "abstol": 1.0e-9,

@@ -89,6 +89,15 @@ class Pn2dCoarse7x3DiagnosticTest(unittest.TestCase):
         sim = config["simulations"][0]
         self.assertEqual(sim["name"], "bv")
         self.assertEqual(sim["vela_materials_file"], "pn2d_sentaurus2018_iv_materials.json")
+        self.assertEqual(sim["vela_sweep_initialization"]["mode"], "poisson_block")
+        self.assertEqual(
+            sim["vela_sweep_initialization"]["diagnostic_csv"],
+            "poisson_block_initialization.csv",
+        )
+        self.assertEqual(
+            sim["vela_sweep_initialization"]["write_state_file"],
+            "poisson_block_initial_state.csv",
+        )
         self.assertFalse(sim.get("execute", True))
 
     def test_aligned_fixed_bias_config_uses_exact_bias_points_and_distinct_outputs(self) -> None:

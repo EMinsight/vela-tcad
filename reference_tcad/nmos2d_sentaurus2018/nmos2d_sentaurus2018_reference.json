@@ -42,6 +42,9 @@
       "vela_stop": 0.5,
       "vela_step": 0.02,
       "vela_node_doping_file": false,
+      "vela_sweep_initialization": {
+        "mode": "none"
+      },
       "vela_contact_overrides": [
         {
           "name": "Gate",

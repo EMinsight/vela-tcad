@@ -740,6 +740,11 @@ Data {
                         "bias_column": "Anode OuterVoltage",
                         "current_column": "Anode TotalCurrent",
                         "vela_current_contact": "Cathode",
+                        "vela_sweep_initialization": {
+                            "mode": "poisson_block",
+                            "diagnostic_csv": "poisson_block_initialization.csv",
+                            "write_state_file": "poisson_block_initial_state.csv",
+                        },
                         "execute": False,
                         "comparison": {
                             "candidate_column": "current_total_A_per_um",
@@ -841,6 +846,16 @@ with out.open("w", newline="") as handle:
             self.assertEqual(zero_deck["solver"]["handoff"]["fallback"], "none")
             self.assertEqual(zero_deck["solver"]["handoff"]["gummel_max_iter"], 0)
             self.assertEqual(zero_deck["solver"]["handoff"]["newton_max_iter"], 80)
+            iv_deck = json.loads((output / "vela" / "simulation_iv.json").read_text())
+            self.assertEqual(iv_deck["sweep"]["initialization"]["mode"], "poisson_block")
+            self.assertEqual(
+                iv_deck["sweep"]["initialization"]["diagnostic_csv"],
+                "poisson_block_initialization.csv",
+            )
+            self.assertEqual(
+                iv_deck["sweep"]["initialization"]["write_state_file"],
+                "poisson_block_initial_state.csv",
+            )
             manifest = json.loads((output / "reference_tcad_manifest.json").read_text())
             self.assertIn("0v execution disabled by reference config", manifest["warnings"])
 

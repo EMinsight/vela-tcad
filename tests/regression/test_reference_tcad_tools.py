@@ -506,6 +506,15 @@ Ionization
         self.assertEqual(low_bias_probe["edge_source_partition"], "symmetric")
         self.assertEqual(bv["vela_stop"], -0.05)
         self.assertEqual(bv["vela_step"], -0.05)
+        self.assertEqual(bv["vela_sweep_initialization"]["mode"], "poisson_block")
+        self.assertEqual(
+            bv["vela_sweep_initialization"]["diagnostic_csv"],
+            "poisson_block_initialization.csv",
+        )
+        self.assertEqual(
+            bv["vela_sweep_initialization"]["write_state_file"],
+            "poisson_block_initial_state.csv",
+        )
         self.assertNotIn("candidate_bias_scale", bv["comparison"])
         self.assertEqual(bv["runtime_diagnostic"]["step"], 0.05)
         self.assertEqual(bv["runtime_diagnostic"]["bias_points"], [-0.5, -2.0, -5.0, -10.0, -20.0])
