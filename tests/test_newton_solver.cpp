@@ -893,7 +893,7 @@ TEST_CASE("NewtonSolver: evaluateStep reports one physical Newton correction", "
     MaterialDatabase matdb;
     DopingModel doping = makePNDoping(mesh);
     std::unordered_map<std::string, Real> biases = {
-        {"anode", -1.0e-14},
+        {"anode", -0.1},
         {"cathode", 0.0},
     };
 
@@ -934,7 +934,7 @@ TEST_CASE("NewtonSolver: evaluateDirectionalDerivative compares analytic and fin
     MaterialDatabase matdb;
     DopingModel doping = makePNDoping(mesh);
     std::unordered_map<std::string, Real> biases = {
-        {"anode", -1.0e-14},
+        {"anode", -0.1},
         {"cathode", 0.0},
     };
 
