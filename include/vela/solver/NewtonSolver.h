@@ -241,6 +241,15 @@ struct NewtonBlockStepEvaluation {
     Real stepNorm = 0.0;
 };
 
+struct NewtonPoissonBlockInitialization {
+    DDSolution coldInitial;
+    DDSolution poissonBlockInitial;
+    NewtonBlockResidualInfo coldBlockResiduals;
+    NewtonBlockResidualInfo poissonBlockResiduals;
+    Real rawStepNorm = 0.0;
+    Real stepNorm = 0.0;
+};
+
 struct NewtonRegularizedCarrierStepEvaluation {
     Real regularizationScale = 0.0;
     NewtonResidualEvaluation residual;
@@ -304,6 +313,7 @@ public:
                  std::vector<InterfaceSheetChargeSpec> sheetCharges = {});
 
     NewtonResult solve() const;
+    NewtonPoissonBlockInitialization buildPoissonBlockInitialization() const;
     NewtonResult solve(const DDSolution& initial) const;
     NewtonResidualEvaluation evaluateResidual(const DDSolution& state) const;
     NewtonStepEvaluation evaluateStep(const DDSolution& state) const;

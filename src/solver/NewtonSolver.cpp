@@ -2257,6 +2257,42 @@ NewtonResult NewtonSolver::solve() const
     return solve(buildInitialGuess(assembler, bcs));
 }
 
+NewtonPoissonBlockInitialization NewtonSolver::buildPoissonBlockInitialization() const
+{
+    const double Vt = thermalVoltage(cfg_.temperature_K);
+    const MobilityModelConfig mobilityConfig = cfg_.mobility;
+    RecombinationModelConfig recombinationConfig =
+        recombinationModelConfig(cfg_.recombination, cfg_.taun, cfg_.taup);
+    recombinationConfig.augerCn = cfg_.augerCn;
+    recombinationConfig.augerCp = cfg_.augerCp;
+    const DDScalingSpec scaling = buildScalingSpec();
+    CoupledDDAssembler assembler(
+        mesh_,
+        matdb_,
+        doping_,
+        Vt,
+        mobilityConfig,
+        recombinationConfig,
+        cfg_.bandgapNarrowing,
+        cfg_.impactIonization,
+        fixedCharges_,
+        sheetCharges_,
+        scaling,
+        cfg_.carrierDiagonalFloor);
+    const CoupledDDBoundaryConditions bcs = buildBoundaryConditions(assembler);
+
+    NewtonPoissonBlockInitialization out;
+    out.coldInitial = buildInitialGuess(assembler, bcs);
+    const NewtonBlockStepEvaluation step =
+        evaluateBlockStep(out.coldInitial, "poisson_only");
+    out.poissonBlockInitial = step.trialSolution;
+    out.coldBlockResiduals = step.residual.blockNorms;
+    out.poissonBlockResiduals = step.trialResidual.blockNorms;
+    out.rawStepNorm = step.rawStepNorm;
+    out.stepNorm = step.stepNorm;
+    return out;
+}
+
 NewtonResult NewtonSolver::solve(const DDSolution& initial) const
 {
     const double Vt = thermalVoltage(cfg_.temperature_K);

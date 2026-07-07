@@ -893,7 +893,7 @@ TEST_CASE("NewtonSolver: evaluateStep reports one physical Newton correction", "
     MaterialDatabase matdb;
     DopingModel doping = makePNDoping(mesh);
     std::unordered_map<std::string, Real> biases = {
-        {"anode", -0.1},
+        {"anode", -1.0e-14},
         {"cathode", 0.0},
     };
 
@@ -934,7 +934,7 @@ TEST_CASE("NewtonSolver: evaluateDirectionalDerivative compares analytic and fin
     MaterialDatabase matdb;
     DopingModel doping = makePNDoping(mesh);
     std::unordered_map<std::string, Real> biases = {
-        {"anode", -0.1},
+        {"anode", -1.0e-14},
         {"cathode", 0.0},
     };
 
@@ -1233,6 +1233,39 @@ TEST_CASE("NewtonSolver: evaluateBlockStep freezes complementary unknown blocks"
             Catch::Approx(state.psi(0) + poisson.deltaPsi(0)));
     REQUIRE(carriers.trialSolution.phin(1) ==
             Catch::Approx(state.phin(1) + carriers.deltaPhin(1)));
+}
+
+TEST_CASE("NewtonSolver: builds a Poisson-block initialized cold state",
+          "[newton][poisson_block_initialization]")
+{
+    DeviceMesh mesh = makePNMesh();
+    MaterialDatabase matdb;
+    DopingModel doping = makePNDoping(mesh);
+
+    std::unordered_map<std::string, Real> biases = {
+        {"anode", -1.0e-14},
+        {"cathode", 0.0},
+    };
+
+    NewtonConfig cfg;
+    cfg.inputScaling.mode = UnitScalingMode::UnitScaling;
+    cfg.recombination = {"none"};
+    cfg.warmStart = true;
+    cfg.maxUpdate = 0.0;
+
+    NewtonSolver solver(mesh, matdb, doping, biases, cfg);
+
+    const auto init = solver.buildPoissonBlockInitialization();
+    const auto coldResidual = solver.evaluateResidual(init.coldInitial);
+    const auto poissonResidual = solver.evaluateResidual(init.poissonBlockInitial);
+
+    REQUIRE(init.coldInitial.psi.size() == init.poissonBlockInitial.psi.size());
+    REQUIRE(init.rawStepNorm > 0.0);
+    REQUIRE(poissonResidual.blockNorms.psi < coldResidual.blockNorms.psi);
+    REQUIRE(poissonResidual.blockNorms.phin ==
+            Catch::Approx(coldResidual.blockNorms.phin));
+    REQUIRE(poissonResidual.blockNorms.phip ==
+            Catch::Approx(coldResidual.blockNorms.phip));
 }
 
 TEST_CASE("NewtonSolver: evaluateRegularizedCarrierStep damps carrier-only correction",
