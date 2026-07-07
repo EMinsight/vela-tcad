@@ -133,6 +133,12 @@ struct SweepContinuationConfig {
     SweepArclengthConfig arclength;
 };
 
+struct SweepInitializationConfig {
+    std::string mode = "none";
+    std::string diagnosticCsv;
+    std::string writeStateFile;
+};
+
 struct DCSweepConfig {
     CurveSweepMode mode = CurveSweepMode::IV;
     std::string contact;
@@ -152,6 +158,7 @@ struct DCSweepConfig {
     std::string csvFile = "dc_sweep.csv";
     std::string initialStateFile;
     std::string writeStateFile;
+    SweepInitializationConfig initialization;
     std::string writeStateEveryPointPrefix;
     std::string chargeContact;
     std::vector<std::string> chargeRegions;
@@ -266,3 +273,4 @@ public:
 };
 
 } // namespace vela
+

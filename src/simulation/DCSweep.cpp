@@ -1290,6 +1290,26 @@ DCSweepConfig dcSweepConfigFromJson(const nlohmann::json& cfg,
     sweep.vtkPrefix = j.value("vtk_prefix", cfg.value("output_vtk_prefix", std::string("dc_sweep")));
     sweep.initialStateFile = j.value("initial_state_file", std::string{});
     sweep.writeStateFile = j.value("write_state_file", std::string{});
+    if (j.contains("initialization")) {
+        const auto& init = j.at("initialization");
+        if (!init.is_object())
+            throw std::invalid_argument("DCSweep: sweep.initialization must be an object.");
+        sweep.initialization.mode = init.value("mode", std::string("none"));
+        if (sweep.initialization.mode != "none" &&
+            sweep.initialization.mode != "poisson_block") {
+            throw std::invalid_argument(
+                "DCSweep: sweep.initialization.mode must be 'none' or 'poisson_block'.");
+        }
+        sweep.initialization.diagnosticCsv =
+            init.value("diagnostic_csv", std::string{});
+        sweep.initialization.writeStateFile =
+            init.value("write_state_file", std::string{});
+    }
+    if (!sweep.initialStateFile.empty() &&
+        sweep.initialization.mode == "poisson_block") {
+        throw std::invalid_argument(
+            "DCSweep: sweep.initialization.mode='poisson_block' cannot be combined with initial_state_file.");
+    }
     sweep.writeStateEveryPointPrefix =
         j.value("write_state_every_point_prefix", std::string{});
     parseSweepContinuationConfig(j, sweep);
@@ -1519,6 +1539,10 @@ DCSweepConfig dcSweepConfigFromJson(const nlohmann::json& cfg,
         sweep.initialStateFile = resolve(sweep.initialStateFile);
     if (!sweep.writeStateFile.empty())
         sweep.writeStateFile = resolve(sweep.writeStateFile);
+    if (!sweep.initialization.diagnosticCsv.empty())
+        sweep.initialization.diagnosticCsv = resolve(sweep.initialization.diagnosticCsv);
+    if (!sweep.initialization.writeStateFile.empty())
+        sweep.initialization.writeStateFile = resolve(sweep.initialization.writeStateFile);
     if (!sweep.writeStateEveryPointPrefix.empty())
         sweep.writeStateEveryPointPrefix = resolve(sweep.writeStateEveryPointPrefix);
     if (sweep.diagnostics.terminalBalance.enabled) {
@@ -4468,3 +4492,4 @@ void runDCSweepStepControl(const DCSweepStepControlConfig& cfg,
 } // namespace detail
 
 } // namespace vela
+

@@ -2802,6 +2802,19 @@ TEST_CASE("DCSweep: write_state_file stores latest converged restart state", "[d
     }
 }
 
+TEST_CASE("DCSweep initialization config defaults to disabled mode", "[dc_sweep]")
+{
+    SweepInitializationConfig init;
+    REQUIRE(init.mode == "none");
+    REQUIRE(init.diagnosticCsv.empty());
+    REQUIRE(init.writeStateFile.empty());
+
+    DCSweepConfig sweep;
+    REQUIRE(sweep.initialization.mode == "none");
+    REQUIRE(sweep.initialization.diagnosticCsv.empty());
+    REQUIRE(sweep.initialization.writeStateFile.empty());
+}
+
 TEST_CASE("DDSolution CSV shared IO roundtrips restart state", "[dc_sweep]")
 {
     const auto dir = makeUniqueSweepDir();
@@ -2876,6 +2889,59 @@ TEST_CASE("DCSweep: initial_state_file validates restart node coverage", "[dc_sw
     REQUIRE_THROWS_WITH(
         sweep.run(cfgPath.string()),
         Catch::Matchers::ContainsSubstring("DCSweep: initial_state_file missing row for node id 1"));
+}
+
+TEST_CASE("DCSweep: poisson_block initialization rejects invalid parser combinations",
+          "[dc_sweep]")
+{
+    const auto dir = makeUniqueSweepDir();
+    const ScopedDirectoryCleanup cleanup{dir};
+    std::filesystem::create_directories(dir);
+    const auto meshPath = writePNMesh(dir);
+    const auto csvPath = dir / "poisson_block_init.csv";
+
+    SECTION("poisson_block conflicts with initial_state_file")
+    {
+        const auto cfgPath = writeSweepConfig(dir, meshPath, csvPath, {
+            {"start", 0.0},
+            {"stop", 0.0},
+            {"step", 0.25},
+            {"write_vtk", false},
+            {"initial_state_file", "restart.csv"},
+            {"initialization", {
+                {"mode", "poisson_block"},
+                {"diagnostic_csv", "init.csv"},
+                {"write_state_file", "init_state.csv"}
+            }}
+        });
+
+        DCSweep sweep;
+        REQUIRE_THROWS_WITH(
+            sweep.runWithResult(cfgPath.string()),
+            Catch::Matchers::ContainsSubstring(
+                "DCSweep: sweep.initialization.mode='poisson_block' cannot be combined with initial_state_file"));
+    }
+
+    SECTION("initialization mode must be supported")
+    {
+        const auto cfgPath = writeSweepConfig(dir, meshPath, csvPath, {
+            {"start", 0.0},
+            {"stop", 0.0},
+            {"step", 0.25},
+            {"write_vtk", false},
+            {"initialization", {
+                {"mode", "bad_mode"},
+                {"diagnostic_csv", "init.csv"},
+                {"write_state_file", "init_state.csv"}
+            }}
+        });
+
+        DCSweep sweep;
+        REQUIRE_THROWS_WITH(
+            sweep.runWithResult(cfgPath.string()),
+            Catch::Matchers::ContainsSubstring(
+                "DCSweep: sweep.initialization.mode must be 'none' or 'poisson_block'."));
+    }
 }
 
 TEST_CASE("DCSweep predictor: extrapolates selected coupled variables",
@@ -3801,3 +3867,4 @@ TEST_CASE("DCSweep: NMOS and PMOS DD examples increase drain current with strong
     const Real pmosOn = std::abs(runMosExampleDrainCurrentAtGate("pmos2d_dd", -0.05, -0.1));
     REQUIRE(pmosOn > pmosOff);
 }
+
