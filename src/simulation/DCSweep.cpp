@@ -2021,6 +2021,40 @@ std::filesystem::path failureDiagnosticsJsonPath(const DCSweepConfig& sweep)
 
 } // namespace
 
+void writePoissonBlockInitializationDiagnosticCsv(
+    const std::filesystem::path& path,
+    const NewtonPoissonBlockInitialization& init)
+{
+    if (!path.parent_path().empty())
+        std::filesystem::create_directories(path.parent_path());
+
+    CSVWriter csv(path.string());
+    csv.writeHeader({
+        "mode",
+        "raw_step_norm",
+        "step_norm",
+        "cold_block_psi",
+        "cold_block_phin",
+        "cold_block_phip",
+        "cold_block_combined",
+        "poisson_block_psi",
+        "poisson_block_phin",
+        "poisson_block_phip",
+        "poisson_block_combined"});
+    csv.writeRow({
+        "poisson_block",
+        formatReal(init.rawStepNorm),
+        formatReal(init.stepNorm),
+        formatReal(init.coldBlockResiduals.psi),
+        formatReal(init.coldBlockResiduals.phin),
+        formatReal(init.coldBlockResiduals.phip),
+        formatReal(init.coldBlockResiduals.combined),
+        formatReal(init.poissonBlockResiduals.psi),
+        formatReal(init.poissonBlockResiduals.phin),
+        formatReal(init.poissonBlockResiduals.phip),
+        formatReal(init.poissonBlockResiduals.combined)});
+}
+
 std::vector<DCSweepPoint> DCSweep::run(const std::string& configFile) const
 {
     return runWithResult(configFile).points;
@@ -2071,6 +2105,7 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
     const DDSolutionValidationOptions validationOptions = validationOptionsFromJson(cfg);
     GummelConfig gummel;
     NewtonConfig newton;
+    std::optional<NewtonConfig> initializationNewton;
     MobilityModelConfig mobilityConfig;
     if (solverMethod == SolverMethod::Newton) {
         newton = newtonConfigFromJson(solverCfg, scaling);
@@ -2091,6 +2126,10 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                                 solverMethod == SolverMethod::GummelNewton)
         ? newton.temperature_K
         : gummel.temperature_K;
+    if (sweep.initialization.mode == "poisson_block") {
+        initializationNewton = newtonConfigFromJson(solverCfg, scaling);
+        initializationNewton->unitScalingRefs = scalingRefs;
+    }
     const bool recombinationDiagnosticsEnabled =
         (solverMethod == SolverMethod::Newton || solverMethod == SolverMethod::GummelNewton) &&
         newton.diagnostics;
@@ -3953,6 +3992,28 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
     if (!sweep.initialStateFile.empty()) {
         initialState = std::make_unique<DDSolution>(
             readDDSolutionStateCsv(sweep.initialStateFile, mesh.numNodes()));
+    } else if (sweep.initialization.mode == "poisson_block") {
+        const Real initialBias = !sweep.biasPoints.empty() ? sweep.biasPoints.front() : sweep.start;
+        auto initializationBiases = baseBiases;
+        initializationBiases[sweep.contact] = initialBias;
+        NewtonSolver initializer(
+            mesh,
+            matdb,
+            doping,
+            initializationBiases,
+            *initializationNewton,
+            fixedChargeSpecs,
+            sheetChargeSpecs);
+        const NewtonPoissonBlockInitialization initialization =
+            initializer.buildPoissonBlockInitialization();
+        initialState = std::make_unique<DDSolution>(initialization.poissonBlockInitial);
+        if (!sweep.initialization.writeStateFile.empty())
+            writeDDSolutionStateCsv(sweep.initialization.writeStateFile, *initialState);
+        if (!sweep.initialization.diagnosticCsv.empty()) {
+            writePoissonBlockInitializationDiagnosticCsv(
+                std::filesystem::path(sweep.initialization.diagnosticCsv),
+                initialization);
+        }
     }
 
     if (!sweep.biasPoints.empty()) {

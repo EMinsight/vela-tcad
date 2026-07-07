@@ -2891,6 +2891,43 @@ TEST_CASE("DCSweep: initial_state_file validates restart node coverage", "[dc_sw
         Catch::Matchers::ContainsSubstring("DCSweep: initial_state_file missing row for node id 1"));
 }
 
+TEST_CASE("DCSweep: poisson_block initialization writes runtime artifacts", "[dc_sweep]")
+{
+    const auto dir = makeUniqueSweepDir();
+    const ScopedDirectoryCleanup cleanup{dir};
+    std::filesystem::create_directories(dir);
+    const auto meshPath = writePNMesh(dir);
+    const auto csvPath = dir / "poisson_block_init.csv";
+    const auto initDiagPath = dir / "init.csv";
+    const auto initStatePath = dir / "init_state.csv";
+    const auto cfgPath = writeSweepConfig(dir, meshPath, csvPath, {
+        {"start", 0.0},
+        {"stop", 0.0},
+        {"step", 0.25},
+        {"write_vtk", false},
+        {"initialization", {
+            {"mode", "poisson_block"},
+            {"diagnostic_csv", "init.csv"},
+            {"write_state_file", "init_state.csv"}
+        }}
+    }, {
+        {"method", "newton"}
+    });
+
+    DCSweep sweep;
+    const DCSweepResult result = sweep.runWithResult(cfgPath.string());
+
+    REQUIRE(result.points.size() == 1);
+    REQUIRE(std::filesystem::exists(initDiagPath));
+    REQUIRE(std::filesystem::exists(initStatePath));
+
+    const auto rows = readCsvRows(initDiagPath);
+    REQUIRE(rows.size() == 2);
+    REQUIRE(rows.front() == std::vector<std::string>{
+        "mode", "raw_step_norm", "step_norm", "cold_block_psi", "cold_block_phin",
+        "cold_block_phip", "cold_block_combined", "poisson_block_psi",
+        "poisson_block_phin", "poisson_block_phip", "poisson_block_combined"});
+}
 TEST_CASE("DCSweep: poisson_block initialization rejects invalid parser combinations",
           "[dc_sweep]")
 {
