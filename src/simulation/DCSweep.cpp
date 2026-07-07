@@ -4044,6 +4044,10 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                     acceptedStep = ok ? attemptedStep : 0.0;
                     failureReason = attempt.failureReason;
                     validationDiagnostics = attempt.validationDiagnostics;
+                    if (sweep.initialization.mode == "poisson_block" && points.empty() &&
+                        attempt.handoffStage == "newton") {
+                        attempt.handoffStage = "poisson_block_newton";
+                    }
                     if (!ok && failureReason.empty())
                         failureReason = "non_convergence";
                 } else {
@@ -4173,6 +4177,10 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
         startOk = startAttempt.ok;
         startFailureReason = startAttempt.failureReason;
         startValidationDiagnostics = startAttempt.validationDiagnostics;
+        if (sweep.initialization.mode == "poisson_block" && points.empty() &&
+            startAttempt.handoffStage == "newton") {
+            startAttempt.handoffStage = "poisson_block_newton";
+        }
         if (!startOk && startFailureReason.empty())
             startFailureReason = "non_convergence";
     } catch (const std::exception& ex) {

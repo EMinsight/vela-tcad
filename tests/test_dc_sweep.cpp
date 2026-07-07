@@ -2918,15 +2918,26 @@ TEST_CASE("DCSweep: poisson_block initialization writes runtime artifacts", "[dc
     const DCSweepResult result = sweep.runWithResult(cfgPath.string());
 
     REQUIRE(result.points.size() == 1);
+    REQUIRE(result.points.front().handoffStage == "poisson_block_newton");
     REQUIRE(std::filesystem::exists(initDiagPath));
     REQUIRE(std::filesystem::exists(initStatePath));
 
-    const auto rows = readCsvRows(initDiagPath);
-    REQUIRE(rows.size() == 2);
-    REQUIRE(rows.front() == std::vector<std::string>{
+    const auto initRows = readCsvRows(initDiagPath);
+    REQUIRE(initRows.size() == 2);
+    REQUIRE(initRows.front() == std::vector<std::string>{
         "mode", "raw_step_norm", "step_norm", "cold_block_psi", "cold_block_phin",
         "cold_block_phip", "cold_block_combined", "poisson_block_psi",
         "poisson_block_phin", "poisson_block_phip", "poisson_block_combined"});
+    REQUIRE(initRows[1][0] == "poisson_block");
+
+    const auto sweepRows = readCsvRows(csvPath);
+    REQUIRE(sweepRows.size() == 2);
+    const auto handoffStageIt = std::find(
+        sweepRows.front().begin(), sweepRows.front().end(), "handoff_stage");
+    REQUIRE(handoffStageIt != sweepRows.front().end());
+    const auto handoffStageIndex =
+        static_cast<std::size_t>(std::distance(sweepRows.front().begin(), handoffStageIt));
+    REQUIRE(sweepRows[1][handoffStageIndex] == "poisson_block_newton");
 }
 TEST_CASE("DCSweep: poisson_block initialization rejects invalid parser combinations",
           "[dc_sweep]")
