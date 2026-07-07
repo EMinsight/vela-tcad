@@ -287,6 +287,11 @@ def write_previous_full20_config(
     sweep["bias_points"] = list(PREVIOUS_FULL20_BIAS_POINTS if bias_points is None else bias_points)
     sweep["contact"] = "Anode"
     sweep["current_contact"] = "Anode"
+    sweep["initialization"] = {
+        "mode": "poisson_block",
+        "diagnostic_csv": str(out_dir / "poisson_block_initialization.csv"),
+        "write_state_file": str(out_dir / "poisson_block_initial_state.csv"),
+    }
     sweep["write_vtk"] = True
     sweep["vtk_prefix"] = f"{vtk_subdir}/dc_sweep"
     sweep["write_state_file"] = f"coarse_previous_full20{diagnostics_suffix}_last_state.csv"
