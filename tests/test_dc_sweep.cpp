@@ -2925,13 +2925,15 @@ TEST_CASE("DCSweep: poisson_block initialization writes runtime artifacts", "[dc
     const auto initRows = readCsvRows(initDiagPath);
     REQUIRE(initRows.size() == 2);
     REQUIRE(initRows.front() == std::vector<std::string>{
-        "mode", "raw_step_norm", "step_norm", "cold_block_psi", "cold_block_phin",
+        "mode", "bias_V", "raw_step_norm", "step_norm", "cold_block_psi", "cold_block_phin",
         "cold_block_phip", "cold_block_combined", "poisson_block_psi",
         "poisson_block_phin", "poisson_block_phip", "poisson_block_combined"});
+    const std::size_t biasCol = csvColumnIndex(initRows.front(), "bias_V");
     const std::size_t rawStepCol = csvColumnIndex(initRows.front(), "raw_step_norm");
     const std::size_t coldCombinedCol = csvColumnIndex(initRows.front(), "cold_block_combined");
     const std::size_t poissonCombinedCol = csvColumnIndex(initRows.front(), "poisson_block_combined");
     REQUIRE(initRows[1][0] == "poisson_block");
+    REQUIRE(csvReal(initRows[1], biasCol) == Catch::Approx(0.01));
     REQUIRE(csvReal(initRows[1], rawStepCol) > 0.0);
     REQUIRE(csvReal(initRows[1], coldCombinedCol) > csvReal(initRows[1], poissonCombinedCol));
 
@@ -3920,4 +3922,3 @@ TEST_CASE("DCSweep: NMOS and PMOS DD examples increase drain current with strong
     const Real pmosOn = std::abs(runMosExampleDrainCurrentAtGate("pmos2d_dd", -0.05, -0.1));
     REQUIRE(pmosOn > pmosOff);
 }
-

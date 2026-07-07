@@ -733,6 +733,24 @@ Output and current fields:
   `DDSolution` for the first solved bias.
 - write_state_file: optional restart-state CSV overwritten after every
   converged point with the latest `DDSolution`.
+- `initialization.mode`: optional first-point initialization mode. `none`
+  preserves the baseline cold-start path; `poisson_block` runs one Newton
+  Poisson block solve before the first coupled Newton solve and uses that state
+  as the first-point handoff.
+- `initialization.diagnostic_csv`: optional CSV written only when
+  `initialization.mode` is `poisson_block`. It records the first-point
+  initialization bias as `bias_V`, plus the cold-state and Poisson-block
+  residual norms.
+- `initialization.write_state_file`: optional restart-state CSV written only
+  when `initialization.mode` is `poisson_block`. It captures the Poisson-block
+  handoff state for the first bias point before ordinary sweep continuation
+  begins.
+
+Initialization semantics:
+- `sweep.initialization` applies only to the first solved bias point. Later
+  points continue from the last accepted sweep state as usual.
+- `initialization.mode="poisson_block"` cannot be combined with
+  `initial_state_file`; use one first-point initialization source or the other.
 
 Restart-state CSV files use this exact header:
 

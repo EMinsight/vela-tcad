@@ -1194,6 +1194,8 @@ Controlled experiment artifacts are under `build-release/reference_tcad/pn2d_sen
 | `-18 V` current (`A/um`) | `-3.038558e-17` | `-3.038532e-17` |
 | `-20 V` current (`A/um`) | `-5.158981e-17` | `-5.158981e-17` |
 
+A low-bias iteration-count caveat remains for the `cell_reconstructed` release path: at `-0.002 V`, the explicit-`none` baseline converges in 3 Newton iterations while `poisson_block` takes 4. This does not change convergence coverage or terminal-current parity; it is a localized iteration-count difference near zero bias.
+
 The `grad_qf` control still fails at the same transition after the same last converged point: last converged bias `-15.2432189285 V`, failed bias `-15.569175793280028 V`, failure `carrier_row_convergence_line_search_rejected`. This confirms that the `grad_qf` high-field blocker is not caused by the 0 V initialization path.
 
 Full release regression after the validation run passed: `ctest --test-dir build-release --output-on-failure` reported `428/428` tests passing.

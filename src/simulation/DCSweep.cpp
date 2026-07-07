@@ -2023,6 +2023,7 @@ std::filesystem::path failureDiagnosticsJsonPath(const DCSweepConfig& sweep)
 
 void writePoissonBlockInitializationDiagnosticCsv(
     const std::filesystem::path& path,
+    const Real bias,
     const NewtonPoissonBlockInitialization& init)
 {
     if (!path.parent_path().empty())
@@ -2031,6 +2032,7 @@ void writePoissonBlockInitializationDiagnosticCsv(
     CSVWriter csv(path.string());
     csv.writeHeader({
         "mode",
+        "bias_V",
         "raw_step_norm",
         "step_norm",
         "cold_block_psi",
@@ -2043,6 +2045,7 @@ void writePoissonBlockInitializationDiagnosticCsv(
         "poisson_block_combined"});
     csv.writeRow({
         "poisson_block",
+        formatReal(bias),
         formatReal(init.rawStepNorm),
         formatReal(init.stepNorm),
         formatReal(init.coldBlockResiduals.psi),
@@ -4012,6 +4015,7 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
         if (!sweep.initialization.diagnosticCsv.empty()) {
             writePoissonBlockInitializationDiagnosticCsv(
                 std::filesystem::path(sweep.initialization.diagnosticCsv),
+                initialBias,
                 initialization);
         }
     }
@@ -4561,4 +4565,3 @@ void runDCSweepStepControl(const DCSweepStepControlConfig& cfg,
 } // namespace detail
 
 } // namespace vela
-
