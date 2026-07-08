@@ -178,7 +178,7 @@ NewtonProblem loadNewtonProblem(const std::string& configFile, const nlohmann::j
         scaling);
     mesh.buildBoxGeometry(vela::parseBoxGeometryOptions(cfg));
 
-    vela::MaterialDatabase matdb;
+    vela::MaterialDatabase matdb(scaling);
     if (cfg.contains("materials_file"))
         matdb.loadJson(resolvePath(cfgDir, cfg.at("materials_file").get<std::string>()), scaling);
 
@@ -214,7 +214,8 @@ NewtonCliResult runNewtonConfig(const std::string& configFile, const nlohmann::j
             resolvePath(cfgDir, cfg.at("output_vtk").get<std::string>()),
             problem.mesh,
             problem.doping,
-            result.solution);
+            result.solution,
+            problem.newton.inputScaling);
     }
 
     return NewtonCliResult{std::move(problem.mesh), std::move(result)};
@@ -241,7 +242,8 @@ nlohmann::json runNewtonSolveFromState(const std::string& configFile,
             resolvePath(cfgDir, cfg.at("output_vtk").get<std::string>()),
             problem.mesh,
             problem.doping,
-            result.solution);
+            result.solution,
+            problem.newton.inputScaling);
     }
 
     // On-state terminal current extraction (no re-solve). Computing ContactCurrent
@@ -257,7 +259,8 @@ nlohmann::json runNewtonSolveFromState(const std::string& configFile,
             (11.7 * vela::constants::eps0),
             vela::UnitScalingSystem::autoInputsFrom(
                 problem.mesh, problem.doping, problem.matdb, 1e10),
-            vela::UnitScalingReferenceConfig{});
+            vela::UnitScalingReferenceConfig{},
+            problem.newton.inputScaling.unitSystem());
         ddScaling.enabled = true;
         ddScaling.V0 = sc.V0();
         ddScaling.C0 = sc.C0();
@@ -265,6 +268,13 @@ nlohmann::json runNewtonSolveFromState(const std::string& configFile,
         ddScaling.D0 = sc.D0();
         ddScaling.L0 = sc.L0();
         ddScaling.permittivityReference_F_per_m = (11.7 * vela::constants::eps0);
+        ddScaling.unitSystem = problem.newton.inputScaling.unitSystem();
+        ddScaling.chargeVolumeFactor = problem.newton.inputScaling.unitSystem().chargeVolumeFactor();
+        ddScaling.chargeSheetFactor = problem.newton.inputScaling.unitSystem().chargeSheetFactor();
+        ddScaling.fieldFromCoordinateDeltaFactor = problem.newton.inputScaling.unitSystem().fieldFromCoordinateDeltaFactor();
+        ddScaling.currentDensityLineIntegralFactor =
+            problem.newton.inputScaling.unitSystem().currentDensityAM2PerInternal() *
+            problem.newton.inputScaling.unitSystem().areaM2PerInternal();
     }
     const vela::ContactCurrent contactCurrent(
         problem.mesh,
@@ -396,8 +406,8 @@ vela::DopingModel readNodeDopingCsv(const std::filesystem::path& path,
             throw std::runtime_error("node_doping_file has duplicate node_id: " + path.string());
         model.setNodeDoping(
             node,
-            scaling.concentrationToSI(std::stod(cells[donorsCol])),
-            scaling.concentrationToSI(std::stod(cells[acceptorsCol])));
+            scaling.concentrationToInternal(std::stod(cells[donorsCol])),
+            scaling.concentrationToInternal(std::stod(cells[acceptorsCol])));
         seen[static_cast<std::size_t>(node)] = true;
     }
     for (vela::Index node = 0; node < nodeCount; ++node) {

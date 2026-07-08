@@ -43,7 +43,7 @@ std::vector<RegionFixedChargeSpec> parseRegionFixedChargeSpecs(
                 specs,
                 sourcesByRegion,
                 entry.at("region").get<std::string>(),
-                scaling.concentrationToSI(entry.at("fixed_charge_m3").get<Real>()),
+                scaling.concentrationToInternal(entry.at("fixed_charge_m3").get<Real>()),
                 "doping entry");
         }
     }
@@ -55,7 +55,7 @@ std::vector<RegionFixedChargeSpec> parseRegionFixedChargeSpecs(
                 specs,
                 sourcesByRegion,
                 entry.at("name").get<std::string>(),
-                scaling.concentrationToSI(entry.at("fixed_charge_m3").get<Real>()),
+                scaling.concentrationToInternal(entry.at("fixed_charge_m3").get<Real>()),
                 "regions entry");
         }
     }
@@ -71,8 +71,8 @@ std::vector<RegionDopingSpec> parseDopingSpecs(
     for (const auto& entry : cfg.at("doping")) {
         RegionDopingSpec spec;
         spec.region = entry.at("region").get<std::string>();
-        spec.donors = scaling.concentrationToSI(entry.at("donors").get<Real>());
-        spec.acceptors = scaling.concentrationToSI(entry.at("acceptors").get<Real>());
+        spec.donors = scaling.concentrationToInternal(entry.at("donors").get<Real>());
+        spec.acceptors = scaling.concentrationToInternal(entry.at("acceptors").get<Real>());
         specs.push_back(std::move(spec));
     }
     return specs;
@@ -104,11 +104,11 @@ std::vector<InterfaceSheetChargeSpec> parseInterfaceSheetChargeSpecs(
             !entry.contains("fixed_charge_m2") &&
             !hasTrapDensity) continue;
 
-        const Real sheetCharge = scaling.sheetDensityToSI(
+        const Real sheetCharge = scaling.sheetDensityToInternal(
             entry.value("sheet_charge_m2", 0.0));
-        const Real fixedCharge = scaling.sheetDensityToSI(
+        const Real fixedCharge = scaling.sheetDensityToInternal(
             entry.value("fixed_charge_m2", 0.0));
-        const Real trapDensity = scaling.sheetDensityToSI(
+        const Real trapDensity = scaling.sheetDensityToInternal(
             entry.value("trap_density_m2", 0.0));
 
         if (entry.contains("regions")) {

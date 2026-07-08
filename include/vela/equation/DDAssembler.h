@@ -1,6 +1,7 @@
 #pragma once
 
 #include "vela/core/Types.h"
+#include "vela/core/UnitScaling.h"
 #include "vela/equation/ChargeSpec.h"
 #include "vela/mesh/DeviceMesh.h"
 #include "vela/material/MaterialDatabase.h"
@@ -23,6 +24,11 @@ struct DDScalingSpec {
     Real D0 = 1.0;
     Real L0 = 1.0;
     Real permittivityReference_F_per_m = 1.0;
+    PhysicalUnitSystem unitSystem = PhysicalUnitSystem::legacySI();
+    Real chargeVolumeFactor = 1.0;
+    Real chargeSheetFactor = 1.0;
+    Real fieldFromCoordinateDeltaFactor = 1.0;
+    Real currentDensityLineIntegralFactor = 1.0;
 };
 
 /**

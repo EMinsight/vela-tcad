@@ -48,11 +48,11 @@ void parseImpactIonizationDrivingForceInterpolation(
     config.drivingForceInterpolation = interpolation.value(
         "mode", config.drivingForceInterpolation);
     if (interpolation.contains("electron_ref_density_m3")) {
-        config.electronDrivingForceRefDensity = scaling.concentrationToSI(
+        config.electronDrivingForceRefDensity = scaling.concentrationToInternal(
             interpolation.at("electron_ref_density_m3").get<Real>());
     }
     if (interpolation.contains("hole_ref_density_m3")) {
-        config.holeDrivingForceRefDensity = scaling.concentrationToSI(
+        config.holeDrivingForceRefDensity = scaling.concentrationToInternal(
             interpolation.at("hole_ref_density_m3").get<Real>());
     }
 }
@@ -652,7 +652,7 @@ DDScalingSpec buildRecoveryScalingSpec(const DeviceMesh& mesh,
     const UnitScalingSystem::AutoInputs autoInputs =
         UnitScalingSystem::autoInputsFrom(mesh, doping, matdb, niFloor);
     const UnitScalingSystem sc = UnitScalingSystem::fromInputs(
-        cfg.temperature_K, epsRef, autoInputs, cfg.unitScalingRefs);
+        cfg.temperature_K, epsRef, autoInputs, cfg.unitScalingRefs, cfg.inputScaling.unitSystem());
 
     scaling.enabled = true;
     scaling.V0 = sc.V0();
@@ -661,6 +661,13 @@ DDScalingSpec buildRecoveryScalingSpec(const DeviceMesh& mesh,
     scaling.D0 = sc.D0();
     scaling.L0 = sc.L0();
     scaling.permittivityReference_F_per_m = epsRef;
+    scaling.unitSystem = cfg.inputScaling.unitSystem();
+    scaling.chargeVolumeFactor = cfg.inputScaling.unitSystem().chargeVolumeFactor();
+    scaling.chargeSheetFactor = cfg.inputScaling.unitSystem().chargeSheetFactor();
+    scaling.fieldFromCoordinateDeltaFactor = cfg.inputScaling.unitSystem().fieldFromCoordinateDeltaFactor();
+    scaling.currentDensityLineIntegralFactor =
+        cfg.inputScaling.unitSystem().currentDensityAM2PerInternal() *
+        cfg.inputScaling.unitSystem().areaM2PerInternal();
     return scaling;
 }
 
@@ -1026,7 +1033,7 @@ NewtonConfig newtonConfigFromJson(const nlohmann::json& json, UnitScalingConfig 
             cfg.bandgapNarrowing = bandgapNarrowingConfig(
                 value.value("model", cfg.bandgapNarrowing.model));
             if (value.contains("reference_doping_m3")) {
-                cfg.bandgapNarrowing.referenceDoping = scaling.concentrationToSI(
+                cfg.bandgapNarrowing.referenceDoping = scaling.concentrationToInternal(
                     value.at("reference_doping_m3").get<Real>());
             }
             cfg.bandgapNarrowing.coefficient = value.value(
@@ -1066,9 +1073,11 @@ NewtonConfig newtonConfigFromJson(const nlohmann::json& json, UnitScalingConfig 
     if (json.contains("impact_ionization")) {
         const auto& value = json.at("impact_ionization");
         if (value.is_string()) {
-            cfg.impactIonization.model = value.get<std::string>();
+            cfg.impactIonization = impactIonizationModelConfig(
+                value.get<std::string>(), scaling);
         } else if (value.is_object()) {
-            cfg.impactIonization.model = value.value("model", cfg.impactIonization.model);
+            cfg.impactIonization = impactIonizationModelConfig(
+                value.value("model", cfg.impactIonization.model), scaling);
             cfg.impactIonization.parameterSet = value.value(
                 "parameter_set", cfg.impactIonization.parameterSet);
             cfg.impactIonization.drivingForce = value.value(
@@ -1103,7 +1112,7 @@ NewtonConfig newtonConfigFromJson(const nlohmann::json& json, UnitScalingConfig 
             cfg.impactIonization.quasiFermiCarrierTruncation = value.value(
                 "quasi_fermi_carrier_trucation",
                 cfg.impactIonization.quasiFermiCarrierTruncation);
-            cfg.impactIonization.minimumField = scaling.electricFieldToSI(value.value(
+            cfg.impactIonization.minimumField = scaling.electricFieldToInternal(value.value(
                 "minimum_field_V_m", cfg.impactIonization.minimumField));
             cfg.impactIonization.debugRawVanOverstraeten = value.value(
                 "debug_raw_vanoverstraeten",
@@ -1113,55 +1122,55 @@ NewtonConfig newtonConfigFromJson(const nlohmann::json& json, UnitScalingConfig 
             cfg.impactIonization.bScale = value.value(
                 "B_scale", cfg.impactIonization.bScale);
             if (value.contains("electron_A_m_inv")) {
-                cfg.impactIonization.electronA = scaling.inverseLengthToSI(
+                cfg.impactIonization.electronA = scaling.inverseLengthToInternal(
                     value.at("electron_A_m_inv").get<Real>());
             }
             if (value.contains("electron_B_V_m")) {
-                cfg.impactIonization.electronB = scaling.electricFieldToSI(
+                cfg.impactIonization.electronB = scaling.electricFieldToInternal(
                     value.at("electron_B_V_m").get<Real>());
             }
             if (value.contains("hole_A_m_inv")) {
-                cfg.impactIonization.holeA = scaling.inverseLengthToSI(
+                cfg.impactIonization.holeA = scaling.inverseLengthToInternal(
                     value.at("hole_A_m_inv").get<Real>());
             }
             if (value.contains("hole_B_V_m")) {
-                cfg.impactIonization.holeB = scaling.electricFieldToSI(
+                cfg.impactIonization.holeB = scaling.electricFieldToInternal(
                     value.at("hole_B_V_m").get<Real>());
             }
             if (value.contains("electron_a_low_m_inv")) {
-                cfg.impactIonization.electronALow = scaling.inverseLengthToSI(
+                cfg.impactIonization.electronALow = scaling.inverseLengthToInternal(
                     value.at("electron_a_low_m_inv").get<Real>());
             }
             if (value.contains("electron_a_high_m_inv")) {
-                cfg.impactIonization.electronAHigh = scaling.inverseLengthToSI(
+                cfg.impactIonization.electronAHigh = scaling.inverseLengthToInternal(
                     value.at("electron_a_high_m_inv").get<Real>());
             }
             if (value.contains("electron_b_low_V_m")) {
-                cfg.impactIonization.electronBLow = scaling.electricFieldToSI(
+                cfg.impactIonization.electronBLow = scaling.electricFieldToInternal(
                     value.at("electron_b_low_V_m").get<Real>());
             }
             if (value.contains("electron_b_high_V_m")) {
-                cfg.impactIonization.electronBHigh = scaling.electricFieldToSI(
+                cfg.impactIonization.electronBHigh = scaling.electricFieldToInternal(
                     value.at("electron_b_high_V_m").get<Real>());
             }
             if (value.contains("hole_a_low_m_inv")) {
-                cfg.impactIonization.holeALow = scaling.inverseLengthToSI(
+                cfg.impactIonization.holeALow = scaling.inverseLengthToInternal(
                     value.at("hole_a_low_m_inv").get<Real>());
             }
             if (value.contains("hole_a_high_m_inv")) {
-                cfg.impactIonization.holeAHigh = scaling.inverseLengthToSI(
+                cfg.impactIonization.holeAHigh = scaling.inverseLengthToInternal(
                     value.at("hole_a_high_m_inv").get<Real>());
             }
             if (value.contains("hole_b_low_V_m")) {
-                cfg.impactIonization.holeBLow = scaling.electricFieldToSI(
+                cfg.impactIonization.holeBLow = scaling.electricFieldToInternal(
                     value.at("hole_b_low_V_m").get<Real>());
             }
             if (value.contains("hole_b_high_V_m")) {
-                cfg.impactIonization.holeBHigh = scaling.electricFieldToSI(
+                cfg.impactIonization.holeBHigh = scaling.electricFieldToInternal(
                     value.at("hole_b_high_V_m").get<Real>());
             }
             if (value.contains("switch_field_V_m")) {
-                cfg.impactIonization.switchField = scaling.electricFieldToSI(
+                cfg.impactIonization.switchField = scaling.electricFieldToInternal(
                     value.at("switch_field_V_m").get<Real>());
             }
             cfg.impactIonization.phononEnergy = value.value(
@@ -1299,7 +1308,7 @@ DDScalingSpec NewtonSolver::buildScalingSpec() const
     const UnitScalingSystem::AutoInputs autoInputs =
         UnitScalingSystem::autoInputsFrom(mesh_, doping_, matdb_, niFloor);
     const UnitScalingSystem sc = UnitScalingSystem::fromInputs(
-        cfg_.temperature_K, epsRef, autoInputs, cfg_.unitScalingRefs);
+        cfg_.temperature_K, epsRef, autoInputs, cfg_.unitScalingRefs, cfg_.inputScaling.unitSystem());
 
     scaling.enabled = true;
     scaling.V0 = sc.V0();
@@ -1308,6 +1317,13 @@ DDScalingSpec NewtonSolver::buildScalingSpec() const
     scaling.D0 = sc.D0();
     scaling.L0 = sc.L0();
     scaling.permittivityReference_F_per_m = epsRef;
+    scaling.unitSystem = cfg_.inputScaling.unitSystem();
+    scaling.chargeVolumeFactor = cfg_.inputScaling.unitSystem().chargeVolumeFactor();
+    scaling.chargeSheetFactor = cfg_.inputScaling.unitSystem().chargeSheetFactor();
+    scaling.fieldFromCoordinateDeltaFactor = cfg_.inputScaling.unitSystem().fieldFromCoordinateDeltaFactor();
+    scaling.currentDensityLineIntegralFactor =
+        cfg_.inputScaling.unitSystem().currentDensityAM2PerInternal() *
+        cfg_.inputScaling.unitSystem().areaM2PerInternal();
     return scaling;
 }
 

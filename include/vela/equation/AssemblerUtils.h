@@ -106,7 +106,9 @@ inline VectorXd computeFixedAndInterfaceChargeRhs(
     const std::vector<std::vector<Index>>& edgeCells,
     const std::vector<RegionFixedChargeSpec>& fixedCharges,
     const std::vector<InterfaceSheetChargeSpec>& sheetCharges,
-    const std::string& context)
+    const std::string& context,
+    Real chargeVolumeFactor = 1.0,
+    Real chargeSheetFactor = 1.0)
 {
     VectorXd contribution = VectorXd::Zero(static_cast<int>(mesh.numNodes()));
 
@@ -118,7 +120,8 @@ inline VectorXd computeFixedAndInterfaceChargeRhs(
             auto it = fixedByRegion.find(region.name);
             if (it == fixedByRegion.end()) continue;
 
-            const Real nodeCharge = constants::q * it->second * triangleArea(mesh, cell) / 3.0;
+            const Real nodeCharge = constants::q * it->second * triangleArea(mesh, cell) *
+                chargeVolumeFactor / 3.0;
             for (Index nid : cell.node_ids)
                 contribution(static_cast<int>(nid)) += nodeCharge;
         }
@@ -136,7 +139,8 @@ inline VectorXd computeFixedAndInterfaceChargeRhs(
             if (it == sheetByRegionPair.end()) continue;
 
             const Edge& edge = mesh.getEdge(e);
-            const Real endpointCharge = constants::q * it->second * edge.length * 0.5;
+            const Real endpointCharge = constants::q * it->second * edge.length *
+                chargeSheetFactor * 0.5;
             contribution(static_cast<int>(edge.n0)) += endpointCharge;
             contribution(static_cast<int>(edge.n1)) += endpointCharge;
         }
@@ -151,9 +155,13 @@ inline void addFixedAndInterfaceChargeToRhs(
     const std::vector<RegionFixedChargeSpec>& fixedCharges,
     const std::vector<InterfaceSheetChargeSpec>& sheetCharges,
     VectorXd& rhs,
-    const std::string& context)
+    const std::string& context,
+    Real chargeVolumeFactor = 1.0,
+    Real chargeSheetFactor = 1.0)
 {
-    rhs += computeFixedAndInterfaceChargeRhs(mesh, edgeCells, fixedCharges, sheetCharges, context);
+    rhs += computeFixedAndInterfaceChargeRhs(
+        mesh, edgeCells, fixedCharges, sheetCharges, context,
+        chargeVolumeFactor, chargeSheetFactor);
 }
 
 // ---------------------------------------------------------------------------
@@ -199,7 +207,7 @@ inline std::vector<Real> computeNodeScalarGradientMagnitudes(const VectorXd& val
 }
 
 /// Return a per-node Sentaurus-like cell-gradient electric-field magnitude [V/m].
-inline std::vector<Real> computeNodeElectricFields(const VectorXd& psi, const DeviceMesh& mesh);
+inline std::vector<Real> computeNodeElectricFields(const VectorXd& psi, const DeviceMesh& mesh, Real fieldFactor = 1.0);
 
 /// Build edge -> adjacent cell ids map.
 inline std::vector<std::vector<Index>> buildEdgeCellMap(const DeviceMesh& mesh)
@@ -1573,11 +1581,14 @@ inline std::vector<Real> computeNodeWeightedLeastSquaresGradientMagnitudes(
     return fields;
 }
 
-inline std::vector<Real> computeNodeElectricFields(const VectorXd& psi, const DeviceMesh& mesh)
+inline std::vector<Real> computeNodeElectricFields(const VectorXd& psi, const DeviceMesh& mesh, Real fieldFactor)
 {
     const std::vector<std::vector<Index>> nodeCells = buildNodeCellMap(mesh);
-    return computeNodeWeightedLeastSquaresGradientMagnitudes(
+    std::vector<Real> fields = computeNodeWeightedLeastSquaresGradientMagnitudes(
         mesh, nodeCells, [&](Index node) { return psi(static_cast<int>(node)); });
+    for (Real& field : fields)
+        field *= fieldFactor;
+    return fields;
 }
 
 inline Real edgeQuasiFermiCoefficientField(
@@ -1610,16 +1621,20 @@ inline std::vector<Real> computeElectronAvalancheNodeQuasiFermiDrivingFields(
     const VectorXd&                        phin,
     const VectorXd&                        n,
     const std::vector<Real>&               ni,
-    Real                                   Vt)
+    Real                                   Vt,
+    Real                                   fieldFactor = 1.0)
 {
-    if (!usesCellGradientQuasiFermiAvalancheDrive(config))
-        return computeNodeScalarGradientMagnitudes(phin, mesh);
-    return computeNodeCellGradientMagnitudes(
-        mesh, nodeCells, [&](Index node) {
-            const int idx = static_cast<int>(node);
-            return electronQfForAvalancheGradient(
-                psi(idx), phin(idx), n(idx), ni[node], Vt, config);
-        });
+    std::vector<Real> fields = !usesCellGradientQuasiFermiAvalancheDrive(config)
+        ? computeNodeScalarGradientMagnitudes(phin, mesh)
+        : computeNodeCellGradientMagnitudes(
+            mesh, nodeCells, [&](Index node) {
+                const int idx = static_cast<int>(node);
+                return electronQfForAvalancheGradient(
+                    psi(idx), phin(idx), n(idx), ni[node], Vt, config);
+            });
+    for (Real& field : fields)
+        field *= fieldFactor;
+    return fields;
 }
 
 inline std::vector<Real> computeHoleAvalancheNodeQuasiFermiDrivingFields(
@@ -1630,16 +1645,20 @@ inline std::vector<Real> computeHoleAvalancheNodeQuasiFermiDrivingFields(
     const VectorXd&                        phip,
     const VectorXd&                        p,
     const std::vector<Real>&               ni,
-    Real                                   Vt)
+    Real                                   Vt,
+    Real                                   fieldFactor = 1.0)
 {
-    if (!usesCellGradientQuasiFermiAvalancheDrive(config))
-        return computeNodeScalarGradientMagnitudes(phip, mesh);
-    return computeNodeCellGradientMagnitudes(
-        mesh, nodeCells, [&](Index node) {
-            const int idx = static_cast<int>(node);
-            return holeQfForAvalancheGradient(
-                psi(idx), phip(idx), p(idx), ni[node], Vt, config);
-        });
+    std::vector<Real> fields = !usesCellGradientQuasiFermiAvalancheDrive(config)
+        ? computeNodeScalarGradientMagnitudes(phip, mesh)
+        : computeNodeCellGradientMagnitudes(
+            mesh, nodeCells, [&](Index node) {
+                const int idx = static_cast<int>(node);
+                return holeQfForAvalancheGradient(
+                    psi(idx), phip(idx), p(idx), ni[node], Vt, config);
+            });
+    for (Real& field : fields)
+        field *= fieldFactor;
+    return fields;
 }
 
 template <typename ValueAt>

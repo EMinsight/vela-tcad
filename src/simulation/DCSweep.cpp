@@ -431,13 +431,24 @@ std::string capacitanceMnemonic(const std::string& sweepContact, const std::stri
     return "C" + sanitizedColumnToken(sweepContact) + "_" + sanitizedColumnToken(terminalName);
 }
 
-Real perMeterToPerMicron(Real value)
-{
-    return value / 1.0e6;
-}
 Real voltsPerMeterToVoltsPerCm(Real value)
 {
     return value / 100.0;
+}
+
+Real currentPerInternalDepthToAPerUm(const UnitScalingConfig& scaling, Real value)
+{
+    return scaling.unitSystem().internalCurrentPerDeviceDepthToAPerUm(value);
+}
+
+Real internalElectricFieldToVPerM(const UnitScalingConfig& scaling, Real value)
+{
+    return scaling.unitSystem().internalElectricFieldToVPerM(value);
+}
+
+Real internalElectricFieldToVPerCm(const UnitScalingConfig& scaling, Real value)
+{
+    return internalElectricFieldToVPerM(scaling, value) / 100.0;
 }
 
 Real terminalCurrentConsistencyRatio(const ContactCurrentResult& current)
@@ -528,13 +539,15 @@ SweepTransportDiagnostics computeSweepTransportDiagnostics(
     const DopingModel& doping,
     const MobilityModelConfig& mobilityConfig,
     Real temperature_K,
-    const DDSolution& sol)
+    const DDSolution& sol,
+    const UnitScalingConfig& scaling)
 {
     SweepTransportDiagnostics diagnostics;
     const auto edgeCells = detail::buildEdgeCellMap(mesh);
     const std::vector<Material> cellMaterials =
         detail::buildCellMaterials(mesh, matdb, temperature_K);
     const std::unique_ptr<MobilityModel> mobility = makeMobilityModel(mobilityConfig);
+    const Real fieldFactor = scaling.unitSystem().fieldFromCoordinateDeltaFactor();
 
     Real electronMobilitySum = 0.0;
     Real holeMobilitySum = 0.0;
@@ -567,20 +580,20 @@ SweepTransportDiagnostics computeSweepTransportDiagnostics(
 
         const int i0 = static_cast<int>(edge.n0);
         const int i1 = static_cast<int>(edge.n1);
-        const Real electricField = std::abs(sol.psi(i1) - sol.psi(i0)) / length;
+        const Real electricField = std::abs(sol.psi(i1) - sol.psi(i0)) / length * fieldFactor;
         diagnostics.maxElectricField_V_per_cm =
             std::max(diagnostics.maxElectricField_V_per_cm,
-                     voltsPerMeterToVoltsPerCm(electricField));
+                     internalElectricFieldToVPerCm(scaling, electricField));
         const Real electronMobilityField =
             mobilityConfig.highFieldDrivingForce == "quasi_fermi_gradient"
-            ? std::abs(sol.phin(i1) - sol.phin(i0)) / length
+            ? std::abs(sol.phin(i1) - sol.phin(i0)) / length * fieldFactor
             : electricField;
         const Real holeMobilityField =
             mobilityConfig.highFieldDrivingForce == "quasi_fermi_gradient"
-            ? std::abs(sol.phip(i1) - sol.phip(i0)) / length
+            ? std::abs(sol.phip(i1) - sol.phip(i0)) / length * fieldFactor
             : electricField;
-        electronHighFieldDriveSum += voltsPerMeterToVoltsPerCm(electronMobilityField);
-        holeHighFieldDriveSum += voltsPerMeterToVoltsPerCm(holeMobilityField);
+        electronHighFieldDriveSum += internalElectricFieldToVPerCm(scaling, electronMobilityField);
+        holeHighFieldDriveSum += internalElectricFieldToVPerCm(scaling, holeMobilityField);
         ++highFieldDriveCount;
 
         const Real electronLowFieldMobility = detail::edgeMobility(
@@ -636,10 +649,10 @@ SweepTransportDiagnostics computeSweepTransportDiagnostics(
             }
         }
 
-        electronQfGradientSum += voltsPerMeterToVoltsPerCm(
-            std::abs(sol.phin(i1) - sol.phin(i0)) / length);
-        holeQfGradientSum += voltsPerMeterToVoltsPerCm(
-            std::abs(sol.phip(i1) - sol.phip(i0)) / length);
+        electronQfGradientSum += internalElectricFieldToVPerCm(scaling,
+            std::abs(sol.phin(i1) - sol.phin(i0)) / length * fieldFactor);
+        holeQfGradientSum += internalElectricFieldToVPerCm(scaling,
+            std::abs(sol.phip(i1) - sol.phip(i0)) / length * fieldFactor);
         ++qfGradientCount;
     }
 
@@ -679,12 +692,14 @@ std::vector<ContinuityBalanceDiagnosticRow> computeContinuityBalanceDiagnostics(
     const DDSolution& sol,
     const std::vector<Real>& effectiveNi,
     const RecombinationModelConfig& recombinationCfg,
-    const std::vector<std::string>& contacts)
+    const std::vector<std::string>& contacts,
+    const UnitScalingConfig& scaling)
 {
     const auto edgeCells = detail::buildEdgeCellMap(mesh);
     const std::vector<Material> cellMaterials =
         detail::buildCellMaterials(mesh, matdb, temperature_K);
     const std::unique_ptr<MobilityModel> mobility = makeMobilityModel(mobilityConfig);
+    const Real fieldFactor = scaling.unitSystem().fieldFromCoordinateDeltaFactor();
     const RecombinationModel recombination(recombinationCfg);
     const Real Vt = constants::kb * temperature_K / constants::q;
 
@@ -703,11 +718,11 @@ std::vector<ContinuityBalanceDiagnosticRow> computeContinuityBalanceDiagnostics(
             return Real{0.0};
         const int i = static_cast<int>(edge.n0);
         const int j = static_cast<int>(edge.n1);
-        const Real electricField = std::abs(sol.psi(j) - sol.psi(i)) / h;
+        const Real electricField = std::abs(sol.psi(j) - sol.psi(i)) / h * fieldFactor;
         const Real drivingField = mobilityConfig.highFieldDrivingForce == "quasi_fermi_gradient"
             ? ((carrier == CarrierType::Electron)
-                ? std::abs(sol.phin(j) - sol.phin(i)) / h
-                : std::abs(sol.phip(j) - sol.phip(i)) / h)
+                ? std::abs(sol.phin(j) - sol.phin(i)) / h * fieldFactor
+                : std::abs(sol.phip(j) - sol.phip(i)) / h * fieldFactor)
             : electricField;
         const Real mu = detail::edgeMobility(
             edgeCells, mesh, doping, *mobility, cellMaterials, edgeId, carrier,
@@ -903,7 +918,7 @@ Real parseNodeDopingConcentration(const std::string& value,
             "DCSweep: node_doping_file has non-finite " + column + " '" + value +
             "' for node id " + std::to_string(nodeId));
     }
-    return scaling.concentrationToSI(parsed);
+    return scaling.concentrationToInternal(parsed);
 }
 
 TerminalChargeConfig terminalChargeConfigFromJson(const nlohmann::json& chargeCfg,
@@ -916,13 +931,13 @@ TerminalChargeConfig terminalChargeConfigFromJson(const nlohmann::json& chargeCf
     config.contact = chargeCfg.value("contact", sweep.chargeContact.empty() ? sweep.contact : sweep.chargeContact);
     config.regions = chargeCfg.value("regions", sweep.chargeRegions);
     config.contactRadius = chargeCfg.contains("contact_radius")
-        ? scaling.lengthToSI(chargeCfg.at("contact_radius").get<Real>())
+        ? scaling.lengthToInternal(chargeCfg.at("contact_radius").get<Real>())
         : sweep.chargeContactRadius;
     config.includeMobileCharge = chargeCfg.value("include_mobile_charge", config.includeMobileCharge);
     config.includeIonizedDopants = chargeCfg.value("include_ionized_dopants", config.includeIonizedDopants);
     config.perMeter = chargeCfg.value("per_meter", sweep.chargePerMeter);
     config.depth_m = chargeCfg.contains("depth_m")
-        ? scaling.lengthToSI(chargeCfg.at("depth_m").get<Real>())
+        ? scaling.lengthToInternal(chargeCfg.at("depth_m").get<Real>())
         : sweep.chargeDepth_m;
     if (config.name.empty())
         config.name = terminalChargeName(config, index);
@@ -1317,17 +1332,17 @@ DCSweepConfig dcSweepConfigFromJson(const nlohmann::json& cfg,
     const auto chargeCfg = j.value("terminal_charge", nlohmann::json::object());
     sweep.chargeContact = chargeCfg.value("contact", j.value("charge_contact", sweep.contact));
     sweep.chargeRegions = chargeCfg.value("regions", j.value("charge_regions", std::vector<std::string>{}));
-    sweep.chargeContactRadius = scaling.lengthToSI(
+    sweep.chargeContactRadius = scaling.lengthToInternal(
         chargeCfg.value("contact_radius", j.value("charge_contact_radius", 0.0)));
     sweep.chargePerMeter = chargeCfg.value("per_meter", j.value("charge_per_meter", true));
-    sweep.chargeDepth_m = scaling.lengthToSI(
+    sweep.chargeDepth_m = scaling.lengthToInternal(
         chargeCfg.value("depth_m", j.value("charge_depth_m", 1.0)));
 
     sweep.storedChargeEnabled = j.contains("stored_charge");
     const auto storedCfg = j.value("stored_charge", nlohmann::json::object());
     sweep.storedCharge.regions = storedCfg.value("regions", std::vector<std::string>{});
     sweep.storedCharge.perMeter = storedCfg.value("per_meter", true);
-    sweep.storedCharge.depth_m = scaling.lengthToSI(storedCfg.value("depth_m", 1.0));
+    sweep.storedCharge.depth_m = scaling.lengthToInternal(storedCfg.value("depth_m", 1.0));
 
     const auto diagnosticsCfg = j.value("diagnostics", nlohmann::json::object());
     if (diagnosticsCfg.contains("terminal_balance")) {
@@ -1521,7 +1536,7 @@ DCSweepConfig dcSweepConfigFromJson(const nlohmann::json& cfg,
     }
 
     const auto bvCfg = j.value("breakdown", nlohmann::json::object());
-    sweep.breakdown.maxElectricField_V_per_m = scaling.electricFieldToSI(
+    sweep.breakdown.maxElectricField_V_per_m = scaling.unitSystem().vPerMToInternalElectricField(
         bvCfg.value("max_electric_field_V_per_m",
                     j.value("breakdown_max_electric_field_V_per_m", 0.0)));
     sweep.breakdown.currentJumpRatio = bvCfg.value("current_jump_ratio", j.value("breakdown_current_jump_ratio", 0.0));
@@ -2085,7 +2100,7 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
     JsonMeshReader reader;
     DeviceMesh mesh = reader.read(resolve(cfg.at("mesh_file").get<std::string>()), scaling);
     mesh.buildBoxGeometry(parseBoxGeometryOptions(cfg));
-    MaterialDatabase matdb;
+    MaterialDatabase matdb(scaling);
     if (cfg.contains("materials_file"))
         matdb.loadJson(resolve(cfg.at("materials_file").get<std::string>()), scaling);
     DopingModel doping = dopingFromJson(mesh, cfg, cfgDir, scaling);
@@ -2188,7 +2203,8 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
             temperature_K,
             (11.7 * vela::constants::eps0),
             UnitScalingSystem::autoInputsFrom(mesh, doping, matdb, 1e10),
-            UnitScalingReferenceConfig{}
+            UnitScalingReferenceConfig{},
+            sweep.scaling.unitSystem()
         );
         ddScaling.enabled = true;
         ddScaling.V0 = sc.V0();
@@ -2197,6 +2213,13 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
         ddScaling.D0 = sc.D0();
         ddScaling.L0 = sc.L0();
         ddScaling.permittivityReference_F_per_m = (11.7 * vela::constants::eps0);
+        ddScaling.unitSystem = sweep.scaling.unitSystem();
+        ddScaling.chargeVolumeFactor = sweep.scaling.unitSystem().chargeVolumeFactor();
+        ddScaling.chargeSheetFactor = sweep.scaling.unitSystem().chargeSheetFactor();
+        ddScaling.fieldFromCoordinateDeltaFactor = sweep.scaling.unitSystem().fieldFromCoordinateDeltaFactor();
+        ddScaling.currentDensityLineIntegralFactor =
+            sweep.scaling.unitSystem().currentDensityAM2PerInternal() *
+            sweep.scaling.unitSystem().areaM2PerInternal();
     }
     ContactCurrent contactCurrent(mesh, matdb, doping, mobilityConfig, temperature_K, ddScaling, sweepBgnConfig);
     CoupledDDAssembler terminalCurrentResidualAssembler(
@@ -2211,8 +2234,8 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
         fixedChargeSpecs,
         sheetChargeSpecs,
         ddScaling);
-    TerminalCharge terminalCharge(mesh, doping);
-    StoredCharge storedCharge(mesh);
+    TerminalCharge terminalCharge(mesh, doping, sweep.scaling.unitSystem());
+    StoredCharge storedCharge(mesh, sweep.scaling.unitSystem());
     const bool hasMultiTerminalCharges = cfg.at("sweep").contains("terminal_charges");
     const TerminalChargeConfig& legacyChargeConfig = sweep.terminalCharges.front();
     const bool continuationDiagnosticsEnabled =
@@ -3248,7 +3271,8 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
             }
         }
         if (converged && sweep.mode == CurveSweepMode::BVReverse) {
-            point.maxElectricField = maxEdgeElectricFieldMagnitude(mesh, sol.psi);
+            point.maxElectricField = maxEdgeElectricFieldMagnitude(mesh, sol.psi) *
+                sweep.scaling.unitSystem().fieldFromCoordinateDeltaFactor();
             if (!points.empty()) {
                 const Real previous = std::abs(points.back().totalCurrent);
                 const Real currentAbs = std::abs(point.totalCurrent);
@@ -3293,7 +3317,7 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
         if (converged && sweep.diagnostics.transport.enabled) {
             const SweepTransportDiagnostics diagnostics =
                 computeSweepTransportDiagnostics(
-                    mesh, matdb, doping, mobilityConfig, temperature_K, sol);
+                    mesh, matdb, doping, mobilityConfig, temperature_K, sol, sweep.scaling);
             point.extraFields.emplace_back(
                 "mean_electron_mobility_m2_V_s", diagnostics.meanElectronMobility_m2_V_s);
             point.extraFields.emplace_back(
@@ -3325,33 +3349,33 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
         }
         if (writeUnitScaledColumns) {
             point.extraFields.emplace_back(
-                "current_total_A_per_um", perMeterToPerMicron(point.totalCurrent));
+                "current_total_A_per_um", currentPerInternalDepthToAPerUm(sweep.scaling, point.totalCurrent));
             point.extraFields.emplace_back(
-                "current_electron_A_per_um", perMeterToPerMicron(point.electronCurrent));
+                "current_electron_A_per_um", currentPerInternalDepthToAPerUm(sweep.scaling, point.electronCurrent));
             point.extraFields.emplace_back(
                 "current_electron_drift_A_per_um",
-                perMeterToPerMicron(point.electronDriftCurrent));
+                currentPerInternalDepthToAPerUm(sweep.scaling, point.electronDriftCurrent));
             point.extraFields.emplace_back(
                 "current_electron_diffusion_A_per_um",
-                perMeterToPerMicron(point.electronDiffusionCurrent));
+                currentPerInternalDepthToAPerUm(sweep.scaling, point.electronDiffusionCurrent));
             point.extraFields.emplace_back(
-                "current_hole_A_per_um", perMeterToPerMicron(point.holeCurrent));
+                "current_hole_A_per_um", currentPerInternalDepthToAPerUm(sweep.scaling, point.holeCurrent));
             point.extraFields.emplace_back(
                 "current_hole_drift_A_per_um",
-                perMeterToPerMicron(point.holeDriftCurrent));
+                currentPerInternalDepthToAPerUm(sweep.scaling, point.holeDriftCurrent));
             point.extraFields.emplace_back(
                 "current_hole_diffusion_A_per_um",
-                perMeterToPerMicron(point.holeDiffusionCurrent));
+                currentPerInternalDepthToAPerUm(sweep.scaling, point.holeDiffusionCurrent));
             if (sweep.mode == CurveSweepMode::CVQuasistatic && legacyChargeConfig.perMeter) {
                 point.extraFields.emplace_back(
-                    "charge_C_per_um", perMeterToPerMicron(point.terminalCharge));
+                    "charge_C_per_um", currentPerInternalDepthToAPerUm(sweep.scaling, point.terminalCharge));
                 point.extraFields.emplace_back(
-                    "capacitance_F_per_um", perMeterToPerMicron(point.capacitance));
+                    "capacitance_F_per_um", currentPerInternalDepthToAPerUm(sweep.scaling, point.capacitance));
             }
             if (sweep.mode == CurveSweepMode::BVReverse) {
                 point.extraFields.emplace_back(
                     "max_electric_field_V_per_cm",
-                    voltsPerMeterToVoltsPerCm(point.maxElectricField));
+                    internalElectricFieldToVPerCm(sweep.scaling, point.maxElectricField));
             }
         }
         std::vector<std::string> row = {
@@ -3390,13 +3414,13 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
             point.newtonFailureClass,
             point.failureDiagnosticsJson};
         if (writeUnitScaledColumns) {
-            row.push_back(formatReal(perMeterToPerMicron(point.totalCurrent)));
-            row.push_back(formatReal(perMeterToPerMicron(point.electronCurrent)));
-            row.push_back(formatReal(perMeterToPerMicron(point.electronDriftCurrent)));
-            row.push_back(formatReal(perMeterToPerMicron(point.electronDiffusionCurrent)));
-            row.push_back(formatReal(perMeterToPerMicron(point.holeCurrent)));
-            row.push_back(formatReal(perMeterToPerMicron(point.holeDriftCurrent)));
-            row.push_back(formatReal(perMeterToPerMicron(point.holeDiffusionCurrent)));
+            row.push_back(formatReal(currentPerInternalDepthToAPerUm(sweep.scaling, point.totalCurrent)));
+            row.push_back(formatReal(currentPerInternalDepthToAPerUm(sweep.scaling, point.electronCurrent)));
+            row.push_back(formatReal(currentPerInternalDepthToAPerUm(sweep.scaling, point.electronDriftCurrent)));
+            row.push_back(formatReal(currentPerInternalDepthToAPerUm(sweep.scaling, point.electronDiffusionCurrent)));
+            row.push_back(formatReal(currentPerInternalDepthToAPerUm(sweep.scaling, point.holeCurrent)));
+            row.push_back(formatReal(currentPerInternalDepthToAPerUm(sweep.scaling, point.holeDriftCurrent)));
+            row.push_back(formatReal(currentPerInternalDepthToAPerUm(sweep.scaling, point.holeDiffusionCurrent)));
         }
         if (sweep.storedChargeEnabled) {
             const char* storedColumn = sweep.storedCharge.perMeter ? "stored_charge_C_per_m" : "stored_charge_C";
@@ -3413,8 +3437,8 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
             row.push_back(formatReal(point.terminalCharge));
             row.push_back(formatReal(point.capacitance));
             if (writeUnitScaledColumns && legacyChargeConfig.perMeter) {
-                row.push_back(formatReal(perMeterToPerMicron(point.terminalCharge)));
-                row.push_back(formatReal(perMeterToPerMicron(point.capacitance)));
+                row.push_back(formatReal(currentPerInternalDepthToAPerUm(sweep.scaling, point.terminalCharge)));
+                row.push_back(formatReal(currentPerInternalDepthToAPerUm(sweep.scaling, point.capacitance)));
             }
             if (hasMultiTerminalCharges) {
                 std::unordered_map<std::string, Real> extraFieldValues;
@@ -3429,9 +3453,9 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
             }
         }
         if (sweep.mode == CurveSweepMode::BVReverse) {
-            row.push_back(formatReal(point.maxElectricField));
+            row.push_back(formatReal(internalElectricFieldToVPerM(sweep.scaling, point.maxElectricField)));
             if (writeUnitScaledColumns)
-                row.push_back(formatReal(voltsPerMeterToVoltsPerCm(point.maxElectricField)));
+                row.push_back(formatReal(internalElectricFieldToVPerCm(sweep.scaling, point.maxElectricField)));
             row.push_back(formatReal(point.currentJumpRatio));
             row.push_back(point.breakdownDetected ? "1" : "0");
             row.push_back(formatReal(point.breakdownVoltage));
@@ -3533,9 +3557,9 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                 "A/um",
                 formatReal(terms.qGJunction_A_per_um),
                 "A/um",
-                formatReal(perMeterToPerMicron(point.totalCurrent)),
+                formatReal(currentPerInternalDepthToAPerUm(sweep.scaling, point.totalCurrent)),
                 "A/um",
-                formatReal(voltsPerMeterToVoltsPerCm(point.maxElectricField)),
+                formatReal(internalElectricFieldToVPerCm(sweep.scaling, point.maxElectricField)),
                 "V/cm",
                 formatReal(terms.maxGava_cm3_s),
                 "cm^-3 s^-1",
@@ -3547,9 +3571,9 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
             releaseBVConfigAuditSummary.lastQGFull_A_per_um = terms.qGFull_A_per_um;
             releaseBVConfigAuditSummary.lastQGJunction_A_per_um = terms.qGJunction_A_per_um;
             releaseBVConfigAuditSummary.lastTerminalCurrent_A_per_um =
-                perMeterToPerMicron(point.totalCurrent);
+                currentPerInternalDepthToAPerUm(sweep.scaling, point.totalCurrent);
             releaseBVConfigAuditSummary.lastMaxE_V_per_cm =
-                voltsPerMeterToVoltsPerCm(point.maxElectricField);
+                internalElectricFieldToVPerCm(sweep.scaling, point.maxElectricField);
             releaseBVConfigAuditSummary.lastMaxGava_cm3_s = terms.maxGava_cm3_s;
             if (releaseBVConfigAuditSummary.hasDiagnosticQGReference) {
                 releaseBVConfigAuditSummary.qGSameOrderAsDiagnostic =
@@ -3612,11 +3636,11 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                     formatReal(terminalCurrent.totalCurrent),
                     formatReal(electronPlusHole)};
                 if (writeUnitScaledColumns) {
-                    diagRow.push_back(formatReal(perMeterToPerMicron(terminalCurrent.electronCurrent)));
-                    diagRow.push_back(formatReal(perMeterToPerMicron(terminalCurrent.holeCurrent)));
-                    diagRow.push_back(formatReal(perMeterToPerMicron(electronMinusHole)));
-                    diagRow.push_back(formatReal(perMeterToPerMicron(terminalCurrent.totalCurrent)));
-                    diagRow.push_back(formatReal(perMeterToPerMicron(electronPlusHole)));
+                    diagRow.push_back(formatReal(currentPerInternalDepthToAPerUm(sweep.scaling, terminalCurrent.electronCurrent)));
+                    diagRow.push_back(formatReal(currentPerInternalDepthToAPerUm(sweep.scaling, terminalCurrent.holeCurrent)));
+                    diagRow.push_back(formatReal(currentPerInternalDepthToAPerUm(sweep.scaling, electronMinusHole)));
+                    diagRow.push_back(formatReal(currentPerInternalDepthToAPerUm(sweep.scaling, terminalCurrent.totalCurrent)));
+                    diagRow.push_back(formatReal(currentPerInternalDepthToAPerUm(sweep.scaling, electronPlusHole)));
                 }
                 diagRow.push_back(point.converged ? "1" : "0");
                 diagRow.push_back(point.solverMethod);
@@ -3673,7 +3697,7 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                         edgeDiag.holeQfDropOverrideApplied ? "1" : "0",
                         formatReal(edgeDiag.totalCurrent)};
                     if (writeUnitScaledColumns)
-                        diagRow.push_back(formatReal(perMeterToPerMicron(edgeDiag.totalCurrent)));
+                        diagRow.push_back(formatReal(currentPerInternalDepthToAPerUm(sweep.scaling, edgeDiag.totalCurrent)));
                     contactEdgeCsv->writeRow(diagRow);
                 }
             }
@@ -3691,7 +3715,8 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                     sol,
                     effectiveNi,
                     sweepRecombinationConfig,
-                    continuityBalanceContacts);
+                    continuityBalanceContacts,
+                    sweep.scaling);
             for (const ContinuityBalanceDiagnosticRow& balance : balanceRows) {
                 continuityBalanceCsv->writeRow({
                     std::to_string(pointIndex),
@@ -3761,9 +3786,9 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                     std::to_string(pointIndex),
                     formatReal(point.bias),
                     contactName,
-                    formatReal(perMeterToPerMicron(sgFluxDetailed.totals.totalCurrent)),
-                    formatReal(perMeterToPerMicron(residualCurrent.totalCurrent)),
-                    formatReal(perMeterToPerMicron(qfFloorDetailed.totals.totalCurrent)),
+                    formatReal(currentPerInternalDepthToAPerUm(sweep.scaling, sgFluxDetailed.totals.totalCurrent)),
+                    formatReal(currentPerInternalDepthToAPerUm(sweep.scaling, residualCurrent.totalCurrent)),
+                    formatReal(currentPerInternalDepthToAPerUm(sweep.scaling, qfFloorDetailed.totals.totalCurrent)),
                     formatReal(maxHoleQfDrop),
                     formatReal(sgAvalancheSourceTotal)});
             }

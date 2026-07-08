@@ -615,19 +615,19 @@ TEST_CASE("DCSweep: unit_scaling CSV appends per-micron currents and V-per-cm fi
     for (std::size_t r = 1; r < rows.size(); ++r) {
         const auto& row = rows.at(r);
         REQUIRE(csvReal(row, currentTotalUm) ==
-                Catch::Approx(csvReal(row, currentTotal) / 1.0e6).epsilon(1.0e-12));
+                Catch::Approx(csvReal(row, currentTotal)).epsilon(1.0e-12));
         REQUIRE(csvReal(row, currentElectronUm) ==
-                Catch::Approx(csvReal(row, currentElectron) / 1.0e6).epsilon(1.0e-12));
+                Catch::Approx(csvReal(row, currentElectron)).epsilon(1.0e-12));
         REQUIRE(csvReal(row, currentElectronDriftUm) ==
-            Catch::Approx(csvReal(row, currentElectronDrift) / 1.0e6).epsilon(1.0e-12));
+            Catch::Approx(csvReal(row, currentElectronDrift)).epsilon(1.0e-12));
         REQUIRE(csvReal(row, currentElectronDiffusionUm) ==
-            Catch::Approx(csvReal(row, currentElectronDiffusion) / 1.0e6).epsilon(1.0e-12));
+            Catch::Approx(csvReal(row, currentElectronDiffusion)).epsilon(1.0e-12));
         REQUIRE(csvReal(row, currentHoleUm) ==
-                Catch::Approx(csvReal(row, currentHole) / 1.0e6).epsilon(1.0e-12));
+                Catch::Approx(csvReal(row, currentHole)).epsilon(1.0e-12));
         REQUIRE(csvReal(row, currentHoleDriftUm) ==
-            Catch::Approx(csvReal(row, currentHoleDrift) / 1.0e6).epsilon(1.0e-12));
+            Catch::Approx(csvReal(row, currentHoleDrift)).epsilon(1.0e-12));
         REQUIRE(csvReal(row, currentHoleDiffusionUm) ==
-            Catch::Approx(csvReal(row, currentHoleDiffusion) / 1.0e6).epsilon(1.0e-12));
+            Catch::Approx(csvReal(row, currentHoleDiffusion)).epsilon(1.0e-12));
         REQUIRE(csvReal(row, maxFieldCm) ==
                 Catch::Approx(csvReal(row, maxField) / 100.0).epsilon(1.0e-12));
     }
@@ -664,12 +664,12 @@ TEST_CASE("DCSweep: PN forward IV unit_scaling remains physically equivalent to 
         REQUIRE(legacy.points[i].converged);
         REQUIRE(scaled.points[i].converged);
         REQUIRE(std::abs(scaled.points[i].totalCurrent)
-                == Catch::Approx(std::abs(legacy.points[i].totalCurrent)).epsilon(5.0e-2));
+                == Catch::Approx(std::abs(legacy.points[i].totalCurrent) / 1.0e6).epsilon(5.0e-2));
     }
 
     const Real legacyEnd = std::abs(legacy.points.back().totalCurrent);
     const Real scaledEnd = std::abs(scaled.points.back().totalCurrent);
-    REQUIRE(scaledEnd == Catch::Approx(legacyEnd).epsilon(5.0e-2));
+    REQUIRE(scaledEnd == Catch::Approx(legacyEnd / 1.0e6).epsilon(5.0e-2));
 }
 
 TEST_CASE("DCSweep reads node_doping_file before region averages", "[dc_sweep][doping]")
@@ -2299,9 +2299,9 @@ TEST_CASE("DCSweep: unit_scaling CV CSV appends per-micron charge and capacitanc
     for (std::size_t r = 1; r < rows.size(); ++r) {
         const auto& row = rows.at(r);
         REQUIRE(csvReal(row, chargeUm) ==
-                Catch::Approx(csvReal(row, charge) / 1.0e6).epsilon(1.0e-12));
+                Catch::Approx(csvReal(row, charge)).epsilon(1.0e-12));
         REQUIRE(csvReal(row, capacitanceUm) ==
-                Catch::Approx(csvReal(row, capacitance) / 1.0e6).epsilon(1.0e-12));
+                Catch::Approx(csvReal(row, capacitance)).epsilon(1.0e-12));
     }
 }
 
@@ -2321,6 +2321,25 @@ TEST_CASE("TerminalCharge: region selections use region-local cell volume", "[te
     REQUIRE(result.charge / constants::q == Catch::Approx(0.5));
 }
 
+TEST_CASE("TerminalCharge: unit_scaling uses TCAD density-area-depth factor", "[terminal_charge][scaling]")
+{
+    DeviceMesh mesh = makeTwoRegionUnitSquareMesh();
+    DopingModel doping(mesh.numNodes());
+    const DDSolution solution = uniformCarrierSolution(mesh.numNodes(), 0.0, 1.0e16);
+
+    TerminalCharge tc(mesh, doping, PhysicalUnitSystem::tcadInternal());
+    TerminalChargeConfig config;
+    config.regions = {"left"};
+    config.includeIonizedDopants = false;
+
+    const TerminalChargeResult perDepth = tc.compute(solution, config);
+    REQUIRE(perDepth.charge / constants::q == Catch::Approx(0.5e16 * 1.0e-12));
+
+    config.perMeter = false;
+    config.depth_m = 2.0;
+    const TerminalChargeResult total = tc.compute(solution, config);
+    REQUIRE(total.charge == Catch::Approx(2.0 * perDepth.charge));
+}
 TEST_CASE("TerminalCharge: unknown region selections are rejected", "[terminal_charge]")
 {
     DeviceMesh mesh = makeTwoRegionUnitSquareMesh();

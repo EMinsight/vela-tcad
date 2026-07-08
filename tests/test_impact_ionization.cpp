@@ -2549,3 +2549,24 @@ TEST_CASE("SG edge current avalanche source supports diagnostic geometry scale",
         REQUIRE(scaledNodal[i] == Catch::Approx(4.0 * baseNodal[i]));
     REQUIRE(sawNonzeroSource);
 }
+
+TEST_CASE("VanOverstraeten Sentaurus fit parameter sets follow active internal units",
+          "[impact][scaling][van_overstraeten]")
+{
+    ImpactIonizationModelConfig legacyConfig = impactIonizationModelConfig("van_overstraeten");
+    legacyConfig.parameterSet = "sentaurus_fit_A_B_switch";
+    legacyConfig = applyImpactIonizationParameterSet(legacyConfig);
+
+    ImpactIonizationModelConfig tcadConfig = impactIonizationModelConfig(
+        "van_overstraeten", UnitScalingConfig{UnitScalingMode::UnitScaling});
+    tcadConfig.parameterSet = "sentaurus_fit_A_B_switch";
+    tcadConfig = applyImpactIonizationParameterSet(tcadConfig);
+
+    REQUIRE(legacyConfig.electronALow == Catch::Approx(2.35990376332e9));
+    REQUIRE(legacyConfig.electronBLow == Catch::Approx(6.68288073314e7));
+    REQUIRE(legacyConfig.switchField == Catch::Approx(2.5e7));
+
+    REQUIRE(tcadConfig.electronALow == Catch::Approx(2.35990376332e7));
+    REQUIRE(tcadConfig.electronBLow == Catch::Approx(6.68288073314e5));
+    REQUIRE(tcadConfig.switchField == Catch::Approx(2.5e5));
+}

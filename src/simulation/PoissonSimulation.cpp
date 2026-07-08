@@ -41,43 +41,6 @@ std::string resolvePath(const std::filesystem::path& baseDir, const std::string&
     return resolved.string();
 }
 
-Real meshMaxLength(const DeviceMesh& mesh)
-{
-    if (mesh.numNodes() == 0)
-        throw std::runtime_error("PoissonSimulation: mesh has no nodes.");
-
-    Real minX = mesh.getNode(0).x;
-    Real maxX = mesh.getNode(0).x;
-    Real minY = mesh.getNode(0).y;
-    Real maxY = mesh.getNode(0).y;
-    for (Index i = 1; i < mesh.numNodes(); ++i) {
-        const Node& node = mesh.getNode(i);
-        minX = std::min(minX, node.x);
-        maxX = std::max(maxX, node.x);
-        minY = std::min(minY, node.y);
-        maxY = std::max(maxY, node.y);
-    }
-    return std::max(maxX - minX, maxY - minY);
-}
-
-Real maxAbsNetDoping(const DopingModel& doping)
-{
-    Real maxAbs = 0.0;
-    for (Index i = 0; i < doping.numNodes(); ++i)
-        maxAbs = std::max(maxAbs, std::abs(doping.netDoping(i)));
-    return maxAbs;
-}
-
-Real maxMobilityAcrossRegions(const DeviceMesh& mesh, const MaterialDatabase& matdb)
-{
-    Real maxMobility = 0.0;
-    for (const Region& region : mesh.regions()) {
-        const Material& material = matdb.getMaterial(region.material);
-        maxMobility = std::max(maxMobility, std::abs(material.mun));
-        maxMobility = std::max(maxMobility, std::abs(material.mup));
-    }
-    return maxMobility;
-}
 
 Real maxRelativePermittivityAcrossRegions(const DeviceMesh& mesh,
                                           const MaterialDatabase& matdb)
@@ -129,7 +92,7 @@ PoissonResult PoissonSimulation::runWithResult(const std::string& configFile)
     // ------------------------------------------------------------------
     // Material database (built-in Si, SiO2 plus optional config override)
     // ------------------------------------------------------------------
-    MaterialDatabase matdb;
+    MaterialDatabase matdb(scaling);
     if (!materialsFile.empty())
         matdb.loadJson(materialsFile, scaling);
 
@@ -158,7 +121,7 @@ PoissonResult PoissonSimulation::runWithResult(const std::string& configFile)
             case BoundaryType::Symmetry: {
                 // Insulating and symmetry are zero Neumann
                 const Real displacement = (spec.type == BoundaryType::Neumann)
-                    ? scaling.sheetDensityToSI(spec.value) : 0.0;
+                    ? scaling.sheetDensityToInternal(spec.value) : 0.0;
                 neumannBoundarySpecs.push_back(
                     PoissonNeumannBoundarySpec{spec.node_ids, displacement});
                 break;
@@ -178,11 +141,8 @@ PoissonResult PoissonSimulation::runWithResult(const std::string& configFile)
     if (scaling.isUnitScaling()) {
         const UnitScalingReferenceConfig refs = parseUnitScalingReferenceConfig(cfg);
 
-        UnitScalingSystem::AutoInputs autoInputs;
-        autoInputs.maxAbsNetDoping_m3 = maxAbsNetDoping(doping);
-        autoInputs.niFloor_m3 = 1.0;
-        autoInputs.meshMaxLength_m = std::max(meshMaxLength(mesh), 1.0e-30);
-        autoInputs.maxMobility_m2_V_s = std::max(maxMobilityAcrossRegions(mesh, matdb), 1.0e-6);
+        UnitScalingSystem::AutoInputs autoInputs =
+            UnitScalingSystem::autoInputsFrom(mesh, doping, matdb, 1.0);
 
         const Real epsRef = constants::eps0 *
             std::max(maxRelativePermittivityAcrossRegions(mesh, matdb), 1.0);
@@ -190,11 +150,14 @@ PoissonResult PoissonSimulation::runWithResult(const std::string& configFile)
             300.0,
             epsRef,
             autoInputs,
-            refs);
+            refs,
+            scaling.unitSystem());
 
         poissonScaling.enabled = true;
         poissonScaling.potentialScale_V = scalingSystem.V0();
         poissonScaling.permittivityReference_F_per_m = epsRef;
+        poissonScaling.chargeVolumeFactor = scaling.unitSystem().chargeVolumeFactor();
+        poissonScaling.chargeSheetFactor = scaling.unitSystem().chargeSheetFactor();
     }
 
     PoissonAssembler assembler(mesh, matdb, doping,

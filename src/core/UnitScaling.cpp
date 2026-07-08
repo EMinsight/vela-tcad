@@ -6,39 +6,99 @@
 
 namespace vela {
 
+PhysicalUnitSystem::PhysicalUnitSystem(Real lengthMPerInternal,
+                                       Real concentrationM3PerInternal,
+                                       Real sheetDensityM2PerInternal,
+                                       Real mobilityM2PerVSPerInternal,
+                                       Real electricFieldVPerMPerInternal,
+                                       Real inverseLengthMInvPerInternal,
+                                       Real surfaceFieldCoefficientMPerVPerInternal,
+                                       Real currentDensityAM2PerInternal)
+    : lengthMPerInternal_(lengthMPerInternal),
+      concentrationM3PerInternal_(concentrationM3PerInternal),
+      sheetDensityM2PerInternal_(sheetDensityM2PerInternal),
+      mobilityM2PerVSPerInternal_(mobilityM2PerVSPerInternal),
+      electricFieldVPerMPerInternal_(electricFieldVPerMPerInternal),
+      inverseLengthMInvPerInternal_(inverseLengthMInvPerInternal),
+      surfaceFieldCoefficientMPerVPerInternal_(surfaceFieldCoefficientMPerVPerInternal),
+      currentDensityAM2PerInternal_(currentDensityAM2PerInternal)
+{}
+
+PhysicalUnitSystem PhysicalUnitSystem::legacySI()
+{
+    return PhysicalUnitSystem(1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0);
+}
+
+PhysicalUnitSystem PhysicalUnitSystem::tcadInternal()
+{
+    return PhysicalUnitSystem(1.0e-6, 1.0e6, 1.0e4, 1.0e-4, 1.0e2, 1.0e2, 1.0e-2, 1.0e4);
+}
+
+Real PhysicalUnitSystem::chargeVolumeFactor() const
+{
+    return concentrationM3PerInternal_ * volumeM3PerInternal();
+}
+
+Real PhysicalUnitSystem::chargeSheetFactor() const
+{
+    return sheetDensityM2PerInternal_ * areaM2PerInternal();
+}
+
+Real PhysicalUnitSystem::fieldFromCoordinateDeltaFactor() const
+{
+    return (1.0 / lengthMPerInternal_) / electricFieldVPerMPerInternal_;
+}
+
+Real PhysicalUnitSystem::currentPerInternalDepthFactor() const
+{
+    return 1.0e-6 / lengthMPerInternal_;
+}
+
+Real PhysicalUnitSystem::internalCurrentPerDeviceDepthToAPerUm(Real value) const
+{
+    return value * currentPerInternalDepthFactor();
+}
+
+UnitScalingConfig::UnitScalingConfig(UnitScalingMode modeValue)
+    : mode(modeValue),
+      physicalUnitSystem(modeValue == UnitScalingMode::UnitScaling
+                             ? PhysicalUnitSystem::tcadInternal()
+                             : PhysicalUnitSystem::legacySI())
+{}
+
 Real UnitScalingConfig::lengthToSI(Real value) const
 {
-    return isUnitScaling() ? value * 1.0e-6 : value;
+    return unitSystem().internalLengthToMeters(value);
 }
 
 Real UnitScalingConfig::concentrationToSI(Real value) const
 {
-    return isUnitScaling() ? value * 1.0e6 : value;
+    return unitSystem().internalConcentrationToM3(value);
 }
 
 Real UnitScalingConfig::sheetDensityToSI(Real value) const
 {
-    return isUnitScaling() ? value * 1.0e4 : value;
+    return unitSystem().internalSheetDensityToM2(value);
 }
 
 Real UnitScalingConfig::mobilityToSI(Real value) const
 {
-    return isUnitScaling() ? value * 1.0e-4 : value;
+    return unitSystem().internalMobilityToM2PerVS(value);
 }
 
 Real UnitScalingConfig::electricFieldToSI(Real value) const
 {
-    return isUnitScaling() ? value * 1.0e2 : value;
+    return unitSystem().internalElectricFieldToVPerM(value);
 }
 
 Real UnitScalingConfig::inverseLengthToSI(Real value) const
 {
-    return isUnitScaling() ? value * 1.0e2 : value;
+    return unitSystem().internalInverseLengthToMInv(value);
 }
 
 Real UnitScalingConfig::surfaceFieldCoefficientToSI(Real value) const
 {
-    return isUnitScaling() ? value * 1.0e-2 : value;
+    return unitSystem().internalSurfaceFieldCoefficientToMPerV(value);
 }
 
 UnitScalingConfig parseUnitScalingConfig(const nlohmann::json& cfg)

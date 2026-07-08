@@ -9,10 +9,9 @@ introduced for public input mode:
 
 Scope:
 - Poisson assembly and solve path only.
-- DD/Gummel/Newton decks also use the shared `unit_scaling` input conversion
-  at the schema boundary, but this note only describes the Poisson-specific
-  scaled assembly path. Drift-diffusion assembly still receives normalized SI
-  values.
+- DD/Gummel/Newton decks also use the shared `unit_scaling` interpretation
+  at the schema boundary. In that mode Vela keeps TCAD units internally rather
+  than converting inputs through SI first.
 
 ## Goals
 
@@ -45,16 +44,16 @@ material contrast remains explicit through `eps/eps_ref`.
 
 ## Assembly strategy implemented
 
-The existing SI Poisson assembly computes matrix `A_si` and RHS `b_si` from:
+The legacy Poisson assembly computes matrix `A_phys` and RHS `b_phys` from active internal physical units:
 - edge flux terms with material `eps`
 - volumetric charge terms (net doping and fixed charge)
 - interface sheet/fixed/trap charge terms
 - Neumann displacement boundary terms
 
-The scaled path is implemented by transforming the assembled SI system:
+The scaled path is implemented by transforming the assembled active-internal system:
 
-- `A_hat = A_si / eps_ref`
-- `b_hat = b_si / (eps_ref * V0)`
+- `A_hat = A_phys / eps_ref`
+- `b_hat = b_phys / (eps_ref * V0)`
 
 Then solve:
 - `A_hat * psi_hat = b_hat`
@@ -66,9 +65,10 @@ still carries its local `eps`, then is normalized by the same `eps_ref`.
 
 ## Source-term and boundary scaling coverage
 
-In `unit_scaling` mode, config inputs are interpreted in common units and
-normalized to SI before assembly. The scaled assembly then applies the global
-`eps_ref` and `V0` normalization above.
+In `unit_scaling` mode, config inputs are interpreted in common TCAD units and
+kept internally in those units. Poisson charge assembly applies the active unit
+system composite factors (`chargeVolumeFactor`, `chargeSheetFactor`) before the
+global `eps_ref` and `V0` normalization above.
 
 Covered source terms:
 - Region fixed charge (`fixed_charge_m3`)
@@ -80,13 +80,13 @@ Neumann note:
 - The field name is stable for compatibility.
 - Numeric interpretation is mode-dependent:
   - legacy mode: SI (`C/m^2`)
-  - `unit_scaling` mode: common area units (`C/cm^2`), normalized to SI.
+  - `unit_scaling` mode: common area units (`C/cm^2`), kept as active internal sheet units.
 
 ## PoissonSimulation path switch
 
 `PoissonSimulation` behavior:
-- legacy mode: construct `PoissonAssembler` without scaling spec and solve SI
-  system as before.
+- legacy mode: construct `PoissonAssembler` without scaling spec and solve the
+  historical SI-valued system as before.
 - `unit_scaling` mode:
   - construct scaling references (`V0`, `eps_ref`) from mesh/material/doping
     context via `UnitScalingSystem`

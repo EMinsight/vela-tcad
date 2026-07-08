@@ -6,6 +6,7 @@
 #include "vela/core/UnitScalingSystem.h"
 #include "vela/equation/ChargeSpec.h"
 #include "vela/core/Types.h"
+#include "vela/core/UnitScaling.h"
 #include "vela/mesh/DeviceMesh.h"
 #include "vela/material/MaterialDatabase.h"
 #include "vela/physics/BandgapNarrowing.h"
@@ -156,7 +157,8 @@ DDSolution runGummel(const DeviceMesh&                          mesh,
 void writeDDSolutionVTK(const std::string&    filename,
                         const DeviceMesh&     mesh,
                         const DopingModel&    doping,
-                        const DDSolution&     sol);
+                        const DDSolution&     sol,
+                        UnitScalingConfig scaling = {});
 
 void writeDDSolutionVTK(const std::string& filename,
                         const DeviceMesh& mesh,
@@ -167,6 +169,7 @@ void writeDDSolutionVTK(const std::string& filename,
                         const RecombinationModelConfig& recombinationConfig,
                         const ImpactIonizationModelConfig& impactIonizationConfig,
                         const BandgapNarrowingConfig& bandgapNarrowingConfig,
-                        Real temperature_K = constants::T0);
+                        Real temperature_K = constants::T0,
+                        UnitScalingConfig scaling = {});
 
 } // namespace vela

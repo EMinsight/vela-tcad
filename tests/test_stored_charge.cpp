@@ -1,3 +1,4 @@
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <cmath>
 
@@ -22,6 +23,28 @@ vela::DeviceMesh makeTwoRegionMesh()
     return mesh;
 }
 
+TEST_CASE("StoredCharge unit_scaling uses TCAD density-area-depth factor", "[post][stored_charge][scaling]")
+{
+    const vela::DeviceMesh mesh = makeTwoRegionMesh();
+    vela::DDSolution sol;
+    sol.n = vela::VectorXd::Constant(4, 1.0e16);
+    sol.p = vela::VectorXd::Zero(4);
+
+    vela::StoredCharge sc(mesh, vela::PhysicalUnitSystem::tcadInternal());
+    vela::StoredChargeConfig cfg;
+    cfg.regions = {"left", "right"};
+    const auto perDepth = sc.compute(sol, cfg);
+
+    const double expectedPerUm = vela::constants::q * 1.0e16 * 1.0e-12;
+    REQUIRE(perDepth.perMeter);
+    REQUIRE(perDepth.charge == Catch::Approx(expectedPerUm));
+
+    cfg.perMeter = false;
+    cfg.depth_m = 2.0;
+    const auto total = sc.compute(sol, cfg);
+    REQUIRE_FALSE(total.perMeter);
+    REQUIRE(total.charge == Catch::Approx(2.0 * expectedPerUm));
+}
 } // namespace
 
 TEST_CASE("StoredCharge computes positive proxy for positive carriers", "[post][stored_charge]")

@@ -22,20 +22,30 @@ constexpr Real sentaurusFitSwitchField_V_per_cm = 2.5e5;
 Real inverseCmToInverseM(Real value) { return value * 100.0; }
 Real fieldVPerCmToVPerM(Real value) { return value * 100.0; }
 
+Real inverseCmToInternal(const ImpactIonizationModelConfig& config, Real value)
+{
+    return config.unitSystem.mInvToInternalInverseLength(inverseCmToInverseM(value));
+}
+
+Real fieldVPerCmToInternal(const ImpactIonizationModelConfig& config, Real value)
+{
+    return config.unitSystem.vPerMToInternalElectricField(fieldVPerCmToVPerM(value));
+}
+
 void applySentaurusFitA(ImpactIonizationModelConfig& config)
 {
-    config.electronALow = inverseCmToInverseM(electronFitLowA_cm_inv);
-    config.electronAHigh = inverseCmToInverseM(electronFitHighA_cm_inv);
-    config.holeALow = inverseCmToInverseM(holeFitLowA_cm_inv);
-    config.holeAHigh = inverseCmToInverseM(holeFitHighA_cm_inv);
+    config.electronALow = inverseCmToInternal(config, electronFitLowA_cm_inv);
+    config.electronAHigh = inverseCmToInternal(config, electronFitHighA_cm_inv);
+    config.holeALow = inverseCmToInternal(config, holeFitLowA_cm_inv);
+    config.holeAHigh = inverseCmToInternal(config, holeFitHighA_cm_inv);
 }
 
 void applySentaurusFitB(ImpactIonizationModelConfig& config)
 {
-    config.electronBLow = fieldVPerCmToVPerM(electronFitLowB_V_per_cm);
-    config.electronBHigh = fieldVPerCmToVPerM(electronFitHighB_V_per_cm);
-    config.holeBLow = fieldVPerCmToVPerM(holeFitLowB_V_per_cm);
-    config.holeBHigh = fieldVPerCmToVPerM(holeFitHighB_V_per_cm);
+    config.electronBLow = fieldVPerCmToInternal(config, electronFitLowB_V_per_cm);
+    config.electronBHigh = fieldVPerCmToInternal(config, electronFitHighB_V_per_cm);
+    config.holeBLow = fieldVPerCmToInternal(config, holeFitLowB_V_per_cm);
+    config.holeBHigh = fieldVPerCmToInternal(config, holeFitHighB_V_per_cm);
 }
 
 void applyVanOverstraetenAScale(ImpactIonizationModelConfig& config)
@@ -65,6 +75,32 @@ void applyVanOverstraetenDiagnosticScales(ImpactIonizationModelConfig& config)
 {
     applyVanOverstraetenAScale(config);
     applyVanOverstraetenBScale(config);
+}
+void convertImpactDefaultsToInternal(ImpactIonizationModelConfig& config,
+                                     UnitScalingConfig scaling)
+{
+    if (!scaling.isUnitScaling())
+        return;
+
+    const PhysicalUnitSystem& units = scaling.unitSystem();
+    config.electronDrivingForceRefDensity =
+        units.m3ToInternalConcentration(config.electronDrivingForceRefDensity);
+    config.holeDrivingForceRefDensity =
+        units.m3ToInternalConcentration(config.holeDrivingForceRefDensity);
+    config.minimumField = units.vPerMToInternalElectricField(config.minimumField);
+    config.electronA = units.mInvToInternalInverseLength(config.electronA);
+    config.electronB = units.vPerMToInternalElectricField(config.electronB);
+    config.holeA = units.mInvToInternalInverseLength(config.holeA);
+    config.holeB = units.vPerMToInternalElectricField(config.holeB);
+    config.electronALow = units.mInvToInternalInverseLength(config.electronALow);
+    config.electronAHigh = units.mInvToInternalInverseLength(config.electronAHigh);
+    config.electronBLow = units.vPerMToInternalElectricField(config.electronBLow);
+    config.electronBHigh = units.vPerMToInternalElectricField(config.electronBHigh);
+    config.holeALow = units.mInvToInternalInverseLength(config.holeALow);
+    config.holeAHigh = units.mInvToInternalInverseLength(config.holeAHigh);
+    config.holeBLow = units.vPerMToInternalElectricField(config.holeBLow);
+    config.holeBHigh = units.vPerMToInternalElectricField(config.holeBHigh);
+    config.switchField = units.vPerMToInternalElectricField(config.switchField);
 }
 
 } // namespace
@@ -225,9 +261,12 @@ Real VanOverstraetenImpactIonization::generationRate(Real electricField, Real n,
             holeCoefficient(electricField) * std::max(p, 0.0));
 }
 
-ImpactIonizationModelConfig impactIonizationModelConfig(std::string modelName)
+ImpactIonizationModelConfig impactIonizationModelConfig(std::string modelName,
+                                                           UnitScalingConfig scaling)
 {
     ImpactIonizationModelConfig config;
+    config.unitSystem = scaling.unitSystem();
+    convertImpactDefaultsToInternal(config, scaling);
     config.model = std::move(modelName);
     return config;
 }
@@ -257,7 +296,7 @@ ImpactIonizationModelConfig applyImpactIonizationParameterSet(
     if (config.parameterSet == "sentaurus_fit_A_B_switch") {
         applySentaurusFitA(config);
         applySentaurusFitB(config);
-        config.switchField = fieldVPerCmToVPerM(sentaurusFitSwitchField_V_per_cm);
+        config.switchField = fieldVPerCmToInternal(config, sentaurusFitSwitchField_V_per_cm);
         applyVanOverstraetenDiagnosticScales(config);
         return config;
     }

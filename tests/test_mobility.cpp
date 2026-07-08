@@ -112,13 +112,13 @@ TEST_CASE("JSON mobility object parses Masetti parameters with unit scaling",
     REQUIRE(cfg.model == "masetti");
     REQUIRE(cfg.highFieldDrivingForce == "electric_field");
     DopingDependentMobility mobility(cfg);
-    MaterialDatabase matdb;
+    MaterialDatabase matdb(UnitScalingConfig{UnitScalingMode::UnitScaling});
     const Material& si = matdb.getMaterial("Si");
 
-    REQUIRE(mobility.electronMobility(si, 1.0e23, 0.0, 0.0) ==
-            Catch::Approx(0.07270544030120773).epsilon(1.0e-12));
-    REQUIRE(mobility.holeMobility(si, 1.0e23, 0.0, 0.0) ==
-            Catch::Approx(0.03190980929489245).epsilon(1.0e-12));
+    REQUIRE(mobility.electronMobility(si, 1.0e17, 0.0, 0.0) ==
+            Catch::Approx(727.0544030120773).epsilon(1.0e-12));
+    REQUIRE(mobility.holeMobility(si, 1.0e17, 0.0, 0.0) ==
+            Catch::Approx(319.0980929489245).epsilon(1.0e-12));
 }
 
 
@@ -147,7 +147,27 @@ TEST_CASE("JSON solver config selects mobility and recombination models", "[mobi
     REQUIRE(cfg.bandgapNarrowing.coefficient == Catch::Approx(0.010));
 }
 
-TEST_CASE("JSON solver config unit_scaling normalizes mobility and field inputs",
+TEST_CASE("JSON solver config unit_scaling default mobility and impact parameters are TCAD internal",
+          "[mobility][json][scaling]")
+{
+    const nlohmann::json json = {
+        {"mobility", "caughey_thomas"},
+        {"impact_ionization", "selberherr"}
+    };
+
+    const GummelConfig cfg = gummelConfigFromJson(
+        json, UnitScalingConfig{UnitScalingMode::UnitScaling});
+
+    REQUIRE(cfg.mobility.electronCT.muMin == Catch::Approx(52.2));
+    REQUIRE(cfg.mobility.electronCT.nRef == Catch::Approx(9.68e16));
+    REQUIRE(cfg.mobility.holeCT.muMin == Catch::Approx(44.9));
+    REQUIRE(cfg.mobility.holeCT.nRef == Catch::Approx(2.23e17));
+    REQUIRE(cfg.impactIonization.electronA == Catch::Approx(7.03e5));
+    REQUIRE(cfg.impactIonization.electronB == Catch::Approx(1.231e6));
+    REQUIRE(cfg.impactIonization.holeA == Catch::Approx(1.582e6));
+    REQUIRE(cfg.impactIonization.holeB == Catch::Approx(2.036e6));
+}
+TEST_CASE("JSON solver config unit_scaling keeps mobility and field inputs internal",
           "[mobility][json][scaling]")
 {
     const nlohmann::json json = {
@@ -179,18 +199,18 @@ TEST_CASE("JSON solver config unit_scaling normalizes mobility and field inputs"
     const GummelConfig cfg = gummelConfigFromJson(
         json, UnitScalingConfig{UnitScalingMode::UnitScaling});
 
-    REQUIRE(cfg.mobility.electronCT.muMin == Catch::Approx(0.00522));
-    REQUIRE(cfg.mobility.electronCT.nRef == Catch::Approx(9.68e22));
-    REQUIRE(cfg.mobility.holeCT.muMin == Catch::Approx(0.00449));
-    REQUIRE(cfg.mobility.holeCT.nRef == Catch::Approx(2.23e23));
-    REQUIRE(cfg.mobility.surface.referenceField == Catch::Approx(1.5e6));
-    REQUIRE(cfg.mobility.surface.thetaElectron == Catch::Approx(1.0e-8));
-    REQUIRE(cfg.mobility.surface.thetaHole == Catch::Approx(2.0e-8));
-    REQUIRE(cfg.bandgapNarrowing.referenceDoping == Catch::Approx(1.0e23));
-    REQUIRE(cfg.impactIonization.electronA == Catch::Approx(7.03e7));
-    REQUIRE(cfg.impactIonization.electronB == Catch::Approx(1.231e8));
-    REQUIRE(cfg.impactIonization.holeA == Catch::Approx(1.582e8));
-    REQUIRE(cfg.impactIonization.holeB == Catch::Approx(2.036e8));
+    REQUIRE(cfg.mobility.electronCT.muMin == Catch::Approx(52.2));
+    REQUIRE(cfg.mobility.electronCT.nRef == Catch::Approx(9.68e16));
+    REQUIRE(cfg.mobility.holeCT.muMin == Catch::Approx(44.9));
+    REQUIRE(cfg.mobility.holeCT.nRef == Catch::Approx(2.23e17));
+    REQUIRE(cfg.mobility.surface.referenceField == Catch::Approx(1.5e4));
+    REQUIRE(cfg.mobility.surface.thetaElectron == Catch::Approx(1.0e-6));
+    REQUIRE(cfg.mobility.surface.thetaHole == Catch::Approx(2.0e-6));
+    REQUIRE(cfg.bandgapNarrowing.referenceDoping == Catch::Approx(1.0e17));
+    REQUIRE(cfg.impactIonization.electronA == Catch::Approx(7.03e5));
+    REQUIRE(cfg.impactIonization.electronB == Catch::Approx(1.231e6));
+    REQUIRE(cfg.impactIonization.holeA == Catch::Approx(1.582e6));
+    REQUIRE(cfg.impactIonization.holeB == Catch::Approx(2.036e6));
 }
 
 TEST_CASE("JSON mobility object parses high-field quasi-Fermi driving force",

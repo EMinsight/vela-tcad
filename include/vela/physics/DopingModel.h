@@ -10,19 +10,20 @@ namespace vela {
 /**
  * @brief Region-based doping specification for a single material region.
  *
- * All concentrations are in SI units [m^-3].
+ * Concentrations are stored in the active internal unit system: legacy SI [m^-3]
+ * or `unit_scaling` TCAD units [cm^-3].
  */
 struct RegionDopingSpec {
     std::string region;    ///< Region name (must match a Region::name in the mesh)
-    Real        donors;    ///< Donor concentration Nd [m^-3]
-    Real        acceptors; ///< Acceptor concentration Na [m^-3]
+    Real        donors;    ///< Donor concentration Nd in active internal units
+    Real        acceptors; ///< Acceptor concentration Na in active internal units
 };
 
 /**
  * @brief Per-node doping concentrations for the device.
  *
  * Stores donor (Nd) and acceptor (Na) concentrations at each mesh node
- * in units of m^-3.  Net doping is defined as Nd - Na.
+ * in active internal units. Net doping is defined as Nd - Na.
  *
  * Populated either directly via setNodeDoping() or via the static
  * factory fromMeshAndRegions() which maps region-based doping specs
@@ -39,10 +40,10 @@ public:
     Real donors   (Index nodeId) const;
     Real acceptors(Index nodeId) const;
 
-    /// Net doping = donors - acceptors [m^-3].
+    /// Net doping = donors - acceptors in active internal units.
     Real netDoping(Index nodeId) const;
 
-    /// Total ionized impurity concentration = donors + acceptors [m^-3].
+    /// Total ionized impurity concentration = donors + acceptors in active internal units.
     Real totalImpurity(Index nodeId) const;
 
     Index numNodes() const { return static_cast<Index>(donors_.size()); }

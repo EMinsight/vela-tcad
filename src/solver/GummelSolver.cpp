@@ -48,11 +48,11 @@ void parseImpactIonizationDrivingForceInterpolation(
     config.drivingForceInterpolation = interpolation.value(
         "mode", config.drivingForceInterpolation);
     if (interpolation.contains("electron_ref_density_m3")) {
-        config.electronDrivingForceRefDensity = scaling.concentrationToSI(
+        config.electronDrivingForceRefDensity = scaling.concentrationToInternal(
             interpolation.at("electron_ref_density_m3").get<Real>());
     }
     if (interpolation.contains("hole_ref_density_m3")) {
-        config.holeDrivingForceRefDensity = scaling.concentrationToSI(
+        config.holeDrivingForceRefDensity = scaling.concentrationToInternal(
             interpolation.at("hole_ref_density_m3").get<Real>());
     }
 }
@@ -172,7 +172,7 @@ GummelConfig gummelConfigFromJson(const nlohmann::json& json, UnitScalingConfig 
             cfg.bandgapNarrowing = bandgapNarrowingConfig(
                 value.value("model", cfg.bandgapNarrowing.model));
             if (value.contains("reference_doping_m3")) {
-                cfg.bandgapNarrowing.referenceDoping = scaling.concentrationToSI(
+                cfg.bandgapNarrowing.referenceDoping = scaling.concentrationToInternal(
                     value.at("reference_doping_m3").get<Real>());
             }
             cfg.bandgapNarrowing.coefficient = value.value(
@@ -202,9 +202,11 @@ GummelConfig gummelConfigFromJson(const nlohmann::json& json, UnitScalingConfig 
     if (json.contains("impact_ionization")) {
         const auto& value = json.at("impact_ionization");
         if (value.is_string()) {
-            cfg.impactIonization.model = value.get<std::string>();
+            cfg.impactIonization = impactIonizationModelConfig(
+                value.get<std::string>(), scaling);
         } else if (value.is_object()) {
-            cfg.impactIonization.model = value.value("model", cfg.impactIonization.model);
+            cfg.impactIonization = impactIonizationModelConfig(
+                value.value("model", cfg.impactIonization.model), scaling);
             cfg.impactIonization.parameterSet = value.value(
                 "parameter_set", cfg.impactIonization.parameterSet);
             cfg.impactIonization.drivingForce = value.value(
@@ -239,7 +241,7 @@ GummelConfig gummelConfigFromJson(const nlohmann::json& json, UnitScalingConfig 
             cfg.impactIonization.quasiFermiCarrierTruncation = value.value(
                 "quasi_fermi_carrier_trucation",
                 cfg.impactIonization.quasiFermiCarrierTruncation);
-            cfg.impactIonization.minimumField = scaling.electricFieldToSI(value.value(
+            cfg.impactIonization.minimumField = scaling.electricFieldToInternal(value.value(
                 "minimum_field_V_m", cfg.impactIonization.minimumField));
             cfg.impactIonization.debugRawVanOverstraeten = value.value(
                 "debug_raw_vanoverstraeten",
@@ -249,55 +251,55 @@ GummelConfig gummelConfigFromJson(const nlohmann::json& json, UnitScalingConfig 
             cfg.impactIonization.bScale = value.value(
                 "B_scale", cfg.impactIonization.bScale);
             if (value.contains("electron_A_m_inv")) {
-                cfg.impactIonization.electronA = scaling.inverseLengthToSI(
+                cfg.impactIonization.electronA = scaling.inverseLengthToInternal(
                     value.at("electron_A_m_inv").get<Real>());
             }
             if (value.contains("electron_B_V_m")) {
-                cfg.impactIonization.electronB = scaling.electricFieldToSI(
+                cfg.impactIonization.electronB = scaling.electricFieldToInternal(
                     value.at("electron_B_V_m").get<Real>());
             }
             if (value.contains("hole_A_m_inv")) {
-                cfg.impactIonization.holeA = scaling.inverseLengthToSI(
+                cfg.impactIonization.holeA = scaling.inverseLengthToInternal(
                     value.at("hole_A_m_inv").get<Real>());
             }
             if (value.contains("hole_B_V_m")) {
-                cfg.impactIonization.holeB = scaling.electricFieldToSI(
+                cfg.impactIonization.holeB = scaling.electricFieldToInternal(
                     value.at("hole_B_V_m").get<Real>());
             }
             if (value.contains("electron_a_low_m_inv")) {
-                cfg.impactIonization.electronALow = scaling.inverseLengthToSI(
+                cfg.impactIonization.electronALow = scaling.inverseLengthToInternal(
                     value.at("electron_a_low_m_inv").get<Real>());
             }
             if (value.contains("electron_a_high_m_inv")) {
-                cfg.impactIonization.electronAHigh = scaling.inverseLengthToSI(
+                cfg.impactIonization.electronAHigh = scaling.inverseLengthToInternal(
                     value.at("electron_a_high_m_inv").get<Real>());
             }
             if (value.contains("electron_b_low_V_m")) {
-                cfg.impactIonization.electronBLow = scaling.electricFieldToSI(
+                cfg.impactIonization.electronBLow = scaling.electricFieldToInternal(
                     value.at("electron_b_low_V_m").get<Real>());
             }
             if (value.contains("electron_b_high_V_m")) {
-                cfg.impactIonization.electronBHigh = scaling.electricFieldToSI(
+                cfg.impactIonization.electronBHigh = scaling.electricFieldToInternal(
                     value.at("electron_b_high_V_m").get<Real>());
             }
             if (value.contains("hole_a_low_m_inv")) {
-                cfg.impactIonization.holeALow = scaling.inverseLengthToSI(
+                cfg.impactIonization.holeALow = scaling.inverseLengthToInternal(
                     value.at("hole_a_low_m_inv").get<Real>());
             }
             if (value.contains("hole_a_high_m_inv")) {
-                cfg.impactIonization.holeAHigh = scaling.inverseLengthToSI(
+                cfg.impactIonization.holeAHigh = scaling.inverseLengthToInternal(
                     value.at("hole_a_high_m_inv").get<Real>());
             }
             if (value.contains("hole_b_low_V_m")) {
-                cfg.impactIonization.holeBLow = scaling.electricFieldToSI(
+                cfg.impactIonization.holeBLow = scaling.electricFieldToInternal(
                     value.at("hole_b_low_V_m").get<Real>());
             }
             if (value.contains("hole_b_high_V_m")) {
-                cfg.impactIonization.holeBHigh = scaling.electricFieldToSI(
+                cfg.impactIonization.holeBHigh = scaling.electricFieldToInternal(
                     value.at("hole_b_high_V_m").get<Real>());
             }
             if (value.contains("switch_field_V_m")) {
-                cfg.impactIonization.switchField = scaling.electricFieldToSI(
+                cfg.impactIonization.switchField = scaling.electricFieldToInternal(
                     value.at("switch_field_V_m").get<Real>());
             }
             cfg.impactIonization.phononEnergy = value.value(
@@ -360,7 +362,7 @@ DDSolution runGummelImpl(const DeviceMesh&                          mesh,
         const UnitScalingSystem::AutoInputs autoInputs = UnitScalingSystem::autoInputsFrom(
             mesh, doping, matdb, niFloor);
         const UnitScalingSystem scalingSystem = UnitScalingSystem::fromInputs(
-            cfg.temperature_K, epsRef, autoInputs, cfg.unitScalingRefs);
+            cfg.temperature_K, epsRef, autoInputs, cfg.unitScalingRefs, cfg.inputScaling.unitSystem());
 
         ddScaling.enabled = true;
         ddScaling.V0 = scalingSystem.V0();
@@ -369,6 +371,13 @@ DDSolution runGummelImpl(const DeviceMesh&                          mesh,
         ddScaling.D0 = scalingSystem.D0();
         ddScaling.L0 = scalingSystem.L0();
         ddScaling.permittivityReference_F_per_m = epsRef;
+        ddScaling.unitSystem = cfg.inputScaling.unitSystem();
+        ddScaling.chargeVolumeFactor = cfg.inputScaling.unitSystem().chargeVolumeFactor();
+        ddScaling.chargeSheetFactor = cfg.inputScaling.unitSystem().chargeSheetFactor();
+        ddScaling.fieldFromCoordinateDeltaFactor = cfg.inputScaling.unitSystem().fieldFromCoordinateDeltaFactor();
+        ddScaling.currentDensityLineIntegralFactor =
+            cfg.inputScaling.unitSystem().currentDensityAM2PerInternal() *
+            cfg.inputScaling.unitSystem().areaM2PerInternal();
     }
 
     // Look up a contact-region material for Schottky barrier helpers.
@@ -785,51 +794,54 @@ DDSolution runGummel(const DeviceMesh&                          mesh,
 
 namespace {
 
-std::vector<Point3> cellFieldVectorsVcm(const std::vector<CellField2>& fields)
+std::vector<Point3> cellFieldVectorsVcm(const std::vector<CellField2>& fields, Real scaleToVcm)
 {
     std::vector<Point3> out(fields.size(), Point3::Zero());
     for (std::size_t i = 0; i < fields.size(); ++i)
-        out[i] = Point3{fields[i].vector.x() / 100.0, fields[i].vector.y() / 100.0, 0.0};
+        out[i] = Point3{fields[i].vector.x() * scaleToVcm, fields[i].vector.y() * scaleToVcm, 0.0};
     return out;
 }
 
-std::vector<Real> cellFieldMagnitudesVcm(const std::vector<CellField2>& fields)
+std::vector<Real> cellFieldMagnitudesVcm(const std::vector<CellField2>& fields, Real scaleToVcm)
 {
     std::vector<Real> out(fields.size(), 0.0);
     for (std::size_t i = 0; i < fields.size(); ++i)
-        out[i] = fields[i].magnitude / 100.0;
+        out[i] = fields[i].magnitude * scaleToVcm;
     return out;
 }
 
-std::vector<Point3> nodeFieldVectorsVcm(const std::vector<NodeField2>& fields)
+std::vector<Point3> nodeFieldVectorsVcm(const std::vector<NodeField2>& fields, Real scaleToVcm)
 {
     std::vector<Point3> out(fields.size(), Point3::Zero());
     for (std::size_t i = 0; i < fields.size(); ++i)
-        out[i] = Point3{fields[i].vector.x() / 100.0, fields[i].vector.y() / 100.0, 0.0};
+        out[i] = Point3{fields[i].vector.x() * scaleToVcm, fields[i].vector.y() * scaleToVcm, 0.0};
     return out;
 }
 
-std::vector<Real> nodeFieldMagnitudesVcm(const std::vector<NodeField2>& fields)
+std::vector<Real> nodeFieldMagnitudesVcm(const std::vector<NodeField2>& fields, Real scaleToVcm)
 {
     std::vector<Real> out(fields.size(), 0.0);
     for (std::size_t i = 0; i < fields.size(); ++i)
-        out[i] = fields[i].magnitude / 100.0;
+        out[i] = fields[i].magnitude * scaleToVcm;
     return out;
 }
 
 void writeRecoveredElectricFields(VTKWriter& writer,
                                   const DeviceMesh& mesh,
-                                  const DDSolution& sol)
+                                  const DDSolution& sol,
+                                  const UnitScalingConfig& scaling)
 {
+    const Real scaleToVcm = scaling.unitSystem().fieldFromCoordinateDeltaFactor() *
+        scaling.unitSystem().electricFieldVPerMPerInternal() / 100.0;
     const auto cellElectric = computeCellElectricField(mesh, sol.psi);
     const auto cellElectronQf = computeCellGradElectronQuasiFermi(mesh, sol.phin);
     const auto cellHoleQf = computeCellGradHoleQuasiFermi(mesh, sol.phip);
-    writer.addCellVector("CellElectricField", cellFieldVectorsVcm(cellElectric));
-    writer.addCellScalar("CellElectricFieldMagnitude", cellFieldMagnitudesVcm(cellElectric));
-    writer.addCellVector("CellGradElectronQuasiFermi", cellFieldVectorsVcm(cellElectronQf));
-    writer.addCellScalar("CellGradElectronQuasiFermiMagnitude", cellFieldMagnitudesVcm(cellElectronQf));
-    writer.addCellVector("CellGradHoleQuasiFermi", cellFieldVectorsVcm(cellHoleQf));
-    writer.addCellScalar("CellGradHoleQuasiFermiMagnitude", cellFieldMagnitudesVcm(cellHoleQf));
+    writer.addCellVector("CellElectricField", cellFieldVectorsVcm(cellElectric, scaleToVcm));
+    writer.addCellScalar("CellElectricFieldMagnitude", cellFieldMagnitudesVcm(cellElectric, scaleToVcm));
+    writer.addCellVector("CellGradElectronQuasiFermi", cellFieldVectorsVcm(cellElectronQf, scaleToVcm));
+    writer.addCellScalar("CellGradElectronQuasiFermiMagnitude", cellFieldMagnitudesVcm(cellElectronQf, scaleToVcm));
+    writer.addCellVector("CellGradHoleQuasiFermi", cellFieldVectorsVcm(cellHoleQf, scaleToVcm));
+    writer.addCellScalar("CellGradHoleQuasiFermiMagnitude", cellFieldMagnitudesVcm(cellHoleQf, scaleToVcm));
 
     const auto area = computeNodeElectricFieldAreaAverage(mesh, sol.psi);
     const auto ls1d = computeNodeElectricFieldLeastSquares(
@@ -842,18 +854,18 @@ void writeRecoveredElectricFields(VTKWriter& writer,
         mesh, sol.psi, ElectricFieldCircumcenterWeight::AreaOverDistance);
     const auto spr = computeNodeElectricFieldSPR(mesh, sol.psi);
 
-    writer.addNodeScalar("NodeElectricField_AreaAverage", nodeFieldMagnitudesVcm(area));
-    writer.addNodeVector("NodeElectricField_AreaAverageVector", nodeFieldVectorsVcm(area));
-    writer.addNodeScalar("NodeElectricField_LS_1overD", nodeFieldMagnitudesVcm(ls1d));
-    writer.addNodeVector("NodeElectricField_LS_1overDVector", nodeFieldVectorsVcm(ls1d));
-    writer.addNodeScalar("NodeElectricField_LS_1overD2", nodeFieldMagnitudesVcm(ls1d2));
-    writer.addNodeVector("NodeElectricField_LS_1overD2Vector", nodeFieldVectorsVcm(ls1d2));
-    writer.addNodeScalar("NodeElectricField_Circumcenter1overD", nodeFieldMagnitudesVcm(circum1d));
-    writer.addNodeVector("NodeElectricField_Circumcenter1overDVector", nodeFieldVectorsVcm(circum1d));
-    writer.addNodeScalar("NodeElectricField_CircumcenterAreaOverD", nodeFieldMagnitudesVcm(circumArea1d));
-    writer.addNodeVector("NodeElectricField_CircumcenterAreaOverDVector", nodeFieldVectorsVcm(circumArea1d));
-    writer.addNodeScalar("NodeElectricField_SPR", nodeFieldMagnitudesVcm(spr));
-    writer.addNodeVector("NodeElectricField_SPRVector", nodeFieldVectorsVcm(spr));
+    writer.addNodeScalar("NodeElectricField_AreaAverage", nodeFieldMagnitudesVcm(area, scaleToVcm));
+    writer.addNodeVector("NodeElectricField_AreaAverageVector", nodeFieldVectorsVcm(area, scaleToVcm));
+    writer.addNodeScalar("NodeElectricField_LS_1overD", nodeFieldMagnitudesVcm(ls1d, scaleToVcm));
+    writer.addNodeVector("NodeElectricField_LS_1overDVector", nodeFieldVectorsVcm(ls1d, scaleToVcm));
+    writer.addNodeScalar("NodeElectricField_LS_1overD2", nodeFieldMagnitudesVcm(ls1d2, scaleToVcm));
+    writer.addNodeVector("NodeElectricField_LS_1overD2Vector", nodeFieldVectorsVcm(ls1d2, scaleToVcm));
+    writer.addNodeScalar("NodeElectricField_Circumcenter1overD", nodeFieldMagnitudesVcm(circum1d, scaleToVcm));
+    writer.addNodeVector("NodeElectricField_Circumcenter1overDVector", nodeFieldVectorsVcm(circum1d, scaleToVcm));
+    writer.addNodeScalar("NodeElectricField_CircumcenterAreaOverD", nodeFieldMagnitudesVcm(circumArea1d, scaleToVcm));
+    writer.addNodeVector("NodeElectricField_CircumcenterAreaOverDVector", nodeFieldVectorsVcm(circumArea1d, scaleToVcm));
+    writer.addNodeScalar("NodeElectricField_SPR", nodeFieldMagnitudesVcm(spr, scaleToVcm));
+    writer.addNodeVector("NodeElectricField_SPRVector", nodeFieldVectorsVcm(spr, scaleToVcm));
 }
 
 } // namespace
@@ -864,13 +876,14 @@ void writeRecoveredElectricFields(VTKWriter& writer,
 void writeDDSolutionVTK(const std::string& filename,
                         const DeviceMesh&  mesh,
                         const DopingModel& doping,
-                        const DDSolution&  sol)
+                        const DDSolution&  sol,
+                        UnitScalingConfig scaling)
 {
     const Index N = mesh.numNodes();
 
     VTKWriter writer(filename, mesh);
     writer.write();
-    writeRecoveredElectricFields(writer, mesh, sol);
+    writeRecoveredElectricFields(writer, mesh, sol, scaling);
 
     auto toVec = [&](const VectorXd& v) {
         std::vector<Real> out(N);
@@ -900,12 +913,13 @@ void writeDDSolutionVTK(const std::string& filename,
                         const RecombinationModelConfig& recombinationConfig,
                         const ImpactIonizationModelConfig& impactIonizationConfig,
                         const BandgapNarrowingConfig& bandgapNarrowingConfig,
-                        Real temperature_K)
+                        Real temperature_K,
+                        UnitScalingConfig scaling)
 {
     const Index N = mesh.numNodes();
     VTKWriter writer(filename, mesh);
     writer.write();
-    writeRecoveredElectricFields(writer, mesh, sol);
+    writeRecoveredElectricFields(writer, mesh, sol, scaling);
 
     auto toVec = [&](const VectorXd& v) {
         std::vector<Real> out(N);
@@ -926,6 +940,8 @@ void writeDDSolutionVTK(const std::string& filename,
     writer.addNodeScalar("NetDoping", netDop);
 
     const auto nodeCells = detail::buildNodeCellMap(mesh);
+    const Real fieldFactor = scaling.unitSystem().fieldFromCoordinateDeltaFactor();
+    const Real scaleToVcm = scaling.unitSystem().electricFieldVPerMPerInternal() / 100.0;
     const std::vector<Point2> electricFieldGradient_V_m =
         detail::computeNodeWeightedLeastSquaresGradients(
             mesh, nodeCells, [&](Index node) { return sol.psi(static_cast<int>(node)); });
@@ -939,9 +955,9 @@ void writeDDSolutionVTK(const std::string& filename,
     std::vector<Real> electronQfGradient_V_m(N, 0.0);
     std::vector<Real> holeQfGradient_V_m(N, 0.0);
     for (Index i = 0; i < N; ++i) {
-        electricField_V_m[i] = electricFieldGradient_V_m[i].norm();
-        electronQfGradient_V_m[i] = electronQfGradientVector_V_m[i].norm();
-        holeQfGradient_V_m[i] = holeQfGradientVector_V_m[i].norm();
+        electricField_V_m[i] = electricFieldGradient_V_m[i].norm() * fieldFactor;
+        electronQfGradient_V_m[i] = electronQfGradientVector_V_m[i].norm() * fieldFactor;
+        holeQfGradient_V_m[i] = holeQfGradientVector_V_m[i].norm() * fieldFactor;
     }
     const bool qfMobility =
         mobilityConfig.highFieldDrivingForce == "quasi_fermi_gradient";
@@ -955,10 +971,10 @@ void writeDDSolutionVTK(const std::string& filename,
     std::vector<Real> electricField_V_cm(N, 0.0);
     std::vector<Point3> electricFieldVector_V_cm(N, Point3::Zero());
     for (Index i = 0; i < N; ++i) {
-        electricField_V_cm[i] = electricField_V_m[i] / 100.0;
+        electricField_V_cm[i] = electricField_V_m[i] * scaleToVcm;
         electricFieldVector_V_cm[i] = Point3{
-            -electricFieldGradient_V_m[i].x() / 100.0,
-            -electricFieldGradient_V_m[i].y() / 100.0,
+            -electricFieldGradient_V_m[i].x() * fieldFactor * scaleToVcm,
+            -electricFieldGradient_V_m[i].y() * fieldFactor * scaleToVcm,
             0.0};
     }
     writer.addNodeScalar("ElectricField", electricField_V_cm);
@@ -1104,8 +1120,8 @@ void writeDDSolutionVTK(const std::string& filename,
         holeAlphaAvalanche[i] = impact->holeCoefficient(holeImpactField);
         const Real electronMobilityField = electronMobilityDrive_V_m[i];
         const Real holeMobilityField = holeMobilityDrive_V_m[i];
-        electronHighFieldDrive_V_cm[i] = electronMobilityField / 100.0;
-        holeHighFieldDrive_V_cm[i] = holeMobilityField / 100.0;
+        electronHighFieldDrive_V_cm[i] = electronMobilityField * scaleToVcm;
+        holeHighFieldDrive_V_cm[i] = holeMobilityField * scaleToVcm;
         electronLowFieldMobility[i] = mobility->electronMobility(
             nodeMaterials[i], doping.netDoping(i), n, p, 0.0);
         holeLowFieldMobility[i] = mobility->holeMobility(

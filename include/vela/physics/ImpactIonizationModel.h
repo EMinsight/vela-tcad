@@ -1,12 +1,14 @@
 #pragma once
 
 #include "vela/core/Types.h"
+#include "vela/core/UnitScaling.h"
 #include <memory>
 #include <string>
 
 namespace vela {
 
 struct ImpactIonizationModelConfig {
+    PhysicalUnitSystem unitSystem = PhysicalUnitSystem::legacySI();
     std::string model = "none";
     std::string parameterSet = "default";
     std::string drivingForce = "electric_field";
@@ -95,7 +97,9 @@ private:
     ImpactIonizationModelConfig config_;
 };
 
-ImpactIonizationModelConfig impactIonizationModelConfig(std::string modelName);
+ImpactIonizationModelConfig impactIonizationModelConfig(
+    std::string modelName,
+    UnitScalingConfig scaling = {});
 ImpactIonizationModelConfig applyImpactIonizationParameterSet(
     ImpactIonizationModelConfig config);
 std::unique_ptr<ImpactIonizationModel> makeImpactIonizationModel(

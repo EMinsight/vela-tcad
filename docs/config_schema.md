@@ -84,10 +84,12 @@ In `unit_scaling` mode, input values use common external TCAD units:
 `scaling.mode` does not accept `si` or non-public aliases.
 Field names with explicit unit suffixes remain the stable public names; this
 mode defines how their numeric values are read at the schema boundary.
-The conversion is applied while reading mesh coordinates, material override
+The interpretation is applied while reading mesh coordinates, material override
 files, doping, region fixed charge, interface sheet/trap charge, mobility
-settings, and electric-field-related solver settings. The Poisson and
-drift-diffusion assemblers continue to receive SI values.
+settings, and electric-field-related solver settings. In `unit_scaling`, these
+values remain in TCAD internal units (um, cm^-3, cm^-2, cm^2/(V s),
+V/cm, cm^-1, cm/V) and the assemblers apply named composite factors where
+geometry and charge/current units meet.
 
 Poisson driver note:
 - In legacy mode (no `scaling`), Poisson uses the historical SI assembly path.
@@ -95,7 +97,7 @@ Poisson driver note:
   and restores physical potential before producing outputs.
 - VTK `potential_V` remains the physical potential in volts in both modes.
 
-CSV output keeps the legacy SI columns for compatibility. In `unit_scaling`
+CSV output keeps the legacy column names for compatibility. In `unit_scaling`
 mode, DC sweep CSV output also appends convenience columns using common
 external TCAD display units, such as `current_total_A_per_um`,
 `current_electron_A_per_um`, `current_hole_A_per_um`, `charge_C_per_um`,
@@ -147,8 +149,7 @@ Notes:
 - Doping uses net doping `Nd - Na` per region.
 - `fixed_charge_m3` may be specified either in `doping[]` or `regions[]` for a region, but not both.
 - With `scaling.mode: "unit_scaling"`, `donors`, `acceptors`, and
-  `fixed_charge_m3` numeric inputs are read as `cm^-3` and normalized to
-  `m^-3` internally.
+  `fixed_charge_m3` numeric inputs are read and kept internally as `cm^-3`.
 
 ### node_doping_file
 
@@ -164,7 +165,7 @@ rejected.
 
 With `scaling.mode: "unit_scaling"`, the donor and acceptor concentrations in
 the CSV use the same external concentration convention as deck-level doping:
-`cm^-3`, normalized to `m^-3` internally. In legacy SI mode, the same values are
+`cm^-3` and are kept internally as `cm^-3`. In legacy SI mode, the same values are
 read through the legacy concentration path.
 
 ### regions[] entries
@@ -177,7 +178,7 @@ Notes:
 - Region `fixed_charge_m3` is additive source charge for Poisson and for drift-diffusion Poisson substeps.
 - Duplicate definitions for the same region are rejected.
 - With `scaling.mode: "unit_scaling"`, `fixed_charge_m3` numeric inputs are
-  read as `cm^-3` and normalized to `m^-3` internally.
+  read and kept internally as `cm^-3`.
 
 ### interfaces[] entries
 
@@ -200,7 +201,7 @@ Notes:
 - The trap model is a quasi-static prototype: `trap_occupancy` is a fixed user-supplied constant for the whole run/sweep. Bias-dependent trap occupancy, frequency dispersion, and trap statistics are not implemented.
 - With `scaling.mode: "unit_scaling"`, `sheet_charge_m2`,
   `fixed_charge_m2`, and `trap_density_m2` numeric inputs are read as
-  `cm^-2` and normalized to `m^-2` internally.
+  `cm^-2` and kept internally as `cm^-2`.
 
 ## contacts[]
 
@@ -262,7 +263,7 @@ Unit interpretation:
 - The field name `normal_displacement_C_per_m2` is stable for compatibility.
 - Legacy mode reads numeric values as SI displacement (`C/m^2`).
 - `unit_scaling` mode reads numeric values in common TCAD area units
-  (`C/cm^2`) and normalizes to SI before assembly.
+  (`C/cm^2`) and assembles it with the active internal area convention.
 
 About node_ids or edge_node_pairs:
 - `node_ids` polyline is the implemented path.
@@ -394,7 +395,7 @@ Notes:
   Negative values are rejected by the recombination model validation.
 - Both Gummel/Newton parse `mobility`, `recombination`, `impact_ionization`, `temperature_K`.
 - With `scaling.mode: "unit_scaling"`, `bandgap_narrowing.reference_doping_m3`
-  is read as `cm^-3` and normalized to `m^-3`.
+  is read and kept internally as `cm^-3`.
 
 `gummel_newton` runs the configured Gummel solve first, validates that solution,
 then runs coupled Newton with `warm_start=true` from the Gummel state. The
@@ -482,7 +483,7 @@ material intrinsic-density override, while the `old_slotboom` BGN term uses
 `Ebgn = 9e-3 eV`, `Nref = 1e17 cm^-3`, and `C = 0.5`. This is implemented in
 Gummel and Newton configurations. With
 `scaling.mode: "unit_scaling"`, `reference_doping_m3` numeric input is read as
-`cm^-3` and normalized to `m^-3`.
+`cm^-3` and kept internally as `cm^-3`.
 
 ### Newton diagnostics and residual options
 
@@ -632,7 +633,7 @@ Scaling:
 - With `scaling.mode: "unit_scaling"`, `electron_A_m_inv` and
   `hole_A_m_inv` numeric inputs are read as `cm^-1`, while
   `electron_B_V_m` and `hole_B_V_m` are read as `V/cm`. They are normalized
-  to `1/m` and `V/m` before the impact-ionization model sees them.
+  as internal `cm^-1` and `V/cm` values before the impact-ionization model sees them.
 - The Van Overstraeten model also accepts split low/high-field parameters:
   `electron_a_low_m_inv`, `electron_a_high_m_inv`, `electron_b_low_V_m`,
   `electron_b_high_V_m`, `hole_a_low_m_inv`, `hole_a_high_m_inv`,
@@ -710,7 +711,7 @@ The first implementation estimates `E_normal` with the local edge electric-field
 With `scaling.mode: "unit_scaling"`, Caughey-Thomas and Masetti mobility
 values are read as `cm^2/(V s)`, reference dopings as `cm^-3`, surface
 reference fields as `V/cm`, and surface theta coefficients as `cm/V`. They are
-normalized to `m^2/(V s)`, `m^-3`, `V/m`, and `m/V` before mobility evaluation.
+kept internally as `cm^2/(V s)`, `cm^-3`, `V/cm`, and `cm/V` before mobility evaluation.
 
 ## sweep
 
@@ -759,7 +760,7 @@ node_id,psi,phin,phip,electrons_m3,holes_m3
 ```
 
 Rows must cover every mesh node exactly once by `node_id`. All state values are
-stored in SI solver units: potentials in V and carrier densities in `m^-3`.
+stored in active internal solver units: potentials in V and carrier densities in legacy `m^-3` or `unit_scaling` `cm^-3`.
 For checkpoint-style BV runs, set `write_state_file` during the first run, then
 resume from the latest converged point with `initial_state_file` plus either a
 new adaptive range or `bias_points` for selected target biases. Sweep CSV files
@@ -840,7 +841,7 @@ when the two Sentaurus outputs exceed the configured relative tolerance.
 For 2-D devices, currents and terminal charges are per-depth quantities by
 default. Legacy CSV current values are per meter of device depth, and
 `charge_C_per_m` / `capacitance_F_per_m` are also per meter. In
-`unit_scaling` mode the CSV keeps those legacy columns and appends per-micron
+`unit_scaling` mode the CSV keeps those legacy column names but their numeric values are active internal units; it also appends per-micron
 display columns (`*_A_per_um`, `charge_C_per_um`, `capacitance_F_per_um`) by
 dividing per-meter values by `1e6`.
 
@@ -988,8 +989,8 @@ breakdown (for BV reverse):
 - breakdown.current_jump_ratio
 - breakdown.non_convergence
 
-In `unit_scaling` mode, BV CSV output keeps `max_electric_field_V_per_m` and
-also appends `max_electric_field_V_per_cm` by dividing the SI value by `100`.
+In `unit_scaling` mode, BV CSV output keeps `max_electric_field_V_per_m` as a compatibility column name using active internal electric-field values, and
+also appends `max_electric_field_V_per_cm` using the active unit system conversion.
 
 Legacy aliases still accepted:
 - breakdown_max_electric_field_V_per_m

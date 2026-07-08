@@ -277,7 +277,7 @@ TEST_CASE("DopingModel: total impurity is separate from signed net doping", "[do
     REQUIRE(doping.totalImpurity(0) == Catch::Approx(2.0e23));
 }
 
-TEST_CASE("ConfigParsing unit_scaling converts cm^-3 doping to m^-3",
+TEST_CASE("ConfigParsing unit_scaling keeps cm^-3 doping internal",
           "[poisson][doping][scaling]")
 {
     DeviceMesh mesh = makePNMesh();
@@ -301,11 +301,10 @@ TEST_CASE("ConfigParsing unit_scaling converts cm^-3 doping to m^-3",
         mesh, parseDopingSpecs(scaledCfg, parseUnitScalingConfig(scaledCfg)));
 
     REQUIRE(scaled.numNodes() == legacy.numNodes());
-    for (Index i = 0; i < legacy.numNodes(); ++i) {
-        REQUIRE(scaled.donors(i) == Catch::Approx(legacy.donors(i)));
-        REQUIRE(scaled.acceptors(i) == Catch::Approx(legacy.acceptors(i)));
-        REQUIRE(scaled.netDoping(i) == Catch::Approx(legacy.netDoping(i)));
-    }
+    REQUIRE(scaled.donors(1) == Catch::Approx(1.0e17));
+    REQUIRE(scaled.acceptors(3) == Catch::Approx(1.0e17));
+    REQUIRE(scaled.netDoping(1) == Catch::Approx(1.0e17));
+    REQUIRE(scaled.netDoping(3) == Catch::Approx(-1.0e17));
 }
 
 TEST_CASE("UnitScalingConfig rejects scaling.system aliases",
@@ -852,7 +851,7 @@ TEST_CASE("PoissonSimulation: external new material can be used for assembly", "
 
 }
 
-TEST_CASE("PoissonSimulation: unit_scaling Neumann displacement matches legacy physical result",
+TEST_CASE("PoissonSimulation: unit_scaling Neumann displacement matches legacy per-depth result",
           "[poisson][boundary][scaling]")
 {
     const auto tempLegacy = makePoissonTempDir("vela_poisson_legacy_neumann_scaling");
@@ -880,7 +879,7 @@ TEST_CASE("PoissonSimulation: unit_scaling Neumann displacement matches legacy p
             {{"name", "midline_neumann"},
              {"type", "neumann"},
              {"node_ids", {2, 3}},
-             {"normal_displacement_C_per_m2", 1.0e-8}}
+             {"normal_displacement_C_per_m2", 1.0e-14}}
         }}
     };
 

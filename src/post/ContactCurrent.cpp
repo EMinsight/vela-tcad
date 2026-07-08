@@ -130,8 +130,7 @@ ContactCurrentDetailedResult ContactCurrent::computeDetailed(
         const int i = static_cast<int>(edge.n0);
         const int j = static_cast<int>(edge.n1);
 
-        // The solver returns physical DDSolution fields, so current post-processing
-        // always operates in SI units regardless of the optional scaling config.
+        // The solver returns physical DDSolution fields in the active internal unit system.
         const Real psi_i = solution.psi(i);
         const Real psi_j = solution.psi(j);
         const Real n_i = solution.n(i);
@@ -141,7 +140,11 @@ ContactCurrentDetailedResult ContactCurrent::computeDetailed(
         const Real dpsi = psi_j - psi_i;
         const Real edgeLength = edge.length;
 
-        const Real electricField = std::abs(dpsi / edgeLength);
+        const Real fieldFactor = scaling_.enabled ? scaling_.fieldFromCoordinateDeltaFactor : 1.0;
+        const Real currentLineFactor = scaling_.enabled
+            ? scaling_.currentDensityLineIntegralFactor
+            : 1.0;
+        const Real electricField = std::abs(dpsi / edgeLength) * fieldFactor;
         const Real phin_i = solution.phin(i);
         const Real phin_j = solution.phin(j);
         const Real phip_i = solution.phip(i);
@@ -157,11 +160,11 @@ ContactCurrentDetailedResult ContactCurrent::computeDetailed(
         }
         const Real electronMobilityField =
             mobilityConfig_.highFieldDrivingForce == "quasi_fermi_gradient"
-            ? std::abs((phin_j - phin_i) / edgeLength)
+            ? std::abs((phin_j - phin_i) / edgeLength) * fieldFactor
             : electricField;
         const Real holeMobilityField =
             mobilityConfig_.highFieldDrivingForce == "quasi_fermi_gradient"
-            ? std::abs((phip_j - phip_i) / edgeLength)
+            ? std::abs((phip_j - phip_i) / edgeLength) * fieldFactor
             : electricField;
 
         const Real mun = detail::edgeMobility(
@@ -187,7 +190,7 @@ ContactCurrentDetailedResult ContactCurrent::computeDetailed(
         Real electronContinuityFlux01 = 0.0;
         Real electronFlux01 = 0.0;
         if (mun > 0.0) {
-            const Real coef = mun * thermalVoltage_ / edgeLength;
+            const Real coef = mun * thermalVoltage_ * fieldFactor / edgeLength;
             electronContinuityFlux01 = sgElectronContinuityFluxFromQuasiFermiVariableNi(
                 ni_i, ni_j, psi_i, psi_j, phin_i, phin_j, thermalVoltage_, coef);
             // sgElectronFlux = -sgElectronContinuityFlux by definition.
@@ -196,7 +199,7 @@ ContactCurrentDetailedResult ContactCurrent::computeDetailed(
         Real holeContinuityFlux01 = 0.0;
         Real holeFlux01 = 0.0;
         if (mup > 0.0) {
-            const Real coef = mup * thermalVoltage_ / edgeLength;
+            const Real coef = mup * thermalVoltage_ * fieldFactor / edgeLength;
             holeContinuityFlux01 = sgHoleContinuityFluxFromQuasiFermiVariableNi(
                 ni_i, ni_j, psi_i, psi_j,
                 phip_i_forHole, phip_j_forHole,
@@ -208,26 +211,26 @@ ContactCurrentDetailedResult ContactCurrent::computeDetailed(
         const SGEdgeWeights weights = sgEdgeWeights(dpsi, thermalVoltage_);
         const Real bAvg = 0.5 * (weights.b_plus + weights.b_minus);
         const Real electronDriftFlux01 = (mun > 0.0)
-            ? mun * (dpsi / edgeLength) * (0.5 * (n_i + n_j))
+            ? mun * (dpsi / edgeLength) * fieldFactor * (0.5 * (n_i + n_j))
             : 0.0;
         const Real electronDiffusionFlux01 = (mun > 0.0)
-            ? mun * (thermalVoltage_ / edgeLength) * bAvg * (n_i - n_j)
+            ? mun * (thermalVoltage_ / edgeLength) * fieldFactor * bAvg * (n_i - n_j)
             : 0.0;
         const Real holeDriftFlux01 = (mup > 0.0)
-            ? mup * (dpsi / edgeLength) * (0.5 * (p_i + p_j))
+            ? mup * (dpsi / edgeLength) * fieldFactor * (0.5 * (p_i + p_j))
             : 0.0;
         const Real holeDiffusionFlux01 = (mup > 0.0)
-            ? mup * (thermalVoltage_ / edgeLength) * bAvg * (p_j - p_i)
+            ? mup * (thermalVoltage_ / edgeLength) * fieldFactor * bAvg * (p_j - p_i)
             : 0.0;
 
         const Real outwardSign = n0OnContact ? 1.0 : -1.0;
-        // Current density [A/m^2] * edge.couple [m] = [A/m]
-        const Real electronCurrent = constants::q * outwardSign * electronFlux01 * edge.couple;
-        const Real electronDriftCurrent = constants::q * outwardSign * electronDriftFlux01 * edge.couple;
-        const Real electronDiffusionCurrent = constants::q * outwardSign * electronDiffusionFlux01 * edge.couple;
-        const Real holeCurrent = constants::q * outwardSign * holeFlux01 * edge.couple;
-        const Real holeDriftCurrent = constants::q * outwardSign * holeDriftFlux01 * edge.couple;
-        const Real holeDiffusionCurrent = constants::q * outwardSign * holeDiffusionFlux01 * edge.couple;
+        // Current density in the active internal unit system times edge length gives current per internal device depth.
+        const Real electronCurrent = constants::q * outwardSign * electronFlux01 * edge.couple * currentLineFactor;
+        const Real electronDriftCurrent = constants::q * outwardSign * electronDriftFlux01 * edge.couple * currentLineFactor;
+        const Real electronDiffusionCurrent = constants::q * outwardSign * electronDiffusionFlux01 * edge.couple * currentLineFactor;
+        const Real holeCurrent = constants::q * outwardSign * holeFlux01 * edge.couple * currentLineFactor;
+        const Real holeDriftCurrent = constants::q * outwardSign * holeDriftFlux01 * edge.couple * currentLineFactor;
+        const Real holeDiffusionCurrent = constants::q * outwardSign * holeDiffusionFlux01 * edge.couple * currentLineFactor;
 
         detailed.totals.electronCurrent += electronCurrent;
         detailed.totals.electronDriftCurrent += electronDriftCurrent;

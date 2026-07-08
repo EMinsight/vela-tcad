@@ -17,6 +17,7 @@ namespace vela {
 class MaterialDatabase {
 public:
     MaterialDatabase();
+    explicit MaterialDatabase(UnitScalingConfig scaling);
     explicit MaterialDatabase(const std::string& jsonPath);
     MaterialDatabase(const std::string& jsonPath, UnitScalingConfig scaling);
 
