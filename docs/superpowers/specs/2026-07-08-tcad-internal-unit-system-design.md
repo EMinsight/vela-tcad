@@ -104,6 +104,10 @@ models.
 Composite constants are required where TCAD base units mix `um` geometry with
 `cm` density or mobility units:
 
+The 2-D solver treats every control volume and boundary edge as having an
+implicit depth of exactly one internal length unit: `1 m` in legacy SI and
+`1 um` in `unit_scaling`.
+
 | Term family | Internal operands | TCAD composite factor |
 | --- | --- | --- |
 | Volumetric charge, generation, recombination geometry | `cm^-3 * um^3` equivalent, including 2-D area times the unit-depth convention | `1e-12` |
@@ -114,6 +118,8 @@ Composite constants are required where TCAD base units mix `um` geometry with
 Do not let individual assemblers or diagnostics independently rederive these
 numbers. Add named helpers on `PhysicalUnitSystem` for these composite factors
 and use them in every charge, source, field, and terminal-current path.
+Suggested names are `chargeVolumeFactor()`, `chargeSheetFactor()`,
+`fieldFromCoordinateDeltaFactor()`, and `currentPerInternalDepthFactor()`.
 
 ## Scaling System
 
@@ -335,6 +341,8 @@ Initial red tests:
 7. `Poisson and DD charge factors are explicit`
    - Add small assembler-level tests that isolate volumetric charge and
      interface/sheet/Neumann charge contributions.
+   - Include the Gummel/DD Poisson-with-carriers path and the coupled Newton
+     Poisson residual/Jacobian path, not only the standalone Poisson assembler.
    - Assert the TCAD composite factors are applied (`1e-12` for volumetric
      `cm^-3 * um^3` equivalent and `1e-8` for sheet `cm^-2 * um^2`
      equivalent).
@@ -380,9 +388,14 @@ ctest --test-dir build --output-on-failure
    blocks.
 9. Audit diagnostics and post-processing paths that use coordinate differences
    or fixed conversion literals (`100`, `1e4`, `1e6`).
-10. Update output naming/documentation, restart-state documentation, and
+10. Update `docs/config_schema.md`,
+    `docs/development_poisson_unit_scaling.md`, example comments that mention
+    SI normalization, and the reference TCAD tool files listed in
+    Compatibility And Migration where they assumed Vela internal fields were
+    SI.
+11. Update output naming/documentation, restart-state documentation, and
     internal diagnostic structure comments or field names.
-11. Run focused and full test suites.
+12. Run focused and full test suites.
 
 ## Risks
 
