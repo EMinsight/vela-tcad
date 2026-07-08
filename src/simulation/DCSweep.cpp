@@ -3164,6 +3164,7 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
         ContactCurrentResult current{};
         ContactCurrentDetailedResult currentDetailed{};
         const DDSolution& sol = attempt.solution;
+        const Real fieldFactor = sweep.scaling.unitSystem().fieldFromCoordinateDeltaFactor();
         std::unordered_map<std::string, ContactCurrentDetailedResult> detailedByContact;
         auto detailedForContact = [&](const std::string& contactName) -> const ContactCurrentDetailedResult& {
             auto it = detailedByContact.find(contactName);
@@ -3540,7 +3541,8 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                     sol.n,
                     sol.p,
                     effectiveNi,
-                    constants::kb * temperature_K / constants::q);
+                    constants::kb * temperature_K / constants::q,
+                    fieldFactor);
                 terms = computeReleaseBVConfigAuditPointTerms(mesh, records);
             }
             const ReleaseBVConfigAuditMetadata& metadata =
@@ -3773,7 +3775,8 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                     sol.n,
                     sol.p,
                     effectiveNi,
-                    constants::kb * temperature_K / constants::q);
+                    constants::kb * temperature_K / constants::q,
+                    fieldFactor);
                 for (const auto& record : records)
                     sgAvalancheSourceTotal += record.edgeSourceIntegral;
             }
@@ -3821,7 +3824,8 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                     sol.n,
                     sol.p,
                     effectiveNi,
-                    constants::kb * temperature_K / constants::q);
+                    constants::kb * temperature_K / constants::q,
+                    fieldFactor);
             for (const detail::SgEdgeCurrentAvalancheSourceRecord& record : records) {
                 const Node& node0 = mesh.getNode(record.node0);
                 const Node& node1 = mesh.getNode(record.node1);
@@ -3831,20 +3835,20 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                     std::to_string(record.edgeId),
                     std::to_string(record.node0),
                     std::to_string(record.node1),
-                    formatReal(node0.x * 1.0e6),
-                    formatReal(node0.y * 1.0e6),
-                    formatReal(node1.x * 1.0e6),
-                    formatReal(node1.y * 1.0e6),
-                    formatReal(record.edgeLength),
-                    formatReal(record.edgeCouple),
-                    formatReal(record.edgeAreaProxy),
-                    formatReal(record.electricField),
-                    formatReal(record.electronImpactField),
-                    formatReal(record.holeImpactField),
-                    formatReal(record.electronAlpha),
-                    formatReal(record.holeAlpha),
-                    formatReal(record.electronMobility),
-                    formatReal(record.holeMobility),
+                    formatReal(sweep.scaling.unitSystem().internalLengthToMeters(node0.x) * 1.0e6),
+                    formatReal(sweep.scaling.unitSystem().internalLengthToMeters(node0.y) * 1.0e6),
+                    formatReal(sweep.scaling.unitSystem().internalLengthToMeters(node1.x) * 1.0e6),
+                    formatReal(sweep.scaling.unitSystem().internalLengthToMeters(node1.y) * 1.0e6),
+                    formatReal(sweep.scaling.unitSystem().internalLengthToMeters(record.edgeLength)),
+                    formatReal(sweep.scaling.unitSystem().internalLengthToMeters(record.edgeCouple)),
+                    formatReal(record.edgeAreaProxy * sweep.scaling.unitSystem().areaM2PerInternal()),
+                    formatReal(internalElectricFieldToVPerM(sweep.scaling, record.electricField)),
+                    formatReal(internalElectricFieldToVPerM(sweep.scaling, record.electronImpactField)),
+                    formatReal(internalElectricFieldToVPerM(sweep.scaling, record.holeImpactField)),
+                    formatReal(sweep.scaling.unitSystem().internalInverseLengthToMInv(record.electronAlpha)),
+                    formatReal(sweep.scaling.unitSystem().internalInverseLengthToMInv(record.holeAlpha)),
+                    formatReal(sweep.scaling.unitSystem().internalMobilityToM2PerVS(record.electronMobility)),
+                    formatReal(sweep.scaling.unitSystem().internalMobilityToM2PerVS(record.holeMobility)),
                     formatReal(record.electronFluxProxy),
                     formatReal(record.holeFluxProxy),
                     formatReal(record.electronRawFluxProxy),
@@ -3881,7 +3885,8 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                     sol.n,
                     sol.p,
                     effectiveNi,
-                    constants::kb * temperature_K / constants::q);
+                    constants::kb * temperature_K / constants::q,
+                    fieldFactor);
             const std::vector<Real> solverSourceIntegrals =
                 detail::sgEdgeCurrentAvalancheSourceIntegrals(
                     sweepImpactIonizationConfig,
@@ -3898,7 +3903,8 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                     sol.n,
                     sol.p,
                     effectiveNi,
-                    constants::kb * temperature_K / constants::q);
+                    constants::kb * temperature_K / constants::q,
+                    fieldFactor);
 
             Real solverSourceIntegralTotal = 0.0;
             for (Real value : solverSourceIntegrals)
@@ -3914,12 +3920,12 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
             for (const detail::SgEdgeCurrentAvalancheSourceRecord& record : records) {
                 const Node& node0 = mesh.getNode(record.node0);
                 const Node& node1 = mesh.getNode(record.node1);
-                const Real x_um = 0.5 * (node0.x + node1.x) * 1.0e6;
-                const Real y_um = 0.5 * (node0.y + node1.y) * 1.0e6;
-                const Real fn_V_per_cm = record.electronImpactField * VPerMToVPerCm;
-                const Real fp_V_per_cm = record.holeImpactField * VPerMToVPerCm;
-                const Real alphaN_cm_inv = record.electronAlpha * InvMToInvCm;
-                const Real alphaP_cm_inv = record.holeAlpha * InvMToInvCm;
+                const Real x_um = sweep.scaling.unitSystem().internalLengthToMeters(0.5 * (node0.x + node1.x)) * 1.0e6;
+                const Real y_um = sweep.scaling.unitSystem().internalLengthToMeters(0.5 * (node0.y + node1.y)) * 1.0e6;
+                const Real fn_V_per_cm = internalElectricFieldToVPerCm(sweep.scaling, record.electronImpactField);
+                const Real fp_V_per_cm = internalElectricFieldToVPerCm(sweep.scaling, record.holeImpactField);
+                const Real alphaN_cm_inv = sweep.scaling.unitSystem().internalInverseLengthToMInv(record.electronAlpha) * InvMToInvCm;
+                const Real alphaP_cm_inv = sweep.scaling.unitSystem().internalInverseLengthToMInv(record.holeAlpha) * InvMToInvCm;
                 const Real jn_A_per_cm2 =
                     constants::q * record.electronFluxProxy * APerM2ToAPerCm2;
                 const Real jp_A_per_cm2 =
@@ -3932,7 +3938,7 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                 const Real gReconstructed_cm3_s = gN_cm3_s + gP_cm3_s;
                 const Real closureError =
                     relativeDifference(gTotalFromSource_cm3_s, gReconstructed_cm3_s);
-                const Real area_cm2 = record.edgeAreaProxy * M2ToCm2;
+                const Real area_cm2 = record.edgeAreaProxy * sweep.scaling.unitSystem().areaM2PerInternal() * M2ToCm2;
                 const Real qG_A_per_um =
                     constants::q * record.edgeSourceIntegral * PerMeterToPerMicron;
 

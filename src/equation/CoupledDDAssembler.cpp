@@ -270,7 +270,8 @@ VectorXd CoupledDDAssembler::residual(const VectorXd& x,
             n,
             p,
             ni_,
-            Vt_)
+            Vt_,
+            fieldFactor)
         : std::vector<Real>{};
 
     VectorXd r = VectorXd::Zero(3 * N);
@@ -537,7 +538,8 @@ CoupledDDAssembler::carrierContinuityTermDiagnostics(
             n,
             p,
             ni_,
-            Vt_)
+            Vt_,
+            fieldFactor)
         : detail::SgAvalancheSourceComponentIntegrals{};
 
     std::vector<bool> hasElectronContribution(static_cast<std::size_t>(N), false);

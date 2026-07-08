@@ -336,7 +336,8 @@ void DDAssembler::assembleElectronContinuity(const VectorXd& psi,
             n_physical,
             p_physical,
             ni_,
-            Vt_)
+            Vt_,
+            fieldFactor)
         : std::vector<Real>{};
 
     // Recombination source term linearised w.r.t. n.
@@ -509,7 +510,8 @@ void DDAssembler::assembleHoleContinuity(const VectorXd& psi,
             n_physical,
             p_physical,
             ni_,
-            Vt_)
+            Vt_,
+            fieldFactor)
         : std::vector<Real>{};
 
     // Recombination source term linearised w.r.t. p.

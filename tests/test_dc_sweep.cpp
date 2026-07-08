@@ -1162,7 +1162,7 @@ TEST_CASE("DCSweep: SG avalanche edge diagnostics write assembled source rows",
     const std::size_t node0SourceCol = csvColumnIndex(header, "node0_source_integral");
     const std::size_t node1SourceCol = csvColumnIndex(header, "node1_source_integral");
     (void)csvColumnIndex(header, "edge_area_proxy_m2");
-    (void)csvColumnIndex(header, "electric_field_V_per_m");
+    const std::size_t electricFieldCol = csvColumnIndex(header, "electric_field_V_per_m");
     (void)csvColumnIndex(header, "electron_impact_field_V_per_m");
     (void)csvColumnIndex(header, "hole_impact_field_V_per_m");
     (void)csvColumnIndex(header, "electron_alpha_m_inv");
@@ -1171,14 +1171,18 @@ TEST_CASE("DCSweep: SG avalanche edge diagnostics write assembled source rows",
     (void)csvColumnIndex(header, "hole_flux_proxy");
     (void)csvColumnIndex(header, "edge_class");
 
+    Real maxEdgeElectricField_V_per_m = 0.0;
     for (std::size_t i = 1; i < rows.size(); ++i) {
         const auto& row = rows.at(i);
         REQUIRE(csvReal(row, pointIndexCol) == Catch::Approx(0.0));
         const Real edgeSource = csvReal(row, edgeSourceCol);
         REQUIRE(edgeSource >= 0.0);
+        maxEdgeElectricField_V_per_m = std::max(maxEdgeElectricField_V_per_m, csvReal(row, electricFieldCol));
         REQUIRE(csvReal(row, node0SourceCol) == Catch::Approx(0.5 * edgeSource));
         REQUIRE(csvReal(row, node1SourceCol) == Catch::Approx(0.5 * edgeSource));
     }
+    REQUIRE(maxEdgeElectricField_V_per_m ==
+            Catch::Approx(result.points.front().maxElectricField * 100.0).epsilon(1.0e-12));
 }
 
 TEST_CASE("DCSweep: avalanche internal source current audit writes closed used terms",

@@ -1813,7 +1813,8 @@ inline std::vector<SgEdgeCurrentAvalancheSourceRecord> sgEdgeCurrentAvalancheSou
     const VectorXd&                    n,
     const VectorXd&                    p,
     const std::vector<Real>&           ni,
-    Real                               Vt)
+    Real                               Vt,
+    Real                               fieldFactor = 1.0)
 {
     std::vector<SgEdgeCurrentAvalancheSourceRecord> records;
     records.reserve(mesh.numEdges());
@@ -1871,9 +1872,9 @@ inline std::vector<SgEdgeCurrentAvalancheSourceRecord> sgEdgeCurrentAvalancheSou
                 psi_i, phip_i, p(i), ni[edge.n0], Vt, config);
             const Real holeQf_j = holeQfForAvalancheGradient(
                 psi_j, phip_j, p(j), ni[edge.n1], Vt, config);
-            const Real electricField = std::abs((psi_j - psi_i) / h);
-            const Real electronQfField = std::abs((electronQf_j - electronQf_i) / h);
-            const Real holeQfField = std::abs((holeQf_j - holeQf_i) / h);
+            const Real electricField = std::abs((psi_j - psi_i) / h) * fieldFactor;
+            const Real electronQfField = std::abs((electronQf_j - electronQf_i) / h) * fieldFactor;
+            const Real holeQfField = std::abs((holeQf_j - holeQf_i) / h) * fieldFactor;
             const Real electronMobilityField = qfMobility ? electronQfField : electricField;
             const Real holeMobilityField = qfMobility ? holeQfField : electricField;
             const Real mun = edgeMobility(
@@ -1882,7 +1883,7 @@ inline std::vector<SgEdgeCurrentAvalancheSourceRecord> sgEdgeCurrentAvalancheSou
             if (mun > 0.0) {
                 const Real signedFlux = sgElectronContinuityFluxFromQuasiFermiVariableNi(
                     ni[edge.n0], ni[edge.n1], psi_i, psi_j, phin_i, phin_j,
-                    Vt, mun * Vt / h);
+                    Vt, mun * Vt * fieldFactor / h);
                 rawSignedElectronFlux[static_cast<std::size_t>(e)] = signedFlux;
                 rawElectronFlux[static_cast<std::size_t>(e)] = std::abs(signedFlux);
             }
@@ -1892,7 +1893,7 @@ inline std::vector<SgEdgeCurrentAvalancheSourceRecord> sgEdgeCurrentAvalancheSou
             if (mup > 0.0) {
                 const Real signedFlux = sgHoleContinuityFluxFromQuasiFermiVariableNi(
                     ni[edge.n0], ni[edge.n1], psi_i, psi_j, phip_i, phip_j,
-                    Vt, mup * Vt / h);
+                    Vt, mup * Vt * fieldFactor / h);
                 rawSignedHoleFlux[static_cast<std::size_t>(e)] = signedFlux;
                 rawHoleFlux[static_cast<std::size_t>(e)] = std::abs(signedFlux);
             }
@@ -1940,9 +1941,9 @@ inline std::vector<SgEdgeCurrentAvalancheSourceRecord> sgEdgeCurrentAvalancheSou
             psi_i, phip_i, p(i), ni[edge.n0], Vt, config);
         const Real holeQf_j = holeQfForAvalancheGradient(
             psi_j, phip_j, p(j), ni[edge.n1], Vt, config);
-        const Real electricField = std::abs((psi_j - psi_i) / h);
-        const Real electronQfField = std::abs((electronQf_j - electronQf_i) / h);
-        const Real holeQfField = std::abs((holeQf_j - holeQf_i) / h);
+        const Real electricField = std::abs((psi_j - psi_i) / h) * fieldFactor;
+        const Real electronQfField = std::abs((electronQf_j - electronQf_i) / h) * fieldFactor;
+        const Real holeQfField = std::abs((holeQf_j - holeQf_i) / h) * fieldFactor;
         const Real electronCoefficientField = qfImpact
             ? edgeQuasiFermiCoefficientField(
                 config, electronQfField, electricField, edgeCells, mesh, e,
@@ -1962,7 +1963,7 @@ inline std::vector<SgEdgeCurrentAvalancheSourceRecord> sgEdgeCurrentAvalancheSou
             config, n(i), n(j), psi_i, psi_j, Vt);
         const Real pMid = cellReconstructedAvalancheMidpointDensity(
             config, p(i), p(j), psi_j, psi_i, Vt);
-        const Real signedElectricField01 = -(psi_j - psi_i) / h;
+        const Real signedElectricField01 = -(psi_j - psi_i) / h * fieldFactor;
 
         const Real edgeArea = avalancheSourceEdgeArea(config, edgeCells, mesh, e);
         SgEdgeCurrentAvalancheSourceRecord record;
@@ -1991,7 +1992,7 @@ inline std::vector<SgEdgeCurrentAvalancheSourceRecord> sgEdgeCurrentAvalancheSou
                 phin_i,
                 phin_j,
                 Vt,
-                mun * Vt / h)
+                mun * Vt * fieldFactor / h)
             : 0.0;
         const Real holeContinuityFlux01 = mup > 0.0
             ? sgHoleContinuityFluxFromQuasiFermiVariableNi(
@@ -2002,7 +2003,7 @@ inline std::vector<SgEdgeCurrentAvalancheSourceRecord> sgEdgeCurrentAvalancheSou
                 phip_i,
                 phip_j,
                 Vt,
-                mup * Vt / h)
+                mup * Vt * fieldFactor / h)
             : 0.0;
         // Conserved total-current magnitude: the electron and hole continuity
         // fluxes share the contact-current sign convention (ContactCurrent.cpp
@@ -2171,7 +2172,8 @@ inline SgAvalancheSourceComponentIntegrals sgEdgeCurrentAvalancheSourceComponent
     const VectorXd&                    n,
     const VectorXd&                    p,
     const std::vector<Real>&           ni,
-    Real                               Vt)
+    Real                               Vt,
+    Real                               fieldFactor = 1.0)
 {
     SgAvalancheSourceComponentIntegrals source;
     source.electron.assign(static_cast<std::size_t>(mesh.numNodes()), 0.0);
@@ -2192,7 +2194,8 @@ inline SgAvalancheSourceComponentIntegrals sgEdgeCurrentAvalancheSourceComponent
         n,
         p,
         ni,
-        Vt);
+        Vt,
+        fieldFactor);
     for (const auto& record : records) {
         addMappedEdgeSourceToNodes(
             config, source.electron, edgeCells, mesh, record,
@@ -2228,7 +2231,8 @@ inline std::vector<Real> sgEdgeCurrentAvalancheSourceIntegrals(
     const VectorXd&                    n,
     const VectorXd&                    p,
     const std::vector<Real>&           ni,
-    Real                               Vt)
+    Real                               Vt,
+    Real                               fieldFactor = 1.0)
 {
     std::vector<Real> source(mesh.numNodes(), 0.0);
     const auto records = sgEdgeCurrentAvalancheSourceRecords(
@@ -2246,7 +2250,8 @@ inline std::vector<Real> sgEdgeCurrentAvalancheSourceIntegrals(
         n,
         p,
         ni,
-        Vt);
+        Vt,
+        fieldFactor);
     for (const auto& record : records) {
         addMappedEdgeSourceToNodes(
             config, source, edgeCells, mesh, record,

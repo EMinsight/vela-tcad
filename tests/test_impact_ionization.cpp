@@ -2550,6 +2550,104 @@ TEST_CASE("SG edge current avalanche source supports diagnostic geometry scale",
     REQUIRE(sawNonzeroSource);
 }
 
+TEST_CASE("SG edge avalanche source records apply coordinate field scaling",
+          "[impact][scaling][diagnostic]")
+{
+    DeviceMesh mesh = makePNMesh();
+    MaterialDatabase matdb;
+    const std::vector<RegionDopingSpec> specs = {
+        {"n_region", 5.0e22, 0.0},
+        {"p_region", 0.0, 5.0e22},
+    };
+    DopingModel doping = DopingModel::fromMeshAndRegions(mesh, specs);
+
+    const Real Vt = 0.025852;
+    DDSolution sol;
+    sol.psi = VectorXd::LinSpaced(static_cast<int>(mesh.numNodes()), -0.02, 0.025);
+    sol.phin = VectorXd::LinSpaced(static_cast<int>(mesh.numNodes()), 0.01, -0.006);
+    sol.phip = VectorXd::LinSpaced(static_cast<int>(mesh.numNodes()), -0.007, 0.005);
+    sol.n.resize(static_cast<int>(mesh.numNodes()));
+    sol.p.resize(static_cast<int>(mesh.numNodes()));
+    const std::vector<Real> ni(static_cast<std::size_t>(mesh.numNodes()), 1.0e16);
+    for (int i = 0; i < static_cast<int>(mesh.numNodes()); ++i) {
+        sol.n(i) = ni[static_cast<std::size_t>(i)] * std::exp((sol.psi(i) - sol.phin(i)) / Vt);
+        sol.p(i) = ni[static_cast<std::size_t>(i)] * std::exp((sol.phip(i) - sol.psi(i)) / Vt);
+    }
+
+    ImpactIonizationModelConfig impactConfig;
+    impactConfig.model = "selberherr";
+    impactConfig.drivingForce = "electric_field";
+    impactConfig.generation = "current_density";
+    impactConfig.currentApproximation = "density_gradient";
+    impactConfig.electronA = 1.0;
+    impactConfig.electronB = 1.0e-30;
+    impactConfig.holeA = 1.0;
+    impactConfig.holeB = 1.0e-30;
+
+    const MobilityModelConfig mobilityConfig = mobilityModelConfig("constant");
+    const auto mobility = makeMobilityModel(mobilityConfig);
+    const auto edgeCells = detail::buildEdgeCellMap(mesh);
+    const auto cellMaterials = detail::buildCellMaterials(mesh, matdb, constants::T0);
+    const auto impact = makeImpactIonizationModel(impactConfig);
+
+    const auto unscaled = detail::sgEdgeCurrentAvalancheSourceRecords(
+        impactConfig,
+        *impact,
+        mobilityConfig,
+        *mobility,
+        edgeCells,
+        mesh,
+        doping,
+        cellMaterials,
+        sol.psi,
+        sol.phin,
+        sol.phip,
+        sol.n,
+        sol.p,
+        ni,
+        Vt);
+    const Real fieldFactor = 1.0e6;
+    const auto scaled = detail::sgEdgeCurrentAvalancheSourceRecords(
+        impactConfig,
+        *impact,
+        mobilityConfig,
+        *mobility,
+        edgeCells,
+        mesh,
+        doping,
+        cellMaterials,
+        sol.psi,
+        sol.phin,
+        sol.phip,
+        sol.n,
+        sol.p,
+        ni,
+        Vt,
+        fieldFactor);
+
+    REQUIRE(scaled.size() == unscaled.size());
+    bool checkedEdge = false;
+    for (std::size_t i = 0; i < unscaled.size(); ++i) {
+        if (unscaled[i].electricField <= 0.0 ||
+            unscaled[i].electronRawFluxProxy <= 0.0 ||
+            unscaled[i].holeRawFluxProxy <= 0.0) {
+            continue;
+        }
+        REQUIRE(scaled[i].electricField ==
+                Catch::Approx(unscaled[i].electricField * fieldFactor));
+        REQUIRE(scaled[i].electronImpactField ==
+                Catch::Approx(unscaled[i].electronImpactField * fieldFactor));
+        REQUIRE(scaled[i].holeImpactField ==
+                Catch::Approx(unscaled[i].holeImpactField * fieldFactor));
+        REQUIRE(scaled[i].electronRawFluxProxy ==
+                Catch::Approx(unscaled[i].electronRawFluxProxy * fieldFactor));
+        REQUIRE(scaled[i].holeRawFluxProxy ==
+                Catch::Approx(unscaled[i].holeRawFluxProxy * fieldFactor));
+        checkedEdge = true;
+        break;
+    }
+    REQUIRE(checkedEdge);
+}
 TEST_CASE("VanOverstraeten Sentaurus fit parameter sets follow active internal units",
           "[impact][scaling][van_overstraeten]")
 {

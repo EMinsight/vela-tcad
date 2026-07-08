@@ -1075,7 +1075,8 @@ void writeDDSolutionVTK(const std::string& filename,
             sol.n,
             sol.p,
             effectiveNi,
-            Vt)
+            Vt,
+            fieldFactor)
         : std::vector<detail::SgEdgeCurrentAvalancheSourceRecord>{};
     std::vector<Real> sgAvalancheSourceIntegrals(N, 0.0);
     for (const auto& record : sgAvalancheRecords) {
