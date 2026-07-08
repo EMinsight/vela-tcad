@@ -316,7 +316,7 @@ VectorXd CoupledDDAssembler::residual(const VectorXd& x,
             hasElectronContribution[static_cast<std::size_t>(i)] = true;
             hasElectronContribution[static_cast<std::size_t>(j)] = true;
 
-            const Real coef = mun * Vt_ * couple[e] / h;
+            const Real coef = mun * Vt_ * fieldFactor * couple[e] / h;
             const Index idxI = static_cast<Index>(i);
             const Index idxJ = static_cast<Index>(j);
             // With bandgap narrowing the per-node intrinsic density varies, so
@@ -348,7 +348,7 @@ VectorXd CoupledDDAssembler::residual(const VectorXd& x,
             hasHoleContribution[static_cast<std::size_t>(i)] = true;
             hasHoleContribution[static_cast<std::size_t>(j)] = true;
 
-            const Real coef = mup * Vt_ * couple[e] / h;
+            const Real coef = mup * Vt_ * fieldFactor * couple[e] / h;
             const Index idxI = static_cast<Index>(i);
             const Index idxJ = static_cast<Index>(j);
             // See the electron flux above for the BGN gating rationale.
@@ -572,7 +572,7 @@ CoupledDDAssembler::carrierContinuityTermDiagnostics(
         if (mun > 0.0) {
             hasElectronContribution[static_cast<std::size_t>(i)] = true;
             hasElectronContribution[static_cast<std::size_t>(j)] = true;
-            const Real coef = mun * Vt_ * couple_[e] / h;
+            const Real coef = mun * Vt_ * fieldFactor * couple_[e] / h;
             const Real nFlux = sgElectronContinuityFluxFromQuasiFermiVariableNi(
                 ni_[static_cast<Index>(i)],
                 ni_[static_cast<Index>(j)],
@@ -597,7 +597,7 @@ CoupledDDAssembler::carrierContinuityTermDiagnostics(
         if (mup > 0.0) {
             hasHoleContribution[static_cast<std::size_t>(i)] = true;
             hasHoleContribution[static_cast<std::size_t>(j)] = true;
-            const Real coef = mup * Vt_ * couple_[e] / h;
+            const Real coef = mup * Vt_ * fieldFactor * couple_[e] / h;
             const Real pFlux = sgHoleContinuityFluxFromQuasiFermiVariableNi(
                 ni_[static_cast<Index>(i)],
                 ni_[static_cast<Index>(j)],
@@ -802,14 +802,14 @@ CoupledDDAssembler::sgEdgeFluxDiagnostics(
 
         Real nFlux = 0.0;
         if (mun > 0.0) {
-            const Real coef = mun * Vt_ * couple_[e] / h;
+            const Real coef = mun * Vt_ * fieldFactor * couple_[e] / h;
             nFlux = sgElectronContinuityFluxFromQuasiFermiVariableNi(
                 ni_[idxI], ni_[idxJ], psi_i, psi_j, phin_i, phin_j, Vt_, coef,
                 bgnEnabled_);
         }
         Real pFlux = 0.0;
         if (mup > 0.0) {
-            const Real coef = mup * Vt_ * couple_[e] / h;
+            const Real coef = mup * Vt_ * fieldFactor * couple_[e] / h;
             pFlux = sgHoleContinuityFluxFromQuasiFermiVariableNi(
                 ni_[idxI], ni_[idxJ], psi_i, psi_j, phip_i, phip_j, Vt_, coef,
                 bgnEnabled_);
@@ -1274,7 +1274,7 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
             CarrierType::Electron, electronMobilityField, &mobilityConfig_, psiForMobility);
         if (mun <= 0.0)
             return 0.0;
-        const Real coef = mun * Vt_ * couple_e / h;
+        const Real coef = mun * Vt_ * fieldFactor * couple_e / h;
         if (bgnEnabled_) {
             return sgElectronContinuityFluxFromQuasiFermiVariableNi(
                 ni_[idxI], ni_[idxJ], psi_i, psi_j, phin_i, phin_j, Vt_, coef);
@@ -1314,7 +1314,7 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
             CarrierType::Hole, holeMobilityField, &mobilityConfig_, psiForMobility);
         if (mup <= 0.0)
             return 0.0;
-        const Real coef = mup * Vt_ * couple_e / h;
+        const Real coef = mup * Vt_ * fieldFactor * couple_e / h;
         if (bgnEnabled_) {
             return sgHoleContinuityFluxFromQuasiFermiVariableNi(
                 ni_[idxI], ni_[idxJ], psi_i, psi_j, phip_i, phip_j, Vt_, coef);
@@ -1390,7 +1390,7 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
                     add(phinOffset() + j, cols[k], -dF);
                 }
             } else {
-                const Real coef = mun * Vt_ * couple_[e] / h;
+                const Real coef = mun * Vt_ * fieldFactor * couple_[e] / h;
                 Real dF_dpsi_i = 0.0;
                 Real dF_dpsi_j = 0.0;
                 Real dF_dphin_i = 0.0;
@@ -1452,7 +1452,7 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
                     add(phipOffset() + j, cols[k], -dF);
                 }
             } else {
-                const Real coef = mup * Vt_ * couple_[e] / h;
+                const Real coef = mup * Vt_ * fieldFactor * couple_[e] / h;
                 Real dF_dpsi_i = 0.0;
                 Real dF_dpsi_j = 0.0;
                 Real dF_dphip_i = 0.0;

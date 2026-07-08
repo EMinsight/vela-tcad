@@ -58,6 +58,16 @@ def load_module(path: Path):
 
 
 class Pn2dCoarse7x3DiagnosticTest(unittest.TestCase):
+    def test_run_command_can_capture_nonzero_runner_for_partial_diagnostics(self) -> None:
+        module = load_module(REPO / "scripts" / "run_pn2d_coarse7x3_previous_full20_compare.py")
+        result = module.run_command(
+            [sys.executable, "-c", "raise SystemExit(7)"],
+            REPO,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 7)
+
     def test_coarse_case_is_independent_and_exports_required_sentaurus_fields(self) -> None:
         self.assertTrue((COARSE_SOURCE / "pn2d_sde.cmd").is_file())
         self.assertTrue((COARSE_SOURCE / "pn2d_bv_sdevice.cmd").is_file())
@@ -185,6 +195,10 @@ class Pn2dCoarse7x3DiagnosticTest(unittest.TestCase):
             self.assertEqual(impact["quasi_fermi_gradient_discretization"], "edge_difference")
             self.assertEqual(data["solver"]["quasi_fermi_update_limit_V"], 0.1)
             self.assertEqual(data["solver"]["max_update"], 0)
+            self.assertEqual(data["solver"]["stall_residual_floor"], 3.0e-5)
+            self.assertEqual(data["solver"]["poisson_line_search_stall_residual_floor"], 3.0e-5)
+            self.assertEqual(data["solver"]["poisson_line_search_stall_relative_increase"], 5.0e-1)
+            self.assertEqual(data["solver"]["poisson_line_search_stall_carrier_residual_floor"], 3.0e-5)
             self.assertEqual(data["solver"]["handoff"], {
                 "fallback": "none",
                 "require_gummel_convergence": False,

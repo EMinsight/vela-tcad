@@ -38,6 +38,11 @@ struct LineSearchResult {
     int attempts = 0;
     std::string failureReason;
     std::vector<LineSearchIterationInfo> history;
+    bool bestRejectedCandidate = false;
+    VectorXd bestRejectedX;
+    VectorXd bestRejectedResidual;
+    Real bestRejectedDamping = 0.0;
+    Real bestRejectedResidualNorm = 0.0;
 };
 
 class BacktrackingLineSearch {

@@ -377,7 +377,7 @@ DDSolution runGummelImpl(const DeviceMesh&                          mesh,
         ddScaling.fieldFromCoordinateDeltaFactor = cfg.inputScaling.unitSystem().fieldFromCoordinateDeltaFactor();
         ddScaling.currentDensityLineIntegralFactor =
             cfg.inputScaling.unitSystem().currentDensityAM2PerInternal() *
-            cfg.inputScaling.unitSystem().areaM2PerInternal();
+            cfg.inputScaling.unitSystem().lengthMPerInternal();
     }
 
     // Look up a contact-region material for Schottky barrier helpers.

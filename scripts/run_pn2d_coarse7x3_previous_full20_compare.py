@@ -196,9 +196,9 @@ def write_json(path: Path, data: dict[str, Any]) -> None:
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 
-def run_command(cmd: list[str], cwd: Path) -> None:
+def run_command(cmd: list[str], cwd: Path, *, check: bool = True) -> subprocess.CompletedProcess:
     print(":: running", " ".join(cmd), flush=True)
-    subprocess.run(cmd, cwd=cwd, check=True)
+    return subprocess.run(cmd, cwd=cwd, check=check)
 
 
 def resolve_config_path(base_config: Path, raw: str | None) -> Path | None:
@@ -257,6 +257,14 @@ def write_previous_full20_config(
     solver["contact_boundary_reconstruction"] = "dominant_signed_contact_mean"
     solver["contact_boundary_minority_electron_relaxation"] = False
     solver["quasi_fermi_update_limit_V"] = 0.1
+    # The Sentaurus BV deck uses RelErrControl with Digits=5. On the coarse 7x3
+    # mesh, the unit-scaled coupled residual reaches a Poisson-dominated floor
+    # of order 1e-5 before the current branch changes; keep this scoped to the
+    # previous-full20 diagnostic deck instead of relaxing global Newton defaults.
+    solver["stall_residual_floor"] = 3.0e-5
+    solver["poisson_line_search_stall_residual_floor"] = 3.0e-5
+    solver["poisson_line_search_stall_relative_increase"] = 5.0e-1
+    solver["poisson_line_search_stall_carrier_residual_floor"] = 3.0e-5
     solver["handoff"] = {
         "fallback": "none",
         "require_gummel_convergence": False,
@@ -1366,9 +1374,11 @@ def main(argv: list[str] | None = None) -> int:
     csv_path = args.out_dir / f"{run_stem}.csv"
 
     vela_run_status = "skipped"
+    vela_runner_returncode: int | None = None
     if not args.skip_vela_run:
-        run_command([str(args.runner), "--config", str(config_path)], args.out_dir)
-        vela_run_status = "attempted"
+        vela_result = run_command([str(args.runner), "--config", str(config_path)], args.out_dir, check=False)
+        vela_runner_returncode = vela_result.returncode
+        vela_run_status = "completed" if vela_runner_returncode == 0 else "failed"
 
     vela_vtks = discover_vela_vtks(vtk_dir)
     node_rows = node_field_compare(
@@ -1445,6 +1455,7 @@ def main(argv: list[str] | None = None) -> int:
         "coarse_previous_full20_csv": str(csv_path),
         "sentaurus_field_gate": field_gate,
         "vela_run_status": vela_run_status,
+        "vela_runner_returncode": vela_runner_returncode,
         "sentaurus_exports": {str(bias): str(path) for bias, path in sentaurus_exports.items()},
         "target_biases": biases,
         "curve_plot": curve,

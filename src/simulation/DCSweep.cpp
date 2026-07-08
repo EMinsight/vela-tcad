@@ -1984,32 +1984,41 @@ nlohmann::json lineSearchHistoryJson(const std::vector<LineSearchIterationInfo>&
     return out;
 }
 
-nlohmann::json topResidualNodesJson(const std::vector<NewtonTopResidualNode>& nodes)
+nlohmann::json topResidualNodesJson(const std::vector<NewtonTopResidualNode>& nodes,
+                                      const UnitScalingConfig& scaling)
 {
+    const PhysicalUnitSystem& units = scaling.unitSystem();
     nlohmann::json out = nlohmann::json::array();
     for (const NewtonTopResidualNode& node : nodes) {
+        const Real x_m = units.internalLengthToMeters(node.x);
+        const Real y_m = units.internalLengthToMeters(node.y);
+        const Real donors_m3 = units.internalConcentrationToM3(node.donors);
+        const Real acceptors_m3 = units.internalConcentrationToM3(node.acceptors);
+        const Real net_doping_m3 = units.internalConcentrationToM3(node.netDoping);
+        const Real ni_eff_m3 = units.internalConcentrationToM3(node.effectiveIntrinsicDensity);
         out.push_back({
             {"node_id", node.nodeId},
-            {"x_m", node.x},
-            {"y_m", node.y},
-            {"x_um", node.x * 1.0e6},
-            {"y_um", node.y * 1.0e6},
+            {"x_m", x_m},
+            {"y_m", y_m},
+            {"x_um", x_m * 1.0e6},
+            {"y_um", y_m * 1.0e6},
             {"poisson_residual", node.poissonResidual},
             {"abs_poisson_residual", node.absPoissonResidual},
-            {"donors_m3", node.donors},
-            {"acceptors_m3", node.acceptors},
-            {"net_doping_m3", node.netDoping},
-            {"donors_cm3", node.donors / 1.0e6},
-            {"acceptors_cm3", node.acceptors / 1.0e6},
-            {"net_doping_cm3", node.netDoping / 1.0e6},
-            {"ni_eff_m3", node.effectiveIntrinsicDensity},
-            {"ni_eff_cm3", node.effectiveIntrinsicDensity / 1.0e6},
+            {"donors_m3", donors_m3},
+            {"acceptors_m3", acceptors_m3},
+            {"net_doping_m3", net_doping_m3},
+            {"donors_cm3", donors_m3 / 1.0e6},
+            {"acceptors_cm3", acceptors_m3 / 1.0e6},
+            {"net_doping_cm3", net_doping_m3 / 1.0e6},
+            {"ni_eff_m3", ni_eff_m3},
+            {"ni_eff_cm3", ni_eff_m3 / 1.0e6},
         });
     }
     return out;
 }
 
-nlohmann::json newtonFailureDiagnosticsJson(const NewtonFailureDiagnostics& diagnostics)
+nlohmann::json newtonFailureDiagnosticsJson(const NewtonFailureDiagnostics& diagnostics,
+                                            const UnitScalingConfig& scaling)
 {
     return {
         {"failure_reason", diagnostics.failureReason},
@@ -2022,7 +2031,7 @@ nlohmann::json newtonFailureDiagnosticsJson(const NewtonFailureDiagnostics& diag
         {"block_residuals", residualBlockJson(diagnostics.blockResiduals)},
         {"carrier_diagnostics", carrierDiagnosticsJson(diagnostics.carrierDiagnostics)},
         {"line_search_history", lineSearchHistoryJson(diagnostics.lineSearchHistory)},
-        {"top_poisson_residual_nodes", topResidualNodesJson(diagnostics.topPoissonResidualNodes)},
+        {"top_poisson_residual_nodes", topResidualNodesJson(diagnostics.topPoissonResidualNodes, scaling)},
     };
 }
 
@@ -2219,7 +2228,7 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
         ddScaling.fieldFromCoordinateDeltaFactor = sweep.scaling.unitSystem().fieldFromCoordinateDeltaFactor();
         ddScaling.currentDensityLineIntegralFactor =
             sweep.scaling.unitSystem().currentDensityAM2PerInternal() *
-            sweep.scaling.unitSystem().areaM2PerInternal();
+            sweep.scaling.unitSystem().lengthMPerInternal();
     }
     ContactCurrent contactCurrent(mesh, matdb, doping, mobilityConfig, temperature_K, ddScaling, sweepBgnConfig);
     CoupledDDAssembler terminalCurrentResidualAssembler(
@@ -3134,7 +3143,7 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                                              const DCSweepPoint& point) {
         if (point.newtonFailureDiagnostics.failureReason.empty())
             return;
-        nlohmann::json entry = newtonFailureDiagnosticsJson(point.newtonFailureDiagnostics);
+        nlohmann::json entry = newtonFailureDiagnosticsJson(point.newtonFailureDiagnostics, sweep.scaling);
         entry["point_index"] = pointIndex;
         entry["bias_V"] = point.bias;
         entry["bias_contact"] = sweep.contact;

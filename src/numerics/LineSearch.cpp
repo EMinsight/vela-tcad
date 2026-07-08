@@ -1,6 +1,7 @@
 #include "vela/numerics/LineSearch.h"
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <cstddef>
 #include <utility>
 
@@ -55,6 +56,11 @@ LineSearchResult BacktrackingLineSearch::search(
     int attemptCount = 0;
     const int attempts = cfg_.enabled ? std::max(1, cfg_.maxBacktracks + 1) : 1;
     std::string lastRejectionReason;
+    bool bestRejectedCandidate = false;
+    VectorXd bestRejectedX;
+    VectorXd bestRejectedResidual;
+    Real bestRejectedDamping = 0.0;
+    Real bestRejectedResidualNorm = std::numeric_limits<Real>::infinity();
     for (int k = 0; k < attempts; ++k) {
         VectorXd candidate = x + alpha * step;
         VectorXd residual = residualFunction(candidate);
@@ -86,6 +92,14 @@ LineSearchResult BacktrackingLineSearch::search(
             return {candidate, residual, alpha, norm, true, attemptCount, {}, std::move(history)};
         }
 
+        if (finite && acceptedByCaller && norm < bestRejectedResidualNorm) {
+            bestRejectedCandidate = true;
+            bestRejectedX = candidate;
+            bestRejectedResidual = residual;
+            bestRejectedDamping = alpha;
+            bestRejectedResidualNorm = norm;
+        }
+
         lastRejectionReason = rejectionReason;
 
         alpha *= cfg_.reduction;
@@ -95,8 +109,16 @@ LineSearchResult BacktrackingLineSearch::search(
 
     if (lastRejectionReason.empty())
         lastRejectionReason = "line_search_rejected";
-    return {x, currentResidual, 0.0, currentNorm, false, attemptCount,
-            lastRejectionReason, std::move(history)};
+    LineSearchResult result{x, currentResidual, 0.0, currentNorm, false, attemptCount,
+                            lastRejectionReason, std::move(history)};
+    result.bestRejectedCandidate = bestRejectedCandidate;
+    if (bestRejectedCandidate) {
+        result.bestRejectedX = std::move(bestRejectedX);
+        result.bestRejectedResidual = std::move(bestRejectedResidual);
+        result.bestRejectedDamping = bestRejectedDamping;
+        result.bestRejectedResidualNorm = bestRejectedResidualNorm;
+    }
+    return result;
 }
 
 } // namespace vela

@@ -123,7 +123,7 @@ TEST_CASE("PhysicalUnitSystem exposes TCAD composite factors", "[scaling]")
     REQUIRE(units.chargeVolumeFactor() == Catch::Approx(1.0e-12));
     REQUIRE(units.chargeSheetFactor() == Catch::Approx(1.0e-8));
     REQUIRE(units.fieldFromCoordinateDeltaFactor() == Catch::Approx(1.0e4));
-    REQUIRE(units.currentPerInternalDepthFactor() == Catch::Approx(1.0));
+    REQUIRE(units.currentPerInternalDepthFactor() == Catch::Approx(1.0e-6));
 }
 TEST_CASE("UnitScalingSystem: unit_scaling references stay in TCAD internal units", "[scaling]")
 {

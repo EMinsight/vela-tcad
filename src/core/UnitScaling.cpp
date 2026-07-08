@@ -51,7 +51,7 @@ Real PhysicalUnitSystem::fieldFromCoordinateDeltaFactor() const
 
 Real PhysicalUnitSystem::currentPerInternalDepthFactor() const
 {
-    return 1.0e-6 / lengthMPerInternal_;
+    return 1.0e-6;
 }
 
 Real PhysicalUnitSystem::internalCurrentPerDeviceDepthToAPerUm(Real value) const

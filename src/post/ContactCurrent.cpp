@@ -87,12 +87,15 @@ ContactCurrentResult ContactCurrent::computeFromResidual(
     const int phipOffset = 2 * N;
     const VectorXd r = assembler.residual(x, CoupledDDBoundaryConditions{});
     const Real continuityScale = assembler.continuityResidualScale();
+    const Real currentLineFactor = scaling_.enabled
+        ? scaling_.currentDensityLineIntegralFactor
+        : 1.0;
 
     ContactCurrentResult result;
     for (Index node : contact->node_ids) {
         const int row = static_cast<int>(node);
-        result.electronCurrent -= constants::q * r(phinOffset + row) * continuityScale;
-        result.holeCurrent -= constants::q * r(phipOffset + row) * continuityScale;
+        result.electronCurrent -= constants::q * r(phinOffset + row) * continuityScale * currentLineFactor;
+        result.holeCurrent -= constants::q * r(phipOffset + row) * continuityScale * currentLineFactor;
     }
     result.totalCurrent = result.electronCurrent - result.holeCurrent;
     return result;

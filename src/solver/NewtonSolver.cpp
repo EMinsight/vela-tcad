@@ -199,6 +199,38 @@ NewtonBlockResidualInfo blockResidualInfo(const VectorXd& residual, Index nodeCo
     return {blocks.psi, blocks.phin, blocks.phip, blocks.combined};
 }
 
+bool isPoissonLineSearchStall(const LineSearchResult& lineSearch,
+                              const NewtonBlockResidualInfo& blocks,
+                              Real stalledNorm,
+                              const NewtonConfig& cfg)
+{
+    if (lineSearch.failureReason != "line_search_non_decrease" ||
+        !lineSearch.bestRejectedCandidate ||
+        !std::isfinite(stalledNorm) ||
+        !std::isfinite(lineSearch.bestRejectedResidualNorm) ||
+        stalledNorm > cfg.poissonLineSearchStallResidualFloor) {
+        return false;
+    }
+
+    const Real allowedResidual = cfg.poissonLineSearchStallResidualFloor *
+        (1.0 + cfg.poissonLineSearchStallRelativeIncrease);
+    if (lineSearch.bestRejectedResidualNorm > allowedResidual)
+        return false;
+
+    if (!std::isfinite(blocks.psi) || !std::isfinite(blocks.phin) ||
+        !std::isfinite(blocks.phip) || !std::isfinite(blocks.combined)) {
+        return false;
+    }
+    if (blocks.psi > cfg.poissonLineSearchStallResidualFloor)
+        return false;
+    if (blocks.phin > cfg.poissonLineSearchStallCarrierResidualFloor ||
+        blocks.phip > cfg.poissonLineSearchStallCarrierResidualFloor) {
+        return false;
+    }
+
+    return blocks.combined <= 0.0 || blocks.psi >= 0.5 * blocks.combined;
+}
+
 std::vector<int> jacobianAuditRows(const std::string& block,
                                    int nodeCount,
                                    const CoupledDDBoundaryConditions& bcs = {})
@@ -667,7 +699,7 @@ DDScalingSpec buildRecoveryScalingSpec(const DeviceMesh& mesh,
     scaling.fieldFromCoordinateDeltaFactor = cfg.inputScaling.unitSystem().fieldFromCoordinateDeltaFactor();
     scaling.currentDensityLineIntegralFactor =
         cfg.inputScaling.unitSystem().currentDensityAM2PerInternal() *
-        cfg.inputScaling.unitSystem().areaM2PerInternal();
+        cfg.inputScaling.unitSystem().lengthMPerInternal();
     return scaling;
 }
 
@@ -881,6 +913,15 @@ NewtonConfig newtonConfigFromJson(const nlohmann::json& json, UnitScalingConfig 
         "quasi_fermi_update_limit_minority_V",
         cfg.quasiFermiUpdateLimitMinority_V);
     cfg.stallResidualFloor = json.value("stall_residual_floor", cfg.stallResidualFloor);
+    cfg.poissonLineSearchStallResidualFloor = json.value(
+        "poisson_line_search_stall_residual_floor",
+        cfg.poissonLineSearchStallResidualFloor);
+    cfg.poissonLineSearchStallRelativeIncrease = json.value(
+        "poisson_line_search_stall_relative_increase",
+        cfg.poissonLineSearchStallRelativeIncrease);
+    cfg.poissonLineSearchStallCarrierResidualFloor = json.value(
+        "poisson_line_search_stall_carrier_residual_floor",
+        cfg.poissonLineSearchStallCarrierResidualFloor);
     cfg.carrierRegularizationScale = json.value(
         "carrier_regularization_scale",
         cfg.carrierRegularizationScale);
@@ -1204,6 +1245,18 @@ NewtonConfig newtonConfigFromJson(const nlohmann::json& json, UnitScalingConfig 
     if (cfg.stallResidualFloor < 0.0 || !std::isfinite(cfg.stallResidualFloor))
         throw std::invalid_argument(
             "newtonConfigFromJson: stall_residual_floor must be non-negative and finite.");
+    if (cfg.poissonLineSearchStallResidualFloor < 0.0 ||
+        !std::isfinite(cfg.poissonLineSearchStallResidualFloor))
+        throw std::invalid_argument(
+            "newtonConfigFromJson: poisson_line_search_stall_residual_floor must be non-negative and finite.");
+    if (cfg.poissonLineSearchStallRelativeIncrease < 0.0 ||
+        !std::isfinite(cfg.poissonLineSearchStallRelativeIncrease))
+        throw std::invalid_argument(
+            "newtonConfigFromJson: poisson_line_search_stall_relative_increase must be non-negative and finite.");
+    if (cfg.poissonLineSearchStallCarrierResidualFloor < 0.0 ||
+        !std::isfinite(cfg.poissonLineSearchStallCarrierResidualFloor))
+        throw std::invalid_argument(
+            "newtonConfigFromJson: poisson_line_search_stall_carrier_residual_floor must be non-negative and finite.");
     if (cfg.carrierRegularizationScale < 0.0 || !std::isfinite(cfg.carrierRegularizationScale))
         throw std::invalid_argument(
             "newtonConfigFromJson: carrier_regularization_scale must be non-negative and finite.");
@@ -1273,6 +1326,21 @@ NewtonSolver::NewtonSolver(
         throw std::invalid_argument(
             "NewtonSolver: stall_residual_floor must be non-negative and finite.");
     }
+    if (cfg_.poissonLineSearchStallResidualFloor < 0.0 ||
+        !std::isfinite(cfg_.poissonLineSearchStallResidualFloor)) {
+        throw std::invalid_argument(
+            "NewtonSolver: poisson_line_search_stall_residual_floor must be non-negative and finite.");
+    }
+    if (cfg_.poissonLineSearchStallRelativeIncrease < 0.0 ||
+        !std::isfinite(cfg_.poissonLineSearchStallRelativeIncrease)) {
+        throw std::invalid_argument(
+            "NewtonSolver: poisson_line_search_stall_relative_increase must be non-negative and finite.");
+    }
+    if (cfg_.poissonLineSearchStallCarrierResidualFloor < 0.0 ||
+        !std::isfinite(cfg_.poissonLineSearchStallCarrierResidualFloor)) {
+        throw std::invalid_argument(
+            "NewtonSolver: poisson_line_search_stall_carrier_residual_floor must be non-negative and finite.");
+    }
     if (cfg_.carrierRegularizationScale < 0.0 ||
         !std::isfinite(cfg_.carrierRegularizationScale)) {
         throw std::invalid_argument(
@@ -1323,7 +1391,7 @@ DDScalingSpec NewtonSolver::buildScalingSpec() const
     scaling.fieldFromCoordinateDeltaFactor = cfg_.inputScaling.unitSystem().fieldFromCoordinateDeltaFactor();
     scaling.currentDensityLineIntegralFactor =
         cfg_.inputScaling.unitSystem().currentDensityAM2PerInternal() *
-        cfg_.inputScaling.unitSystem().areaM2PerInternal();
+        cfg_.inputScaling.unitSystem().lengthMPerInternal();
     return scaling;
 }
 
@@ -2624,9 +2692,16 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
             // Declaring convergence here avoids spurious failures when the
             // Newton iterate has already reached the achievable precision.
             const NewtonCarrierRowConvergenceEvaluation stalledRowEval = carrierRowEval(acceptedX);
+            const NewtonBlockResidualInfo stalledBlocks = blockResidualInfo(acceptedR, mesh_.numNodes());
             if (stalledNorm <= stallResidualFloor &&
                 carrierRowsAcceptConvergence(stalledRowEval)) {
                 finishConverged("stall_residual_floor", acceptedX, acceptedR,
+                                acceptedIters, stalledNorm, stalledRowEval);
+                return result;
+            }
+            if (isPoissonLineSearchStall(ls, stalledBlocks, stalledNorm, cfg_) &&
+                carrierRowsAcceptConvergence(stalledRowEval)) {
+                finishConverged("poisson_line_search_stall_floor", acceptedX, acceptedR,
                                 acceptedIters, stalledNorm, stalledRowEval);
                 return result;
             }
@@ -2644,7 +2719,7 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
             }
             result.finalResidualNorm = stalledNorm;
             result.iters = acceptedIters;
-            result.finalBlockNorms = blockResidualInfo(acceptedR, mesh_.numNodes());
+            result.finalBlockNorms = stalledBlocks;
             result.finalCarrierRowConvergence = stalledRowEval;
             result.solution = makeSolution(assembler, acceptedX, acceptedIters);
             result.failureDiagnostics = buildFailureDiagnostics(

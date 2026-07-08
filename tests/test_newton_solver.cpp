@@ -397,6 +397,62 @@ TEST_CASE("ContactCurrent: raw residual method matches SG flux without avalanche
     REQUIRE(residual.holeCurrent == Catch::Approx(sgFlux.holeCurrent));
     REQUIRE(residual.totalCurrent == Catch::Approx(sgFlux.totalCurrent));
 }
+TEST_CASE("ContactCurrent: unit-scaled residual method matches SG flux without avalanche",
+          "[contact_current][residual][scaling]")
+{
+    DeviceMesh mesh = makePNMesh();
+    MaterialDatabase matdb;
+    DopingModel doping = makePNDoping(mesh);
+
+    DDScalingSpec scaling;
+    scaling.enabled = true;
+    scaling.V0 = constants::Vt_300;
+    scaling.C0 = 1.0;
+    scaling.mu0 = 1.0;
+    scaling.D0 = 1.0;
+    scaling.L0 = 1.0;
+    scaling.permittivityReference_F_per_m = constants::eps0 * 11.7;
+    scaling.fieldFromCoordinateDeltaFactor = 1.0e4;
+    scaling.currentDensityLineIntegralFactor = 1.0e-2;
+
+    MobilityModelConfig mobility = mobilityModelConfig("constant");
+    const RecombinationModelConfig noRecombination = recombinationModelConfig({"none"});
+    CoupledDDAssembler assembler(
+        mesh,
+        matdb,
+        doping,
+        constants::Vt_300,
+        mobility,
+        noRecombination,
+        BandgapNarrowingConfig{},
+        ImpactIonizationModelConfig{},
+        {},
+        {},
+        scaling);
+
+    CoupledDDState state;
+    const int N = static_cast<int>(mesh.numNodes());
+    state.psi = VectorXd::LinSpaced(N, -0.02, 0.03) / scaling.V0;
+    state.phin = VectorXd::LinSpaced(N, -0.04, 0.01) / scaling.V0;
+    state.phip = VectorXd::LinSpaced(N, 0.02, -0.03) / scaling.V0;
+
+    const VectorXd x = assembler.pack(state);
+    DDSolution solution;
+    solution.psi = state.psi * scaling.V0;
+    solution.phin = state.phin * scaling.V0;
+    solution.phip = state.phip * scaling.V0;
+    solution.n = assembler.electronDensity(x);
+    solution.p = assembler.holeDensity(x);
+
+    ContactCurrent current(mesh, matdb, doping, mobility, constants::T0, scaling);
+    const ContactCurrentResult sgFlux = current.compute(solution, "anode");
+    const ContactCurrentResult residual =
+        current.computeFromResidual(assembler, x, "anode");
+
+    REQUIRE(residual.electronCurrent == Catch::Approx(sgFlux.electronCurrent));
+    REQUIRE(residual.holeCurrent == Catch::Approx(sgFlux.holeCurrent));
+    REQUIRE(residual.totalCurrent == Catch::Approx(sgFlux.totalCurrent));
+}
 TEST_CASE("NewtonSolver: Gummel initial guess reduces Newton iterations", "[newton]")
 {
     DeviceMesh mesh = makePNMesh();
@@ -1594,6 +1650,9 @@ TEST_CASE("NewtonSolver: parses block residual norm controls", "[newton][config]
         {"residual_norm", "block"},
         {"max_update", 0.25},
         {"stall_residual_floor", 2.0e-8},
+        {"poisson_line_search_stall_residual_floor", 3.0e-7},
+        {"poisson_line_search_stall_relative_increase", 2.0e-5},
+        {"poisson_line_search_stall_carrier_residual_floor", 4.0e-8},
         {"auger_cn_m6_per_s", 4.0e-43},
         {"auger_cp_m6_per_s", 2.0e-43},
         {"residual_weights", {{"psi", 0.25}, {"phin", 2.0}, {"phip", 3.0}}},
@@ -1603,6 +1662,9 @@ TEST_CASE("NewtonSolver: parses block residual norm controls", "[newton][config]
     REQUIRE(cfg.residualNorm == "block");
     REQUIRE(cfg.maxUpdate == Catch::Approx(0.25));
     REQUIRE(cfg.stallResidualFloor == Catch::Approx(2.0e-8));
+    REQUIRE(cfg.poissonLineSearchStallResidualFloor == Catch::Approx(3.0e-7));
+    REQUIRE(cfg.poissonLineSearchStallRelativeIncrease == Catch::Approx(2.0e-5));
+    REQUIRE(cfg.poissonLineSearchStallCarrierResidualFloor == Catch::Approx(4.0e-8));
     REQUIRE(cfg.residualWeightPsi == Catch::Approx(0.25));
     REQUIRE(cfg.residualWeightPhin == Catch::Approx(2.0));
     REQUIRE(cfg.residualWeightPhip == Catch::Approx(3.0));
@@ -1642,6 +1704,15 @@ TEST_CASE("NewtonSolver: parses block residual norm controls", "[newton][config]
         std::invalid_argument);
     REQUIRE_THROWS_AS(
         newtonConfigFromJson(nlohmann::json{{"carrier_regularization_scale", -1.0}}),
+        std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        newtonConfigFromJson(nlohmann::json{{"poisson_line_search_stall_residual_floor", -1.0}}),
+        std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        newtonConfigFromJson(nlohmann::json{{"poisson_line_search_stall_relative_increase", -1.0}}),
+        std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        newtonConfigFromJson(nlohmann::json{{"poisson_line_search_stall_carrier_residual_floor", -1.0}}),
         std::invalid_argument);
     REQUIRE_THROWS_AS(
         newtonConfigFromJson(nlohmann::json{

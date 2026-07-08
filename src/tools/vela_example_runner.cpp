@@ -274,7 +274,7 @@ nlohmann::json runNewtonSolveFromState(const std::string& configFile,
         ddScaling.fieldFromCoordinateDeltaFactor = problem.newton.inputScaling.unitSystem().fieldFromCoordinateDeltaFactor();
         ddScaling.currentDensityLineIntegralFactor =
             problem.newton.inputScaling.unitSystem().currentDensityAM2PerInternal() *
-            problem.newton.inputScaling.unitSystem().areaM2PerInternal();
+            problem.newton.inputScaling.unitSystem().lengthMPerInternal();
     }
     const vela::ContactCurrent contactCurrent(
         problem.mesh,
@@ -449,7 +449,8 @@ void writeResidualProbeCsv(const std::filesystem::path& path,
                            const vela::DeviceMesh& mesh,
                            const vela::DopingModel& doping,
                            const vela::DDSolution& state,
-                           const vela::NewtonResidualEvaluation& residual)
+                           const vela::NewtonResidualEvaluation& residual,
+                           const vela::UnitScalingConfig& scaling)
 {
     std::ofstream out(path);
     if (!out.is_open())
@@ -461,6 +462,7 @@ void writeResidualProbeCsv(const std::filesystem::path& path,
     for (int i = 0; i < n; ++i) {
         const auto nodeId = static_cast<vela::Index>(i);
         const vela::Node& node = mesh.getNode(nodeId);
+        const vela::PhysicalUnitSystem& units = scaling.unitSystem();
         const vela::Real rPsi = residual.raw(i);
         const vela::Real rPhin = residual.raw(n + i);
         const vela::Real rPhip = residual.raw(2 * n + i);
@@ -476,10 +478,11 @@ void writeResidualProbeCsv(const std::filesystem::path& path,
             << std::abs(rPsi) << ','
             << std::abs(rPhin) << ','
             << std::abs(rPhip) << ','
-            << doping.donors(nodeId) << ','
-            << doping.acceptors(nodeId) << ','
-            << doping.netDoping(nodeId) << ','
-            << residual.intrinsicDensity[static_cast<std::size_t>(nodeId)]
+            << units.internalConcentrationToM3(doping.donors(nodeId)) << ','
+            << units.internalConcentrationToM3(doping.acceptors(nodeId)) << ','
+            << units.internalConcentrationToM3(doping.netDoping(nodeId)) << ','
+            << units.internalConcentrationToM3(
+                   residual.intrinsicDensity[static_cast<std::size_t>(nodeId)])
             << '\n';
     }
 }
@@ -497,7 +500,8 @@ nlohmann::json runNewtonResidualProbe(const std::string& configFile, const nlohm
         problem.mesh,
         problem.doping,
         state,
-        residual);
+        residual,
+        problem.newton.inputScaling);
 
     return {
         {"nodes", problem.mesh.numNodes()},
@@ -516,7 +520,8 @@ void writeNewtonStepProbeCsv(const std::filesystem::path& path,
                              const vela::DeviceMesh& mesh,
                              const vela::DopingModel& doping,
                              const vela::DDSolution& state,
-                             const vela::NewtonStepEvaluation& step)
+                             const vela::NewtonStepEvaluation& step,
+                             const vela::UnitScalingConfig& scaling)
 {
     std::ofstream out(path);
     if (!out.is_open())
@@ -532,6 +537,7 @@ void writeNewtonStepProbeCsv(const std::filesystem::path& path,
     for (int i = 0; i < n; ++i) {
         const auto nodeId = static_cast<vela::Index>(i);
         const vela::Node& node = mesh.getNode(nodeId);
+        const vela::PhysicalUnitSystem& units = scaling.unitSystem();
         out << nodeId << ','
             << node.x << ','
             << node.y << ','
@@ -546,18 +552,19 @@ void writeNewtonStepProbeCsv(const std::filesystem::path& path,
             << step.trialSolution.psi(i) << ','
             << step.trialSolution.phin(i) << ','
             << step.trialSolution.phip(i) << ','
-            << step.trialSolution.n(i) << ','
-            << step.trialSolution.p(i) << ','
+            << units.internalConcentrationToM3(step.trialSolution.n(i)) << ','
+            << units.internalConcentrationToM3(step.trialSolution.p(i)) << ','
             << step.residual.raw(i) << ','
             << step.residual.raw(n + i) << ','
             << step.residual.raw(2 * n + i) << ','
             << step.trialResidual.raw(i) << ','
             << step.trialResidual.raw(n + i) << ','
             << step.trialResidual.raw(2 * n + i) << ','
-            << doping.donors(nodeId) << ','
-            << doping.acceptors(nodeId) << ','
-            << doping.netDoping(nodeId) << ','
-            << step.residual.intrinsicDensity[static_cast<std::size_t>(nodeId)]
+            << units.internalConcentrationToM3(doping.donors(nodeId)) << ','
+            << units.internalConcentrationToM3(doping.acceptors(nodeId)) << ','
+            << units.internalConcentrationToM3(doping.netDoping(nodeId)) << ','
+            << units.internalConcentrationToM3(
+                   step.residual.intrinsicDensity[static_cast<std::size_t>(nodeId)])
             << '\n';
     }
 }
@@ -575,7 +582,8 @@ nlohmann::json runNewtonStepProbe(const std::string& configFile, const nlohmann:
         problem.mesh,
         problem.doping,
         state,
-        step);
+        step,
+        problem.newton.inputScaling);
 
     return {
         {"nodes", problem.mesh.numNodes()},
@@ -1271,7 +1279,8 @@ nlohmann::json runNewtonCarrierTermProbe(const std::string& configFile, const nl
 
 void writeSgEdgeFluxProbeCsv(
     const std::filesystem::path& path,
-    const std::vector<vela::CoupledDDEdgeFluxDiagnostic>& edges)
+    const std::vector<vela::CoupledDDEdgeFluxDiagnostic>& edges,
+    const vela::UnitScalingConfig& scaling)
 {
     std::ofstream out(path);
     if (!out.is_open())
@@ -1280,29 +1289,30 @@ void writeSgEdgeFluxProbeCsv(
         << "net_doping_avg_m3,ni0_m3,ni1_m3,psi0_V,psi1_V,phin0_V,phin1_V,"
         << "phip0_V,phip1_V,electric_field_V_m,electron_mobility_m2_V_s,"
         << "hole_mobility_m2_V_s,electron_flux,hole_flux\n";
+    const vela::PhysicalUnitSystem& units = scaling.unitSystem();
     out << std::setprecision(17);
     for (const auto& edge : edges) {
         out << edge.edgeId << ','
             << edge.node0 << ','
             << edge.node1 << ','
-            << edge.x0 << ','
-            << edge.y0 << ','
-            << edge.x1 << ','
-            << edge.y1 << ','
-            << edge.length_m << ','
-            << edge.couple_m << ','
-            << edge.netDopingAvg_m3 << ','
-            << edge.ni0_m3 << ','
-            << edge.ni1_m3 << ','
+            << units.internalLengthToMeters(edge.x0) << ','
+            << units.internalLengthToMeters(edge.y0) << ','
+            << units.internalLengthToMeters(edge.x1) << ','
+            << units.internalLengthToMeters(edge.y1) << ','
+            << units.internalLengthToMeters(edge.length_m) << ','
+            << units.internalLengthToMeters(edge.couple_m) << ','
+            << units.internalConcentrationToM3(edge.netDopingAvg_m3) << ','
+            << units.internalConcentrationToM3(edge.ni0_m3) << ','
+            << units.internalConcentrationToM3(edge.ni1_m3) << ','
             << edge.psi0_V << ','
             << edge.psi1_V << ','
             << edge.phin0_V << ','
             << edge.phin1_V << ','
             << edge.phip0_V << ','
             << edge.phip1_V << ','
-            << edge.electricField_V_m << ','
-            << edge.electronMobility_m2_V_s << ','
-            << edge.holeMobility_m2_V_s << ','
+            << units.internalElectricFieldToVPerM(edge.electricField_V_m) << ','
+            << units.internalMobilityToM2PerVS(edge.electronMobility_m2_V_s) << ','
+            << units.internalMobilityToM2PerVS(edge.holeMobility_m2_V_s) << ','
             << edge.electronFlux << ','
             << edge.holeFlux << '\n';
     }
@@ -1319,7 +1329,8 @@ nlohmann::json runSgEdgeFluxProbe(const std::string& configFile, const nlohmann:
         solver.evaluateSgEdgeFluxDiagnostics(state);
     writeSgEdgeFluxProbeCsv(
         resolvePath(cfgDir, cfg.at("output_csv").get<std::string>()),
-        edges);
+        edges,
+        problem.newton.inputScaling);
     return {
         {"nodes", problem.mesh.numNodes()},
         {"edge_count", edges.size()},
@@ -1338,6 +1349,7 @@ void writeEdgeMobilityProbeCsv(const std::filesystem::path& path,
         mesh, matdb, newton.temperature_K);
     const std::unique_ptr<vela::MobilityModel> mobility =
         vela::makeMobilityModel(newton.mobility);
+    const vela::PhysicalUnitSystem& units = newton.inputScaling.unitSystem();
 
     std::ofstream out(path);
     if (!out.is_open())
@@ -1359,9 +1371,10 @@ void writeEdgeMobilityProbeCsv(const std::filesystem::path& path,
             continue;
         const int i0 = static_cast<int>(edge.n0);
         const int i1 = static_cast<int>(edge.n1);
-        const vela::Real electricField = std::abs(state.psi(i1) - state.psi(i0)) / length;
-        const vela::Real electronQfField = std::abs(state.phin(i1) - state.phin(i0)) / length;
-        const vela::Real holeQfField = std::abs(state.phip(i1) - state.phip(i0)) / length;
+        const vela::Real fieldFactor = units.fieldFromCoordinateDeltaFactor();
+        const vela::Real electricField = std::abs(state.psi(i1) - state.psi(i0)) / length * fieldFactor;
+        const vela::Real electronQfField = std::abs(state.phin(i1) - state.phin(i0)) / length * fieldFactor;
+        const vela::Real holeQfField = std::abs(state.phip(i1) - state.phip(i0)) / length * fieldFactor;
         const vela::Real electronMobilityField =
             newton.mobility.highFieldDrivingForce == "quasi_fermi_gradient"
             ? electronQfField
@@ -1392,22 +1405,22 @@ void writeEdgeMobilityProbeCsv(const std::filesystem::path& path,
         out << edgeId << ','
             << edge.n0 << ','
             << edge.n1 << ','
-            << n0.x << ','
-            << n0.y << ','
-            << n1.x << ','
-            << n1.y << ','
-            << length << ','
-            << edge.couple << ','
-            << netDoping << ','
-            << electricField << ','
-            << electronQfField << ','
-            << holeQfField << ','
-            << electronMobilityField << ','
-            << holeMobilityField << ','
-            << electronLowField << ','
-            << holeLowField << ','
-            << electronFinal << ','
-            << holeFinal << ','
+            << units.internalLengthToMeters(n0.x) << ','
+            << units.internalLengthToMeters(n0.y) << ','
+            << units.internalLengthToMeters(n1.x) << ','
+            << units.internalLengthToMeters(n1.y) << ','
+            << units.internalLengthToMeters(length) << ','
+            << units.internalLengthToMeters(edge.couple) << ','
+            << units.internalConcentrationToM3(netDoping) << ','
+            << units.internalElectricFieldToVPerM(electricField) << ','
+            << units.internalElectricFieldToVPerM(electronQfField) << ','
+            << units.internalElectricFieldToVPerM(holeQfField) << ','
+            << units.internalElectricFieldToVPerM(electronMobilityField) << ','
+            << units.internalElectricFieldToVPerM(holeMobilityField) << ','
+            << units.internalMobilityToM2PerVS(electronLowField) << ','
+            << units.internalMobilityToM2PerVS(holeLowField) << ','
+            << units.internalMobilityToM2PerVS(electronFinal) << ','
+            << units.internalMobilityToM2PerVS(holeFinal) << ','
             << electronLimiter << ','
             << holeLimiter << ','
             << edgeCells[edgeId].size()
