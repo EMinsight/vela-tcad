@@ -1,0 +1,306 @@
+# TCAD Internal Unit System Design
+
+## Purpose
+
+The current `unit_scaling` mode interprets public deck values in common TCAD
+units, immediately converts them to SI, and then builds dimensionless solver
+unknowns from those SI values. The requested change is to remove SI as the
+internal physical intermediate for `unit_scaling`.
+
+After this change, `unit_scaling` uses TCAD display units as the internal
+physical unit system:
+
+| Quantity | Legacy mode internal unit | `unit_scaling` internal unit |
+| --- | --- | --- |
+| length | m | um |
+| area | m^2 | um^2 |
+| volume | m^3 | um^3 |
+| concentration | m^-3 | cm^-3 |
+| sheet density | m^-2 | cm^-2 |
+| mobility | m^2/(V s) | cm^2/(V s) |
+| diffusivity | m^2/s | cm^2/s |
+| electric field | V/m | V/cm |
+| inverse length | m^-1 | cm^-1 |
+| current density | A/m^2 | A/cm^2 |
+| potential | V | V |
+| temperature | K | K |
+| energy | eV | eV |
+
+The design keeps legacy SI behavior unchanged when `scaling` is omitted.
+
+## Non-Goals
+
+- Do not introduce a second public TCAD mode. The target is to change
+  `scaling.mode = "unit_scaling"` semantics after tests and documentation are
+  updated.
+- Do not tune physical models or PN2D calibration while changing units.
+- Do not preserve misleading SI-named output columns in paths that no longer
+  compute SI internally without an explicit conversion at the output boundary.
+- Do not rewrite unrelated solver algorithms.
+
+## Architecture
+
+Introduce a small unit-system layer, tentatively `PhysicalUnitSystem`, that is
+owned by `UnitScalingConfig`.
+
+`UnitScalingConfig` should stop exposing `lengthToSI`, `concentrationToSI`,
+`mobilityToSI`, and similar APIs as the main parser surface. Replace them with
+internal-unit names:
+
+- `lengthToInternal`
+- `concentrationToInternal`
+- `sheetDensityToInternal`
+- `mobilityToInternal`
+- `electricFieldToInternal`
+- `inverseLengthToInternal`
+- `surfaceFieldCoefficientToInternal`
+
+For legacy mode these methods are identity because legacy internal units are
+SI. For `unit_scaling` these methods are also identity for deck values that are
+already written in TCAD units. The method names are still useful because they
+make the schema boundary explicit and prevent new code from assuming SI.
+
+Add output-boundary helpers for display and compatibility:
+
+- `internalLengthToMeters`
+- `internalConcentrationToM3`
+- `internalElectricFieldToVPerM`
+- `internalCurrentDensityToAPerM2`
+- `internalCurrentPerDeviceDepthToAPerUm`
+
+These helpers are only for outputs, cross-mode comparisons, and compatibility
+tests. They are not used as the default path into assemblers.
+
+## Unit Constants
+
+Each unit system needs factors from its internal units to SI only for deriving
+dimensionally correct constants. Those factors live inside the unit-system
+layer, not in parser code.
+
+For the TCAD internal system:
+
+- `length_m_per_internal = 1e-6`
+- `area_m2_per_internal = 1e-12`
+- `volume_m3_per_internal = 1e-18`
+- `concentration_m3_per_internal = 1e6`
+- `mobility_m2_per_V_s_per_internal = 1e-4`
+- `field_V_per_m_per_internal = 1e2`
+- `inverse_length_m_inv_per_internal = 1e2`
+- `current_density_A_m2_per_internal = 1e4`
+
+These factors should be centralized so equations do not scatter literals such
+as `1e-6`, `1e4`, or `100`.
+
+## Scaling System
+
+`UnitScalingSystem` should receive internal physical quantities and a
+`PhysicalUnitSystem`.
+
+References:
+
+- `V0 = kT / q` in volts.
+- `C0` is an internal concentration scale.
+- `L0` is an internal length scale.
+- `mu0` is an internal mobility scale.
+- `D0 = mu0 * V0`, adjusted so its length unit matches the continuity geometry.
+- `E0 = V0 / L0`, expressed in the internal electric-field unit.
+- `J0` is expressed in the internal current-density unit.
+- `R0` is expressed in the internal volumetric generation/recombination unit.
+- `lambda2` is the dimensionless Poisson coefficient in the current internal
+  unit system.
+
+The implementation must not derive `lambda2`, `J0`, or `R0` by assuming SI
+mesh length, SI concentration, or SI mobility. It should either:
+
+1. derive them from a dimensionally explicit `PhysicalUnitSystem`, or
+2. compute them by converting only the reference constants through the
+   centralized unit-system factors.
+
+The second option is acceptable because the conversion is isolated in the unit
+layer and is not part of parser or solver physical-state flow.
+
+## Poisson Equation
+
+The Poisson path is the highest-risk part because it couples charge density,
+permittivity, geometry, and potential:
+
+`-div(eps grad psi) = q * rho_number`
+
+In TCAD internal units:
+
+- geometry is in `um`,
+- doping/fixed charge is in `cm^-3`,
+- interface charge is in `cm^-2`,
+- potential is in `V`.
+
+The assembler must use unit-system factors to make volumetric and sheet charge
+terms consistent with the geometric control volumes. The matrix and RHS
+normalization should be documented in code next to the Poisson scaling spec.
+
+Acceptance checks:
+
+- A legacy SI deck and an equivalent `unit_scaling` deck produce the same
+  physical potential after output conversion.
+- A `0.01 um` square cell keeps geometry in `um^2` internally and does not
+  construct `1e-16 m^2` node areas as the main geometry representation.
+
+## Drift-Diffusion Equations
+
+The drift-diffusion assemblers should operate on internal physical units and
+dimensionless solver unknowns:
+
+- `psi_hat = psi / V0`
+- `phin_hat = phin / V0`
+- `phip_hat = phip / V0`
+- `n_hat = n / C0`
+- `p_hat = p / C0`
+
+Scharfetter-Gummel flux and recombination/source terms must be re-derived for
+the internal unit system:
+
+- Mobility is `cm^2/(V s)` in `unit_scaling`.
+- Electric field and quasi-Fermi gradients are `V/cm`.
+- Mesh edge lengths are `um`, so any flux expression using gradients must
+  apply the centralized `cm_per_um = 1e-4` relation through the unit-system
+  layer.
+- Recombination rates and avalanche source integrals must have explicit
+  internal units before residual normalization.
+
+The solver should still return `DDSolution` in internal physical units. For
+legacy mode this means SI; for `unit_scaling` this means TCAD units. Consumers
+must not assume `DDSolution` is SI without checking the associated
+`UnitScalingConfig` or `PhysicalUnitSystem`.
+
+## Materials And Models
+
+Input parsing changes:
+
+- Mesh coordinates in `unit_scaling` are stored as `um`, not converted to `m`.
+- Doping and material concentrations are stored as `cm^-3`.
+- Mobilities are stored as `cm^2/(V s)`.
+- Impact ionization coefficients remain in `cm^-1` and `V/cm`.
+- Surface mobility theta remains in `cm/V`.
+
+Model implementations should use the same internal units as their inputs. When
+a formula currently assumes SI, update either the formula constants or add a
+unit-system coefficient at the model boundary.
+
+## Output Policy
+
+Outputs should be explicit about display units.
+
+Recommended policy:
+
+- VTK potential and quasi-Fermi fields: `V`.
+- VTK carrier and doping fields in `unit_scaling`: `cm^-3`.
+- VTK electric field in `unit_scaling`: `V/cm`.
+- VTK current-density vectors in `unit_scaling`: `A/cm^2`.
+- DC sweep current display columns: keep `*_A_per_um`.
+- If SI compatibility columns are retained, compute them only through explicit
+  output conversion helpers and keep their names honest.
+
+Restart-state CSV policy:
+
+- Keep the existing restart-state header in the first implementation to avoid
+  breaking restart readers during the unit-system migration.
+- Document that restart-state values are in the active internal physical unit
+  system, despite the historical `electrons_m3` and `holes_m3` column names.
+- Require restart files to be read with the same scaling mode that wrote them.
+  Cross-mode restart conversion is out of scope for this change.
+
+## Compatibility And Migration
+
+This is a breaking semantic change for decks using
+`scaling.mode = "unit_scaling"`.
+
+Migration work:
+
+- Update `docs/config_schema.md`.
+- Update `docs/development_poisson_unit_scaling.md` or replace it with a
+  broader internal-unit-system note.
+- Update example comments that mention SI normalization.
+- Update reference TCAD tools only where they assumed Vela internal fields were
+  SI.
+
+Legacy no-`scaling` decks must remain unchanged.
+
+## Test Plan
+
+Follow TDD. Add failing tests before production edits.
+
+Initial red tests:
+
+1. `UnitScalingConfig unit_scaling keeps TCAD values internal`
+   - Mesh `x = 0.01` remains `0.01` internally.
+   - Doping `1e17` remains `1e17` internally.
+   - Mobility `1000` remains `1000` internally.
+
+2. `UnitScalingSystem computes finite TCAD references`
+   - With `L0 = 1 um`, `C0 = 1e17 cm^-3`, `mu0 = 1000 cm^2/(V s)`, all
+     references are positive and dimensionless coefficients are finite.
+
+3. `Poisson unit_scaling matches equivalent legacy SI potential`
+   - Build one tiny PN or charged slab case in both modes.
+   - Compare final physical potential after explicit output conversion.
+
+4. `Box geometry stays in internal units`
+   - A `0.01 um` by `0.01 um` cell has area on the order of `1e-4 um^2`, not
+     `1e-16 m^2`.
+
+5. `Impact and mobility parsers do not preconvert unit_scaling parameters to SI`
+   - `electron_A_m_inv = 1e6` remains the internal `cm^-1` value for TCAD mode.
+   - `electron_mu_min_m2_V_s = 100` remains the internal `cm^2/(V s)` value for
+     TCAD mode.
+
+Regression commands:
+
+```powershell
+$env:Path = "D:\msys64\ucrt64\bin;D:\msys64\usr\bin;$env:Path"
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure -R "scaling|poisson|mesh|mobility|newton|gummel"
+```
+
+Run the full suite before claiming completion:
+
+```powershell
+$env:Path = "D:\msys64\ucrt64\bin;D:\msys64\usr\bin;$env:Path"
+ctest --test-dir build --output-on-failure
+```
+
+## Implementation Order
+
+1. Add `PhysicalUnitSystem` and internal-unit parser methods.
+2. Add tests proving `unit_scaling` no longer converts parser values to SI.
+3. Update mesh, doping, material, mobility, and impact parsing to use internal
+   methods.
+4. Update `UnitScalingSystem` to accept the unit system and compute references
+   without SI assumptions leaking into solver state.
+5. Update Poisson assembly and tests.
+6. Update DD assembly and tests.
+7. Update post-processing and output naming/documentation.
+8. Run focused and full test suites.
+
+## Risks
+
+- Poisson charge scaling can silently drift if permittivity, volume, and
+  concentration factors are not derived together.
+- SG flux can silently drift because mobility and geometry use different TCAD
+  length bases (`cm` for mobility, `um` for mesh).
+- Existing regression fixtures that compare against `current_total_A_per_um`
+  may change if output conversion and internal current scaling are not kept
+  equivalent.
+- Restart-state files become ambiguous unless their scaling mode is preserved
+  by convention or metadata.
+
+## Design Decisions
+
+- Restart-state column names stay stable for the first implementation, but
+  their documented meaning becomes active internal physical units.
+- Existing user-facing JSON field names stay stable even when they contain
+  historical SI suffixes. Under `unit_scaling`, their numeric interpretation is
+  TCAD internal units.
+- Keep common TCAD display columns such as `*_A_per_um`,
+  `max_electric_field_V_per_cm`, and VTK `A/cm^2` current density.
+- Preserve SI compatibility output only through explicit output conversion
+  helpers. Do not feed converted SI values back into solver state or model
+  evaluation.
