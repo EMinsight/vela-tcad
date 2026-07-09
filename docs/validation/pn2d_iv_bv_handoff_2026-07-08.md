@@ -564,3 +564,43 @@ git log --oneline -5
 - coarse `cell_reconstructed` 可跑到 `-20 V`，但 `breakdown_detected` 仍未触发。
 - 继续比较 `density_gradient`、`grad_qf`、`conserved_total_current` 的 source/current proxy 和 continuation 稳定性。
 - 不要回退已修的 SG field/alpha/midpoint 权重问题。
+
+## 2026-07-09 IV full-range closure and BV next plan
+
+Update after rerunning the Sentaurus 2018 IV reference through the real
+`0 V -> 10 V` goal:
+
+- Sentaurus `pn2d_iv.plt` and `pn2d_iv_multibias_0000..0200_des.tdr` have been
+  regenerated/promoted from the VM run using the authoritative IV SDevice deck.
+- Vela `iv_full_sentaurus_range` converges across the full range. Over the
+  stable `0.2..10 V` comparison window, 197 reference points are compared, max
+  order error is `8.4102e-4`, and max relative error is `0.19384%`.
+- The earlier `0.3 V` `~1554x` IV anomaly is not reproduced with the refreshed
+  reference/current deck. The current 0.3 V magnitude ratio is about `1.000018`;
+  the 10 V ratio is about `1.000635`.
+- The IV multibias field comparison produced 1809 ok rows across potential,
+  electron/hole quasi-Fermi potential, densities, mobilities, SRH, and electric
+  field. At 0.3 V the potential and QF RMS errors are O(1e-6 V); at 10 V they
+  are about `0.019 V`, with largest local errors about `0.025 V` near the top
+  right contact-side endpoint.
+
+Current conclusion: IV is no longer the main blocker. Treat it as a regression
+track and move the main debug focus back to BV.
+
+BV next plan:
+
+1. Validate the authoritative Sentaurus BV artifact set (`pn2d_bv.plt` and the
+   endpoint multibias TDR files) before curve or field comparisons.
+2. Rerun the current Vela BV matrix with no-impact continuation, faithful
+   SRH/Auger/Avalanche, and source/current proxy variants (`cell_reconstructed`,
+   `density_gradient`, `grad_qf`, `conserved_total_current` if available).
+3. Record last converged bias, failure reason, Newton block residuals, terminal
+   current consistency, max field, alpha, avalanche source integral, proxy
+   ratios, and contact/QF sanity for every point.
+4. Compare BV fields at shared reverse-bias anchors from near zero through the
+   knee and endpoint, including `-13.2 V`, `-15 V`, `-18 V`, and `-20 V` where
+   available.
+5. Keep SG field/alpha scaling, midpoint weighting, and the SG avalanche
+   Jacobian block out of the suspect list unless new evidence regresses them.
+   The active BV suspect set is branch/continuation support, avalanche feedback
+   ownership, current proxy choice, and curve-shape/knee alignment.

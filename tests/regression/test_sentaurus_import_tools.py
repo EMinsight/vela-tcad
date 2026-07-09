@@ -161,6 +161,52 @@ class SentaurusImportToolsTest(unittest.TestCase):
             self.assertEqual(deck["sweep"]["stop"], -20.0)
             self.assertEqual(deck["sweep"]["step"], -0.05)
 
+    def test_reference_patch_copies_simulation_sweep_diagnostics(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="vela_sweep_diagnostics_patch_") as tmp:
+            root = Path(tmp)
+            deck_path = root / "simulation_iv.json"
+            deck_path.write_text(json.dumps({
+                "contacts": [
+                    {"name": "Anode", "bias": 0.0},
+                    {"name": "Cathode", "bias": 0.0},
+                ],
+                "solver": {"method": "gummel_newton"},
+                "sweep": {},
+            }) + "\n")
+
+            diagnostics = {
+                "terminal_balance": {"enabled": True, "contacts": ["Anode", "Cathode"]},
+                "contact_edge": {"enabled": True, "contacts": ["Anode", "Cathode"]},
+                "newton_history": {"enabled": True},
+                "terminal_current_method_compare": {
+                    "enabled": True,
+                    "contacts": ["Anode", "Cathode"],
+                },
+            }
+            sentaurus_import.patch_reference_deck(
+                deck_path,
+                {
+                    "physics": [],
+                    "sweeps": [{
+                        "contact": "Anode",
+                        "stop": 10.0,
+                        "step_control": {"MaxStep": 0.025},
+                    }],
+                },
+                {
+                    "name": "iv_full_sentaurus_range",
+                    "kind": "iv",
+                    "vela_stop": 10.0,
+                    "vela_step": 0.05,
+                    "vela_sweep_diagnostics": diagnostics,
+                },
+                "iv_full.csv",
+            )
+
+            deck = json.loads(deck_path.read_text())
+            self.assertEqual(deck["sweep"]["stop"], 10.0)
+            self.assertEqual(deck["sweep"]["step"], 0.05)
+            self.assertEqual(deck["sweep"]["diagnostics"], diagnostics)
     def test_plt_parser_exports_reference_curve(self) -> None:
         with tempfile.TemporaryDirectory(prefix="vela_sentaurus_plt_") as tmp:
             root = Path(tmp)

@@ -216,16 +216,30 @@ but sets `impact_ionization.model: "none"`; avalanche/impact-ionization fields
 remain available through the imported Sentaurus TDR/tdx state exports.
 
 The current executable comparison uses the faithful node-level doping decks.
-The IV deck uses `vela_stop: 0.3` and `vela_step: 0.02`; the local gate compares
-the 0.2-0.3 V forward-bias window against the full imported Sentaurus IV
-reference. The sweep bias follows the Sentaurus `Anode` voltage ramp, while the
-Vela current is taken from `Cathode`; this matches the terminal-current
-orientation observed in the imported Sentaurus `Anode TotalCurrent` curve and
-avoids an artificial electron/hole cancellation at the swept contact. The
-comparison selects Vela's `current_total_A_per_um` column rather than the
-per-meter `current_total` column, matching the Sentaurus total-current quantity
-used by the imported PLT curves. The BV deck currently uses a strict
-low-reverse-bias smoke window (`vela_stop: 0.05`, `vela_step: 0.05`) while
+The authoritative Sentaurus IV range is the `pn2d_iv_sdevice.cmd` Anode ramp
+from `0 V` to `10 V`; its multibias output uses `Plot(... Intervals=200)`, so
+`0.05 V` is the reference sampling cadence for full-curve diagnostics. The
+legacy `iv` Vela deck still uses `vela_stop: 0.3` and `vela_step: 0.02` as a
+local 0.2-0.3 V gate only. That gate is useful because it exposes the current
+contact-edge quasi-Fermi branch problem quickly, but it is not the Sentaurus IV
+simulation endpoint.
+
+Two diagnostic IV deck variants are declared in
+`pn2d_sentaurus2018_reference.json`: `iv_low_bias_debug` keeps a dense
+`0..0.3 V` sweep for fast contact-edge triage, while
+`iv_full_sentaurus_range` derives the full `0..10 V` sweep with `0.05 V`
+sampling. Both enable terminal balance, contact-edge, Newton history, and
+terminal-current-method comparison diagnostics. Full-range debug summaries can
+be generated with `scripts/summarize_pn2d_iv_full_range_debug.py`, which reports
+compared point count, max order/relative current error, first high-error bias,
+first non-`reltol` convergence reason, terminal-current consistency, and the
+top contact-edge current contributors. The sweep bias follows the Sentaurus
+`Anode` voltage ramp, while the Vela current is taken from `Cathode`; this
+matches the terminal-current orientation observed in the imported Sentaurus
+`Anode TotalCurrent` curve and avoids an artificial electron/hole cancellation
+at the swept contact. The comparison selects Vela's `current_total_A_per_um`
+column rather than the per-meter `current_total` column, matching the Sentaurus
+total-current quantity used by the imported PLT curves. The BV deck currently uses a strict low-reverse-bias smoke window (`vela_stop: 0.05`, `vela_step: 0.05`) while
 Newton continuation beyond the first reverse-bias steps is improved; its
 quantity gate checks the non-zero 0.05 V point and leaves the 0 V equilibrium
 row as a strict Newton/provenance smoke check. Vela currently disables the Sentaurus
@@ -3139,3 +3153,74 @@ work should target branch/continuation support: compare predictor direction,
 state handoff, and current-growth branch selection around the sharp transition
 between factor `0.875` (no knee) and factor `0.90625` (`>1.5` marker jumps to
 `-15 V`).
+
+## PN2D IV Full-Range Closure (2026-07-09)
+
+After regenerating the Sentaurus 2018 IV artifacts from the authoritative
+`pn2d_iv_sdevice.cmd` goal (`Anode` ramp `0 V -> 10 V`) and promoting the
+`pn2d_iv.plt` plus `pn2d_iv_multibias_0000..0200_des.tdr` set, the current Vela
+`iv_full_sentaurus_range` deck is no longer showing the earlier 0.3 V current
+branch failure.
+
+Current evidence:
+
+- Sentaurus multibias field set: 201 samples at the `0.05 V` cadence.
+- Vela full-range IV sweep: 401 converged samples through the 10 V endpoint.
+- Current-curve comparison over the stable `0.2..10 V` window: 197 compared
+  Sentaurus points, max order error `8.4102e-4`, max relative error `0.19384%`,
+  and no high-error, trend-mismatch, or non-`reltol` bias in that window.
+- At `0.3 V`, Vela/Sentaurus current magnitude ratio is about `1.000018`; the
+  previous `~1554x` high-current anomaly does not reproduce with the refreshed
+  full-range reference and current deck.
+- At `10 V`, Vela/Sentaurus current magnitude ratio is about `1.000635`.
+
+The IV multibias field comparison report is under
+`build-release/reference_tcad/pn2d_sentaurus2018/reports/iv_multibias_field_compare_20260709/`.
+It compares 201 Sentaurus field exports against 401 Vela VTK states and writes
+1809 quantity rows; all rows currently have `status=ok`.
+
+Representative field errors:
+
+| bias | potential RMS | electron QF RMS | hole QF RMS | electron density log10 p95 | hole density log10 p95 | electric-field rel p95 |
+|---:|---:|---:|---:|---:|---:|---:|
+| `0.3 V` | `3.3227e-6 V` | `2.7144e-6 V` | `2.5078e-7 V` | `1.5518e-4` | `1.4797e-4` | `5.0956e-2` |
+| `10 V` | `1.8890e-2 V` | `1.8913e-2 V` | `1.8855e-2 V` | `7.1278e-3` | `6.9444e-3` | `9.6159e-2` |
+
+At 10 V the largest potential/QF node errors are about `0.025 V` near the top
+right contact-side endpoint (`x ~= 1.0078125 um`, `y = 0.5 um`). This is small
+relative to the previous IV branch failure and is not the active blocker. The
+0 V electric-field and SRH relative outliers are near-floor denominator effects
+and should not be read as a physical IV failure.
+
+Conclusion: IV is currently accepted as a full `0..10 V` diagnostic alignment
+track. Future IV work should be regression monitoring and report polish, while
+BV becomes the primary debug line.
+
+## PN2D BV Debug Plan After IV Closure (2026-07-09)
+
+BV should now be resumed as the main Sentaurus-parity task. The plan is:
+
+1. Re-establish the authoritative BV reference artifacts from the Sentaurus
+   `pn2d_bv_sdevice.cmd` range and multibias cadence. Validate that the source
+   tree contains the expected `pn2d_bv.plt` and endpoint multibias TDR set before
+   using any curve or field comparison.
+2. Run a fresh current-branch BV diagnostic matrix on the current Vela branch:
+   no-impact numerical continuation, Sentaurus-faithful SRH/Auger/Avalanche,
+   and the source/current proxy variants (`cell_reconstructed`,
+   `density_gradient`, `grad_qf`, and `conserved_total_current` if available).
+3. For every BV point, record last converged bias, failure reason, Newton block
+   residuals, terminal current consistency, max electric field, ionization
+   coefficients, avalanche source integral, current proxy ratios, and contact/QF
+   sanity metrics.
+4. Compare reverse-bias multibias fields at shared anchors such as `0`, `-0.05`,
+   `-0.3`, `-1`, `-5`, `-10`, `-13.2`, `-15`, `-18`, and `-20 V`, or the exact
+   Sentaurus sample points if the cadence differs.
+5. Keep the existing BV evidence ordering: SG field/alpha units, midpoint weight
+   normalization, and the SG avalanche Jacobian block are already addressed or
+   ruled out as the current blocker. The remaining suspect area is curve-shape
+   branch selection, avalanche feedback ownership/support, current proxy choice,
+   and continuation through the multiplication knee.
+6. Acceptance requires more than convergence to `-20 V`: report compared point
+   count, max order error, first high-error bias, knee/growth marker agreement,
+   terminal current balance, and QF/contact sanity. Do not accept a low-bias-only
+   or endpoint-only BV fix.

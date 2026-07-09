@@ -449,6 +449,111 @@ Ionization
             False,
         )
 
+    def test_pn2d_sentaurus2018_iv_debug_decks_cover_low_bias_and_full_sentaurus_range(self) -> None:
+        path = REPO / "reference_tcad" / "pn2d_sentaurus2018" / "pn2d_sentaurus2018_reference.json"
+        config = json.loads(path.read_text())
+        sims = {sim["name"]: sim for sim in config["simulations"]}
+
+        self.assertIn("iv_low_bias_debug", sims)
+        self.assertIn("iv_full_sentaurus_range", sims)
+        low = sims["iv_low_bias_debug"]
+        full = sims["iv_full_sentaurus_range"]
+
+        self.assertEqual(low["kind"], "iv")
+        self.assertEqual(full["kind"], "iv")
+        self.assertEqual(full["cmd"], "pn2d_iv_sdevice.cmd")
+        self.assertEqual(full["plt"], "pn2d_iv.plt")
+        self.assertAlmostEqual(low["vela_stop"], 0.3)
+        self.assertAlmostEqual(full["vela_stop"], 10.0)
+        self.assertAlmostEqual(full["vela_step"], 0.05)
+        self.assertEqual(full["comparison"]["bias_min"], 0.0)
+        self.assertEqual(full["comparison"]["bias_max"], 10.0)
+        self.assertEqual(full["comparison"]["interpolation"], "log_current")
+        self.assertEqual(full["comparison"]["candidate_column"], "current_total_A_per_um")
+        self.assertGreaterEqual(full["comparison"]["min_points"], 150)
+
+        for sim in (low, full):
+            with self.subTest(sim=sim["name"]):
+                diagnostics = sim["vela_sweep_diagnostics"]
+                self.assertTrue(diagnostics["terminal_balance"]["enabled"])
+                self.assertEqual(diagnostics["terminal_balance"]["contacts"], ["Anode", "Cathode"])
+                self.assertTrue(diagnostics["contact_edge"]["enabled"])
+                self.assertEqual(diagnostics["contact_edge"]["contacts"], ["Anode", "Cathode"])
+                self.assertTrue(diagnostics["newton_history"]["enabled"])
+                self.assertTrue(diagnostics["terminal_current_method_compare"]["enabled"])
+
+    def test_pn2d_iv_full_range_debug_summary_reports_first_deviation_and_top_edges(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="vela_iv_full_summary_") as td:
+            root = Path(td)
+            reference = root / "reference.csv"
+            candidate = root / "candidate.csv"
+            terminal_balance = root / "terminal_balance.csv"
+            contact_edges = root / "contact_edges.csv"
+            summary_json = root / "summary.json"
+            summary_md = root / "summary.md"
+
+            self._write_csv(reference, ["bias_V", "current_total"], [
+                [0.00, 0.0],
+                [0.05, 1.0e-15],
+                [0.10, 2.0e-15],
+                [0.15, 3.0e-15],
+                [0.20, 4.0e-15],
+                [0.25, 5.0e-15],
+                [0.30, 6.0e-15],
+            ])
+            self._write_csv(candidate, [
+                "bias_V",
+                "current_total_A_per_um",
+                "converged",
+                "newton_iterations",
+                "newton_convergence_reason",
+            ], [
+                [0.00, 0.0, 1, 2, "reltol"],
+                [0.05, -1.0e-15, 1, 3, "reltol"],
+                [0.10, -2.0e-15, 1, 3, "reltol"],
+                [0.15, -3.0e-15, 1, 4, "reltol"],
+                [0.20, -4.0e-14, 1, 8, "reltol"],
+                [0.25, -5.0e-14, 0, 20, "line_search_non_decrease"],
+                [0.30, -6.0e-14, 0, 20, "line_search_non_decrease"],
+            ])
+            self._write_csv(terminal_balance, [
+                "bias_V", "contact", "current_total_A_per_um", "newton_iterations",
+            ], [
+                [0.20, "Anode", 4.2e-14, 8],
+                [0.20, "Cathode", -4.0e-14, 8],
+            ])
+            self._write_csv(contact_edges, [
+                "bias_V", "current_contact", "edge_id", "node0", "node1", "phin0_V", "phin1_V",
+                "current_total_A_per_um",
+            ], [
+                [0.20, "Anode", 11, 1, 2, 0.20, 0.04, 1.0e-14],
+                [0.20, "Cathode", 19, 7, 8, 0.00, 0.02, -9.0e-14],
+            ])
+
+            result = subprocess.run([
+                sys.executable,
+                str(REPO / "scripts" / "summarize_pn2d_iv_full_range_debug.py"),
+                "--reference", str(reference),
+                "--candidate", str(candidate),
+                "--terminal-balance", str(terminal_balance),
+                "--contact-edge", str(contact_edges),
+                "--output-json", str(summary_json),
+                "--output-md", str(summary_md),
+                "--candidate-scale", "-1.0",
+                "--candidate-column", "current_total_A_per_um",
+                "--interpolation", "log_current",
+                "--max-orders-threshold", "0.3",
+            ], text=True, capture_output=True, cwd=REPO)
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            summary = json.loads(summary_json.read_text())
+            self.assertEqual(summary["points_compared"], 6)
+            self.assertAlmostEqual(summary["first_high_error"]["bias_V"], 0.20)
+            self.assertAlmostEqual(summary["first_non_reltol"]["bias_V"], 0.25)
+            self.assertAlmostEqual(summary["last_converged_bias_V"], 0.20)
+            self.assertAlmostEqual(summary["terminal_current_consistency"]["worst_bias_V"], 0.20)
+            self.assertEqual(summary["top_contact_edges_by_abs_current"][0]["edge_id"], "19")
+            self.assertIn("0.2", summary_md.read_text())
     def test_pn2d_sentaurus2018_iv_uses_models_par_alignment(self) -> None:
         path = REPO / "reference_tcad" / "pn2d_sentaurus2018" / "pn2d_sentaurus2018_reference.json"
         config = json.loads(path.read_text())

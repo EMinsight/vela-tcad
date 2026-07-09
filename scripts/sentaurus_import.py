@@ -935,6 +935,11 @@ def patch_reference_deck(deck_path: Path,
     if "vela_step" in sim:
         deck["sweep"]["step"] = float(sim["vela_step"])
     deck["sweep"]["write_vtk"] = False
+    sweep_diagnostics = sim.get("vela_sweep_diagnostics")
+    if sweep_diagnostics is not None:
+        if not isinstance(sweep_diagnostics, dict):
+            raise ValueError("vela_sweep_diagnostics must be an object")
+        deck["sweep"]["diagnostics"] = json.loads(json.dumps(sweep_diagnostics))
     sweep_initialization = sim.get("vela_sweep_initialization")
     if sweep_initialization is not None:
         if not isinstance(sweep_initialization, dict):
