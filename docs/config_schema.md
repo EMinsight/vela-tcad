@@ -372,6 +372,11 @@ Notes:
   the majority carrier keeps the looser `quasi_fermi_update_limit_V`. `0`
   disables the minority-specific cap and reproduces the global uniform behavior
   (default). It must be finite and non-negative.
+- `poisson_line_search_stall_contact_majority_qf_drop_limit_V` is an optional
+  non-negative physical-voltage guard for the `poisson_line_search_stall_floor`
+  acceptance path. When greater than zero, a Poisson-block line-search stall is
+  accepted only if the maximum majority-carrier quasi-Fermi drop across contact-to-interior edges
+  is below this value. The default is `5e-11` V; `0` disables this guard.
 - `carrier_regularization_scale` is an experimental non-negative Newton
   stabilization knob. When greater than zero, Vela adds
   `sign(diagonal) * scale * carrier_row_abs_sum` to each carrier continuity

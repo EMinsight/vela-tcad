@@ -35,6 +35,24 @@ static DeviceMesh makeSingleCellMesh()
     return mesh;
 }
 
+TEST_CASE("Bernoulli avalanche midpoint weights stay normalized at large potential drops",
+          "[impact][cell_reconstructed]")
+{
+    const Real large = 80.0;
+
+    REQUIRE(detail::avalancheMidpointAux2(large) < 1.0e-30);
+    REQUIRE(detail::avalancheMidpointAux2(-large) == Catch::Approx(1.0));
+    REQUIRE(detail::avalancheMidpointAux2(large) +
+            detail::avalancheMidpointAux2(-large) == Catch::Approx(1.0));
+
+    const Real midpoint = detail::bernoulliWeightedMidpointDensity(
+        1.0e3,
+        1.0e17,
+        -10.0,
+        0.0,
+        0.025852);
+    REQUIRE(midpoint == Catch::Approx(1.0e3));
+}
 TEST_CASE("Cell reconstructed avalanche support uses local current density magnitude",
           "[impact][cell_reconstructed]")
 {
@@ -94,8 +112,7 @@ TEST_CASE("Cell reconstructed avalanche support uses local current density magni
 
     const Real Vt = constants::kb * constants::T0 / constants::q;
     auto aux2 = [](Real x) {
-        return x >= 0.0 ? 1.0 / (1.0 + std::exp(x))
-                        : std::exp(x) / (1.0 + std::exp(x));
+        return detail::avalancheMidpointAux2(x);
     };
     const Real electronArg = (psi(0) - psi(1)) / (2.0 * Vt);
     const Real electronCarrier =

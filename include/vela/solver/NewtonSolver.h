@@ -94,6 +94,7 @@ struct NewtonConfig {
     Real poissonLineSearchStallResidualFloor = 1.0e-6; ///< Poisson-block floor for near-flat line-search stalls.
     Real poissonLineSearchStallRelativeIncrease = 1.0e-5; ///< Allowed best rejected residual increase at the Poisson floor.
     Real poissonLineSearchStallCarrierResidualFloor = 1.0e-6; ///< Carrier-block ceiling for Poisson-floor stall acceptance.
+    Real poissonLineSearchStallContactMajorityQfDropLimit_V = 5.0e-11; ///< Maximum contact-edge majority-carrier quasi-Fermi drop allowed for Poisson-floor stall acceptance; 0 disables.
     Real carrierRegularizationScale = 0.0; ///< Optional carrier-row diagonal regularization scale.
     CarrierDiagonalFloorRegularizationConfig carrierDiagonalFloor{}; ///< Optional absolute floor for depleted minority carrier-row diagonals.
     NewtonCarrierRowConvergenceConfig carrierRowConvergence{}; ///< Optional per-carrier-row local residual convergence check.
@@ -179,6 +180,8 @@ struct NewtonFailureDiagnostics {
     std::string lineSearchFailureReason;
     NewtonBlockResidualInfo blockResiduals;
     NewtonCarrierDiagnostics carrierDiagnostics;
+    Real maxContactMajorityQfDrop = 0.0;
+    Real bestRejectedContactMajorityQfDrop = 0.0;
     std::vector<LineSearchIterationInfo> lineSearchHistory;
     std::vector<NewtonTopResidualNode> topPoissonResidualNodes;
 };
@@ -319,6 +322,7 @@ public:
     NewtonPoissonBlockInitialization buildPoissonBlockInitialization() const;
     NewtonResult solve(const DDSolution& initial) const;
     NewtonResidualEvaluation evaluateResidual(const DDSolution& state) const;
+    Real maxContactMajorityQuasiFermiDrop(const DDSolution& state) const;
     NewtonStepEvaluation evaluateStep(const DDSolution& state) const;
     NewtonDirectionalDerivativeEvaluation evaluateDirectionalDerivative(
         const DDSolution& state,

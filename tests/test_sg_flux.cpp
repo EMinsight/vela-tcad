@@ -2,6 +2,7 @@
 #include <catch2/catch_approx.hpp>
 #include "vela/discretization/ScharfetterGummel.h"
 #include "vela/core/PhysicalConstants.h"
+#include "vela/core/UnitScalingSystem.h"
 #include "vela/equation/AssemblerUtils.h"
 #include "vela/equation/CoupledDDAssembler.h"
 #include "vela/equation/DDAssembler.h"
@@ -9,6 +10,8 @@
 #include "vela/mesh/DeviceMesh.h"
 #include "vela/physics/DopingModel.h"
 #include "vela/physics/RecombinationModel.h"
+#include "vela/post/ContactCurrent.h"
+#include "vela/solver/GummelSolver.h"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -473,6 +476,296 @@ TEST_CASE("DDAssembler rejects incomplete unit scaling references", "[sg][dd][sc
                       std::invalid_argument);
 }
 
+static DeviceMesh makeSingleSiliconTriangleMeshMicrometers()
+{
+    DeviceMesh mesh;
+
+    Node n0; n0.id = 0; n0.x = 0.0;  n0.y = 0.0; mesh.addNode(n0);
+    Node n1; n1.id = 1; n1.x = 1.0;  n1.y = 0.0; mesh.addNode(n1);
+    Node n2; n2.id = 2; n2.x = 0.25; n2.y = 0.8; mesh.addNode(n2);
+
+    Cell c0; c0.id = 0; c0.type = CellType::Tri3; c0.region_id = 0;
+    c0.node_ids = {0, 1, 2};
+    mesh.addCell(c0);
+
+    Region r0; r0.id = 0; r0.name = "silicon"; r0.material = "Si"; r0.cell_ids = {0};
+    mesh.addRegion(r0);
+
+    mesh.buildEdges();
+    return mesh;
+}
+
+TEST_CASE("CoupledDDAssembler unit scaling Poisson residual matches DDAssembler",
+          "[sg][dd][coupled][scaling]")
+{
+    DeviceMesh mesh = makeSingleSiliconTriangleMeshMicrometers();
+    const UnitScalingConfig unitScaling{UnitScalingMode::UnitScaling};
+    MaterialDatabase matdb(unitScaling);
+    DopingModel doping(mesh.numNodes());
+    doping.setNodeDoping(0, 1.0e17, 0.0);
+    doping.setNodeDoping(1, 0.0, 7.5e16);
+    doping.setNodeDoping(2, 2.0e16, 0.0);
+
+    DDScalingSpec scaling;
+    scaling.enabled = true;
+    scaling.V0 = constants::Vt_300;
+    scaling.C0 = 1.0e17;
+    scaling.mu0 = 1350.0;
+    scaling.D0 = scaling.mu0 * scaling.V0;
+    scaling.L0 = 1.0;
+    scaling.permittivityReference_F_per_m = constants::eps0 * 11.7;
+    scaling.unitSystem = unitScaling.unitSystem();
+    scaling.chargeVolumeFactor = unitScaling.unitSystem().chargeVolumeFactor();
+    scaling.chargeSheetFactor = unitScaling.unitSystem().chargeSheetFactor();
+    scaling.fieldFromCoordinateDeltaFactor =
+        unitScaling.unitSystem().fieldFromCoordinateDeltaFactor();
+
+    const RecombinationModelConfig noRecombination = recombinationModelConfig({"none"});
+    DDAssembler dd(mesh,
+                   matdb,
+                   doping,
+                   constants::Vt_300,
+                   MobilityModelConfig{},
+                   noRecombination,
+                   BandgapNarrowingConfig{},
+                   ImpactIonizationModelConfig{},
+                   {},
+                   {},
+                   scaling);
+    CoupledDDAssembler coupled(mesh,
+                               matdb,
+                               doping,
+                               constants::Vt_300,
+                               MobilityModelConfig{},
+                               noRecombination,
+                               BandgapNarrowingConfig{},
+                               ImpactIonizationModelConfig{},
+                               {},
+                               {},
+                               scaling);
+
+    CoupledDDState state;
+    state.psi.resize(3);
+    state.phin.resize(3);
+    state.phip.resize(3);
+    state.psi << 0.020, -0.010, 0.015;
+    state.phin << 0.001, -0.002, 0.0005;
+    state.phip << -0.0015, 0.0025, -0.00025;
+
+    VectorXd x = coupled.pack(state);
+    x.segment(0, 3) /= scaling.V0;
+    x.segment(3, 3) /= scaling.V0;
+    x.segment(6, 3) /= scaling.V0;
+    const VectorXd n = coupled.electronDensity(x);
+    const VectorXd p = coupled.holeDensity(x);
+    const VectorXd nScaled = n / scaling.C0;
+    const VectorXd pScaled = p / scaling.C0;
+    const VectorXd psiScaled = state.psi / scaling.V0;
+
+    dd.assemblePoissonWithCarriers(nScaled, pScaled, psiScaled);
+    const VectorXd ddResidual = dd.matrix() * psiScaled - dd.rhs();
+    const VectorXd coupledResidual = coupled.residual(x, CoupledDDBoundaryConditions{});
+
+    for (int row = 0; row < 3; ++row)
+        REQUIRE(coupledResidual(row) == Approx(ddResidual(row)).epsilon(1.0e-12).margin(1.0e-12));
+}
+TEST_CASE("CoupledDDAssembler unit scaling continuity residual matches DDAssembler",
+          "[sg][dd][coupled][scaling]")
+{
+    DeviceMesh mesh = makeSingleSiliconTriangleMeshMicrometers();
+    const UnitScalingConfig unitScaling{UnitScalingMode::UnitScaling};
+    MaterialDatabase matdb(unitScaling);
+    DopingModel doping(mesh.numNodes());
+    doping.setNodeDoping(0, 1.0e17, 0.0);
+    doping.setNodeDoping(1, 0.0, 7.5e16);
+    doping.setNodeDoping(2, 2.0e16, 0.0);
+
+    DDScalingSpec scaling;
+    scaling.enabled = true;
+    scaling.V0 = constants::Vt_300;
+    scaling.C0 = 1.0e17;
+    scaling.mu0 = 1350.0;
+    scaling.D0 = scaling.mu0 * scaling.V0;
+    scaling.L0 = 1.0;
+    scaling.permittivityReference_F_per_m = constants::eps0 * 11.7;
+    scaling.unitSystem = unitScaling.unitSystem();
+    scaling.chargeVolumeFactor = unitScaling.unitSystem().chargeVolumeFactor();
+    scaling.chargeSheetFactor = unitScaling.unitSystem().chargeSheetFactor();
+    scaling.fieldFromCoordinateDeltaFactor =
+        unitScaling.unitSystem().fieldFromCoordinateDeltaFactor();
+    scaling.currentDensityLineIntegralFactor =
+        unitScaling.unitSystem().currentDensityAM2PerInternal() *
+        unitScaling.unitSystem().lengthMPerInternal();
+
+    const RecombinationModelConfig noRecombination = recombinationModelConfig({"none"});
+    DDAssembler dd(mesh,
+                   matdb,
+                   doping,
+                   constants::Vt_300,
+                   MobilityModelConfig{},
+                   noRecombination,
+                   BandgapNarrowingConfig{},
+                   ImpactIonizationModelConfig{},
+                   {},
+                   {},
+                   scaling);
+    CoupledDDAssembler coupled(mesh,
+                               matdb,
+                               doping,
+                               constants::Vt_300,
+                               MobilityModelConfig{},
+                               noRecombination,
+                               BandgapNarrowingConfig{},
+                               ImpactIonizationModelConfig{},
+                               {},
+                               {},
+                               scaling);
+
+    CoupledDDState state;
+    state.psi.resize(3);
+    state.phin.resize(3);
+    state.phip.resize(3);
+    state.psi << 0.020, -0.010, 0.015;
+    state.phin << 0.001, -0.002, 0.0005;
+    state.phip << -0.0015, 0.0025, -0.00025;
+
+    VectorXd x = coupled.pack(state);
+    x.segment(0, 3) /= scaling.V0;
+    x.segment(3, 3) /= scaling.V0;
+    x.segment(6, 3) /= scaling.V0;
+    const VectorXd n = coupled.electronDensity(x);
+    const VectorXd p = coupled.holeDensity(x);
+    const VectorXd nScaled = n / scaling.C0;
+    const VectorXd pScaled = p / scaling.C0;
+    const VectorXd psiScaled = state.psi / scaling.V0;
+
+    dd.assembleElectronContinuity(psiScaled, nScaled, pScaled);
+    const VectorXd ddElectronResidual = dd.matrix() * nScaled - dd.rhs();
+    dd.assembleHoleContinuity(psiScaled, nScaled, pScaled);
+    const VectorXd ddHoleResidual = dd.matrix() * pScaled - dd.rhs();
+    const VectorXd coupledResidual = coupled.residual(x, CoupledDDBoundaryConditions{});
+
+    for (int row = 0; row < 3; ++row) {
+        REQUIRE(coupledResidual(3 + row) ==
+                Approx(ddElectronResidual(row)).epsilon(1.0e-12).margin(1.0e-12));
+        REQUIRE(coupledResidual(6 + row) ==
+                Approx(ddHoleResidual(row)).epsilon(1.0e-12).margin(1.0e-12));
+    }
+}
+
+static DeviceMesh makeContactedSiliconSquareMesh(Real sideLength)
+{
+    DeviceMesh mesh;
+
+    Node n0; n0.id = 0; n0.x = 0.0;        n0.y = 0.0;        mesh.addNode(n0);
+    Node n1; n1.id = 1; n1.x = sideLength; n1.y = 0.0;        mesh.addNode(n1);
+    Node n2; n2.id = 2; n2.x = sideLength; n2.y = sideLength; mesh.addNode(n2);
+    Node n3; n3.id = 3; n3.x = 0.0;        n3.y = sideLength; mesh.addNode(n3);
+
+    Cell c0; c0.id = 0; c0.type = CellType::Tri3; c0.region_id = 0; c0.node_ids = {0, 1, 2};
+    mesh.addCell(c0);
+    Cell c1; c1.id = 1; c1.type = CellType::Tri3; c1.region_id = 0; c1.node_ids = {0, 2, 3};
+    mesh.addCell(c1);
+
+    Region r0; r0.id = 0; r0.name = "silicon"; r0.material = "Si"; r0.cell_ids = {0, 1};
+    mesh.addRegion(r0);
+
+    Contact left; left.id = 0; left.name = "left"; left.region_id = 0; left.node_ids = {0, 3};
+    mesh.addContact(left);
+    Contact right; right.id = 1; right.name = "right"; right.region_id = 0; right.node_ids = {1, 2};
+    mesh.addContact(right);
+
+    mesh.buildEdges();
+    return mesh;
+}
+
+static DDScalingSpec makeTcadCurrentScalingSpec(const UnitScalingConfig& unitScaling)
+{
+    DDScalingSpec scaling;
+    scaling.enabled = true;
+    scaling.V0 = constants::Vt_300;
+    scaling.C0 = 1.0e17;
+    scaling.mu0 = 1350.0;
+    scaling.D0 = scaling.mu0 * scaling.V0;
+    scaling.L0 = 1.0;
+    scaling.permittivityReference_F_per_m = constants::eps0 * 11.7;
+    scaling.unitSystem = unitScaling.unitSystem();
+    scaling.chargeVolumeFactor = unitScaling.unitSystem().chargeVolumeFactor();
+    scaling.chargeSheetFactor = unitScaling.unitSystem().chargeSheetFactor();
+    scaling.fieldFromCoordinateDeltaFactor =
+        unitScaling.unitSystem().fieldFromCoordinateDeltaFactor();
+    scaling.currentDensityLineIntegralFactor =
+        unitScaling.unitSystem().currentDensityAM2PerInternal() *
+        unitScaling.unitSystem().lengthMPerInternal();
+    return scaling;
+}
+
+TEST_CASE("ContactCurrent unit scaling terminal current matches legacy SI",
+          "[sg][contact_current][scaling]")
+{
+    DeviceMesh legacyMesh = makeContactedSiliconSquareMesh(1.0e-6);
+    DeviceMesh scaledMesh = makeContactedSiliconSquareMesh(1.0);
+    const UnitScalingConfig unitScaling{UnitScalingMode::UnitScaling};
+    MaterialDatabase legacyMatdb;
+    MaterialDatabase scaledMatdb(unitScaling);
+
+    DopingModel legacyDoping(legacyMesh.numNodes());
+    DopingModel scaledDoping(scaledMesh.numNodes());
+    for (Index node = 0; node < legacyMesh.numNodes(); ++node) {
+        legacyDoping.setNodeDoping(node, 1.0e23, 5.0e21);
+        scaledDoping.setNodeDoping(node, 1.0e17, 5.0e15);
+    }
+
+    DDSolution legacy;
+    DDSolution scaled;
+    legacy.psi.resize(4); legacy.phin.resize(4); legacy.phip.resize(4);
+    scaled.psi.resize(4); scaled.phin.resize(4); scaled.phip.resize(4);
+    legacy.psi << 0.000, 0.045, 0.038, -0.006;
+    legacy.phin << -0.010, 0.006, 0.004, -0.012;
+    legacy.phip << 0.008, -0.004, -0.006, 0.010;
+    scaled.psi = legacy.psi;
+    scaled.phin = legacy.phin;
+    scaled.phip = legacy.phip;
+
+    const Real legacyNi = legacyMatdb.getMaterial("Si").ni;
+    const Real scaledNi = scaledMatdb.getMaterial("Si").ni;
+    legacy.n.resize(4); legacy.p.resize(4); scaled.n.resize(4); scaled.p.resize(4);
+    for (int i = 0; i < 4; ++i) {
+        legacy.n(i) = legacyNi * std::exp((legacy.psi(i) - legacy.phin(i)) / constants::Vt_300);
+        legacy.p(i) = legacyNi * std::exp((legacy.phip(i) - legacy.psi(i)) / constants::Vt_300);
+        scaled.n(i) = scaledNi * std::exp((scaled.psi(i) - scaled.phin(i)) / constants::Vt_300);
+        scaled.p(i) = scaledNi * std::exp((scaled.phip(i) - scaled.psi(i)) / constants::Vt_300);
+    }
+
+    const MobilityModelConfig mobility = mobilityModelConfig("constant");
+    ContactCurrent legacyCurrent(legacyMesh, legacyMatdb, legacyDoping, mobility, constants::T0);
+    ContactCurrent scaledCurrent(scaledMesh,
+                                 scaledMatdb,
+                                 scaledDoping,
+                                 mobility,
+                                 constants::T0,
+                                 makeTcadCurrentScalingSpec(unitScaling));
+
+    const ContactCurrentDetailedResult scaledDetailed = scaledCurrent.computeDetailed(scaled, "left");
+    REQUIRE(!scaledDetailed.edges.empty());
+    for (const ContactCurrentEdgeDiagnostic& edge : scaledDetailed.edges) {
+        REQUIRE(edge.edgeLength_m > 0.0);
+        REQUIRE(edge.edgeLength_m < 2.0e-6);
+        REQUIRE(edge.edgeCouple_m > 0.0);
+        REQUIRE(edge.edgeCouple_m < 2.0e-6);
+    }
+
+    const ContactCurrentResult legacyLeft = legacyCurrent.compute(legacy, "left");
+    const ContactCurrentResult scaledLeft = scaledDetailed.totals;
+
+    const Real scale = std::max(1.0, std::abs(legacyLeft.totalCurrent));
+    REQUIRE(scaledLeft.electronCurrent / scale ==
+            Approx(legacyLeft.electronCurrent / scale).epsilon(1.0e-12).margin(1.0e-12));
+    REQUIRE(scaledLeft.holeCurrent / scale ==
+            Approx(legacyLeft.holeCurrent / scale).epsilon(1.0e-12).margin(1.0e-12));
+    REQUIRE(scaledLeft.totalCurrent / scale ==
+            Approx(legacyLeft.totalCurrent / scale).epsilon(1.0e-12).margin(1.0e-12));
+}
 TEST_CASE("Slotboom BGN uses total impurity density for compensated nodes", "[sg][coupled][bgn]")
 {
     DeviceMesh mesh = makeSingleSiliconTriangleMesh();

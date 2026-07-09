@@ -246,8 +246,8 @@ ContactCurrentDetailedResult ContactCurrent::computeDetailed(
         edgeDiag.edgeId = e;
         edgeDiag.node0 = edge.n0;
         edgeDiag.node1 = edge.n1;
-        edgeDiag.edgeLength_m = edge.length;
-        edgeDiag.edgeCouple_m = edge.couple;
+        edgeDiag.edgeLength_m = scaling_.unitSystem.internalLengthToMeters(edge.length);
+        edgeDiag.edgeCouple_m = scaling_.unitSystem.internalLengthToMeters(edge.couple);
         edgeDiag.outwardSign = outwardSign;
         edgeDiag.bernoulliU = dpsi / thermalVoltage_;
         edgeDiag.bernoulliBplus = weights.b_plus;

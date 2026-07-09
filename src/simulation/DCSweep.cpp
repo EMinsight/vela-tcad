@@ -2030,6 +2030,8 @@ nlohmann::json newtonFailureDiagnosticsJson(const NewtonFailureDiagnostics& diag
         {"line_search_failure_reason", diagnostics.lineSearchFailureReason},
         {"block_residuals", residualBlockJson(diagnostics.blockResiduals)},
         {"carrier_diagnostics", carrierDiagnosticsJson(diagnostics.carrierDiagnostics)},
+        {"max_contact_majority_qf_drop_V", diagnostics.maxContactMajorityQfDrop},
+        {"best_rejected_contact_majority_qf_drop_V", diagnostics.bestRejectedContactMajorityQfDrop},
         {"line_search_history", lineSearchHistoryJson(diagnostics.lineSearchHistory)},
         {"top_poisson_residual_nodes", topResidualNodesJson(diagnostics.topPoissonResidualNodes, scaling)},
     };

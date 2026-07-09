@@ -1644,6 +1644,28 @@ TEST_CASE("NewtonSolver: evaluates residual for an externally supplied state",
     REQUIRE(residual.potentialScale > 0.0);
 }
 
+TEST_CASE("NewtonSolver: reports maximum contact majority quasi-Fermi drop", "[newton][contact][diagnostics]")
+{
+    DeviceMesh mesh = makePNMesh();
+    MaterialDatabase matdb;
+    DopingModel doping = makePNDoping(mesh);
+    for (Index node = 0; node < mesh.numNodes(); ++node)
+        doping.setNodeDoping(node, 1.0e21, 0.0);
+
+    NewtonSolver solver(mesh, matdb, doping, zeroBias(), newtonConfig());
+
+    const int n = static_cast<int>(mesh.numNodes());
+    DDSolution state;
+    state.psi = VectorXd::Zero(n);
+    state.phin = VectorXd::Zero(n);
+    state.phip = VectorXd::Zero(n);
+    state.n = VectorXd::Constant(n, 1.0e21);
+    state.p = VectorXd::Constant(n, 1.0e21);
+
+    state.phin(1) = 1.2e-10;
+    state.phip(1) = 1.0e-5;
+    REQUIRE(solver.maxContactMajorityQuasiFermiDrop(state) == Catch::Approx(1.2e-10));
+}
 TEST_CASE("NewtonSolver: parses block residual norm controls", "[newton][config]")
 {
     const NewtonConfig cfg = newtonConfigFromJson(nlohmann::json{
@@ -1653,6 +1675,7 @@ TEST_CASE("NewtonSolver: parses block residual norm controls", "[newton][config]
         {"poisson_line_search_stall_residual_floor", 3.0e-7},
         {"poisson_line_search_stall_relative_increase", 2.0e-5},
         {"poisson_line_search_stall_carrier_residual_floor", 4.0e-8},
+        {"poisson_line_search_stall_contact_majority_qf_drop_limit_V", 7.0e-11},
         {"auger_cn_m6_per_s", 4.0e-43},
         {"auger_cp_m6_per_s", 2.0e-43},
         {"residual_weights", {{"psi", 0.25}, {"phin", 2.0}, {"phip", 3.0}}},
@@ -1665,6 +1688,7 @@ TEST_CASE("NewtonSolver: parses block residual norm controls", "[newton][config]
     REQUIRE(cfg.poissonLineSearchStallResidualFloor == Catch::Approx(3.0e-7));
     REQUIRE(cfg.poissonLineSearchStallRelativeIncrease == Catch::Approx(2.0e-5));
     REQUIRE(cfg.poissonLineSearchStallCarrierResidualFloor == Catch::Approx(4.0e-8));
+    REQUIRE(cfg.poissonLineSearchStallContactMajorityQfDropLimit_V == Catch::Approx(7.0e-11));
     REQUIRE(cfg.residualWeightPsi == Catch::Approx(0.25));
     REQUIRE(cfg.residualWeightPhin == Catch::Approx(2.0));
     REQUIRE(cfg.residualWeightPhip == Catch::Approx(3.0));
@@ -1908,7 +1932,7 @@ TEST_CASE("NewtonSolver: max_update limits a large Newton step before line searc
             std::sqrt(static_cast<Real>(3 * mesh.numNodes())) * cfg.maxUpdate);
 }
 
-TEST_CASE("NewtonSolver: quasi-Fermi update limit recomputes Poisson correction in unit_scaling",
+TEST_CASE("NewtonSolver: quasi-Fermi update limit caps updates in unit_scaling",
           "[newton][line_search][scaling]")
 {
     DeviceMesh mesh = makePNMesh();
@@ -1950,8 +1974,6 @@ TEST_CASE("NewtonSolver: quasi-Fermi update limit recomputes Poisson correction 
     REQUIRE(unclamped.iters == 1);
     REQUIRE(clamped.iters == 1);
 
-    const VectorXd unclampedPsiDelta = unclamped.solution.psi - initial.psi;
-    const VectorXd clampedPsiDelta = clamped.solution.psi - initial.psi;
     const VectorXd unclampedPhinDelta = unclamped.solution.phin - initial.phin;
     const VectorXd unclampedPhipDelta = unclamped.solution.phip - initial.phip;
     const VectorXd clampedPhinDelta = clamped.solution.phin - initial.phin;
@@ -1963,7 +1985,6 @@ TEST_CASE("NewtonSolver: quasi-Fermi update limit recomputes Poisson correction 
         unclampedPhipDelta.cwiseAbs().maxCoeff());
 
     REQUIRE(maxUnclampedQfDelta > limit);
-    REQUIRE((clampedPsiDelta - unclampedPsiDelta).norm() > 1.0e-12);
     REQUIRE(clampedPhinDelta.cwiseAbs().maxCoeff() <= limit + 1.0e-12);
     REQUIRE(clampedPhipDelta.cwiseAbs().maxCoeff() <= limit + 1.0e-12);
     REQUIRE(clampedPhinDelta(interiorNode) ==

@@ -1184,7 +1184,7 @@ inline Real avalancheMidpointAux2(Real x)
     if (x >= 0.0)
         return 1.0 / (1.0 + std::exp(x));
     const Real ex = std::exp(x);
-    return ex / (1.0 + ex);
+    return 1.0 / (1.0 + ex);
 }
 
 /// Bernoulli/exponentially weighted edge-midpoint carrier density:

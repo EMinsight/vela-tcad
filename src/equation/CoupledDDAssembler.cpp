@@ -252,6 +252,7 @@ VectorXd CoupledDDAssembler::residual(const VectorXd& x,
             impactIonizationConfig_, mesh_, nodeCells_, psi, phipPhysical, p, ni_, Vt_, fieldFactor)
         : nodeElectricFields;
     const bool qfMobility = mobilityConfig_.highFieldDrivingForce == "quasi_fermi_gradient";
+    const Real chargeVolumeFactor = scaling_.enabled ? scaling_.chargeVolumeFactor : 1.0;
     const bool sgCurrentAvalanche = impactIonizationEnabled_ &&
         detail::usesEdgeCurrentAvalancheSource(impactIonizationConfig_);
     const std::vector<Real> sgAvalancheSourceIntegrals = sgCurrentAvalanche
@@ -371,7 +372,7 @@ VectorXd CoupledDDAssembler::residual(const VectorXd& x,
     for (Index i = 0; i < Nidx; ++i) {
         const int ii = static_cast<int>(i);
         r(psiOffset() + ii) -= constants::q *
-            (p(ii) - n(ii) + doping_.netDoping(i)) * vol[i];
+            (p(ii) - n(ii) + doping_.netDoping(i)) * vol[i] * chargeVolumeFactor;
 
         const Real ni = ni_[i];
         if (ni <= 0.0)
@@ -893,6 +894,7 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
             impactIonizationConfig_, mesh_, nodeCells_, psi, phipState, p, ni_, Vt_, fieldFactor)
         : nodeElectricFields;
     const bool qfMobility = mobilityConfig_.highFieldDrivingForce == "quasi_fermi_gradient";
+    const Real chargeVolumeFactor = scaling_.enabled ? scaling_.chargeVolumeFactor : 1.0;
     const std::vector<bool> contactNodes = detail::contactNodeMask(mesh_);
     const std::vector<std::vector<Index>> cellEdges = detail::buildCellEdgeMap(edgeCells_, mesh_);
     const bool transportMobilityDerivative = transportMobilityDependsOnPotentials(mobilityConfig_);
@@ -1599,11 +1601,11 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
         const Real dpi_dphip = p(ii) / Vt_;
 
         add(psiOffset() + ii, psiOffset() + ii,
-            -constants::q * (dpi_dpsi - dni_dpsi) * vol_[i]);
+            -constants::q * (dpi_dpsi - dni_dpsi) * vol_[i] * chargeVolumeFactor);
         add(psiOffset() + ii, phinOffset() + ii,
-            -constants::q * (-dni_dphin) * vol_[i]);
+            -constants::q * (-dni_dphin) * vol_[i] * chargeVolumeFactor);
         add(psiOffset() + ii, phipOffset() + ii,
-            -constants::q * dpi_dphip * vol_[i]);
+            -constants::q * dpi_dphip * vol_[i] * chargeVolumeFactor);
 
         const Real ni = ni_[i];
         if (ni <= 0.0)

@@ -202,6 +202,7 @@ NewtonBlockResidualInfo blockResidualInfo(const VectorXd& residual, Index nodeCo
 bool isPoissonLineSearchStall(const LineSearchResult& lineSearch,
                               const NewtonBlockResidualInfo& blocks,
                               Real stalledNorm,
+                              Real maxContactMajorityQfDrop,
                               const NewtonConfig& cfg)
 {
     if (lineSearch.failureReason != "line_search_non_decrease" ||
@@ -225,6 +226,11 @@ bool isPoissonLineSearchStall(const LineSearchResult& lineSearch,
         return false;
     if (blocks.phin > cfg.poissonLineSearchStallCarrierResidualFloor ||
         blocks.phip > cfg.poissonLineSearchStallCarrierResidualFloor) {
+        return false;
+    }
+    if (cfg.poissonLineSearchStallContactMajorityQfDropLimit_V > 0.0 &&
+        (!std::isfinite(maxContactMajorityQfDrop) ||
+         maxContactMajorityQfDrop > cfg.poissonLineSearchStallContactMajorityQfDropLimit_V)) {
         return false;
     }
 
@@ -545,6 +551,8 @@ NewtonFailureDiagnostics buildFailureDiagnostics(
     Real dampingFactor,
     int lineSearchAttempts,
     const std::string& lineSearchFailureReason,
+    Real maxContactMajorityQfDrop = 0.0,
+    Real bestRejectedContactMajorityQfDrop = 0.0,
     std::vector<LineSearchIterationInfo> lineSearchHistory = {})
 {
     NewtonFailureDiagnostics diagnostics;
@@ -557,6 +565,8 @@ NewtonFailureDiagnostics buildFailureDiagnostics(
     diagnostics.lineSearchFailureReason = lineSearchFailureReason;
     diagnostics.blockResiduals = blockResidualInfo(residual, mesh.numNodes());
     diagnostics.carrierDiagnostics = carrierDiagnostics(assembler, x);
+    diagnostics.maxContactMajorityQfDrop = maxContactMajorityQfDrop;
+    diagnostics.bestRejectedContactMajorityQfDrop = bestRejectedContactMajorityQfDrop;
     diagnostics.lineSearchHistory = std::move(lineSearchHistory);
     diagnostics.topPoissonResidualNodes = topPoissonResidualNodes(mesh, doping, assembler, residual);
     return diagnostics;
@@ -569,6 +579,9 @@ void printFailureDiagnostics(const NewtonFailureDiagnostics& diagnostics)
               << " blocks=(" << diagnostics.blockResiduals.psi << ','
               << diagnostics.blockResiduals.phin << ','
               << diagnostics.blockResiduals.phip << ")"
+              << " max_contact_majority_qf_drop_V=" << diagnostics.maxContactMajorityQfDrop
+              << " best_rejected_contact_majority_qf_drop_V="
+              << diagnostics.bestRejectedContactMajorityQfDrop
               << " carriers_positive_finite="
               << (diagnostics.carrierDiagnostics.positiveFinite ? "1" : "0")
               << '\n';
@@ -922,6 +935,9 @@ NewtonConfig newtonConfigFromJson(const nlohmann::json& json, UnitScalingConfig 
     cfg.poissonLineSearchStallCarrierResidualFloor = json.value(
         "poisson_line_search_stall_carrier_residual_floor",
         cfg.poissonLineSearchStallCarrierResidualFloor);
+    cfg.poissonLineSearchStallContactMajorityQfDropLimit_V = json.value(
+        "poisson_line_search_stall_contact_majority_qf_drop_limit_V",
+        cfg.poissonLineSearchStallContactMajorityQfDropLimit_V);
     cfg.carrierRegularizationScale = json.value(
         "carrier_regularization_scale",
         cfg.carrierRegularizationScale);
@@ -1257,6 +1273,10 @@ NewtonConfig newtonConfigFromJson(const nlohmann::json& json, UnitScalingConfig 
         !std::isfinite(cfg.poissonLineSearchStallCarrierResidualFloor))
         throw std::invalid_argument(
             "newtonConfigFromJson: poisson_line_search_stall_carrier_residual_floor must be non-negative and finite.");
+    if (cfg.poissonLineSearchStallContactMajorityQfDropLimit_V < 0.0 ||
+        !std::isfinite(cfg.poissonLineSearchStallContactMajorityQfDropLimit_V))
+        throw std::invalid_argument(
+            "newtonConfigFromJson: poisson_line_search_stall_contact_majority_qf_drop_limit_V must be non-negative and finite.");
     if (cfg.carrierRegularizationScale < 0.0 || !std::isfinite(cfg.carrierRegularizationScale))
         throw std::invalid_argument(
             "newtonConfigFromJson: carrier_regularization_scale must be non-negative and finite.");
@@ -1340,6 +1360,11 @@ NewtonSolver::NewtonSolver(
         !std::isfinite(cfg_.poissonLineSearchStallCarrierResidualFloor)) {
         throw std::invalid_argument(
             "NewtonSolver: poisson_line_search_stall_carrier_residual_floor must be non-negative and finite.");
+    }
+    if (cfg_.poissonLineSearchStallContactMajorityQfDropLimit_V < 0.0 ||
+        !std::isfinite(cfg_.poissonLineSearchStallContactMajorityQfDropLimit_V)) {
+        throw std::invalid_argument(
+            "NewtonSolver: poisson_line_search_stall_contact_majority_qf_drop_limit_V must be non-negative and finite.");
     }
     if (cfg_.carrierRegularizationScale < 0.0 ||
         !std::isfinite(cfg_.carrierRegularizationScale)) {
@@ -1644,6 +1669,47 @@ DDSolution NewtonSolver::unpackArclengthState(const VectorXd& x) const
     return makeSolution(*assembler, x, 0);
 }
 
+Real NewtonSolver::maxContactMajorityQuasiFermiDrop(const DDSolution& state) const
+{
+    if (state.phin.size() < static_cast<int>(mesh_.numNodes()) ||
+        state.phip.size() < static_cast<int>(mesh_.numNodes())) {
+        return std::numeric_limits<Real>::infinity();
+    }
+
+    Real maxDrop = 0.0;
+    for (const Contact& contact : mesh_.contacts()) {
+        std::vector<bool> isContactNode(mesh_.numNodes(), false);
+        Real netDopingSum = 0.0;
+        int netDopingCount = 0;
+        for (Index node : contact.node_ids) {
+            if (node >= mesh_.numNodes())
+                continue;
+            isContactNode[node] = true;
+            netDopingSum += doping_.netDoping(node);
+            ++netDopingCount;
+        }
+        if (netDopingCount == 0)
+            continue;
+
+        const Real meanNetDoping = netDopingSum / static_cast<Real>(netDopingCount);
+        const bool electronMajority = meanNetDoping > 0.0;
+        const bool holeMajority = meanNetDoping < 0.0;
+        for (Index e = 0; e < mesh_.numEdges(); ++e) {
+            const Edge& edge = mesh_.getEdge(e);
+            const bool n0Contact = isContactNode[edge.n0];
+            const bool n1Contact = isContactNode[edge.n1];
+            if (n0Contact == n1Contact)
+                continue;
+            const int i = static_cast<int>(edge.n0);
+            const int j = static_cast<int>(edge.n1);
+            if (electronMajority || !holeMajority)
+                maxDrop = std::max(maxDrop, std::abs(state.phin(i) - state.phin(j)));
+            if (holeMajority || !electronMajority)
+                maxDrop = std::max(maxDrop, std::abs(state.phip(i) - state.phip(j)));
+        }
+    }
+    return maxDrop;
+}
 NewtonResidualEvaluation NewtonSolver::evaluateResidual(const DDSolution& state) const
 {
     const double Vt = thermalVoltage(cfg_.temperature_K);
@@ -2447,6 +2513,7 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
             residualScales,
             residualWeights);
     };
+
     const Real initialNorm = residualNormFn(r);
 
     NewtonResult result;
@@ -2601,6 +2668,7 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
         return retried;
     };
 
+
     if (cfg_.verbose) {
         const ResidualBlockNormValue blocks = ResidualNorm::computeBlocks(r, mesh_.numNodes());
         std::cout << "Newton iter 0 residual=" << initialNorm
@@ -2699,7 +2767,15 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
                                 acceptedIters, stalledNorm, stalledRowEval);
                 return result;
             }
-            if (isPoissonLineSearchStall(ls, stalledBlocks, stalledNorm, cfg_) &&
+            const DDSolution stalledSolution = makeSolution(assembler, acceptedX, acceptedIters);
+            const Real stalledContactMajorityQfDrop = maxContactMajorityQuasiFermiDrop(stalledSolution);
+            Real bestRejectedContactMajorityQfDrop = std::numeric_limits<Real>::infinity();
+            if (ls.bestRejectedCandidate) {
+                const DDSolution bestRejectedSolution = makeSolution(assembler, ls.bestRejectedX, acceptedIters);
+                bestRejectedContactMajorityQfDrop = maxContactMajorityQuasiFermiDrop(bestRejectedSolution);
+            }
+
+            if (isPoissonLineSearchStall(ls, stalledBlocks, stalledNorm, stalledContactMajorityQfDrop, cfg_) &&
                 carrierRowsAcceptConvergence(stalledRowEval)) {
                 finishConverged("poisson_line_search_stall_floor", acceptedX, acceptedR,
                                 acceptedIters, stalledNorm, stalledRowEval);
@@ -2737,6 +2813,8 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
                 ls.damping,
                 ls.attempts,
                 ls.failureReason,
+                stalledContactMajorityQfDrop,
+                bestRejectedContactMajorityQfDrop,
                 std::move(ls.history));
             if (cfg_.verbose) {
                 std::cerr << "Newton failed at iter " << iter

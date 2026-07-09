@@ -272,7 +272,7 @@ void DDAssembler::assembleElectronContinuity(const VectorXd& psi,
 
         const Real coef = scaling_.enabled
             ? (mun / scaling_.mu0) * fieldFactor * couple_[e] / h
-            : mun * Vt_ * couple_[e] / h;
+            : mun * Vt_ * fieldFactor * couple_[e] / h;
 
         auto i = static_cast<int>(edge.n0);
         auto j = static_cast<int>(edge.n1);
@@ -446,7 +446,7 @@ void DDAssembler::assembleHoleContinuity(const VectorXd& psi,
 
         const Real coef = scaling_.enabled
             ? (mup / scaling_.mu0) * fieldFactor * couple_[e] / h
-            : mup * Vt_ * couple_[e] / h;
+            : mup * Vt_ * fieldFactor * couple_[e] / h;
 
         auto i = static_cast<int>(edge.n0);
         auto j = static_cast<int>(edge.n1);
