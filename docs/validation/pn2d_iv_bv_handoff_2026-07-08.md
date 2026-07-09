@@ -604,3 +604,35 @@ BV next plan:
    Jacobian block out of the suspect list unless new evidence regresses them.
    The active BV suspect set is branch/continuation support, avalanche feedback
    ownership, current proxy choice, and curve-shape/knee alignment.
+
+## 2026-07-09 BV compensated junction debug update
+
+Scope: continue BV debug as evidence collection, not solver modification. The current track is to separate junction-representation effects from the remaining source-proxy right bias after the compensated junction probe.
+
+New diagnostic artifact:
+
+- Script: `scripts/diagnose_pn2d_bv_compensated_source_proxy.py`
+- Output root: `build-release/reference_tcad/pn2d_sentaurus2018_coarse7x3/reports/bv_density_gradient_aligned_20260709/compensated_junction_proxy_compare_20260709`
+- Outputs: `compensated_source_proxy_compare.csv`, `compensated_source_proxy_compare_summary.json`, `compensated_source_proxy_compare_report_20260709.md`
+- Coverage: `3 bias points x 3 y-cuts x 2 sides x 2 variants = 36 rows`, covering `-12 V`, `-19 V`, and `-20 V`.
+
+Key result:
+
+- Baseline Vela junction representation remains `p -> p -> n`, while the Sentaurus coarse artifact is `p -> compensated -> n` around the junction column.
+- The compensated probe changes the x=1.0 um Vela junction-column nodes to compensated and brings median right/left `phin` drop ratios from baseline `120x / 24x / 17x` to `0.8906 / 0.9291 / 0.9323` at `-12 / -19 / -20 V`.
+- The remaining edge-source right/left ratios are still `17.95 / 5.80 / 4.89` at `-12 / -19 / -20 V`.
+- Channel decomposition shows the residual right-heavy source is carried by the electron source channel: electron source right/left is `27.22 / 21.71 / 17.85`, while hole source is left-heavy at `0.0546 / 0.212 / 0.246`.
+- The electron channel follows electron SG flux proxy / raw flux proxy (`60.64 / 29.88 / 23.84`) moderated by electron alpha below one (`0.449 / 0.727 / 0.749`) and near-unity electron mobility (`1.117 / 1.074 / 1.071`). Edge area is neutral.
+
+Interpretation:
+
+- The compensated probe closes the earlier QF-drop asymmetry evidence, so the next root-cause target is no longer direct `phin` branch balancing.
+- The remaining BV breakdown-growth right bias is most consistent with density-gradient SG current/source construction or carrier-density/flux-proxy selection on the compensated/right edge.
+- Doping classification from `donors - acceptors` is allowed for n/p/compensated/junction-edge diagnostics and artifact alignment only. Do not directly clamp, hard-zero, or truncate `phin/phip` from this classification unless a later independent failure artifact and regression test justify that solver-level limiter.
+
+Next debug focus:
+
+1. Replay the density-gradient SG flux/source construction for the compensated probe at `-12 V`, `-19 V`, and `-20 V`, using the exact edge endpoints and reconstructed midpoint carrier densities.
+2. Compare endpoint vs midpoint density selection, Bernoulli/SG exponential support, raw flux proxy, reconstructed flux proxy, and final source weighting on `p-compensated` vs `compensated-n` edges.
+3. If the electron SG flux proxy remains the only right-heavy multiplier, inspect density-gradient edge reconstruction and carrier-density floor/support near the compensated junction column.
+4. Keep solver hard limiters out of scope until the source-proxy evidence is closed.
