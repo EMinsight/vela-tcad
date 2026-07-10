@@ -3224,3 +3224,71 @@ BV should now be resumed as the main Sentaurus-parity task. The plan is:
    count, max order error, first high-error bias, knee/growth marker agreement,
    terminal current balance, and QF/contact sanity. Do not accept a low-bias-only
    or endpoint-only BV fix.
+
+## PN2D BV Electron SG Same-Edge Evidence Closure (2026-07-10)
+
+This pass implemented the planned evidence path without changing solver physics.
+The production variable-`ni` electron SG value is decomposed exactly as
+
+`F_n = C_n [B(-eta) n0 - B(eta) n1]`,
+
+with the endpoint state, both signed Bernoulli-density terms, cancellation and
+clamp flags, physical particle/current flux, a stable QF-factorized equivalent,
+and an independent long-double reference appended to the existing SG diagnostic
+CSV schema. The solver still returns the original production value.
+
+The reproducible coarse artifact is under
+`build-release/reference_tcad/pn2d_sentaurus2018_coarse7x3/reports/pn2d_bv_compensated_sg_replay_20260710`.
+Its manifest records clean code state
+`f402296f19601f792141ec3bbccd34d9d6f0b36d`, TDR/deck/tool/mesh/doping hashes,
+eight generation commands, and the 36 resolved endpoint-edge mappings. A verified
+`--reuse-existing` invocation preserved those generation commands and recorded
+an empty current invocation command list.
+
+The standard matrix is current HEAD only:
+`legacy_dominant_signed` is a historical doping-policy control and
+`reported_compensated` is the committed reference policy. Both produced the same
+numbers, so the old `17.95/5.80/4.89` ratios remain frozen historical evidence
+rather than a target fitted by this run.
+
+| bias (V) | production/high-precision max rel. error | raw gap (dex) | Sent-state residual (dex) | recovery | alpha gap (dex) | classification |
+|---:|---:|---:|---:|---:|---:|---|
+| -12 | <=2.07e-16 | 4.46254 | 1.89075 | 0.58059 | 6.01418 | `sg_discretization_ni_or_current_semantics` |
+| -19 | <=2.07e-16 | 4.02249 | 1.53982 | 0.61820 | 3.87599 | `sg_discretization_ni_or_current_semantics` |
+| -20 | <=2.07e-16 | 3.45905 | 1.48064 | 0.57237 | 3.68013 | `sg_discretization_ni_or_current_semantics` |
+
+All 36 production/reconstruction comparisons are exact at the written precision;
+the stable/reference maximum error is `2.09e-14`, cancellation condition is `1`,
+and no exponent clamp is active. The variable-`ni` double-stability hypothesis is
+therefore rejected on the coarse evidence. Replaying mapped Sentaurus endpoint
+state in the Vela SG formula recovers only `57%..62%` of the raw gap and leaves
+`1.48..1.89 dex`, well outside the internal-state rule (`>=80%` recovery and
+`<=0.1 dex` residual). The ordered result is the same-state SG discretization,
+effective-`ni`/BGN, or current-definition semantic class. Near-zero Vela internal
+source-closure residual does not support ownership as the leading coarse cause.
+The Sentaurus source column remains explicitly a same-Vela-area proxy, not a
+native Sentaurus source-discretization oracle.
+
+The curve-shape evidence is consistent with that result. Sentaurus has
+`I(-19)/I(-18)=1.52859` and `I(-20)/I(-19)=3.85258`, while current Vela has
+`1.39537` and `1.83822`; Vela therefore misses both the `>1.5` and `>2.0` growth
+markers. The persistent same-state current residual is large enough to explain
+the direction of the missing knee, but the coarse-only rule forbids promoting
+this to a solver change before main-mesh confirmation.
+
+The strict five-anchor main-mesh preflight was run at `-10`, `-13.2`, `-18`,
+`-19`, and `-20 V`. Every 1943-node raw TDR exports only scalar
+`eCurrentDensity components=1` and lacks `eAlphaAvalanche`. The generated report
+is
+`build-release/reference_tcad/pn2d_sentaurus2018/reports/pn2d_bv_main_sg_replay_20260710/main_confirmation/main_mesh_confirmation_report.md`.
+It intentionally does not substitute current magnitude for a vector projection,
+so the p99 union, bidirectional false-support, four-of-five mechanism, and high-
+bias recovery gates remain unevaluated.
+
+The unique next target is therefore the evidence artifact, not a solver knob:
+produce main-mesh Sentaurus exports at all five anchors with two-component
+`eCurrentDensity` plus scalar `eAlphaAvalanche`, then rerun
+`scripts/diagnose_pn2d_bv_main_mesh_confirmation.py`. The minimum failing test is
+`test_pn2d_bv_main_mesh_confirmation_requires_vector_current_and_alpha_exports`.
+Until that contract passes, do not change SG factorization, source ownership,
+continuation, alpha, QF clamps, or source-volume factors.

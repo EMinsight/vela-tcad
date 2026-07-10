@@ -636,3 +636,70 @@ Next debug focus:
 2. Compare endpoint vs midpoint density selection, Bernoulli/SG exponential support, raw flux proxy, reconstructed flux proxy, and final source weighting on `p-compensated` vs `compensated-n` edges.
 3. If the electron SG flux proxy remains the only right-heavy multiplier, inspect density-gradient edge reconstruction and carrier-density floor/support near the compensated junction column.
 4. Keep solver hard limiters out of scope until the source-proxy evidence is closed.
+
+## 2026-07-10 BV electron SG flux 根因证据闭环
+
+本轮只增加只读诊断、复现入口、分类 gate 和测试，没有修改 solver 物理行为，
+也没有使用 `source_volume_factor`、QF hard clamp、arclength 或 alpha 调参。
+
+实现范围：
+
+- `ScharfetterGummel.cpp` 现在可对生产 variable-`ni` electron SG flux 做逐项分解，
+  包括 `eta`、两个 Bernoulli-density 项、系数、signed difference、clamp、
+  cancellation、stable QF-factorized value 和独立 long-double reference。
+- `sg_avalanche_edges.csv` 追加生产/重构/高精度 flux 及物理 particle/current flux；
+  原有列和 solver 返回值保持不变。
+- `scripts/reproduce_pn2d_bv_compensated_sg_replay.py` 从已验证 coarse7x3
+  `0000..0400` TDR 重建 `-12/-19/-20 V` 导出、两个 current-HEAD
+  `density_gradient` 401 点 sweep、36 行同边 replay 和 `artifact_manifest.json`。
+- `scripts/diagnose_pn2d_bv_main_mesh_confirmation.py` 实现主网格五锚点、p99
+  active-support 并集及严格 raw-artifact contract。Sentaurus source 明确是
+  “endpoint alpha average x projected vector flux x Vela edge area”的 same-area proxy，
+  不是 Sentaurus 原生 source discretization oracle。
+- 标准路径按 VTK endpoint node pair 唯一匹配 SG edge，不再使用历史固定 edge ID；
+  缺失、重复或多匹配均立即失败。current-generated VTK 坐标按 mesh um 读取。
+
+最终 coarse 工件：
+
+- Root: `build-release/reference_tcad/pn2d_sentaurus2018_coarse7x3/reports/pn2d_bv_compensated_sg_replay_20260710`
+- Manifest schema: `vela.pn2d_compensated_sg_replay.artifact_manifest.v1`
+- Manifest code state: `f402296f19601f792141ec3bbccd34d9d6f0b36d`，`dirty=false`
+- Coverage: `2 variants x 3 biases x 3 y-cuts x 2 sides = 36 rows`
+- `legacy_dominant_signed` 和 committed `reported_compensated` 的结果完全一致；
+  历史 `17.95/5.80/4.89` 仅保留为旧工件证据，没有拟合到新基线。
+
+| bias (V) | raw Vela/Sent gap (dex) | Sent state replay residual (dex) | gap recovery | alpha gap (dex) | coarse classification |
+|---:|---:|---:|---:|---:|---|
+| -12 | 4.46254 | 1.89075 | 0.58059 | 6.01418 | `sg_discretization_ni_or_current_semantics` |
+| -19 | 4.02249 | 1.53982 | 0.61820 | 3.87599 | `sg_discretization_ni_or_current_semantics` |
+| -20 | 3.45905 | 1.48064 | 0.57237 | 3.68013 | `sg_discretization_ni_or_current_semantics` |
+
+精确 flux gate 已通过：production/reconstruction 相对误差最大为 `0`，production
+对独立高精度 reference 最大相对误差 `2.07e-16`，stable factorized 最大误差
+`2.09e-14`，36 行 cancellation condition 均为 `1`，无 exponent clamp。
+因此 coarse 证据排除 variable-`ni` SG double 数值稳定性；Sentaurus 状态 replay
+只恢复 `57%..62%` 且仍残留 `1.48..1.89 dex`，满足“同状态下 SG/`ni`/current
+definition 语义差异”规则，不满足 Vela 内部 state branch 的 `>=80%`/`<=0.1 dex`
+gate。Vela internal source closure 接近 machine zero，也不支持把 coarse 差异优先归为
+ownership/support。
+
+曲线 marker 同样保留差异：Sentaurus `|-19|/|-18| = 1.52859`、
+`|-20|/|-19| = 3.85258`，而当前 Vela 分别为 `1.39537`、`1.83822`。
+这与同状态 replay 仍有 `>1 dex` current gap 的方向一致，可解释 Vela 为什么没有
+达到 `-19 V >1.5` 和 `-20 V >2.0` 增长标记；但 coarse 结果不能单独升级为 solver 修复。
+
+主网格 gate 结果：
+
+- 五个原始 TDR (`-10/-13.2/-18/-19/-20 V`) 均为 1943 nodes，但 manifest
+  只有 scalar `eCurrentDensity components=1`，并且没有 `eAlphaAvalanche`。
+- Report: `build-release/reference_tcad/pn2d_sentaurus2018/reports/pn2d_bv_main_sg_replay_20260710/main_confirmation/main_mesh_confirmation_report.md`
+- 因此 vector edge projection、alpha/source comparison、4/5 mechanism、双向
+  false-positive/false-negative support 和 `-19/-20 V` recovery gate 均未执行；
+  scalar current magnitude 被明确禁止作为 vector projection 替代品。
+
+唯一下一目标是生成或取得主网格五锚点同时包含 two-component
+`eCurrentDensity` 和 scalar `eAlphaAvalanche` 的 Sentaurus raw export，然后原样重跑
+`diagnose_pn2d_bv_main_mesh_confirmation.py`。最小失败测试为
+`test_pn2d_bv_main_mesh_confirmation_requires_vector_current_and_alpha_exports`。
+这说明“现有主网格 raw sweep 无需重跑”的假设不成立；在该 artifact gate 通过前，
+本轮停止，不实施 SG、source ownership 或 continuation solver 修复。
