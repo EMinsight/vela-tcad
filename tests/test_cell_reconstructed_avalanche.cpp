@@ -349,7 +349,21 @@ TEST_CASE("Cell-current reconstructed avalanche support uses cell-smoothed SG cu
             Catch::Approx(expectedHole / it->holeRawFluxProxy).epsilon(1.0e-12));
 }
 
-TEST_CASE("Conserved total-current avalanche support uses |F_n + F_p| on both carriers",
+TEST_CASE("Conserved total-current flux uses the physical carrier-current sign convention",
+          "[impact][conserved_total_current]")
+{
+    SECTION("same-sign continuity fluxes") {
+        REQUIRE(detail::conservedTotalCurrentFluxMagnitude(7.0, 2.0) ==
+                Catch::Approx(5.0));
+    }
+
+    SECTION("opposite-sign continuity fluxes") {
+        REQUIRE(detail::conservedTotalCurrentFluxMagnitude(-7.0, 2.0) ==
+                Catch::Approx(9.0));
+    }
+}
+
+TEST_CASE("Conserved total-current avalanche support uses |F_p - F_n| on both carriers",
           "[impact][conserved_total_current]")
 {
     DeviceMesh mesh = makeSingleCellMesh();
@@ -407,10 +421,10 @@ TEST_CASE("Conserved total-current avalanche support uses |F_n + F_p| on both ca
     });
     REQUIRE(it != records.end());
 
-    // Both carriers must see the same conserved total-current magnitude
-    // |F_n + F_p| built from the signed SG continuity fluxes.
+    // Both carriers must see the same physical total-current magnitude
+    // |F_p - F_n| built from the signed SG continuity fluxes.
     const Real expectedConserved = std::abs(
-        it->electronRawSignedFluxProxy + it->holeRawSignedFluxProxy);
+        it->holeRawSignedFluxProxy - it->electronRawSignedFluxProxy);
     REQUIRE(expectedConserved > 0.0);
     REQUIRE(it->electronFluxProxy == Catch::Approx(expectedConserved).epsilon(1.0e-12));
     REQUIRE(it->holeFluxProxy == Catch::Approx(expectedConserved).epsilon(1.0e-12));

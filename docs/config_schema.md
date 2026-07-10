@@ -559,7 +559,7 @@ Field meanings (Selberherr prototype):
   Bernoulli-weighted edge-midpoint density, `cell_current_reconstructed` and
   `cell_vector_current_reconstructed` use cell-smoothed SG flux magnitudes, and
   `conserved_total_current` feeds both carriers the conserved total-current
-  magnitude `|F_n + F_p|` (divergence-free in the converged state, so the
+  magnitude `|F_p - F_n|` (divergence-free in the converged state, so the
   avalanche source does not collapse on the depleted side of a reverse-biased
   junction).
 - `edge_source_partition`: SG edge-current source split. The default

@@ -1157,7 +1157,7 @@ inline bool usesCellVectorCurrentReconstructedAvalancheCurrent(
            config.currentApproximation == "cell_vector_current_reconstructed";
 }
 
-/// Avalanche source driven by the conserved total-current magnitude |F_n+F_p|
+/// Avalanche source driven by the conserved total-current magnitude |F_p-F_n|
 /// on each edge instead of the per-carrier local-density SG flux. The total
 /// charge current is divergence-free in the converged state, so it does not
 /// collapse on the depleted side of a reverse-biased junction where the
@@ -1167,6 +1167,12 @@ inline bool usesConservedTotalCurrentAvalancheCurrent(
 {
     return config.generation == "current_density" &&
            config.currentApproximation == "conserved_total_current";
+}
+
+inline Real conservedTotalCurrentFluxMagnitude(Real electronContinuityFlux,
+                                               Real holeContinuityFlux)
+{
+    return std::abs(holeContinuityFlux - electronContinuityFlux);
 }
 
 inline Real reconstructedAvalancheCurrentDensityMagnitude(Real mobility,
@@ -2016,13 +2022,11 @@ inline std::vector<SgEdgeCurrentAvalancheSourceRecord> sgEdgeCurrentAvalancheSou
                 Vt,
                 mup * Vt * fieldFactor / h)
             : 0.0;
-        // Conserved total-current magnitude: the electron and hole continuity
-        // fluxes share the contact-current sign convention (ContactCurrent.cpp
-        // sums them directly), and their sum is divergence-free in the
-        // converged state, so it does not collapse where one carrier is
-        // depleted.
+        // SG continuity fluxes use the particle-flux convention, so the
+        // physical charge-current magnitude is |F_p - F_n|.
         const Real conservedTotalFluxMagnitude =
-            std::abs(electronContinuityFlux01 + holeContinuityFlux01);
+            conservedTotalCurrentFluxMagnitude(
+                electronContinuityFlux01, holeContinuityFlux01);
         if (collectElectronSgDiagnostics) {
             record.electronSgDiagnosticsCollected = true;
             record.electronSgFluxDecomposition =

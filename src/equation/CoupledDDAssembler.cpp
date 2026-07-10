@@ -1176,7 +1176,8 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
             ? sgHoleContinuityFluxFromQuasiFermiVariableNi(
                 niI, niJ, psi_i, psi_j, phip_i, phip_j, Vt_, mup * Vt_ / h, bgnEnabled_)
             : 0.0;
-        const Real conservedTotalFluxMagnitude = std::abs(signedFluxN + signedFluxP);
+        const Real conservedTotalFluxMagnitude =
+            detail::conservedTotalCurrentFluxMagnitude(signedFluxN, signedFluxP);
 
         Real electronSource = 0.0;
         if (mun > 0.0) {
