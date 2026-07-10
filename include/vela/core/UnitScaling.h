@@ -82,6 +82,15 @@ public:
     {
         return value * currentDensityAM2PerInternal_;
     }
+    /**
+     * Native continuity particle flux uses the same area scale as native
+     * current density because the elementary charge is already in SI units.
+     */
+    Real internalContinuityParticleFluxToPerM2PerS(Real value) const
+    {
+        return value * currentDensityAM2PerInternal_;
+    }
+
     Real aPerM2ToInternalCurrentDensity(Real value) const
     {
         return value / currentDensityAM2PerInternal_;

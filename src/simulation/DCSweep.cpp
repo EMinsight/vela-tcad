@@ -2559,7 +2559,14 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
             "electron_sg_node1_exponent_clamped_high",
             "electron_sg_include_ni_gradient_drift",
             "electron_sg_flat_qf_short_circuit",
-            "electron_sg_reconstruction_relative_error"});
+            "electron_sg_reconstruction_relative_error",
+            "electron_sg_high_precision_reference_flux_native",
+            "electron_sg_production_vs_high_precision_reference_relative_error",
+            "electron_sg_stable_vs_high_precision_reference_relative_error",
+            "electron_sg_production_signed_continuity_particle_flux_m2_s",
+            "electron_sg_production_abs_continuity_particle_flux_m2_s",
+            "electron_sg_production_signed_conventional_current_density_A_per_m2",
+            "electron_sg_production_signed_conventional_current_density_A_per_cm2"});
     }
 
     std::unique_ptr<CSVWriter> avalancheInternalSourceAuditCsv;
@@ -3853,10 +3860,22 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                     sol.p,
                     effectiveNi,
                     constants::kb * temperature_K / constants::q,
-                    fieldFactor);
+                    fieldFactor,
+                    true);
             for (const detail::SgEdgeCurrentAvalancheSourceRecord& record : records) {
                 const Node& node0 = mesh.getNode(record.node0);
                 const Node& node1 = mesh.getNode(record.node1);
+                if (!record.electronSgDiagnosticsCollected) {
+                    throw std::logic_error(
+                        "DCSweep: SG avalanche edge CSV requires electron SG diagnostics.");
+                }
+                const PhysicalUnitSystem& units = sweep.scaling.unitSystem();
+                const Real electronSignedContinuityParticleFlux_m2_s =
+                    units.internalContinuityParticleFluxToPerM2PerS(
+                        record.electronSgProductionSignedFluxNative);
+                const Real electronSignedConventionalCurrentDensity_A_per_m2 =
+                    -constants::q * electronSignedContinuityParticleFlux_m2_s;
+
                 sgAvalancheEdgesCsv->writeRow({
                     std::to_string(pointIndex),
                     formatReal(point.bias),
@@ -3918,7 +3937,15 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                     record.electronSgFluxDecomposition.node1ExponentClampedHigh ? "1" : "0",
                     record.electronSgFluxDecomposition.includeNiGradientDrift ? "1" : "0",
                     record.electronSgFluxDecomposition.flatQuasiFermiShortCircuit ? "1" : "0",
-                    formatReal(record.electronSgReconstructionRelativeError)});
+                    formatReal(record.electronSgReconstructionRelativeError),
+                    formatReal(record.electronSgFluxDecomposition.highPrecisionReferenceFlux),
+                    formatReal(record.electronSgProductionVsReferenceRelativeError),
+                    formatReal(record.electronSgStableVsReferenceRelativeError),
+                    formatReal(electronSignedContinuityParticleFlux_m2_s),
+                    formatReal(std::abs(electronSignedContinuityParticleFlux_m2_s)),
+                    formatReal(electronSignedConventionalCurrentDensity_A_per_m2),
+                    formatReal(
+                        electronSignedConventionalCurrentDensity_A_per_m2 * 1.0e-4)});
             }
         }
 

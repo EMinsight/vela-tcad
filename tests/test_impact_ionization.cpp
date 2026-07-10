@@ -2102,7 +2102,7 @@ TEST_CASE("Grad-QF avalanche source uses quasi-Fermi field with SG current proxy
     const auto cellMaterials = detail::buildCellMaterials(mesh, matdb, constants::T0);
     const auto impact = makeImpactIonizationModel(impactConfig);
 
-    const auto records = detail::sgEdgeCurrentAvalancheSourceRecords(
+    const auto defaultRecords = detail::sgEdgeCurrentAvalancheSourceRecords(
         impactConfig,
         *impact,
         mobilityConfig,
@@ -2118,6 +2118,29 @@ TEST_CASE("Grad-QF avalanche source uses quasi-Fermi field with SG current proxy
         sol.p,
         ni,
         Vt);
+    REQUIRE_FALSE(defaultRecords.empty());
+    REQUIRE_FALSE(defaultRecords.front().electronSgDiagnosticsCollected);
+    REQUIRE(defaultRecords.front().electronSgFluxDecomposition.highPrecisionReferenceFlux == 0.0);
+
+
+    const auto records = detail::sgEdgeCurrentAvalancheSourceRecords(
+        impactConfig,
+        *impact,
+        mobilityConfig,
+        *mobility,
+        edgeCells,
+        mesh,
+        doping,
+        cellMaterials,
+        sol.psi,
+        sol.phin,
+        sol.phip,
+        sol.n,
+        sol.p,
+        ni,
+        Vt,
+        1.0,
+        true);
 
     REQUIRE_FALSE(records.empty());
     const auto& record = records.front();
@@ -2154,11 +2177,17 @@ TEST_CASE("Grad-QF avalanche source uses quasi-Fermi field with SG current proxy
             Catch::Approx(record.electronSgProductionSignedFluxNative));
     REQUIRE(record.electronSgFluxDecomposition.coef ==
             Catch::Approx(record.electronMobility * Vt / record.edgeLength));
+    REQUIRE(record.electronSgDiagnosticsCollected);
     REQUIRE(record.electronSgFluxDecomposition.includeNiGradientDrift);
     REQUIRE(std::isfinite(record.electronSgFluxDecomposition.stableFactorizedFlux));
+    REQUIRE(std::isfinite(record.electronSgFluxDecomposition.highPrecisionReferenceFlux));
     REQUIRE(std::isfinite(record.electronSgFluxDecomposition.cancellationCondition));
     REQUIRE(std::isfinite(record.electronSgReconstructionRelativeError));
+    REQUIRE(std::isfinite(record.electronSgProductionVsReferenceRelativeError));
+    REQUIRE(std::isfinite(record.electronSgStableVsReferenceRelativeError));
     REQUIRE(record.electronSgReconstructionRelativeError <= 1.0e-12);
+    REQUIRE(record.electronSgProductionVsReferenceRelativeError <= 1.0e-6);
+    REQUIRE(record.electronSgStableVsReferenceRelativeError <= 1.0e-6);
 
     REQUIRE(record.edgeSourceIntegral == Catch::Approx(
         (record.electronAlpha * electronSgFlux + record.holeAlpha * holeSgFlux)

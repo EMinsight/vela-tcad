@@ -133,6 +133,9 @@ struct SgElectronVariableNiFluxDecomposition {
     Real signedDifference = 0.0;
     Real reconstructedFlux = 0.0;
     Real stableFactorizedFlux = 0.0;
+    Real highPrecisionReferenceFlux = 0.0;
+    Real highPrecisionReferenceTermScale = 0.0;
+
     Real cancellationCondition = 0.0;
     bool node0ExponentClampedLow = false;
     bool node0ExponentClampedHigh = false;

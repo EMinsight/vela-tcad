@@ -1107,6 +1107,19 @@ TEST_CASE("DCSweep: contact-edge diagnostics are opt-in and write per-edge rows"
     }
 }
 
+TEST_CASE("Physical unit systems convert native continuity particle flux",
+          "[dc_sweep][diagnostics][sg_avalanche_edges][scaling]")
+{
+    const Real nativeFlux = 3.25;
+    REQUIRE(PhysicalUnitSystem::legacySI()
+                .internalContinuityParticleFluxToPerM2PerS(nativeFlux)
+            == Catch::Approx(nativeFlux));
+    REQUIRE(PhysicalUnitSystem::tcadInternal()
+                .internalContinuityParticleFluxToPerM2PerS(nativeFlux)
+            == Catch::Approx(nativeFlux * 1.0e4));
+}
+
+
 TEST_CASE("DCSweep: SG avalanche edge diagnostics write assembled source rows",
           "[dc_sweep][diagnostics][sg_avalanche_edges]")
 {
@@ -1197,6 +1210,13 @@ TEST_CASE("DCSweep: SG avalanche edge diagnostics write assembled source rows",
         "electron_sg_include_ni_gradient_drift",
         "electron_sg_flat_qf_short_circuit",
         "electron_sg_reconstruction_relative_error",
+        "electron_sg_high_precision_reference_flux_native",
+        "electron_sg_production_vs_high_precision_reference_relative_error",
+        "electron_sg_stable_vs_high_precision_reference_relative_error",
+        "electron_sg_production_signed_continuity_particle_flux_m2_s",
+        "electron_sg_production_abs_continuity_particle_flux_m2_s",
+        "electron_sg_production_signed_conventional_current_density_A_per_m2",
+        "electron_sg_production_signed_conventional_current_density_A_per_cm2",
     };
     std::vector<std::size_t> electronSgNumericColumnIndices;
     electronSgNumericColumnIndices.reserve(electronSgNumericColumns.size());
@@ -1216,6 +1236,18 @@ TEST_CASE("DCSweep: SG avalanche edge diagnostics write assembled source rows",
         csvColumnIndex(header, "electron_sg_flat_qf_short_circuit");
     const std::size_t electronSgRelativeErrorCol =
         csvColumnIndex(header, "electron_sg_reconstruction_relative_error");
+    const std::size_t electronSgProductionReferenceErrorCol = csvColumnIndex(
+        header, "electron_sg_production_vs_high_precision_reference_relative_error");
+    const std::size_t electronSgStableReferenceErrorCol = csvColumnIndex(
+        header, "electron_sg_stable_vs_high_precision_reference_relative_error");
+    const std::size_t electronSgSignedParticleFluxCol = csvColumnIndex(
+        header, "electron_sg_production_signed_continuity_particle_flux_m2_s");
+    const std::size_t electronSgAbsParticleFluxCol = csvColumnIndex(
+        header, "electron_sg_production_abs_continuity_particle_flux_m2_s");
+    const std::size_t electronSgCurrentM2Col = csvColumnIndex(
+        header, "electron_sg_production_signed_conventional_current_density_A_per_m2");
+    const std::size_t electronSgCurrentCm2Col = csvColumnIndex(
+        header, "electron_sg_production_signed_conventional_current_density_A_per_cm2");
 
     Real maxEdgeElectricField_V_per_m = 0.0;
     for (std::size_t i = 1; i < rows.size(); ++i) {
@@ -1238,6 +1270,19 @@ TEST_CASE("DCSweep: SG avalanche edge diagnostics write assembled source rows",
                                   * csvReal(row, electronSgSignedDifferenceCol)));
         }
         REQUIRE(csvReal(row, electronSgRelativeErrorCol) <= 1.0e-12);
+        REQUIRE(csvReal(row, electronSgProductionReferenceErrorCol) <= 1.0e-6);
+        REQUIRE(csvReal(row, electronSgStableReferenceErrorCol) <= 1.0e-6);
+        const Real nativeSignedFlux = csvReal(row, electronSgProductionFluxCol);
+        const Real signedParticleFlux = csvReal(row, electronSgSignedParticleFluxCol);
+        REQUIRE(signedParticleFlux ==
+                Catch::Approx(nativeSignedFlux * 1.0e4).epsilon(1.0e-12));
+        REQUIRE(csvReal(row, electronSgAbsParticleFluxCol) ==
+                Catch::Approx(std::abs(signedParticleFlux)).epsilon(1.0e-12));
+        REQUIRE(csvReal(row, electronSgCurrentM2Col) ==
+                Catch::Approx(-constants::q * signedParticleFlux).epsilon(1.0e-12));
+        REQUIRE(csvReal(row, electronSgCurrentCm2Col) ==
+                Catch::Approx(csvReal(row, electronSgCurrentM2Col) * 1.0e-4)
+                    .epsilon(1.0e-12));
 
     }
     REQUIRE(maxEdgeElectricField_V_per_m ==

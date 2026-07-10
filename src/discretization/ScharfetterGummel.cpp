@@ -78,6 +78,35 @@ Real finiteCancellationCondition(Real leftTerm,
         ? condition
         : std::numeric_limits<Real>::max();
 }
+long double longDoubleBernoulli(long double value)
+{
+    if (std::abs(value) < 1.0e-12L)
+        return 1.0L - value * 0.5L + value * value / 12.0L;
+    if (value > 50.0L) {
+        const long double expNegative = std::exp(-value);
+        return value * expNegative / (1.0L - expNegative);
+    }
+    if (value < -50.0L) {
+        const long double expValue = std::exp(value);
+        return -value / (1.0L - expValue);
+    }
+    return value / std::expm1(value);
+}
+
+Real finiteRealFromLongDouble(long double value)
+{
+    const long double maximum =
+        static_cast<long double>(std::numeric_limits<Real>::max());
+    if (std::isnan(value))
+        return 0.0;
+    if (value >= maximum)
+        return std::numeric_limits<Real>::max();
+    if (value <= -maximum)
+        return -std::numeric_limits<Real>::max();
+    return static_cast<Real>(value);
+}
+
+
 
 
 } // namespace
@@ -238,6 +267,56 @@ sgElectronContinuityFluxFromQuasiFermiVariableNiDecomposition(
     result.reconstructedFlux = result.coef * result.signedDifference;
     result.cancellationCondition = finiteCancellationCondition(
         result.leftTerm, result.rightTerm, result.signedDifference);
+
+    const long double ni0Long = static_cast<long double>(ni0);
+    const long double ni1Long = static_cast<long double>(ni1);
+    const long double psi0Long = static_cast<long double>(psi0);
+    const long double psi1Long = static_cast<long double>(psi1);
+    const long double phin0Long = static_cast<long double>(phin0);
+    const long double phin1Long = static_cast<long double>(phin1);
+    const long double VtLong = static_cast<long double>(Vt);
+    const long double coefLong = static_cast<long double>(coef);
+    const long double endpointExponent0Long =
+        (psi0Long - phin0Long) / VtLong;
+    const long double endpointExponent1Long =
+        (psi1Long - phin1Long) / VtLong;
+    const long double clampedExponent0Long = std::clamp(
+        endpointExponent0Long, -500.0L, 500.0L);
+    const long double clampedExponent1Long = std::clamp(
+        endpointExponent1Long, -500.0L, 500.0L);
+    const long double n0Long = ni0Long * std::exp(clampedExponent0Long);
+    const long double n1Long = ni1Long * std::exp(clampedExponent1Long);
+    long double etaLong = (psi1Long - psi0Long) / VtLong;
+    if (ni0 > 0.0 && ni1 > 0.0 && includeNiGradientDrift)
+        etaLong += std::log(ni1Long / ni0Long);
+    const long double leftTermLong =
+        longDoubleBernoulli(-etaLong) * n0Long;
+    const long double rightTermLong =
+        longDoubleBernoulli(etaLong) * n1Long;
+    const long double referenceTermScaleLong =
+        std::abs(coefLong)
+        * (std::abs(leftTermLong) + std::abs(rightTermLong));
+    long double referenceFluxLong = 0.0L;
+    if (!result.flatQuasiFermiShortCircuit) {
+        if (ni0 > 0.0 && ni1 > 0.0) {
+            long double logLeftOverRightLong =
+                (phin1Long - phin0Long) / VtLong;
+            if (!includeNiGradientDrift)
+                logLeftOverRightLong += std::log(ni0Long / ni1Long);
+            logLeftOverRightLong +=
+                (clampedExponent0Long - endpointExponent0Long)
+                - (clampedExponent1Long - endpointExponent1Long);
+            referenceFluxLong = coefLong * rightTermLong
+                * std::expm1(logLeftOverRightLong);
+        } else {
+            referenceFluxLong = coefLong * (leftTermLong - rightTermLong);
+        }
+    }
+    result.highPrecisionReferenceFlux =
+        finiteRealFromLongDouble(referenceFluxLong);
+    result.highPrecisionReferenceTermScale =
+        finiteRealFromLongDouble(referenceTermScaleLong);
+
 
     if (result.flatQuasiFermiShortCircuit) {
         result.stableFactorizedFlux = 0.0;

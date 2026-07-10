@@ -1793,7 +1793,9 @@ struct SgEdgeCurrentAvalancheSourceRecord {
     SgElectronVariableNiFluxDecomposition electronSgFluxDecomposition;
     Real electronSgProductionSignedFluxNative = 0.0;
     Real electronSgReconstructionRelativeError = 0.0;
-
+    Real electronSgProductionVsReferenceRelativeError = 0.0;
+    Real electronSgStableVsReferenceRelativeError = 0.0;
+    bool electronSgDiagnosticsCollected = false;
 };
 
 struct SgAvalancheSourceComponentIntegrals {
@@ -1818,7 +1820,8 @@ inline std::vector<SgEdgeCurrentAvalancheSourceRecord> sgEdgeCurrentAvalancheSou
     const VectorXd&                    p,
     const std::vector<Real>&           ni,
     Real                               Vt,
-    Real                               fieldFactor = 1.0)
+    Real                               fieldFactor = 1.0,
+    bool                               collectElectronSgDiagnostics = false)
 {
     std::vector<SgEdgeCurrentAvalancheSourceRecord> records;
     records.reserve(mesh.numEdges());
@@ -2020,29 +2023,51 @@ inline std::vector<SgEdgeCurrentAvalancheSourceRecord> sgEdgeCurrentAvalancheSou
         // depleted.
         const Real conservedTotalFluxMagnitude =
             std::abs(electronContinuityFlux01 + holeContinuityFlux01);
-        record.electronSgFluxDecomposition =
-            sgElectronContinuityFluxFromQuasiFermiVariableNiDecomposition(
-                ni[edge.n0],
-                ni[edge.n1],
-                psi_i,
-                psi_j,
-                phin_i,
-                phin_j,
-                Vt,
-                electronContinuityCoefficient,
-                IncludeElectronNiGradientDrift);
-        record.electronSgProductionSignedFluxNative = electronContinuityFlux01;
-        const Real electronSgReconstructionScale = std::max({
-            std::abs(record.electronSgProductionSignedFluxNative),
-            std::abs(record.electronSgFluxDecomposition.reconstructedFlux),
-            std::abs(record.electronSgFluxDecomposition.coef)
-                * (std::abs(record.electronSgFluxDecomposition.leftTerm)
-                   + std::abs(record.electronSgFluxDecomposition.rightTerm)),
-            Real{1.0e-300}});
-        record.electronSgReconstructionRelativeError =
-            std::abs(record.electronSgProductionSignedFluxNative
-                     - record.electronSgFluxDecomposition.reconstructedFlux)
-            / electronSgReconstructionScale;
+        if (collectElectronSgDiagnostics) {
+            record.electronSgDiagnosticsCollected = true;
+            record.electronSgFluxDecomposition =
+                sgElectronContinuityFluxFromQuasiFermiVariableNiDecomposition(
+                    ni[edge.n0],
+                    ni[edge.n1],
+                    psi_i,
+                    psi_j,
+                    phin_i,
+                    phin_j,
+                    Vt,
+                    electronContinuityCoefficient,
+                    IncludeElectronNiGradientDrift);
+            record.electronSgProductionSignedFluxNative = electronContinuityFlux01;
+            const Real electronSgReconstructionScale = std::max({
+                std::abs(record.electronSgProductionSignedFluxNative),
+                std::abs(record.electronSgFluxDecomposition.reconstructedFlux),
+                std::abs(record.electronSgFluxDecomposition.coef)
+                    * (std::abs(record.electronSgFluxDecomposition.leftTerm)
+                       + std::abs(record.electronSgFluxDecomposition.rightTerm)),
+                Real{1.0e-300}});
+            record.electronSgReconstructionRelativeError =
+                std::abs(record.electronSgProductionSignedFluxNative
+                         - record.electronSgFluxDecomposition.reconstructedFlux)
+                / electronSgReconstructionScale;
+
+            const Real referenceScale = std::max({
+                std::abs(record.electronSgProductionSignedFluxNative),
+                record.electronSgFluxDecomposition.highPrecisionReferenceTermScale,
+                Real{1.0e-300}});
+            const long double referenceScaleLong =
+                static_cast<long double>(referenceScale);
+            const long double referenceFluxLong = static_cast<long double>(
+                record.electronSgFluxDecomposition.highPrecisionReferenceFlux);
+            record.electronSgProductionVsReferenceRelativeError =
+                static_cast<Real>(std::abs(
+                    static_cast<long double>(
+                        record.electronSgProductionSignedFluxNative)
+                    - referenceFluxLong) / referenceScaleLong);
+            record.electronSgStableVsReferenceRelativeError =
+                static_cast<Real>(std::abs(
+                    static_cast<long double>(
+                        record.electronSgFluxDecomposition.stableFactorizedFlux)
+                    - referenceFluxLong) / referenceScaleLong);
+        }
 
         if (mun > 0.0) {
             record.electronImpactField = currentAlignedImpact

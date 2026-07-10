@@ -340,6 +340,14 @@ TEST_CASE("SG variable-ni electron flux decomposition reconstructs the productio
                 Approx(decomposition.leftTerm - decomposition.rightTerm));
         REQUIRE(decomposition.reconstructedFlux == production);
         REQUIRE(std::isfinite(decomposition.stableFactorizedFlux));
+        REQUIRE(std::isfinite(decomposition.highPrecisionReferenceFlux));
+        REQUIRE(std::isfinite(decomposition.highPrecisionReferenceTermScale));
+        const Real referenceScale = std::max({
+            std::abs(production),
+            decomposition.highPrecisionReferenceTermScale,
+            Real{1.0e-300}});
+        REQUIRE(std::abs(production - decomposition.highPrecisionReferenceFlux)
+                / referenceScale <= 1.0e-6);
         REQUIRE(std::isfinite(decomposition.cancellationCondition));
         REQUIRE_FALSE(decomposition.node0ExponentClampedLow);
         REQUIRE_FALSE(decomposition.node0ExponentClampedHigh);
@@ -392,6 +400,8 @@ TEST_CASE("SG variable-ni electron flux decomposition reports finite exact-cance
     REQUIRE(decomposition.flatQuasiFermiShortCircuit);
     REQUIRE(decomposition.reconstructedFlux == 0.0);
     REQUIRE(decomposition.stableFactorizedFlux == 0.0);
+    REQUIRE(decomposition.highPrecisionReferenceFlux == 0.0);
+    REQUIRE(std::isfinite(decomposition.highPrecisionReferenceTermScale));
     REQUIRE(std::isfinite(decomposition.cancellationCondition));
     REQUIRE(decomposition.cancellationCondition == std::numeric_limits<Real>::max());
 }
@@ -424,8 +434,15 @@ TEST_CASE("SG variable-ni electron flux decomposition remains stable under sever
 
     REQUIRE(decomposition.cancellationCondition > 1.0e9);
     REQUIRE(std::isfinite(decomposition.stableFactorizedFlux));
-    REQUIRE(decomposition.stableFactorizedFlux ==
+    REQUIRE(std::isfinite(decomposition.highPrecisionReferenceFlux));
+    REQUIRE(decomposition.highPrecisionReferenceFlux ==
             Approx(static_cast<Real>(expected)).epsilon(1.0e-8));
+    const Real productionError = std::abs(
+        decomposition.reconstructedFlux - decomposition.highPrecisionReferenceFlux);
+    const Real stableError = std::abs(
+        decomposition.stableFactorizedFlux - decomposition.highPrecisionReferenceFlux);
+    REQUIRE(stableError <= productionError);
+    REQUIRE(stableError <= 0.1 * productionError);
     REQUIRE(decomposition.reconstructedFlux ==
             sgElectronContinuityFluxFromQuasiFermiVariableNi(
                 ni0, ni1, psi0, psi1, phin0, phin1, Vt, coef, true));
@@ -446,6 +463,8 @@ TEST_CASE("SG variable-ni electron flux decomposition reports endpoint exponent 
     REQUIRE_FALSE(decomposition.node1ExponentClampedHigh);
     REQUIRE(std::isfinite(decomposition.reconstructedFlux));
     REQUIRE(std::isfinite(decomposition.stableFactorizedFlux));
+    REQUIRE(std::isfinite(decomposition.highPrecisionReferenceFlux));
+    REQUIRE(std::isfinite(decomposition.highPrecisionReferenceTermScale));
     REQUIRE(decomposition.reconstructedFlux ==
             sgElectronContinuityFluxFromQuasiFermiVariableNi(
                 1.0e16, 1.0e16, 13.0, -13.0, 0.0, 0.1,
