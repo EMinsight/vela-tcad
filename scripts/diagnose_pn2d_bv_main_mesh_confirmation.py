@@ -564,7 +564,7 @@ def _sentaurus_endpoint(
 def collect_anchor_edges(args: argparse.Namespace, bias: float) -> list[dict[str, Any]]:
     doping = compensated.load_doping(args.imported_doping)
     vtk_path = resolve_vtk_for_bias(args.vtk_root, args.vtk_prefix, bias)
-    vela = compensated.parse_vtk(vtk_path)
+    vela = compensated.parse_vtk(vtk_path, coordinate_scale_to_um=1.0)
     export_dir = resolve_sentaurus_export_dir(args, bias)
     sent_nodes = load_sentaurus_nodes_from_export(export_dir)
     sent_by_id = {int(node["id"]): node for node in sent_nodes}

@@ -331,6 +331,23 @@ class CompensatedSgReplayCoreTest(unittest.TestCase):
             ):
                 diagnostic.load_sg_edges(path)
 
+    def test_sg_edge_mapping_uses_unique_endpoint_nodes_not_historical_id(self) -> None:
+        edges = {
+            (-12.0, 22): {"node0": "7", "node1": "10"},
+            (-12.0, 29): {"node0": "10", "node1": "13"},
+        }
+        edge_id, row = diagnostic.unique_sg_edge_for_nodes(edges, -12.0, 10, 7)
+        self.assertEqual(edge_id, 22)
+        self.assertIs(row, edges[(-12.0, 22)])
+        with self.assertRaisesRegex(ValueError, "found 0"):
+            diagnostic.unique_sg_edge_for_nodes(edges, -12.0, 7, 13)
+        ambiguous = dict(edges)
+        ambiguous[(-12.0, 99)] = {"node0": "10", "node1": "7"}
+        with self.assertRaisesRegex(ValueError, "found 2"):
+            diagnostic.unique_sg_edge_for_nodes(ambiguous, -12.0, 7, 10)
+
+
+
     def test_enrichment_requires_finite_vela_coordinates_and_reverses_sign(self) -> None:
         edge_row = {field: "1.0" for field in diagnostic.ELECTRON_SG_FIELDS}
         edge_row.update({
@@ -443,10 +460,14 @@ class CompensatedSgReplayCoreTest(unittest.TestCase):
                             if side == "left"
                             else (diagnostic.VELA_X_COLUMNS[1], diagnostic.VELA_X_COLUMNS[2])
                         )
+                        node0 = diagnostic.nearest_node(points, x0, y_um)
+                        node1 = diagnostic.nearest_node(points, x1, y_um)
                         edge = {field: "1.0" for field in diagnostic.ELECTRON_SG_FIELDS}
                         edge.update({
                             "bias_V": str(bias),
                             "edge_id": str(edge_id),
+                            "node0": str(node0),
+                            "node1": str(node1),
                             "x0_um": str(x0),
                             "y0_um": str(y_um),
                             "x1_um": str(x1),

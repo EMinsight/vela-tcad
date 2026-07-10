@@ -1042,7 +1042,10 @@ def load_doping(path: Path) -> dict[int, dict[str, Any]]:
     return result
 
 
-def parse_vtk(path: Path) -> dict[str, Any]:
+def parse_vtk(
+    path: Path,
+    *, coordinate_scale_to_um: float = 1.0e6,
+) -> dict[str, Any]:
     lines = path.read_text(encoding="utf-8").splitlines()
     points: list[tuple[float, float, float]] = []
     scalars: dict[str, list[float]] = {}
@@ -1061,7 +1064,7 @@ def parse_vtk(path: Path) -> dict[str, Any]:
             while len(values) < 3 * count:
                 values.extend(float(item) for item in lines[index].split())
                 index += 1
-            points = [(values[i] * 1.0e6, values[i + 1] * 1.0e6, values[i + 2] * 1.0e6) for i in range(0, len(values), 3)]
+            points = [(values[i] * coordinate_scale_to_um, values[i + 1] * coordinate_scale_to_um, values[i + 2] * coordinate_scale_to_um) for i in range(0, len(values), 3)]
             continue
         if parts[0] == "POINT_DATA":
             section = "point"
@@ -1128,6 +1131,31 @@ def load_sg_edges(path: Path) -> dict[tuple[float, int], dict[str, str]]:
             )
         result[key] = row
     return result
+
+def unique_sg_edge_for_nodes(
+    edges: Mapping[tuple[float, int], dict[str, str]],
+    bias: float,
+    node0: int,
+    node1: int,
+) -> tuple[int, dict[str, str]]:
+    bias_key = round(float(bias), 10)
+    target_nodes = {int(node0), int(node1)}
+    matches: list[tuple[int, dict[str, str]]] = []
+    for (row_bias, edge_id), row in edges.items():
+        if row_bias != bias_key:
+            continue
+        row_nodes = {
+            int(finite_float(row.get("node0"))),
+            int(finite_float(row.get("node1"))),
+        }
+        if row_nodes == target_nodes:
+            matches.append((edge_id, row))
+    if len(matches) != 1:
+        raise ValueError(
+            f"expected one SG edge for bias={bias:g}, nodes={sorted(target_nodes)}; "
+            f"found {len(matches)}"
+        )
+    return matches[0]
 
 
 def load_sentaurus_nodes(sentaurus_root: Path, bias: float) -> tuple[list[dict[str, Any]], dict[int, dict[str, Any]]]:
@@ -1407,7 +1435,8 @@ def build_standard_detail_rows(args: argparse.Namespace) -> list[dict[str, Any]]
         sentaurus_state = load_sentaurus_electron_state(export_dir)
         states = {
             name: parse_vtk(
-                vtk_for_bias(data["vtk_root"], data["vtk_prefix"], bias)
+                vtk_for_bias(data["vtk_root"], data["vtk_prefix"], bias),
+                coordinate_scale_to_um=1.0,
             )
             for name, data in variants.items()
         }
@@ -1428,14 +1457,13 @@ def build_standard_detail_rows(args: argparse.Namespace) -> list[dict[str, Any]]
             for variant_name, variant in variants.items():
                 state = states[variant_name]
                 for side in ("left", "right"):
-                    edge_id = EDGE_BY_SIDE[y_um][side]
-                    edge_row = variant["sg"].get((round(bias, 10), edge_id))
-                    if edge_row is None:
-                        raise ValueError(
-                            f"missing SG edge row for {variant_name} "
-                            f"bias={bias} edge={edge_id}"
-                        )
                     node0, node1 = row_side_nodes(state, side, y_um)
+                    try:
+                        edge_id, edge_row = unique_sg_edge_for_nodes(
+                            variant["sg"], bias, node0, node1
+                        )
+                    except ValueError as exc:
+                        raise ValueError(f"{variant_name}: {exc}") from exc
                     doping0 = variant["doping"][node0]
                     doping1 = variant["doping"][node1]
                     sent0, sent1 = sent_pairs[side]
