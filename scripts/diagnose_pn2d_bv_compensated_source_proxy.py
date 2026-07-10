@@ -13,12 +13,95 @@ import json
 import math
 import os
 import statistics
+import sys
+from decimal import Decimal, localcontext
 from pathlib import Path
 from typing import Any
 
 
+ELEMENTARY_CHARGE_C = 1.602176634e-19
 BIASES = [-12.0, -19.0, -20.0]
 Y_CUTS = [0.0, 0.25, 0.5]
+REPLAY_VARIANTS = (
+    "legacy_dominant_signed",
+    "reported_compensated",
+)
+BOLTZMANN_OVER_CHARGE_V_K = 8.617333262145e-5
+ELECTRON_SG_FIELDS = (
+    "electron_sg_ni0",
+    "electron_sg_ni1",
+    "electron_sg_n0",
+    "electron_sg_n1",
+    "electron_sg_psi0",
+    "electron_sg_psi1",
+    "electron_sg_phin0",
+    "electron_sg_phin1",
+    "electron_sg_eta",
+    "electron_sg_b_minus_eta",
+    "electron_sg_b_eta",
+    "electron_sg_coef",
+    "electron_sg_left_term",
+    "electron_sg_right_term",
+    "electron_sg_signed_difference",
+    "electron_sg_reconstructed_flux_native",
+    "electron_sg_stable_factorized_flux_native",
+    "electron_sg_production_signed_flux_native",
+    "electron_sg_cancellation_condition",
+    "electron_sg_node0_exponent_clamped_low",
+    "electron_sg_node0_exponent_clamped_high",
+    "electron_sg_node1_exponent_clamped_low",
+    "electron_sg_node1_exponent_clamped_high",
+    "electron_sg_include_ni_gradient_drift",
+    "electron_sg_flat_qf_short_circuit",
+    "electron_sg_reconstruction_relative_error",
+    "electron_sg_high_precision_reference_flux_native",
+    "electron_sg_production_vs_high_precision_reference_relative_error",
+    "electron_sg_stable_vs_high_precision_reference_relative_error",
+    "electron_sg_production_signed_continuity_particle_flux_m2_s",
+    "electron_sg_production_abs_continuity_particle_flux_m2_s",
+    "electron_sg_production_signed_conventional_current_density_A_per_m2",
+    "electron_sg_production_signed_conventional_current_density_A_per_cm2",
+)
+REQUIRED_ENRICHED_FIELDS = ELECTRON_SG_FIELDS + (
+    "sentaurus_e_psi0_V",
+    "sentaurus_e_psi1_V",
+    "sentaurus_e_phin0_V",
+    "sentaurus_e_phin1_V",
+    "sentaurus_e_density0_m3",
+    "sentaurus_e_density1_m3",
+    "sentaurus_e_mobility0_m2_V_s",
+    "sentaurus_e_mobility1_m2_V_s",
+    "sentaurus_e_ni_inferred0_m3",
+    "sentaurus_e_ni_inferred1_m3",
+    "sentaurus_e_alpha0_m_inv",
+    "sentaurus_e_alpha1_m_inv",
+    "sentaurus_e_alpha_edge_average_m_inv",
+    "vela_e_over_sentaurus_alpha_abs_ratio",
+    "sentaurus_e_current_edge_signed_A_cm2",
+    "sentaurus_edge_length_m",
+    "sentaurus_e_continuity_edge_signed_flux_m2_s",
+    "sentaurus_e_sg_vela_mobility_signed_flux_m2_s",
+    "sentaurus_e_sg_vela_mobility_abs_flux_m2_s",
+    "sentaurus_e_sg_vela_mobility_conventional_current_A_cm2",
+    "sentaurus_e_sg_sentaurus_mobility_signed_flux_m2_s",
+    "sentaurus_e_sg_sentaurus_mobility_abs_flux_m2_s",
+    "sentaurus_e_sg_sentaurus_mobility_conventional_current_A_cm2",
+    "vela_e_sg_production_canonical_signed_flux_m2_s",
+    "vela_e_over_sentaurus_vector_abs_ratio",
+    "sentaurus_e_sg_vela_mobility_over_vector_abs_ratio",
+    "sentaurus_e_sg_sentaurus_mobility_over_vector_abs_ratio",
+    "vela_e_source_integral_physical_m_inv_s",
+    "sentaurus_e_source_on_vela_area_physical_m_inv_s",
+    "vela_e_over_sentaurus_source_abs_ratio",
+    "vela_e_source_closure_ratio",
+)
+SENTAURUS_SCALAR_FIELD_SPECS = {
+    "ElectrostaticPotential": "V",
+    "eQuasiFermiPotential": "V",
+    "eDensity": "cm^-3",
+    "eMobility": "cm^2*V^-1*s^-1",
+    "eAlphaAvalanche": "cm^-1",
+}
 EDGE_BY_SIDE = {
     0.0: {"left": 9, "right": 13},
     0.25: {"left": 12, "right": 16},
@@ -52,13 +135,22 @@ RATIO_FIELDS = [
 ]
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--baseline-report-root", type=Path, required=True)
-    parser.add_argument("--probe-root", type=Path, required=True)
+    parser.add_argument("--variants-root", type=Path)
+    parser.add_argument("--baseline-report-root", type=Path)
+    parser.add_argument("--probe-root", type=Path)
     parser.add_argument("--sentaurus-root", type=Path, required=True)
     parser.add_argument("--out-dir", type=Path, required=True)
-    return parser.parse_args()
+    args = parser.parse_args(argv)
+    has_legacy_pair = args.baseline_report_root is not None and args.probe_root is not None
+    if args.variants_root is None and not has_legacy_pair:
+        parser.error(
+            "provide --variants-root or both --baseline-report-root and --probe-root"
+        )
+    if (args.baseline_report_root is None) != (args.probe_root is None):
+        parser.error("--baseline-report-root and --probe-root must be provided together")
+    return args
 
 
 def long_path(path: Path) -> str:
@@ -123,6 +215,806 @@ def clean_json(value: Any) -> Any:
         return [clean_json(item) for item in value]
     return value
 
+
+def production_bernoulli(value: float) -> float:
+    """Match Vela's production Bernoulli branch thresholds."""
+    value = float(value)
+    if not math.isfinite(value):
+        raise ValueError("Bernoulli input must be finite")
+    if abs(value) < 1.0e-10:
+        return 1.0 - value * 0.5 + value * value / 12.0
+    if value > 500.0:
+        return value * math.exp(-value)
+    if value < -500.0:
+        return -value
+    return value / math.expm1(value)
+
+
+def _finite_saturated_float(value: Decimal) -> float:
+    maximum = Decimal(str(sys.float_info.max))
+    if value.is_nan():
+        raise ValueError("Decimal SG reference produced NaN")
+    if value >= maximum:
+        return sys.float_info.max
+    if value <= -maximum:
+        return -sys.float_info.max
+    result = float(value)
+    if not math.isfinite(result):
+        return math.copysign(sys.float_info.max, result)
+    return result
+
+
+def _decimal_bernoulli(value: Decimal) -> Decimal:
+    if abs(value) < Decimal("1e-30"):
+        return Decimal(1) - value / 2 + value * value / 12
+    if value > 500:
+        return value * (-value).exp()
+    if value < -500:
+        return -value
+    return value / (value.exp() - 1)
+
+
+def replay_electron_variable_ni_sg(
+    *,
+    ni0: float,
+    ni1: float,
+    psi0: float,
+    psi1: float,
+    phin0: float,
+    phin1: float,
+    vt: float,
+    mobility_m2_V_s: float,
+    length_m: float,
+    include_ni_gradient_drift: bool = True,
+) -> dict[str, Any]:
+    """Replay Vela's variable-ni electron SG flux with a Decimal reference."""
+    raw = {
+        "ni0": ni0,
+        "ni1": ni1,
+        "psi0": psi0,
+        "psi1": psi1,
+        "phin0": phin0,
+        "phin1": phin1,
+        "vt": vt,
+        "mobility_m2_V_s": mobility_m2_V_s,
+        "length_m": length_m,
+    }
+    invalid = [name for name, value in raw.items() if not math.isfinite(float(value))]
+    if invalid:
+        raise ValueError(f"SG replay inputs must be finite: {invalid}")
+    if vt <= 0.0 or length_m <= 0.0:
+        raise ValueError("SG replay vt and length_m must be positive")
+    if ni0 < 0.0 or ni1 < 0.0 or mobility_m2_V_s < 0.0:
+        raise ValueError("SG replay ni and mobility must be non-negative")
+
+    coefficient = mobility_m2_V_s * vt / length_m
+    endpoint_exponent0 = (psi0 - phin0) / vt
+    endpoint_exponent1 = (psi1 - phin1) / vt
+    clamped_exponent0 = max(-500.0, min(500.0, endpoint_exponent0))
+    clamped_exponent1 = max(-500.0, min(500.0, endpoint_exponent1))
+    density0 = ni0 * math.exp(clamped_exponent0)
+    density1 = ni1 * math.exp(clamped_exponent1)
+    eta = (psi1 - psi0) / vt
+    if ni0 > 0.0 and ni1 > 0.0 and include_ni_gradient_drift:
+        eta += math.log(ni1 / ni0)
+    b_minus_eta = production_bernoulli(-eta)
+    b_eta = production_bernoulli(eta)
+    left_term = b_minus_eta * density0
+    right_term = b_eta * density1
+    flat_qf = phin0 == phin1
+    signed_difference = 0.0 if flat_qf else left_term - right_term
+    double_flux = coefficient * signed_difference
+    term_scale = abs(left_term) + abs(right_term)
+    if term_scale == 0.0:
+        cancellation_condition = 0.0
+    elif signed_difference == 0.0:
+        cancellation_condition = sys.float_info.max
+    else:
+        cancellation_condition = min(
+            sys.float_info.max,
+            term_scale / abs(signed_difference),
+        )
+
+    with localcontext() as context:
+        context.prec = 100
+        dec = {name: Decimal(str(value)) for name, value in raw.items()}
+        dec_endpoint0 = (dec["psi0"] - dec["phin0"]) / dec["vt"]
+        dec_endpoint1 = (dec["psi1"] - dec["phin1"]) / dec["vt"]
+        dec_clamped0 = max(Decimal(-500), min(Decimal(500), dec_endpoint0))
+        dec_clamped1 = max(Decimal(-500), min(Decimal(500), dec_endpoint1))
+        dec_density0 = dec["ni0"] * dec_clamped0.exp()
+        dec_density1 = dec["ni1"] * dec_clamped1.exp()
+        dec_eta = (dec["psi1"] - dec["psi0"]) / dec["vt"]
+        if ni0 > 0.0 and ni1 > 0.0 and include_ni_gradient_drift:
+            dec_eta += (dec["ni1"] / dec["ni0"]).ln()
+        dec_left = _decimal_bernoulli(-dec_eta) * dec_density0
+        dec_right = _decimal_bernoulli(dec_eta) * dec_density1
+        dec_coefficient = (
+            dec["mobility_m2_V_s"] * dec["vt"] / dec["length_m"]
+        )
+        if flat_qf:
+            decimal_flux_raw = Decimal(0)
+        elif ni0 > 0.0 and ni1 > 0.0:
+            log_left_over_right = (
+                (dec["phin1"] - dec["phin0"]) / dec["vt"]
+                + (dec_clamped0 - dec_endpoint0)
+                - (dec_clamped1 - dec_endpoint1)
+            )
+            if not include_ni_gradient_drift:
+                log_left_over_right += (dec["ni0"] / dec["ni1"]).ln()
+            decimal_flux_raw = (
+                dec_coefficient
+                * dec_right
+                * (log_left_over_right.exp() - Decimal(1))
+            )
+        else:
+            decimal_flux_raw = dec_coefficient * (dec_left - dec_right)
+        decimal_term_scale_raw = abs(dec_coefficient) * (
+            abs(dec_left) + abs(dec_right)
+        )
+        decimal_flux = _finite_saturated_float(decimal_flux_raw)
+        decimal_term_scale = _finite_saturated_float(decimal_term_scale_raw)
+
+    reference_scale = max(abs(decimal_flux), 1.0e-300)
+    double_highprec_relative_error = abs(double_flux - decimal_flux) / reference_scale
+    if not math.isfinite(double_highprec_relative_error):
+        double_highprec_relative_error = sys.float_info.max
+    return {
+        "ni0": ni0,
+        "ni1": ni1,
+        "n0": density0,
+        "n1": density1,
+        "psi0": psi0,
+        "psi1": psi1,
+        "phin0": phin0,
+        "phin1": phin1,
+        "eta": eta,
+        "bernoulli_minus_eta": b_minus_eta,
+        "bernoulli_eta": b_eta,
+        "coef": coefficient,
+        "left_term": left_term,
+        "right_term": right_term,
+        "signed_difference": signed_difference,
+        "double_flux_m2_s": double_flux,
+        "decimal_flux_m2_s": decimal_flux,
+        "decimal_reference_term_scale": decimal_term_scale,
+        "double_highprec_relative_error": double_highprec_relative_error,
+        "cancellation_condition": cancellation_condition,
+        "node0_exponent_clamped_low": endpoint_exponent0 < -500.0,
+        "node0_exponent_clamped_high": endpoint_exponent0 > 500.0,
+        "node1_exponent_clamped_low": endpoint_exponent1 < -500.0,
+        "node1_exponent_clamped_high": endpoint_exponent1 > 500.0,
+        "include_ni_gradient_drift": include_ni_gradient_drift,
+        "flat_qf_short_circuit": flat_qf,
+    }
+
+
+def require_finite_fields(
+    row: dict[str, Any],
+    fields: tuple[str, ...] | list[str],
+    *,
+    context: str,
+) -> None:
+    """Require numeric, finite values instead of silently emitting JSON nulls."""
+    missing = [field for field in fields if field not in row or row[field] in (None, "")]
+    if missing:
+        raise ValueError(f"{context}: missing required fields: {missing}")
+    nonfinite: list[str] = []
+    for field in fields:
+        try:
+            value = float(row[field])
+        except (TypeError, ValueError):
+            nonfinite.append(field)
+            continue
+        if not math.isfinite(value):
+            nonfinite.append(field)
+    if nonfinite:
+        raise ValueError(f"{context}: non-finite required fields: {nonfinite}")
+
+
+def validate_36_row_keys(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Validate the exact 3 bias x 3 cut x 2 side x 2 variant matrix."""
+    expected = {
+        (variant, float(bias), float(y_um), side)
+        for variant in REPLAY_VARIANTS
+        for bias in BIASES
+        for y_um in Y_CUTS
+        for side in ("left", "right")
+    }
+    keys: list[tuple[str, float, float, str]] = []
+    for index, row in enumerate(rows):
+        try:
+            key = (
+                str(row["variant"]),
+                float(row["bias_V"]),
+                float(row["y_um"]),
+                str(row["side"]),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(f"row {index}: invalid replay key") from exc
+        keys.append(key)
+    if len(keys) != len(set(keys)):
+        raise ValueError("duplicate row key in compensated SG replay matrix")
+    if len(keys) != 36:
+        raise ValueError(f"expected 36 replay rows, got {len(keys)}")
+    actual = set(keys)
+    if actual != expected:
+        missing = sorted(expected - actual)
+        extra = sorted(actual - expected)
+        raise ValueError(f"replay row key mismatch: missing={missing}, extra={extra}")
+    return rows
+
+
+def standard_variant_inputs(variants_root: Path) -> dict[str, dict[str, Any]]:
+    """Resolve standardized current-HEAD density-gradient variant inputs."""
+    policies = {
+        "legacy_dominant_signed": "dominant_signed_region",
+        "reported_compensated": "reported",
+    }
+    result: dict[str, dict[str, Any]] = {}
+    for name in REPLAY_VARIANTS:
+        variant_root = variants_root / name
+        result[name] = {
+            "variant_root": variant_root,
+            "run_root": variant_root / "run",
+            "doping_csv": variant_root / "imported" / "vela" / "doping.csv",
+            "compensated_doping_policy": policies[name],
+            "implementation": "current_head",
+            "current_approximation": "density_gradient",
+        }
+    return result
+
+
+def validate_manifest_vector_components(
+    manifest: dict[str, Any],
+    field_name: str,
+    *,
+    expected_components: int,
+) -> dict[str, Any]:
+    """Return a manifest field only when it has the required vector arity."""
+    fields = manifest.get("fields")
+    if not isinstance(fields, list):
+        raise ValueError("field manifest is missing a fields list")
+    name_matches = [
+        field for field in fields
+        if isinstance(field, dict) and str(field.get("name", "")) == field_name
+    ]
+    if not name_matches:
+        raise ValueError(f"field manifest missing {field_name}")
+    matches: list[dict[str, Any]] = []
+    for field in name_matches:
+        try:
+            components = int(field.get("components"))
+        except (TypeError, ValueError):
+            continue
+        if components == expected_components:
+            matches.append(field)
+    if not matches:
+        actual = [field.get("components") for field in name_matches]
+        raise ValueError(
+            f"{field_name} must have components={expected_components}, got {actual}"
+        )
+    if len(matches) != 1:
+        raise ValueError(
+            f"field manifest has duplicate {field_name} components={expected_components} entries"
+        )
+    field = matches[0]
+    return field
+
+
+def _require_manifest_field(
+    manifest: dict[str, Any],
+    field_name: str,
+    *,
+    components: int,
+    unit: str,
+) -> dict[str, Any]:
+    fields = manifest.get("fields")
+    if not isinstance(fields, list):
+        raise ValueError("field manifest is missing a fields list")
+    matches = [
+        field for field in fields
+        if (
+            isinstance(field, dict)
+            and str(field.get("name", "")) == field_name
+            and int(field.get("components", -1)) == components
+            and int(field.get("region", -1)) == 0
+        )
+    ]
+    if len(matches) != 1:
+        raise ValueError(
+            f"field manifest requires exactly one region0 {field_name} "
+            f"with components={components}"
+        )
+    field = matches[0]
+    if str(field.get("unit", "")) != unit:
+        raise ValueError(f"{field_name} unit must be {unit}")
+    if str(field.get("mapping_status", "")) != "complete":
+        raise ValueError(f"{field_name} mapping_status must be complete")
+    if str(field.get("global_node_mapping", "")) != "global_vertex_order":
+        raise ValueError(f"{field_name} must use global_vertex_order mapping")
+    return field
+
+
+def project_endpoint_current_to_canonical_edge(
+    *,
+    point0: tuple[float, float],
+    point1: tuple[float, float],
+    current0_A_cm2: tuple[float, float],
+    current1_A_cm2: tuple[float, float],
+) -> dict[str, Any]:
+    """Average a two-component conventional current and project low-x/low-y to high."""
+    raw_values = (*point0, *point1, *current0_A_cm2, *current1_A_cm2)
+    if not all(math.isfinite(float(value)) for value in raw_values):
+        raise ValueError("edge projection inputs must be finite")
+    p0 = (float(point0[0]), float(point0[1]))
+    p1 = (float(point1[0]), float(point1[1]))
+    j0 = (float(current0_A_cm2[0]), float(current0_A_cm2[1]))
+    j1 = (float(current1_A_cm2[0]), float(current1_A_cm2[1]))
+    reversed_input = p1 < p0
+    if reversed_input:
+        p0, p1 = p1, p0
+        j0, j1 = j1, j0
+    dx = p1[0] - p0[0]
+    dy = p1[1] - p0[1]
+    length = math.hypot(dx, dy)
+    if length <= 0.0:
+        raise ValueError("canonical edge projection requires distinct endpoints")
+    tangent = (dx / length, dy / length)
+    average_current = (0.5 * (j0[0] + j1[0]), 0.5 * (j0[1] + j1[1]))
+    conventional_current = (
+        average_current[0] * tangent[0] + average_current[1] * tangent[1]
+    )
+    electron_continuity_flux = (
+        -conventional_current * 1.0e4 / ELEMENTARY_CHARGE_C
+    )
+    return {
+        "canonical_point0": p0,
+        "canonical_point1": p1,
+        "canonical_tangent": tangent,
+        "canonical_length_coordinate_units": length,
+        "input_orientation_reversed": reversed_input,
+        "conventional_current_A_cm2": conventional_current,
+        "conventional_current_abs_A_cm2": abs(conventional_current),
+        "electron_continuity_flux_m2_s": electron_continuity_flux,
+        "electron_continuity_flux_abs_m2_s": abs(electron_continuity_flux),
+    }
+
+
+def classify_root_cause(evidence: dict[str, Any]) -> dict[str, Any]:
+    """Apply the ordered compensated-SG root-cause rules with explicit evidence."""
+    numeric_fields = (
+        "double_highprec_relative_error",
+        "cancellation_condition",
+        "sent_state_gap_recovery",
+        "sent_state_replay_residual_dex",
+        "sent_state_vector_residual_dex",
+        "raw_edge_residual_dex",
+        "source_residual_dex",
+        "alpha_residual_dex",
+        "source_closure_residual_dex",
+        "terminal_residual_dex",
+    )
+    metrics: dict[str, float] = {}
+    for name in numeric_fields:
+        raw = evidence.get(name)
+        if raw is None:
+            continue
+        try:
+            value = float(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"classifier evidence {name} must be numeric") from exc
+        if not math.isfinite(value):
+            raise ValueError(f"classifier evidence {name} must be finite")
+        metrics[name] = value
+
+    clamp = bool(evidence.get("any_exponent_clamped")) or any(
+        bool(evidence.get(name))
+        for name in (
+            "node0_exponent_clamped_low",
+            "node0_exponent_clamped_high",
+            "node1_exponent_clamped_low",
+            "node1_exponent_clamped_high",
+        )
+    )
+    error = metrics.get("double_highprec_relative_error")
+    cancellation = metrics.get("cancellation_condition")
+    if (
+        error is not None
+        and error > 1.0e-6
+        and (clamp or (cancellation is not None and cancellation >= 1.0e12))
+    ):
+        classification = "variable_ni_sg_numerical_stability"
+        rule = (
+            "double/high-precision relative error > 1e-6 with exponent clamp "
+            "or cancellation condition >= 1e12"
+        )
+    elif (
+        metrics.get("sent_state_gap_recovery", -math.inf) >= 0.8
+        and metrics.get("sent_state_replay_residual_dex", math.inf) <= 0.1
+    ):
+        classification = "vela_internal_state_branch"
+        rule = "Sentaurus-state replay recovers >= 0.8 of gap with <= 0.1 dex residual"
+    elif metrics.get("sent_state_vector_residual_dex", -math.inf) > 0.2:
+        classification = "sg_discretization_ni_or_current_semantics"
+        rule = "Sentaurus-state SG replay differs from vector projection by > 0.2 dex"
+    elif (
+        metrics.get("raw_edge_residual_dex", math.inf) <= 0.1
+        and metrics.get("alpha_residual_dex", -math.inf) > 0.1
+    ):
+        classification = "impact_coefficient_or_source_semantics"
+        rule = (
+            "raw edge agrees within 0.1 dex but impact coefficient differs "
+            "by > 0.1 dex"
+        )
+    elif (
+        metrics.get("raw_edge_residual_dex", math.inf) <= 0.1
+        and metrics.get("alpha_residual_dex", math.inf) <= 0.1
+        and (
+            metrics.get("source_residual_dex", -math.inf) > 0.2
+            or metrics.get("terminal_residual_dex", -math.inf) > 0.2
+        )
+    ):
+        classification = "ownership_support_mapping"
+        rule = (
+            "raw edge and alpha agree but source or terminal differs by > 0.2 dex"
+        )
+    elif (
+        evidence.get("coarse_only") is True
+        and evidence.get("main_comparison_supports_same_failure") is False
+    ):
+        classification = "coarse_artifact"
+        rule = "later main comparison explicitly does not reproduce the coarse-only failure"
+    else:
+        classification = "inconclusive"
+        rule = "no ordered root-cause threshold was met"
+
+    return {
+        "classification": classification,
+        "rule": rule,
+        "thresholds": {
+            "double_highprec_relative_error": 1.0e-6,
+            "cancellation_condition": 1.0e12,
+            "sent_state_gap_recovery": 0.8,
+            "sent_state_replay_residual_dex": 0.1,
+            "sent_state_vector_residual_dex": 0.2,
+            "raw_edge_residual_dex": 0.1,
+            "alpha_residual_dex": 0.1,
+            "source_or_terminal_residual_dex": 0.2,
+        },
+        "evidence": dict(evidence),
+    }
+
+
+def _read_sentaurus_component_field(
+    path: Path,
+    *,
+    components: int,
+) -> dict[int, float | tuple[float, float]]:
+    rows = read_csv(path)
+    if not rows:
+        raise ValueError(f"empty Sentaurus field CSV: {path}")
+    result: dict[int, float | tuple[float, float]] = {}
+    required_columns = tuple(f"component{index}" for index in range(components))
+    for row_index, row in enumerate(rows):
+        raw_node = row.get("node_id", row.get("id"))
+        if raw_node in (None, ""):
+            raise ValueError(f"{path}: row {row_index} missing node id")
+        node_id = int(raw_node)
+        if node_id in result:
+            raise ValueError(f"{path}: duplicate node id {node_id}")
+        values: list[float] = []
+        for column in required_columns:
+            if row.get(column) in (None, ""):
+                raise ValueError(f"{path}: node {node_id} missing {column}")
+            value = float(row[column])
+            if not math.isfinite(value):
+                raise ValueError(f"{path}: node {node_id} has non-finite {column}")
+            values.append(value)
+        result[node_id] = values[0] if components == 1 else (values[0], values[1])
+    return result
+
+
+def load_sentaurus_electron_state(export_dir: Path) -> dict[str, Any]:
+    """Load strict scalar endpoints plus the two-component eCurrentDensity field."""
+    manifest_path = export_dir / "field_manifest.json"
+    if not manifest_path.exists():
+        raise FileNotFoundError(manifest_path)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
+    vector_field = validate_manifest_vector_components(
+        manifest,
+        "eCurrentDensity",
+        expected_components=2,
+    )
+    if int(vector_field.get("region", -1)) != 0:
+        raise ValueError("eCurrentDensity vector must be region0")
+    if str(vector_field.get("unit", "")) != "A*cm^-2":
+        raise ValueError("eCurrentDensity unit must be A*cm^-2")
+    if str(vector_field.get("mapping_status", "")) != "complete":
+        raise ValueError("eCurrentDensity mapping_status must be complete")
+    if str(vector_field.get("global_node_mapping", "")) != "global_vertex_order":
+        raise ValueError("eCurrentDensity must use global_vertex_order mapping")
+    for field_name, unit in SENTAURUS_SCALAR_FIELD_SPECS.items():
+        _require_manifest_field(manifest, field_name, components=1, unit=unit)
+    fields_dir = export_dir / "fields"
+    scalar_specs = {
+        "psi_V": ("ElectrostaticPotential", 1.0),
+        "phin_V": ("eQuasiFermiPotential", 1.0),
+        "density_m3": ("eDensity", 1.0e6),
+        "mobility_m2_V_s": ("eMobility", 1.0e-4),
+        "alpha_m_inv": ("eAlphaAvalanche", 1.0e2),
+    }
+    state: dict[str, Any] = {}
+    expected_nodes: set[int] | None = None
+    for output_name, (field_name, scale) in scalar_specs.items():
+        raw = _read_sentaurus_component_field(
+            fields_dir / f"{field_name}_region0.csv",
+            components=1,
+        )
+        values = {node: float(value) * scale for node, value in raw.items()}
+        nodes = set(values)
+        if expected_nodes is None:
+            expected_nodes = nodes
+        elif nodes != expected_nodes:
+            raise ValueError(f"{field_name} node ids do not match Sentaurus scalar state")
+        state[output_name] = values
+    current = _read_sentaurus_component_field(
+        fields_dir / "eCurrentDensity_region0.csv",
+        components=2,
+    )
+    if set(current) != (expected_nodes or set()):
+        raise ValueError("eCurrentDensity node ids do not match Sentaurus scalar state")
+    state["current_A_cm2"] = current
+    return state
+
+
+def _inferred_electron_ni_m3(
+    density_m3: float,
+    psi_V: float,
+    phin_V: float,
+    vt: float,
+) -> float:
+    if density_m3 <= 0.0:
+        raise ValueError("Sentaurus electron density must be positive")
+    exponent = max(-500.0, min(500.0, (psi_V - phin_V) / vt))
+    value = density_m3 / math.exp(exponent)
+    if not math.isfinite(value) or value <= 0.0:
+        raise ValueError("inferred Sentaurus electron ni must be positive and finite")
+    return value
+
+
+def _finite_abs_ratio(numerator: float, denominator: float) -> float:
+    if not math.isfinite(numerator) or not math.isfinite(denominator):
+        raise ValueError("ratio operands must be finite")
+    if denominator == 0.0:
+        return 1.0 if numerator == 0.0 else sys.float_info.max
+    value = abs(numerator) / abs(denominator)
+    if not math.isfinite(value):
+        return sys.float_info.max
+    return max(value, 1.0e-300)
+
+
+def _append_replay_columns(
+    output: dict[str, Any],
+    prefix: str,
+    replay: dict[str, Any],
+) -> None:
+    for name, value in replay.items():
+        if isinstance(value, bool):
+            output[f"{prefix}_{name}"] = int(value)
+        elif isinstance(value, (int, float)):
+            numeric = float(value)
+            if not math.isfinite(numeric):
+                raise ValueError(f"{prefix}_{name} is non-finite")
+            output[f"{prefix}_{name}"] = numeric
+    signed_flux = float(replay["double_flux_m2_s"])
+    output[f"{prefix}_signed_flux_m2_s"] = signed_flux
+    output[f"{prefix}_abs_flux_m2_s"] = abs(signed_flux)
+    output[f"{prefix}_conventional_current_A_cm2"] = (
+        -ELEMENTARY_CHARGE_C * signed_flux / 1.0e4
+    )
+
+
+def enrich_edge_with_sentaurus_replay(
+    *,
+    edge_row: dict[str, Any],
+    sentaurus_state: dict[str, Any],
+    sentaurus_node0: dict[str, Any],
+    sentaurus_node1: dict[str, Any],
+    temperature_K: float,
+    unit_system: str = "tcad_internal",
+) -> dict[str, Any]:
+    """Append strict Vela SG decomposition and canonical Sentaurus replays."""
+    if not math.isfinite(temperature_K) or temperature_K <= 0.0:
+        raise ValueError("temperature_K must be positive and finite")
+    if unit_system != "tcad_internal":
+        raise ValueError("compensated SG replay requires tcad_internal unit_system")
+    require_finite_fields(
+        edge_row,
+        (
+            "edge_length_m",
+            "edge_area_proxy_m2",
+            "electron_mobility_m2_V_s",
+            "electron_alpha_m_inv",
+            "electron_source_integral",
+            "x0_um", "y0_um", "x1_um", "y1_um",
+        ),
+        context="SG edge row",
+    )
+    output: dict[str, Any] = {}
+    for field in ELECTRON_SG_FIELDS:
+        if edge_row.get(field) in (None, ""):
+            raise ValueError(f"SG edge row missing {field}")
+        value = float(edge_row[field])
+        if not math.isfinite(value):
+            raise ValueError(f"SG edge row has non-finite {field}")
+        output[field] = value
+
+    node0 = dict(sentaurus_node0)
+    node1 = dict(sentaurus_node1)
+    point0 = (float(node0["x_um"]), float(node0["y_um"]))
+    point1 = (float(node1["x_um"]), float(node1["y_um"]))
+    sentaurus_reversed = point1 < point0
+    if sentaurus_reversed:
+        node0, node1 = node1, node0
+        point0, point1 = point1, point0
+    id0 = int(node0["id"])
+    id1 = int(node1["id"])
+    try:
+        psi0 = float(sentaurus_state["psi_V"][id0])
+        psi1 = float(sentaurus_state["psi_V"][id1])
+        phin0 = float(sentaurus_state["phin_V"][id0])
+        phin1 = float(sentaurus_state["phin_V"][id1])
+        density0 = float(sentaurus_state["density_m3"][id0])
+        density1 = float(sentaurus_state["density_m3"][id1])
+        mobility0 = float(sentaurus_state["mobility_m2_V_s"][id0])
+        mobility1 = float(sentaurus_state["mobility_m2_V_s"][id1])
+        alpha0 = float(sentaurus_state["alpha_m_inv"][id0])
+        alpha1 = float(sentaurus_state["alpha_m_inv"][id1])
+        current0 = sentaurus_state["current_A_cm2"][id0]
+        current1 = sentaurus_state["current_A_cm2"][id1]
+    except KeyError as exc:
+        raise ValueError(f"Sentaurus endpoint state missing {exc}") from exc
+    endpoint_values = (
+        psi0, psi1, phin0, phin1, density0, density1, mobility0, mobility1,
+        alpha0, alpha1,
+        *current0, *current1,
+    )
+    if not all(math.isfinite(float(value)) for value in endpoint_values):
+        raise ValueError("Sentaurus endpoint state contains non-finite values")
+
+    vt = BOLTZMANN_OVER_CHARGE_V_K * temperature_K
+    ni0 = _inferred_electron_ni_m3(density0, psi0, phin0, vt)
+    ni1 = _inferred_electron_ni_m3(density1, psi1, phin1, vt)
+    projection = project_endpoint_current_to_canonical_edge(
+        point0=point0,
+        point1=point1,
+        current0_A_cm2=current0,
+        current1_A_cm2=current1,
+    )
+    edge_length_m = (
+        float(projection["canonical_length_coordinate_units"]) * 1.0e-6
+    )
+    vela_mobility = float(edge_row["electron_mobility_m2_V_s"])
+    sentaurus_mobility = 0.5 * (mobility0 + mobility1)
+    vela_replay = replay_electron_variable_ni_sg(
+        ni0=ni0,
+        ni1=ni1,
+        psi0=psi0,
+        psi1=psi1,
+        phin0=phin0,
+        phin1=phin1,
+        vt=vt,
+        mobility_m2_V_s=vela_mobility,
+        length_m=edge_length_m,
+    )
+    sentaurus_replay = replay_electron_variable_ni_sg(
+        ni0=ni0,
+        ni1=ni1,
+        psi0=psi0,
+        psi1=psi1,
+        phin0=phin0,
+        phin1=phin1,
+        vt=vt,
+        mobility_m2_V_s=sentaurus_mobility,
+        length_m=edge_length_m,
+    )
+    output.update({
+        "sentaurus_input_orientation_reversed": int(sentaurus_reversed),
+        "sentaurus_e_psi0_V": psi0,
+        "sentaurus_e_psi1_V": psi1,
+        "sentaurus_e_phin0_V": phin0,
+        "sentaurus_e_phin1_V": phin1,
+        "sentaurus_e_density0_m3": density0,
+        "sentaurus_e_density1_m3": density1,
+        "sentaurus_e_mobility0_m2_V_s": mobility0,
+        "sentaurus_e_mobility1_m2_V_s": mobility1,
+        "sentaurus_e_ni_inferred0_m3": ni0,
+        "sentaurus_e_ni_inferred1_m3": ni1,
+        "sentaurus_e_alpha0_m_inv": alpha0,
+        "sentaurus_e_alpha1_m_inv": alpha1,
+        "sentaurus_edge_length_m": edge_length_m,
+        "sentaurus_e_current_edge_signed_A_cm2": projection["conventional_current_A_cm2"],
+        "sentaurus_e_current_edge_abs_A_cm2": projection["conventional_current_abs_A_cm2"],
+        "sentaurus_e_continuity_edge_signed_flux_m2_s": projection["electron_continuity_flux_m2_s"],
+        "sentaurus_e_continuity_edge_abs_flux_m2_s": projection["electron_continuity_flux_abs_m2_s"],
+    })
+    _append_replay_columns(
+        output,
+        "sentaurus_e_sg_vela_mobility",
+        vela_replay,
+    )
+    _append_replay_columns(
+        output,
+        "sentaurus_e_sg_sentaurus_mobility",
+        sentaurus_replay,
+    )
+
+    vela_point0 = (float(edge_row["x0_um"]), float(edge_row["y0_um"]))
+    vela_point1 = (float(edge_row["x1_um"]), float(edge_row["y1_um"]))
+    vela_orientation_sign = -1.0 if vela_point1 < vela_point0 else 1.0
+    vela_production = (
+        float(edge_row["electron_sg_production_signed_continuity_particle_flux_m2_s"])
+        * vela_orientation_sign
+    )
+    sent_vector_flux = float(projection["electron_continuity_flux_m2_s"])
+    vela_replay_flux = float(vela_replay["double_flux_m2_s"])
+    sentaurus_replay_flux = float(sentaurus_replay["double_flux_m2_s"])
+    output.update({
+        "vela_edge_orientation_sign_to_canonical": vela_orientation_sign,
+        "vela_e_sg_production_canonical_signed_flux_m2_s": vela_production,
+        "vela_e_over_sentaurus_vector_abs_ratio": _finite_abs_ratio(
+            vela_production, sent_vector_flux
+        ),
+        "sentaurus_e_sg_vela_mobility_over_vector_abs_ratio": _finite_abs_ratio(
+            vela_replay_flux, sent_vector_flux
+        ),
+        "sentaurus_e_sg_sentaurus_mobility_over_vector_abs_ratio": _finite_abs_ratio(
+            sentaurus_replay_flux, sent_vector_flux
+        ),
+    })
+    source = float(edge_row["electron_source_integral"])
+    alpha = float(edge_row["electron_alpha_m_inv"])
+    area = float(edge_row["edge_area_proxy_m2"])
+    sentaurus_alpha_average = 0.5 * (alpha0 + alpha1)
+    output["sentaurus_e_alpha_edge_average_m_inv"] = sentaurus_alpha_average
+    output["vela_e_over_sentaurus_alpha_abs_ratio"] = _finite_abs_ratio(
+        alpha, sentaurus_alpha_average
+    )
+    # TCAD-native source uses cm^-1, cm^-2 s^-1 and um^2. Converting the
+    # assembled 2-D source per device depth gives 100 * 1e4 * 1e-12 = 1e-6.
+    source_physical = source * 1.0e-6
+    output["vela_e_source_integral_physical_m_inv_s"] = source_physical
+    sentaurus_source_physical = (
+        sentaurus_alpha_average
+        * abs(float(projection["electron_continuity_flux_m2_s"]))
+        * area
+    )
+    output["sentaurus_e_source_on_vela_area_physical_m_inv_s"] = sentaurus_source_physical
+    output["vela_e_over_sentaurus_source_abs_ratio"] = _finite_abs_ratio(
+        source_physical, sentaurus_source_physical
+    )
+    output["vela_e_source_closure_ratio"] = _finite_abs_ratio(
+        source_physical,
+        alpha * abs(vela_production) * area,
+    )
+    require_finite_fields(
+        output,
+        REQUIRED_ENRICHED_FIELDS,
+        context="enriched SG edge",
+    )
+    return output
+
+
+def validate_enriched_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    validate_36_row_keys(rows)
+    for index, row in enumerate(rows):
+        require_finite_fields(
+            row,
+            REQUIRED_ENRICHED_FIELDS,
+            context=f"row {index}",
+        )
+    return rows
 
 def classify_doping(donors: float, acceptors: float) -> tuple[str, float]:
     net = donors - acceptors
@@ -229,7 +1121,12 @@ def load_sg_edges(path: Path) -> dict[tuple[float, int], dict[str, str]]:
     for row in read_csv(path):
         bias = round(finite_float(row.get("bias_V")), 10)
         edge_id = int(finite_float(row.get("edge_id")))
-        result[(bias, edge_id)] = row
+        key = (bias, edge_id)
+        if key in result:
+            raise ValueError(
+                f"duplicate SG edge row for bias={bias:g}, edge_id={edge_id}"
+            )
+        result[key] = row
     return result
 
 
@@ -277,7 +1174,7 @@ def endpoint_values(state: dict[str, Any], field: str, node0: int, node1: int) -
     return values[node0], values[node1]
 
 
-def build_detail_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
+def build_legacy_detail_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
     baseline_mesh_doping = load_doping(args.baseline_report_root.parent.parent / "imported_reference" / "vela" / "doping.csv")
     probe_doping = load_doping(args.probe_root / "doping_compensated_x1_column.csv")
     variants = {
@@ -375,6 +1272,234 @@ def build_detail_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
     add_pair_ratios(rows)
     add_probe_over_baseline(rows)
     return rows
+
+
+STANDARD_REPLAY_RATIO_FIELDS = (
+    "vela_e_sg_production_canonical_signed_flux_m2_s",
+    "sentaurus_e_continuity_edge_signed_flux_m2_s",
+    "sentaurus_e_sg_vela_mobility_signed_flux_m2_s",
+    "sentaurus_e_sg_sentaurus_mobility_signed_flux_m2_s",
+    "sentaurus_e_alpha_edge_average_m_inv",
+    "vela_e_over_sentaurus_alpha_abs_ratio",
+    "vela_e_source_integral_physical_m_inv_s",
+    "sentaurus_e_source_on_vela_area_physical_m_inv_s",
+    "vela_e_over_sentaurus_source_abs_ratio",
+    "vela_e_source_closure_ratio",
+)
+
+
+def _log_gap_from_abs_ratio(ratio: float) -> float:
+    value = float(ratio)
+    if not math.isfinite(value) or value <= 0.0:
+        raise ValueError("SG replay ratio must be positive and finite")
+    return abs(math.log10(value))
+
+
+def _standard_row_classification(enriched: dict[str, Any]) -> dict[str, Any]:
+    raw_gap = _log_gap_from_abs_ratio(
+        enriched["vela_e_over_sentaurus_vector_abs_ratio"]
+    )
+    replay_gap = _log_gap_from_abs_ratio(
+        enriched["sentaurus_e_sg_vela_mobility_over_vector_abs_ratio"]
+    )
+    recovery = (
+        1.0 - replay_gap / raw_gap
+        if raw_gap > 1.0e-15
+        else (1.0 if replay_gap <= 1.0e-15 else 0.0)
+    )
+    evidence = {
+        "double_highprec_relative_error": float(
+            enriched[
+                "electron_sg_production_vs_high_precision_reference_relative_error"
+            ]
+        ),
+        "cancellation_condition": float(
+            enriched["electron_sg_cancellation_condition"]
+        ),
+        "any_exponent_clamped": any(
+            bool(float(enriched[name]))
+            for name in (
+                "electron_sg_node0_exponent_clamped_low",
+                "electron_sg_node0_exponent_clamped_high",
+                "electron_sg_node1_exponent_clamped_low",
+                "electron_sg_node1_exponent_clamped_high",
+            )
+        ),
+        "raw_edge_residual_dex": raw_gap,
+        "sent_state_vector_residual_dex": replay_gap,
+        "sent_state_replay_residual_dex": replay_gap,
+        "sent_state_gap_recovery": recovery,
+        "source_residual_dex": _log_gap_from_abs_ratio(
+            enriched["vela_e_over_sentaurus_source_abs_ratio"]
+        ),
+        "sentaurus_source_residual_dex": _log_gap_from_abs_ratio(
+            enriched["vela_e_over_sentaurus_source_abs_ratio"]
+        ),
+        "alpha_residual_dex": _log_gap_from_abs_ratio(
+            enriched["vela_e_over_sentaurus_alpha_abs_ratio"]
+        ),
+        "source_closure_residual_dex": _log_gap_from_abs_ratio(
+            enriched["vela_e_source_closure_ratio"]
+        ),
+    }
+    result = classify_root_cause(evidence)
+    return {
+        "root_cause_classification": result["classification"],
+        "root_cause_rule": result["rule"],
+        "classifier_gap_recovery": recovery,
+        "classifier_raw_gap_dex": raw_gap,
+        "classifier_sent_state_residual_dex": replay_gap,
+        "classifier_source_residual_dex": evidence["source_residual_dex"],
+        "classifier_alpha_residual_dex": evidence["alpha_residual_dex"],
+        "classifier_source_closure_residual_dex": evidence["source_closure_residual_dex"],
+        "root_cause_evidence_json": json.dumps(
+            clean_json(evidence), sort_keys=True, separators=(",", ":")
+        ),
+        **evidence,
+    }
+
+
+def _append_standard_ratios(rows: list[dict[str, Any]]) -> None:
+    by_pair: dict[tuple[str, float, float], dict[str, dict[str, Any]]] = {}
+    for row in rows:
+        by_pair.setdefault(
+            (row["variant"], row["bias_V"], row["y_um"]), {}
+        )[row["side"]] = row
+    for pair in by_pair.values():
+        left = pair["left"]
+        right = pair["right"]
+        for field in STANDARD_REPLAY_RATIO_FIELDS:
+            ratio = abs_ratio(float(right[field]), float(left[field]))
+            left[f"right_over_left_{field}"] = ratio
+            right[f"right_over_left_{field}"] = ratio
+
+    by_variant_pair: dict[tuple[float, float, str], dict[str, dict[str, Any]]] = {}
+    for row in rows:
+        by_variant_pair.setdefault(
+            (row["bias_V"], row["y_um"], row["side"]), {}
+        )[row["variant"]] = row
+    for pair in by_variant_pair.values():
+        legacy = pair["legacy_dominant_signed"]
+        reported = pair["reported_compensated"]
+        for field in STANDARD_REPLAY_RATIO_FIELDS:
+            ratio = abs_ratio(float(reported[field]), float(legacy[field]))
+            legacy[f"reported_over_legacy_{field}"] = ratio
+            reported[f"reported_over_legacy_{field}"] = ratio
+
+
+def build_standard_detail_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
+    specs = standard_variant_inputs(args.variants_root)
+    variants: dict[str, dict[str, Any]] = {}
+    for name, spec in specs.items():
+        variants[name] = {
+            "sg": load_sg_edges(spec["run_root"] / "sg_avalanche_edges.csv"),
+            "vtk_root": spec["run_root"] / "vtk",
+            "vtk_prefix": "dc_sweep",
+            "doping": load_doping(spec["doping_csv"]),
+        }
+
+    rows: list[dict[str, Any]] = []
+    for bias in BIASES:
+        export_dir = args.sentaurus_root / f"sentaurus_{bias:g}v"
+        sentaurus_nodes, sentaurus_doping = load_sentaurus_nodes(
+            args.sentaurus_root, bias
+        )
+        sentaurus_state = load_sentaurus_electron_state(export_dir)
+        states = {
+            name: parse_vtk(
+                vtk_for_bias(data["vtk_root"], data["vtk_prefix"], bias)
+            )
+            for name, data in variants.items()
+        }
+        for y_um in Y_CUTS:
+            sent_left = nearest_sentaurus_node(
+                sentaurus_nodes, SENTAURUS_X_COLUMNS[0], y_um
+            )
+            sent_mid = nearest_sentaurus_node(
+                sentaurus_nodes, SENTAURUS_X_COLUMNS[1], y_um
+            )
+            sent_right = nearest_sentaurus_node(
+                sentaurus_nodes, SENTAURUS_X_COLUMNS[2], y_um
+            )
+            sent_pairs = {
+                "left": (sent_left, sent_mid),
+                "right": (sent_mid, sent_right),
+            }
+            for variant_name, variant in variants.items():
+                state = states[variant_name]
+                for side in ("left", "right"):
+                    edge_id = EDGE_BY_SIDE[y_um][side]
+                    edge_row = variant["sg"].get((round(bias, 10), edge_id))
+                    if edge_row is None:
+                        raise ValueError(
+                            f"missing SG edge row for {variant_name} "
+                            f"bias={bias} edge={edge_id}"
+                        )
+                    node0, node1 = row_side_nodes(state, side, y_um)
+                    doping0 = variant["doping"][node0]
+                    doping1 = variant["doping"][node1]
+                    sent0, sent1 = sent_pairs[side]
+                    item: dict[str, Any] = {
+                        "variant": variant_name,
+                        "bias_V": bias,
+                        "y_um": y_um,
+                        "side": side,
+                        "edge_id": edge_id,
+                        "node0": node0,
+                        "node1": node1,
+                        "node0_type": doping0["type"],
+                        "node1_type": doping1["type"],
+                        "edge_type": f"{doping0['type']}-{doping1['type']}",
+                        "node0_net_doping_cm3": doping0["net_doping_cm3"],
+                        "node1_net_doping_cm3": doping1["net_doping_cm3"],
+                        "sentaurus_edge_type": (
+                            f"{sentaurus_doping[sent0['id']]['type']}-"
+                            f"{sentaurus_doping[sent1['id']]['type']}"
+                        ),
+                        "sentaurus_nearest_node0": sent0["id"],
+                        "sentaurus_nearest_node1": sent1["id"],
+                    }
+                    for field, output_name in FIELD_TO_OUTPUT.items():
+                        item[f"{output_name}_drop_V"] = scalar_drop(
+                            state, field, node0, node1
+                        )
+                        value0, value1 = endpoint_values(
+                            state, field, node0, node1
+                        )
+                        item[f"{output_name}0"] = value0
+                        item[f"{output_name}1"] = value1
+                    for key, raw in edge_row.items():
+                        if key in item:
+                            continue
+                        if key == "edge_class":
+                            item[key] = str(raw)
+                            continue
+                        value = finite_float(raw)
+                        if not math.isfinite(value):
+                            raise ValueError(
+                                f"non-finite SG edge field {key} for edge {edge_id}"
+                            )
+                        item[key] = value
+                    enriched = enrich_edge_with_sentaurus_replay(
+                        edge_row=edge_row,
+                        sentaurus_state=sentaurus_state,
+                        sentaurus_node0=sent0,
+                        sentaurus_node1=sent1,
+                        temperature_K=300.0,
+                        unit_system="tcad_internal",
+                    )
+                    item.update(enriched)
+                    item.update(_standard_row_classification(enriched))
+                    rows.append(item)
+    validate_enriched_rows(rows)
+    _append_standard_ratios(rows)
+    return rows
+
+
+def build_detail_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
+    if args.variants_root is not None:
+        return build_standard_detail_rows(args)
+    return build_legacy_detail_rows(args)
 
 
 def add_pair_ratios(rows: list[dict[str, Any]]) -> None:
@@ -516,6 +1641,136 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
     return {"aggregate": aggregate, "dominant_by_bias": dominant_by_bias}
 
 
+def summarize_standard(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    aggregate: list[dict[str, Any]] = []
+    classifications: list[dict[str, Any]] = []
+    classification_counts: dict[str, int] = {}
+    evidence_fields = (
+        "double_highprec_relative_error",
+        "cancellation_condition",
+        "sent_state_gap_recovery",
+        "sent_state_replay_residual_dex",
+        "sent_state_vector_residual_dex",
+        "raw_edge_residual_dex",
+        "source_residual_dex",
+        "sentaurus_source_residual_dex",
+        "alpha_residual_dex",
+        "source_closure_residual_dex",
+    )
+    for row in rows:
+        name = str(row["root_cause_classification"])
+        classification_counts[name] = classification_counts.get(name, 0) + 1
+    for variant in REPLAY_VARIANTS:
+        for bias in BIASES:
+            subset = [
+                row for row in rows
+                if row["variant"] == variant and row["bias_V"] == bias
+            ]
+            item: dict[str, Any] = {
+                "variant": variant,
+                "bias_V": bias,
+                "edge_count": len(subset),
+            }
+            aggregate_evidence: dict[str, Any] = {}
+            for field in evidence_fields:
+                value = median([
+                    float(row.get(field, 0.0)) for row in subset
+                ])
+                item[f"median_{field}"] = value
+                if value is not None:
+                    aggregate_evidence[field] = value
+            aggregate_evidence["any_exponent_clamped"] = any(
+                bool(float(row.get(name, 0.0)))
+                for row in subset
+                for name in (
+                    "electron_sg_node0_exponent_clamped_low",
+                    "electron_sg_node0_exponent_clamped_high",
+                    "electron_sg_node1_exponent_clamped_low",
+                    "electron_sg_node1_exponent_clamped_high",
+                )
+            )
+            classification = classify_root_cause(aggregate_evidence)
+            item["classification"] = classification["classification"]
+            item["classification_rule"] = classification["rule"]
+            aggregate.append(item)
+            classifications.append({
+                "variant": variant,
+                "bias_V": bias,
+                "classification": classification["classification"],
+                "rule": classification["rule"],
+                "evidence": aggregate_evidence,
+            })
+    non_inconclusive = {
+        key: value for key, value in classification_counts.items()
+        if key != "inconclusive"
+    }
+    dominant = (
+        max(non_inconclusive, key=lambda key: (non_inconclusive[key], key))
+        if non_inconclusive else "inconclusive"
+    )
+    return {
+        "schema": "vela.pn2d_bv_compensated_sg_replay.summary.v1",
+        "row_count": len(rows),
+        "variants": {
+            "legacy_dominant_signed": {
+                "implementation": "current_head",
+                "compensated_doping_policy": "dominant_signed_region",
+                "role": "historical-policy control",
+            },
+            "reported_compensated": {
+                "implementation": "current_head",
+                "compensated_doping_policy": "reported",
+                "role": "current committed reference policy",
+            },
+        },
+        "classification_counts": classification_counts,
+        "dominant_classification": dominant,
+        "aggregate": aggregate,
+        "classifications": classifications,
+    }
+
+
+def write_standard_report(path: Path, summary: dict[str, Any]) -> None:
+    lines = [
+        "# PN2D BV Compensated SG Same-Edge Replay",
+        "",
+        "Both variants use the current HEAD density-gradient implementation. "
+        "`legacy_dominant_signed` is only a historical doping-policy control; "
+        "`reported_compensated` is the committed reference policy.",
+        "",
+        f"- Rows: `{summary['row_count']}`",
+        f"- Dominant coarse classification: `{summary['dominant_classification']}`",
+        "",
+        "## Structured Root-Cause Classifications",
+        "",
+        "| variant | bias (V) | edges | raw gap (dex) | Sent-state residual (dex) | gap recovery | classification |",
+        "|---|---:|---:|---:|---:|---:|---|",
+    ]
+    for item in summary["aggregate"]:
+        lines.append(
+            "| {variant} | {bias:g} | {count} | {raw:.6g} | {residual:.6g} | "
+            "{recovery:.6g} | {classification} |".format(
+                variant=item["variant"],
+                bias=item["bias_V"],
+                count=item["edge_count"],
+                raw=item.get("median_raw_edge_residual_dex") or 0.0,
+                residual=item.get("median_sent_state_replay_residual_dex") or 0.0,
+                recovery=item.get("median_sent_state_gap_recovery") or 0.0,
+                classification=item["classification"],
+            )
+        )
+    lines.extend([
+        "",
+        "`sentaurus_e_source_on_vela_area_physical_m_inv_s` is a same-area "
+        "proxy (endpoint alpha arithmetic mean times projected vector current "
+        "on the Vela edge area), not a native Sentaurus source discretization.",
+        "",
+        "This report is diagnostic only. A coarse classification is not promoted "
+        "to a solver fix until the main-mesh five-anchor gate is evaluated.",
+    ])
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def write_report(path: Path, summary: dict[str, Any], rows: list[dict[str, Any]]) -> None:
     lines: list[str] = []
     lines.append("# PN2D BV Compensated Junction Source Proxy Compare")
@@ -597,10 +1852,27 @@ def write_report(path: Path, summary: dict[str, Any], rows: list[dict[str, Any]]
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def main() -> None:
-    args = parse_args()
+def main(argv: list[str] | None = None) -> None:
+    args = parse_args(argv)
     args.out_dir.mkdir(parents=True, exist_ok=True)
     rows = build_detail_rows(args)
+    if args.variants_root is not None:
+        validate_enriched_rows(rows)
+        summary = summarize_standard(rows)
+        csv_path = args.out_dir / "compensated_sg_replay.csv"
+        json_path = args.out_dir / "compensated_sg_replay.json"
+        report_path = args.out_dir / "compensated_sg_replay_report.md"
+        write_csv(csv_path, rows)
+        json_path.write_text(json.dumps(clean_json({
+            "schema": "vela.pn2d_bv_compensated_sg_replay.v1",
+            "row_count": len(rows),
+            "summary": summary,
+            "classifications": summary["classifications"],
+            "rows": rows,
+        }), indent=2) + "\n", encoding="utf-8")
+        write_standard_report(report_path, summary)
+        print(json.dumps({"csv": str(csv_path), "json": str(json_path), "report": str(report_path), "rows": len(rows)}, indent=2))
+        return
     summary = summarize(rows)
     csv_path = args.out_dir / "compensated_source_proxy_compare.csv"
     json_path = args.out_dir / "compensated_source_proxy_compare_summary.json"
