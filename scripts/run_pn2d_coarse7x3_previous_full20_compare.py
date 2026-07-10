@@ -219,6 +219,7 @@ def write_previous_full20_config(
     config_name: str = "simulation_coarse_previous_full20.json",
     vtk_subdir: str = "vtk",
     diagnostics_suffix: str = "",
+    current_approximation: str = "cell_reconstructed",
 ) -> Path:
     config = read_json(base_config)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -282,7 +283,7 @@ def write_previous_full20_config(
         "model": "van_overstraeten",
         "driving_force": "quasi_fermi_gradient",
         "generation": "current_density",
-        "current_approximation": "cell_reconstructed",
+        "current_approximation": current_approximation,
         "quasi_fermi_gradient_discretization": "edge_difference",
     }
     solver["diagnostics"] = True
@@ -1302,6 +1303,12 @@ def build_parser() -> argparse.ArgumentParser:
         default="",
         help="Run Vela only at these exact bias points and write *_aligned outputs.",
     )
+    parser.add_argument(
+        "--current-approximation",
+        choices=("cell_reconstructed", "density_gradient"),
+        default="cell_reconstructed",
+        help="Impact-ionization current approximation used in the generated Vela deck.",
+    )
     parser.add_argument("--skip-import", action="store_true")
     parser.add_argument("--skip-vela-run", action="store_true")
     parser.add_argument("--skip-multibias-export", action="store_true")
@@ -1370,6 +1377,7 @@ def main(argv: list[str] | None = None) -> int:
         config_name=f"simulation_{run_stem}.json",
         vtk_subdir=vtk_subdir,
         diagnostics_suffix=run_suffix,
+        current_approximation=args.current_approximation,
     )
     csv_path = args.out_dir / f"{run_stem}.csv"
 
