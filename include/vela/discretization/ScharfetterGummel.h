@@ -104,6 +104,58 @@ Real sgElectronContinuityFluxFromQuasiFermiVariableNi(Real ni0,
                                                       bool includeNiGradientDrift = true);
 
 /**
+ * @brief Read-only term decomposition of the production variable-ni electron SG flux.
+ *
+ * All values retain the caller's native solver units. The reconstructed flux
+ * mirrors the production endpoint exponent clamp [-500, 500] and its exact
+ * flat-quasi-Fermi short circuit; the production flux implementation itself is
+ * not replaced by the stable diagnostic value.
+ *
+ * cancellationCondition is (abs(leftTerm) + abs(rightTerm)) /
+ * abs(signedDifference). Exact cancellation with nonzero terms is represented
+ * by max<Real>, a finite saturation sentinel; two zero terms report 0.
+ */
+struct SgElectronVariableNiFluxDecomposition {
+    Real ni0 = 0.0;
+    Real ni1 = 0.0;
+    Real n0 = 0.0;
+    Real n1 = 0.0;
+    Real psi0 = 0.0;
+    Real psi1 = 0.0;
+    Real phin0 = 0.0;
+    Real phin1 = 0.0;
+    Real eta = 0.0;
+    Real bernoulliMinusEta = 0.0;
+    Real bernoulliEta = 0.0;
+    Real coef = 0.0;
+    Real leftTerm = 0.0;
+    Real rightTerm = 0.0;
+    Real signedDifference = 0.0;
+    Real reconstructedFlux = 0.0;
+    Real stableFactorizedFlux = 0.0;
+    Real cancellationCondition = 0.0;
+    bool node0ExponentClampedLow = false;
+    bool node0ExponentClampedHigh = false;
+    bool node1ExponentClampedLow = false;
+    bool node1ExponentClampedHigh = false;
+    bool includeNiGradientDrift = true;
+    bool flatQuasiFermiShortCircuit = false;
+};
+
+SgElectronVariableNiFluxDecomposition
+sgElectronContinuityFluxFromQuasiFermiVariableNiDecomposition(
+    Real ni0,
+    Real ni1,
+    Real psi0,
+    Real psi1,
+    Real phin0,
+    Real phin1,
+    Real Vt,
+    Real coef,
+    bool includeNiGradientDrift = true);
+
+
+/**
  * @brief Balanced hole continuity flux for Boltzmann quasi-Fermi variables.
  *
  * Algebraically equivalent to sgHoleContinuityFlux when both edge nodes use the

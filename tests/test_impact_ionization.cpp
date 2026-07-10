@@ -2148,6 +2148,18 @@ TEST_CASE("Grad-QF avalanche source uses quasi-Fermi field with SG current proxy
     REQUIRE(record.holeImpactField == Catch::Approx(holeQfField));
     REQUIRE(record.electronFluxProxy == Catch::Approx(electronSgFlux));
     REQUIRE(record.holeFluxProxy == Catch::Approx(holeSgFlux));
+    REQUIRE(record.electronSgProductionSignedFluxNative ==
+            Catch::Approx(record.electronRawSignedFluxProxy));
+    REQUIRE(record.electronSgFluxDecomposition.reconstructedFlux ==
+            Catch::Approx(record.electronSgProductionSignedFluxNative));
+    REQUIRE(record.electronSgFluxDecomposition.coef ==
+            Catch::Approx(record.electronMobility * Vt / record.edgeLength));
+    REQUIRE(record.electronSgFluxDecomposition.includeNiGradientDrift);
+    REQUIRE(std::isfinite(record.electronSgFluxDecomposition.stableFactorizedFlux));
+    REQUIRE(std::isfinite(record.electronSgFluxDecomposition.cancellationCondition));
+    REQUIRE(std::isfinite(record.electronSgReconstructionRelativeError));
+    REQUIRE(record.electronSgReconstructionRelativeError <= 1.0e-12);
+
     REQUIRE(record.edgeSourceIntegral == Catch::Approx(
         (record.electronAlpha * electronSgFlux + record.holeAlpha * holeSgFlux)
         * record.edgeAreaProxy));

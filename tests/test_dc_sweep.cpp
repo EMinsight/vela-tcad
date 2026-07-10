@@ -1169,7 +1169,53 @@ TEST_CASE("DCSweep: SG avalanche edge diagnostics write assembled source rows",
     (void)csvColumnIndex(header, "hole_alpha_m_inv");
     (void)csvColumnIndex(header, "electron_flux_proxy");
     (void)csvColumnIndex(header, "hole_flux_proxy");
-    (void)csvColumnIndex(header, "edge_class");
+    const std::size_t edgeClassCol = csvColumnIndex(header, "edge_class");
+    const std::vector<std::string> electronSgNumericColumns = {
+        "electron_sg_ni0",
+        "electron_sg_ni1",
+        "electron_sg_n0",
+        "electron_sg_n1",
+        "electron_sg_psi0",
+        "electron_sg_psi1",
+        "electron_sg_phin0",
+        "electron_sg_phin1",
+        "electron_sg_eta",
+        "electron_sg_b_minus_eta",
+        "electron_sg_b_eta",
+        "electron_sg_coef",
+        "electron_sg_left_term",
+        "electron_sg_right_term",
+        "electron_sg_signed_difference",
+        "electron_sg_reconstructed_flux_native",
+        "electron_sg_stable_factorized_flux_native",
+        "electron_sg_production_signed_flux_native",
+        "electron_sg_cancellation_condition",
+        "electron_sg_node0_exponent_clamped_low",
+        "electron_sg_node0_exponent_clamped_high",
+        "electron_sg_node1_exponent_clamped_low",
+        "electron_sg_node1_exponent_clamped_high",
+        "electron_sg_include_ni_gradient_drift",
+        "electron_sg_flat_qf_short_circuit",
+        "electron_sg_reconstruction_relative_error",
+    };
+    std::vector<std::size_t> electronSgNumericColumnIndices;
+    electronSgNumericColumnIndices.reserve(electronSgNumericColumns.size());
+    for (const std::string& name : electronSgNumericColumns)
+        electronSgNumericColumnIndices.push_back(csvColumnIndex(header, name));
+    REQUIRE(edgeClassCol < electronSgNumericColumnIndices.front());
+    const std::size_t electronSgCoefCol = csvColumnIndex(header, "electron_sg_coef");
+    const std::size_t electronSgSignedDifferenceCol =
+        csvColumnIndex(header, "electron_sg_signed_difference");
+    const std::size_t electronSgReconstructedFluxCol =
+        csvColumnIndex(header, "electron_sg_reconstructed_flux_native");
+    const std::size_t electronSgProductionFluxCol =
+        csvColumnIndex(header, "electron_sg_production_signed_flux_native");
+    const std::size_t electronRawSignedFluxCol =
+        csvColumnIndex(header, "electron_raw_signed_flux_proxy");
+    const std::size_t electronSgFlatQfCol =
+        csvColumnIndex(header, "electron_sg_flat_qf_short_circuit");
+    const std::size_t electronSgRelativeErrorCol =
+        csvColumnIndex(header, "electron_sg_reconstruction_relative_error");
 
     Real maxEdgeElectricField_V_per_m = 0.0;
     for (std::size_t i = 1; i < rows.size(); ++i) {
@@ -1180,6 +1226,19 @@ TEST_CASE("DCSweep: SG avalanche edge diagnostics write assembled source rows",
         maxEdgeElectricField_V_per_m = std::max(maxEdgeElectricField_V_per_m, csvReal(row, electricFieldCol));
         REQUIRE(csvReal(row, node0SourceCol) == Catch::Approx(0.5 * edgeSource));
         REQUIRE(csvReal(row, node1SourceCol) == Catch::Approx(0.5 * edgeSource));
+        for (const std::size_t column : electronSgNumericColumnIndices)
+            REQUIRE(std::isfinite(csvReal(row, column)));
+        REQUIRE(csvReal(row, electronSgProductionFluxCol) ==
+                Catch::Approx(csvReal(row, electronRawSignedFluxCol)));
+        REQUIRE(csvReal(row, electronSgReconstructedFluxCol) ==
+                Catch::Approx(csvReal(row, electronSgProductionFluxCol)));
+        if (csvReal(row, electronSgFlatQfCol) == 0.0) {
+            REQUIRE(csvReal(row, electronSgReconstructedFluxCol) ==
+                    Catch::Approx(csvReal(row, electronSgCoefCol)
+                                  * csvReal(row, electronSgSignedDifferenceCol)));
+        }
+        REQUIRE(csvReal(row, electronSgRelativeErrorCol) <= 1.0e-12);
+
     }
     REQUIRE(maxEdgeElectricField_V_per_m ==
             Catch::Approx(result.points.front().maxElectricField * 100.0).epsilon(1.0e-12));

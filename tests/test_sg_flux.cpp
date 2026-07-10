@@ -300,6 +300,159 @@ TEST_CASE("SG variable-ni quasi-Fermi flux matches density form at large absolut
     REQUIRE(holeQfFlux == Approx(holeDensityFlux).epsilon(1.0e-12));
 }
 
+TEST_CASE("SG variable-ni electron flux decomposition reconstructs the production flux",
+          "[sg][diagnostics][bgn]")
+{
+    const Real Vt = constants::Vt_300;
+    const Real ni0 = 1.0e16;
+    const Real ni1 = 1.7e16;
+    const Real psi0 = -0.14;
+    const Real psi1 = 0.23;
+    const Real phin0 = -0.031;
+    const Real phin1 = 0.047;
+    const Real coef = 3.25e-4;
+
+    for (const bool includeNiGradientDrift : {false, true}) {
+        const SgElectronVariableNiFluxDecomposition decomposition =
+            sgElectronContinuityFluxFromQuasiFermiVariableNiDecomposition(
+                ni0, ni1, psi0, psi1, phin0, phin1, Vt, coef,
+                includeNiGradientDrift);
+        const Real production = sgElectronContinuityFluxFromQuasiFermiVariableNi(
+            ni0, ni1, psi0, psi1, phin0, phin1, Vt, coef,
+            includeNiGradientDrift);
+
+        REQUIRE(decomposition.ni0 == ni0);
+        REQUIRE(decomposition.ni1 == ni1);
+        REQUIRE(decomposition.psi0 == psi0);
+        REQUIRE(decomposition.psi1 == psi1);
+        REQUIRE(decomposition.phin0 == phin0);
+        REQUIRE(decomposition.phin1 == phin1);
+        REQUIRE(decomposition.coef == coef);
+        REQUIRE(decomposition.includeNiGradientDrift == includeNiGradientDrift);
+        REQUIRE(decomposition.eta == Approx(
+            (psi1 - psi0) / Vt
+            + (includeNiGradientDrift ? std::log(ni1 / ni0) : 0.0)));
+        REQUIRE(decomposition.leftTerm ==
+                Approx(decomposition.bernoulliMinusEta * decomposition.n0));
+        REQUIRE(decomposition.rightTerm ==
+                Approx(decomposition.bernoulliEta * decomposition.n1));
+        REQUIRE(decomposition.signedDifference ==
+                Approx(decomposition.leftTerm - decomposition.rightTerm));
+        REQUIRE(decomposition.reconstructedFlux == production);
+        REQUIRE(std::isfinite(decomposition.stableFactorizedFlux));
+        REQUIRE(std::isfinite(decomposition.cancellationCondition));
+        REQUIRE_FALSE(decomposition.node0ExponentClampedLow);
+        REQUIRE_FALSE(decomposition.node0ExponentClampedHigh);
+        REQUIRE_FALSE(decomposition.node1ExponentClampedLow);
+        REQUIRE_FALSE(decomposition.node1ExponentClampedHigh);
+    }
+}
+
+TEST_CASE("SG variable-ni electron flux decomposition is oriented and handles large eta",
+          "[sg][diagnostics][bgn]")
+{
+    const Real Vt = constants::Vt_300;
+    const Real ni0 = 8.0e15;
+    const Real ni1 = 2.0e16;
+    const Real psi0 = 0.0;
+    const Real psi1 = 2.5;
+    const Real phin0 = 0.10;
+    const Real phin1 = 2.40;
+    const Real coef = 1.0e-6;
+
+    const auto forward = sgElectronContinuityFluxFromQuasiFermiVariableNiDecomposition(
+        ni0, ni1, psi0, psi1, phin0, phin1, Vt, coef, true);
+    const auto reverse = sgElectronContinuityFluxFromQuasiFermiVariableNiDecomposition(
+        ni1, ni0, psi1, psi0, phin1, phin0, Vt, coef, true);
+
+    REQUIRE(forward.eta > 50.0);
+    REQUIRE(reverse.eta < -50.0);
+    REQUIRE(forward.reconstructedFlux ==
+            sgElectronContinuityFluxFromQuasiFermiVariableNi(
+                ni0, ni1, psi0, psi1, phin0, phin1, Vt, coef, true));
+    REQUIRE(reverse.reconstructedFlux ==
+            sgElectronContinuityFluxFromQuasiFermiVariableNi(
+                ni1, ni0, psi1, psi0, phin1, phin0, Vt, coef, true));
+    REQUIRE(reverse.reconstructedFlux ==
+            Approx(-forward.reconstructedFlux).epsilon(1.0e-12));
+    REQUIRE(reverse.stableFactorizedFlux ==
+            Approx(-forward.stableFactorizedFlux).epsilon(1.0e-12));
+}
+
+TEST_CASE("SG variable-ni electron flux decomposition reports finite exact-cancellation policy",
+          "[sg][diagnostics][bgn]")
+{
+    const Real Vt = constants::Vt_300;
+    const Real phin = 0.004;
+    const auto decomposition =
+        sgElectronContinuityFluxFromQuasiFermiVariableNiDecomposition(
+            1.0e16, 1.5e16, 0.013, -0.021, phin, phin,
+            Vt, 1.0, true);
+
+    REQUIRE(decomposition.flatQuasiFermiShortCircuit);
+    REQUIRE(decomposition.reconstructedFlux == 0.0);
+    REQUIRE(decomposition.stableFactorizedFlux == 0.0);
+    REQUIRE(std::isfinite(decomposition.cancellationCondition));
+    REQUIRE(decomposition.cancellationCondition == std::numeric_limits<Real>::max());
+}
+
+TEST_CASE("SG variable-ni electron flux decomposition remains stable under severe cancellation",
+          "[sg][diagnostics][bgn]")
+{
+    const Real Vt = constants::Vt_300;
+    const Real ni0 = 1.0e16;
+    const Real ni1 = 1.4e16;
+    const Real psi0 = 9.99;
+    const Real psi1 = 10.0;
+    const Real phin0 = 0.0;
+    const Real phin1 = 1.0e-12;
+    const Real coef = 1.0e-170;
+    const auto decomposition =
+        sgElectronContinuityFluxFromQuasiFermiVariableNiDecomposition(
+            ni0, ni1, psi0, psi1, phin0, phin1, Vt, coef, true);
+
+    const long double eta =
+        (static_cast<long double>(psi1) - static_cast<long double>(psi0))
+            / static_cast<long double>(Vt)
+        + std::log(static_cast<long double>(ni1) / static_cast<long double>(ni0));
+    const long double bernoulliEta = eta / std::expm1(eta);
+    const long double expected = static_cast<long double>(coef) * bernoulliEta
+        * static_cast<long double>(ni1)
+        * std::exp(static_cast<long double>(psi1) / static_cast<long double>(Vt))
+        * (std::exp(-static_cast<long double>(phin0) / static_cast<long double>(Vt))
+           - std::exp(-static_cast<long double>(phin1) / static_cast<long double>(Vt)));
+
+    REQUIRE(decomposition.cancellationCondition > 1.0e9);
+    REQUIRE(std::isfinite(decomposition.stableFactorizedFlux));
+    REQUIRE(decomposition.stableFactorizedFlux ==
+            Approx(static_cast<Real>(expected)).epsilon(1.0e-8));
+    REQUIRE(decomposition.reconstructedFlux ==
+            sgElectronContinuityFluxFromQuasiFermiVariableNi(
+                ni0, ni1, psi0, psi1, phin0, phin1, Vt, coef, true));
+}
+
+TEST_CASE("SG variable-ni electron flux decomposition reports endpoint exponent clamps",
+          "[sg][diagnostics][bgn]")
+{
+    const Real Vt = constants::Vt_300;
+    const auto decomposition =
+        sgElectronContinuityFluxFromQuasiFermiVariableNiDecomposition(
+            1.0e16, 1.0e16, 13.0, -13.0, 0.0, 0.1,
+            Vt, 1.0, true);
+
+    REQUIRE(decomposition.node0ExponentClampedHigh);
+    REQUIRE_FALSE(decomposition.node0ExponentClampedLow);
+    REQUIRE(decomposition.node1ExponentClampedLow);
+    REQUIRE_FALSE(decomposition.node1ExponentClampedHigh);
+    REQUIRE(std::isfinite(decomposition.reconstructedFlux));
+    REQUIRE(std::isfinite(decomposition.stableFactorizedFlux));
+    REQUIRE(decomposition.reconstructedFlux ==
+            sgElectronContinuityFluxFromQuasiFermiVariableNi(
+                1.0e16, 1.0e16, 13.0, -13.0, 0.0, 0.1,
+                Vt, 1.0, true));
+}
+
+
 static DeviceMesh makeSingleSiliconTriangleMesh()
 {
     DeviceMesh mesh;

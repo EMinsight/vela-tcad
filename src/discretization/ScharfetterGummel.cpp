@@ -3,6 +3,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
+
 
 namespace vela {
 
@@ -12,6 +14,71 @@ Real limitedExp(Real value)
 {
     return std::exp(std::clamp(value, -500.0, 500.0));
 }
+
+constexpr Real ProductionExponentClamp = 500.0;
+
+Real logBernoulli(Real value)
+{
+    if (std::abs(value) < 1.0e-10) {
+        const Real series = 1.0 - value * 0.5 + value * value / 12.0;
+        return std::log(series);
+    }
+    if (value > 500.0)
+        return std::log(value) - value;
+    if (value < -500.0)
+        return std::log(-value);
+    return std::log(value / std::expm1(value));
+}
+
+Real signedSaturatedExp(Real logMagnitude, Real sign)
+{
+    if (sign == 0.0)
+        return 0.0;
+    const Real logMaximum = std::log(std::numeric_limits<Real>::max());
+    if (logMagnitude >= logMaximum)
+        return std::copysign(std::numeric_limits<Real>::max(), sign);
+    const Real magnitude = std::exp(logMagnitude);
+    if (!std::isfinite(magnitude))
+        return std::copysign(std::numeric_limits<Real>::max(), sign);
+    return std::copysign(magnitude, sign);
+}
+
+Real stableBernoulliDensityDifferenceFlux(Real ni1,
+                                          Real exponent1,
+                                          Real eta,
+                                          Real coef,
+                                          Real logLeftOverRight)
+{
+    if (coef == 0.0 || logLeftOverRight == 0.0)
+        return 0.0;
+
+    const Real logAbsRelativeDifference = logLeftOverRight > 50.0
+        ? logLeftOverRight + std::log1p(-std::exp(-logLeftOverRight))
+        : std::log(std::abs(std::expm1(logLeftOverRight)));
+    const Real logRight = logBernoulli(eta) + std::log(ni1) + exponent1;
+    const Real logMagnitude =
+        std::log(std::abs(coef)) + logRight + logAbsRelativeDifference;
+    const Real sign = (coef > 0.0 ? 1.0 : -1.0)
+        * (logLeftOverRight > 0.0 ? 1.0 : -1.0);
+    return signedSaturatedExp(logMagnitude, sign);
+}
+
+Real finiteCancellationCondition(Real leftTerm,
+                                 Real rightTerm,
+                                 Real signedDifference)
+{
+    const Real termScale = std::abs(leftTerm) + std::abs(rightTerm);
+    if (termScale == 0.0)
+        return 0.0;
+    if (signedDifference == 0.0)
+        return std::numeric_limits<Real>::max();
+
+    const Real condition = termScale / std::abs(signedDifference);
+    return std::isfinite(condition)
+        ? condition
+        : std::numeric_limits<Real>::max();
+}
+
 
 } // namespace
 
@@ -117,6 +184,83 @@ Real sgElectronContinuityFluxFromQuasiFermiVariableNi(Real ni0,
     const Real n1 = ni1 * limitedExp((psi1 - phin1) / Vt);
     return coef * (bernoulli(-eta) * n0 - bernoulli(eta) * n1);
 }
+
+SgElectronVariableNiFluxDecomposition
+sgElectronContinuityFluxFromQuasiFermiVariableNiDecomposition(
+    Real ni0,
+    Real ni1,
+    Real psi0,
+    Real psi1,
+    Real phin0,
+    Real phin1,
+    Real Vt,
+    Real coef,
+    bool includeNiGradientDrift)
+{
+    SgElectronVariableNiFluxDecomposition result;
+    result.ni0 = ni0;
+    result.ni1 = ni1;
+    result.psi0 = psi0;
+    result.psi1 = psi1;
+    result.phin0 = phin0;
+    result.phin1 = phin1;
+    result.coef = coef;
+    result.includeNiGradientDrift = includeNiGradientDrift;
+    result.flatQuasiFermiShortCircuit = phin0 == phin1;
+
+    const Real endpointExponent0 = (psi0 - phin0) / Vt;
+    const Real endpointExponent1 = (psi1 - phin1) / Vt;
+    result.node0ExponentClampedLow =
+        endpointExponent0 < -ProductionExponentClamp;
+    result.node0ExponentClampedHigh =
+        endpointExponent0 > ProductionExponentClamp;
+    result.node1ExponentClampedLow =
+        endpointExponent1 < -ProductionExponentClamp;
+    result.node1ExponentClampedHigh =
+        endpointExponent1 > ProductionExponentClamp;
+    const Real clampedExponent0 = std::clamp(
+        endpointExponent0, -ProductionExponentClamp, ProductionExponentClamp);
+    const Real clampedExponent1 = std::clamp(
+        endpointExponent1, -ProductionExponentClamp, ProductionExponentClamp);
+
+    result.n0 = ni0 * std::exp(clampedExponent0);
+    result.n1 = ni1 * std::exp(clampedExponent1);
+    result.eta = (psi1 - psi0) / Vt;
+    if (ni0 > 0.0 && ni1 > 0.0 && includeNiGradientDrift)
+        result.eta += std::log(ni1 / ni0);
+    result.bernoulliMinusEta = bernoulli(-result.eta);
+    result.bernoulliEta = bernoulli(result.eta);
+    result.leftTerm = result.bernoulliMinusEta * result.n0;
+    result.rightTerm = result.bernoulliEta * result.n1;
+    result.signedDifference = result.flatQuasiFermiShortCircuit
+        ? 0.0
+        : result.leftTerm - result.rightTerm;
+    result.reconstructedFlux = result.coef * result.signedDifference;
+    result.cancellationCondition = finiteCancellationCondition(
+        result.leftTerm, result.rightTerm, result.signedDifference);
+
+    if (result.flatQuasiFermiShortCircuit) {
+        result.stableFactorizedFlux = 0.0;
+    } else if (ni0 > 0.0 && ni1 > 0.0
+               && std::isfinite(clampedExponent0)
+               && std::isfinite(clampedExponent1)
+               && std::isfinite(result.eta)
+               && std::isfinite(coef)) {
+        Real logLeftOverRight = (phin1 - phin0) / Vt;
+        if (!includeNiGradientDrift)
+            logLeftOverRight += std::log(ni0 / ni1);
+        logLeftOverRight +=
+            (clampedExponent0 - endpointExponent0)
+            - (clampedExponent1 - endpointExponent1);
+        result.stableFactorizedFlux = stableBernoulliDensityDifferenceFlux(
+            ni1, clampedExponent1, result.eta, coef, logLeftOverRight);
+    } else {
+        result.stableFactorizedFlux = result.reconstructedFlux;
+    }
+
+    return result;
+}
+
 
 Real sgHoleContinuityFluxFromQuasiFermi(Real ni0,
                                         Real psi0,

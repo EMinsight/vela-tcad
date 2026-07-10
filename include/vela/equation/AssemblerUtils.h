@@ -1790,6 +1790,10 @@ struct SgEdgeCurrentAvalancheSourceRecord {
     Real holeNode1SourceIntegral = 0.0;
     Real node0SourceIntegral = 0.0;
     Real node1SourceIntegral = 0.0;
+    SgElectronVariableNiFluxDecomposition electronSgFluxDecomposition;
+    Real electronSgProductionSignedFluxNative = 0.0;
+    Real electronSgReconstructionRelativeError = 0.0;
+
 };
 
 struct SgAvalancheSourceComponentIntegrals {
@@ -1983,6 +1987,9 @@ inline std::vector<SgEdgeCurrentAvalancheSourceRecord> sgEdgeCurrentAvalancheSou
             edgeCells, mesh, doping, mobility, cellMaterials, e, CarrierType::Hole,
             holeMobilityField, &mobilityConfig, &psi);
         record.holeMobility = mup;
+        constexpr bool IncludeElectronNiGradientDrift = true;
+        const Real electronContinuityCoefficient =
+            mun > 0.0 ? mun * Vt * fieldFactor / h : 0.0;
         const Real electronContinuityFlux01 = mun > 0.0
             ? sgElectronContinuityFluxFromQuasiFermiVariableNi(
                 ni[edge.n0],
@@ -1992,7 +1999,8 @@ inline std::vector<SgEdgeCurrentAvalancheSourceRecord> sgEdgeCurrentAvalancheSou
                 phin_i,
                 phin_j,
                 Vt,
-                mun * Vt * fieldFactor / h)
+                electronContinuityCoefficient,
+                IncludeElectronNiGradientDrift)
             : 0.0;
         const Real holeContinuityFlux01 = mup > 0.0
             ? sgHoleContinuityFluxFromQuasiFermiVariableNi(
@@ -2012,6 +2020,30 @@ inline std::vector<SgEdgeCurrentAvalancheSourceRecord> sgEdgeCurrentAvalancheSou
         // depleted.
         const Real conservedTotalFluxMagnitude =
             std::abs(electronContinuityFlux01 + holeContinuityFlux01);
+        record.electronSgFluxDecomposition =
+            sgElectronContinuityFluxFromQuasiFermiVariableNiDecomposition(
+                ni[edge.n0],
+                ni[edge.n1],
+                psi_i,
+                psi_j,
+                phin_i,
+                phin_j,
+                Vt,
+                electronContinuityCoefficient,
+                IncludeElectronNiGradientDrift);
+        record.electronSgProductionSignedFluxNative = electronContinuityFlux01;
+        const Real electronSgReconstructionScale = std::max({
+            std::abs(record.electronSgProductionSignedFluxNative),
+            std::abs(record.electronSgFluxDecomposition.reconstructedFlux),
+            std::abs(record.electronSgFluxDecomposition.coef)
+                * (std::abs(record.electronSgFluxDecomposition.leftTerm)
+                   + std::abs(record.electronSgFluxDecomposition.rightTerm)),
+            Real{1.0e-300}});
+        record.electronSgReconstructionRelativeError =
+            std::abs(record.electronSgProductionSignedFluxNative
+                     - record.electronSgFluxDecomposition.reconstructedFlux)
+            / electronSgReconstructionScale;
+
         if (mun > 0.0) {
             record.electronImpactField = currentAlignedImpact
                 ? parallelCurrentAvalancheDrivingField(
