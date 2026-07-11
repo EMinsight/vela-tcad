@@ -53,6 +53,50 @@ TEST_CASE("Bernoulli avalanche midpoint weights stay normalized at large potenti
         0.025852);
     REQUIRE(midpoint == Catch::Approx(1.0e3));
 }
+
+TEST_CASE("Avalanche current proxy selection covers every configured mode",
+          "[impact][current_proxy]")
+{
+    ImpactIonizationModelConfig config;
+    config.generation = "current_density";
+    constexpr Real rawFlux = 2.0;
+    constexpr Real reconstructedFlux = 3.0;
+    constexpr Real mobility = 5.0;
+    constexpr Real midpointDensity = 7.0;
+    constexpr Real impactField = 11.0;
+    constexpr Real electricField = 13.0;
+    constexpr Real conservedTotalFlux = 17.0;
+    const auto selected = [&]() {
+        return detail::selectAvalancheCurrentFluxProxy(
+            config,
+            rawFlux,
+            reconstructedFlux,
+            mobility,
+            midpointDensity,
+            impactField,
+            electricField,
+            conservedTotalFlux);
+    };
+
+    config.currentApproximation = "density_gradient";
+    REQUIRE(selected() == Catch::Approx(rawFlux));
+    config.currentApproximation = "grad_qf";
+    REQUIRE(selected() == Catch::Approx(rawFlux));
+    config.currentApproximation = "cell_reconstructed";
+    REQUIRE(selected() == Catch::Approx(mobility * midpointDensity * impactField));
+    config.currentApproximation = "psi_gradient_proxy";
+    REQUIRE(selected() == Catch::Approx(mobility * midpointDensity * electricField));
+    config.currentApproximation = "conserved_total_current";
+    REQUIRE(selected() == Catch::Approx(conservedTotalFlux));
+    config.currentApproximation = "cell_current_reconstructed";
+    REQUIRE(selected() == Catch::Approx(reconstructedFlux));
+    config.currentApproximation = "cell_vector_current_reconstructed";
+    REQUIRE(selected() == Catch::Approx(reconstructedFlux));
+    config.currentApproximation = "density_gradient";
+    config.currentMagnitudeMode = "dual_face_vector_mag";
+    REQUIRE(selected() == Catch::Approx(reconstructedFlux));
+}
+
 TEST_CASE("Cell reconstructed avalanche support uses local current density magnitude",
           "[impact][cell_reconstructed]")
 {

@@ -875,14 +875,10 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
     const bool currentAlignedImpact =
         !impactIonizationConfig_.debugRawVanOverstraeten &&
         detail::usesCurrentAlignedAvalancheDrivingForce(impactIonizationConfig_);
-    const bool cellReconstructedCurrent =
-        detail::usesCellReconstructedAvalancheCurrent(impactIonizationConfig_);
     const bool cellCurrentReconstructedCurrent =
         detail::usesCellCurrentReconstructedAvalancheCurrent(impactIonizationConfig_);
     const bool cellVectorCurrentReconstructedCurrent =
         detail::usesCellVectorCurrentReconstructedAvalancheCurrent(impactIonizationConfig_);
-    const bool conservedTotalCurrent =
-        detail::usesConservedTotalCurrentAvalancheCurrent(impactIonizationConfig_);
     const bool dualFaceVectorCurrentMagnitude =
         impactIonizationConfig_.currentMagnitudeMode == "dual_face_vector_mag";
     const std::vector<Real> nodeElectronDrivingFields = (impactIonizationEnabled_ && qfImpact)
@@ -1186,18 +1182,22 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
                 : detail::electronAvalancheDrivingField(
                     impactIonizationConfig_, electronCoefficientField, electricField, nAvg);
             const Real rawFluxN = std::abs(signedFluxN);
-            const Real fluxN = dualFaceVectorCurrentMagnitude
+            const Real reconstructedFluxN = dualFaceVectorCurrentMagnitude
                 ? dualFaceVectorCurrentReconstructedFlux(signedElectronFluxForEdge)
                 : (cellVectorCurrentReconstructedCurrent
                     ? cellVectorCurrentReconstructedFlux(signedElectronFluxForEdge)
                     : (cellCurrentReconstructedCurrent
-                    ? cellCurrentReconstructedFlux(signedElectronFluxForEdge)
-                    : (cellReconstructedCurrent
-                    ? detail::reconstructedAvalancheCurrentDensityMagnitude(
-                        mun, nMid, electronImpactField)
-                    : (conservedTotalCurrent
-                        ? conservedTotalFluxMagnitude
-                        : rawFluxN))));
+                        ? cellCurrentReconstructedFlux(signedElectronFluxForEdge)
+                        : rawFluxN));
+            const Real fluxN = detail::selectAvalancheCurrentFluxProxy(
+                impactIonizationConfig_,
+                rawFluxN,
+                reconstructedFluxN,
+                mun,
+                nMid,
+                electronImpactField,
+                electricField,
+                conservedTotalFluxMagnitude);
             const Real alphaN = impactIonization_->electronCoefficient(electronImpactField);
             electronSource = alphaN * fluxN * edgeArea;
         }
@@ -1209,18 +1209,22 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
                 : detail::holeAvalancheDrivingField(
                     impactIonizationConfig_, holeCoefficientField, electricField, pAvg);
             const Real rawFluxP = std::abs(signedFluxP);
-            const Real fluxP = dualFaceVectorCurrentMagnitude
+            const Real reconstructedFluxP = dualFaceVectorCurrentMagnitude
                 ? dualFaceVectorCurrentReconstructedFlux(signedHoleFluxForEdge)
                 : (cellVectorCurrentReconstructedCurrent
                     ? cellVectorCurrentReconstructedFlux(signedHoleFluxForEdge)
                     : (cellCurrentReconstructedCurrent
-                    ? cellCurrentReconstructedFlux(signedHoleFluxForEdge)
-                    : (cellReconstructedCurrent
-                    ? detail::reconstructedAvalancheCurrentDensityMagnitude(
-                        mup, pMid, holeImpactField)
-                    : (conservedTotalCurrent
-                        ? conservedTotalFluxMagnitude
-                        : rawFluxP))));
+                        ? cellCurrentReconstructedFlux(signedHoleFluxForEdge)
+                        : rawFluxP));
+            const Real fluxP = detail::selectAvalancheCurrentFluxProxy(
+                impactIonizationConfig_,
+                rawFluxP,
+                reconstructedFluxP,
+                mup,
+                pMid,
+                holeImpactField,
+                electricField,
+                conservedTotalFluxMagnitude);
             const Real alphaP = impactIonization_->holeCoefficient(holeImpactField);
             holeSource = alphaP * fluxP * edgeArea;
         }
