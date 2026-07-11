@@ -284,7 +284,13 @@ def write_previous_full20_config(
         "driving_force": "quasi_fermi_gradient",
         "generation": "current_density",
         "current_approximation": current_approximation,
+        "current_magnitude_mode": "edge_scalar_abs",
+        "cell_reconstructed_midpoint_density": "bernoulli",
         "quasi_fermi_gradient_discretization": "edge_difference",
+        "source_volume_policy": "genius_truncated",
+        "source_volume_factor": 0.0,
+        "source_geometry_scale": 1.0,
+        "edge_source_partition": "symmetric",
     }
     solver["diagnostics"] = True
 

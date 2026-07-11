@@ -48,6 +48,19 @@ def manifest_field(name: str, components: int, unit: str) -> dict[str, object]:
 
 
 class CompensatedSgReplayOrchestratorTest(unittest.TestCase):
+    EXPECTED_IMPACT_BASE = {
+        "model": "van_overstraeten",
+        "driving_force": "quasi_fermi_gradient",
+        "generation": "current_density",
+        "current_magnitude_mode": "edge_scalar_abs",
+        "cell_reconstructed_midpoint_density": "bernoulli",
+        "quasi_fermi_gradient_discretization": "edge_difference",
+        "source_volume_policy": "genius_truncated",
+        "source_volume_factor": 0.0,
+        "source_geometry_scale": 1.0,
+        "edge_source_partition": "symmetric",
+    }
+
     def write_minimal_base(self, root: Path) -> Path:
         (root / "mesh.json").write_text(
             json.dumps({"nodes": [], "triangles": [], "contacts": []}),
@@ -85,6 +98,13 @@ class CompensatedSgReplayOrchestratorTest(unittest.TestCase):
             self.assertEqual(
                 data["solver"]["impact_ionization"]["current_approximation"],
                 "cell_reconstructed",
+            )
+            self.assertEqual(
+                {
+                    key: data["solver"]["impact_ionization"][key]
+                    for key in self.EXPECTED_IMPACT_BASE
+                },
+                self.EXPECTED_IMPACT_BASE,
             )
 
     def test_previous_full20_current_approximation_can_use_density_gradient(self) -> None:
@@ -200,8 +220,9 @@ class CompensatedSgReplayOrchestratorTest(unittest.TestCase):
             self.assertEqual(first, second)
             self.assertEqual(
                 first["schema"],
-                "vela.pn2d_compensated_sg_replay.artifact_manifest.v1",
+                "vela.pn2d_compensated_sg_replay.artifact_manifest.v2",
             )
+            self.assertEqual(first["schema_version"], 2)
             self.assertEqual(
                 [item["path"] for item in first["artifacts"]],
                 ["a.txt", "b.txt"],
@@ -216,42 +237,132 @@ class CompensatedSgReplayOrchestratorTest(unittest.TestCase):
                 [item["path"] for item in first["artifacts"]],
             )
             self.assertIn("edge_mapping", first)
+    def test_v1_manifest_is_never_reused(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="vela_compensated_v1_cache_") as td:
+            root = Path(td)
+            manifest_path = root / orchestrator.ARTIFACT_MANIFEST_NAME
+            manifest_path.write_text(json.dumps({
+                "schema": "vela.pn2d_compensated_sg_replay.artifact_manifest.v1",
+                "git_head": "deadbeef",
+                "dirty": False,
+            }), encoding="utf-8")
 
-    def test_variant_specs_use_two_explicit_current_head_policies(self) -> None:
+            self.assertFalse(orchestrator.reuse_manifest_matches(
+                manifest_path,
+                out_dir=root,
+                git_head="deadbeef",
+                dirty=False,
+                tdrs=[],
+                signature={},
+            ))
+
+
+    def test_variant_specs_form_explicit_two_by_two_matrix(self) -> None:
         with tempfile.TemporaryDirectory(prefix="vela_compensated_variants_") as td:
             out = Path(td)
             specs = orchestrator.variant_specs(out)
 
             self.assertEqual(
                 list(specs),
-                ["legacy_dominant_signed", "reported_compensated"],
+                [
+                    "legacy_density_gradient",
+                    "legacy_gss_midpoint",
+                    "reported_density_gradient",
+                    "reported_gss_midpoint",
+                ],
             )
             self.assertEqual(
-                specs["legacy_dominant_signed"]["compensated_doping_policy"],
+                specs["legacy_density_gradient"]["compensated_doping_policy"],
                 "dominant_signed_region",
             )
             self.assertEqual(
-                specs["reported_compensated"]["compensated_doping_policy"],
+                specs["reported_gss_midpoint"]["compensated_doping_policy"],
                 "reported",
             )
             self.assertEqual(
-                specs["legacy_dominant_signed"]["imported_dir"],
-                out / "variants" / "legacy_dominant_signed" / "imported",
+                specs["legacy_density_gradient"]["imported_dir"],
+                out / "variants" / "legacy_density_gradient" / "imported",
             )
             self.assertEqual(
-                specs["reported_compensated"]["run_dir"],
-                out / "variants" / "reported_compensated" / "run",
+                specs["reported_gss_midpoint"]["run_dir"],
+                out / "variants" / "reported_gss_midpoint" / "run",
             )
-            self.assertTrue(all(
-                spec["implementation"] == "current_head"
-                and spec["current_approximation"] == "density_gradient"
-                for spec in specs.values()
-            ))
+            self.assertEqual(
+                [spec["current_variant"] for spec in specs.values()],
+                ["density_gradient", "gss_midpoint", "density_gradient", "gss_midpoint"],
+            )
+            self.assertEqual(
+                [spec["current_approximation"] for spec in specs.values()],
+                ["density_gradient", "cell_reconstructed", "density_gradient", "cell_reconstructed"],
+            )
+
+    def test_legacy_doping_replay_and_matrix_gate(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="vela_compensated_matrix_") as td:
+            specs = orchestrator.variant_specs(Path(td))
+            records = {}
+            for spec in specs.values():
+                imported = spec["imported_dir"]
+                vela = imported / "vela"
+                vela.mkdir(parents=True)
+                (vela / "mesh.json").write_text(
+                    json.dumps({"nodes": [{"id": 0}]}),
+                    encoding="utf-8",
+                )
+                (vela / "doping.csv").write_text(
+                    "node_id,donors_cm3,acceptors_cm3\n0,1e17,1e17\n",
+                    encoding="utf-8",
+                )
+                resolution = (
+                    "signed_aggregate_zero"
+                    if spec["doping_strategy"] == "legacy"
+                    else "reported"
+                )
+                (imported / "doping_metadata.json").write_text(
+                    json.dumps({
+                        "compensated_nodes": {
+                            "nodes": [{
+                                "node_id": 0,
+                                "resolved": False,
+                                "resolution_source": resolution,
+                            }],
+                        },
+                    }),
+                    encoding="utf-8",
+                )
+                records[spec["name"]] = (
+                    orchestrator.apply_variant_doping_strategy(spec)
+                )
+
+            matrix = orchestrator.validate_doping_strategy_matrix(specs)
+            self.assertNotEqual(
+                matrix["doping_sha256_by_strategy"]["legacy"],
+                matrix["doping_sha256_by_strategy"]["reported"],
+            )
+            self.assertEqual(
+                records["legacy_density_gradient"]["transformed_node_ids"],
+                [0],
+            )
+            self.assertEqual(
+                records["reported_density_gradient"]["transformed_node_ids"],
+                [],
+            )
+
+            reported = (
+                specs["reported_density_gradient"]["imported_dir"]
+                / "vela"
+                / "doping.csv"
+            ).read_bytes()
+            for name in ("legacy_density_gradient", "legacy_gss_midpoint"):
+                (
+                    specs[name]["imported_dir"] / "vela" / "doping.csv"
+                ).write_bytes(reported)
+            with self.assertRaisesRegex(ValueError, "collapsed"):
+                orchestrator.validate_doping_strategy_matrix(specs)
 
     def test_command_builders_and_recording_use_argv_arrays(self) -> None:
         with tempfile.TemporaryDirectory(prefix="vela_compensated_commands_") as td:
             root = Path(td)
-            spec = orchestrator.variant_specs(root)["legacy_dominant_signed"]
+            spec = orchestrator.variant_specs(root)["legacy_density_gradient"]
             import_argv = orchestrator.reference_import_command(
                 import_script=root / "sentaurus_import.py",
                 reference_config=spec["reference_config"],
@@ -330,7 +441,58 @@ class CompensatedSgReplayOrchestratorTest(unittest.TestCase):
                 "--diagnostic-script", str(root / "diagnose.py"),
                 "--prepare-only",
             ])
-            command_runner = mock.Mock(side_effect=AssertionError("must not execute"))
+            prepare_calls: list[list[str]] = []
+
+            def prepare_runner(argv, *, cwd, check):
+                del cwd, check
+                argv = list(argv)
+                prepare_calls.append(argv)
+                self.assertEqual(argv[0], sys.executable)
+                self.assertEqual(argv[2], "reference")
+                imported = Path(argv[argv.index("--output-dir") + 1])
+                vela = imported / "vela"
+                vela.mkdir(parents=True, exist_ok=True)
+                (vela / "mesh.json").write_text(
+                    json.dumps({"nodes": [], "triangles": [], "contacts": []}),
+                    encoding="utf-8",
+                )
+                (vela / "doping.csv").write_text(
+                    "node_id,donors_cm3,acceptors_cm3\n0,1e17,1e17\n",
+                    encoding="utf-8",
+                )
+                config_path = Path(argv[argv.index("--config") + 1])
+                policy = json.loads(
+                    config_path.read_text(encoding="utf-8")
+                )["tdr_doping"]["compensated_node_policy"]
+                (imported / "doping_metadata.json").write_text(
+                    json.dumps({
+                        "compensated_nodes": {
+                            "policy": policy,
+                            "nodes": [{
+                                "node_id": 0,
+                                "resolved": False,
+                                "resolution_source": (
+                                    "signed_aggregate_zero"
+                                    if policy == "dominant_signed_region"
+                                    else "reported"
+                                ),
+                            }],
+                        },
+                    }),
+                    encoding="utf-8",
+                )
+                (vela / "pn2d_sentaurus2018_iv_materials.json").write_text(
+                    json.dumps({"materials": [{"name": "Si", "ni": 1.0e10}]}),
+                    encoding="utf-8",
+                )
+                (vela / "simulation_bv.json").write_text(json.dumps({
+                    "mesh_file": "mesh.json",
+                    "node_doping_file": "doping.csv",
+                    "materials_file": "pn2d_sentaurus2018_iv_materials.json",
+                    "solver": {},
+                    "sweep": {},
+                }), encoding="utf-8")
+                return subprocess.CompletedProcess(argv, 0)
 
             with mock.patch.object(
                 orchestrator,
@@ -339,39 +501,52 @@ class CompensatedSgReplayOrchestratorTest(unittest.TestCase):
             ):
                 manifest = orchestrator.run_reproduction(
                     args,
-                    command_runner=command_runner,
+                    command_runner=prepare_runner,
                 )
 
-            command_runner.assert_not_called()
+            self.assertEqual(len(prepare_calls), 4)
             self.assertEqual(
                 [(item["bias_V"], item["index"]) for item in manifest["tdrs"]],
                 [(-20.0, 400), (-19.0, 380), (-12.0, 240)],
             )
             self.assertTrue(all("sha256" in item for item in manifest["tdrs"]))
             self.assertTrue(all("size_bytes" in item for item in manifest["tdrs"]))
-            self.assertEqual(len(manifest["commands"]), 8)
+            self.assertEqual(manifest["schema_version"], 2)
+            self.assertEqual(len(manifest["commands"]), 12)
             self.assertEqual(manifest["parameters"]["implementation"], "current_head")
-            self.assertEqual(manifest["parameters"]["variants"], {
-                "legacy_dominant_signed": "dominant_signed_region",
-                "reported_compensated": "reported",
-            })
-            self.assertTrue(all(
-                command["returncode"] is None
-                and isinstance(command["argv"], list)
-                for command in manifest["commands"]
-            ))
+            self.assertEqual(
+                list(manifest["parameters"]["variants"]),
+                [
+                    "legacy_density_gradient",
+                    "legacy_gss_midpoint",
+                    "reported_density_gradient",
+                    "reported_gss_midpoint",
+                ],
+            )
+            self.assertEqual(
+                sum(command["returncode"] == 0 for command in manifest["commands"]),
+                4,
+            )
+            self.assertEqual(
+                sum(command["returncode"] is None for command in manifest["commands"]),
+                8,
+            )
             specs = orchestrator.variant_specs(out)
-            for name, policy in [
-                ("legacy_dominant_signed", "dominant_signed_region"),
-                ("reported_compensated", "reported"),
-            ]:
+            for name, spec in specs.items():
                 config = json.loads(
-                    specs[name]["reference_config"].read_text(encoding="utf-8")
+                    spec["reference_config"].read_text(encoding="utf-8")
                 )
                 self.assertEqual(
                     config["tdr_doping"]["compensated_node_policy"],
-                    policy,
+                    spec["compensated_doping_policy"],
                 )
+                deck_path = spec["run_dir"] / spec["deck_name"]
+                deck = json.loads(deck_path.read_text(encoding="utf-8"))
+                self.assertEqual(
+                    deck["solver"]["impact_ionization"],
+                    spec["impact_ionization"],
+                )
+            self.assertEqual(len(manifest["generated"]["decks"]), 4)
             manifest_path = out / "artifact_manifest.json"
             self.assertEqual(
                 json.loads(manifest_path.read_text(encoding="utf-8")),
@@ -444,7 +619,28 @@ class CompensatedSgReplayOrchestratorTest(unittest.TestCase):
                         "contacts": [],
                     }), encoding="utf-8")
                     (vela / "doping.csv").write_text(
-                        "node_id,donors_cm3,acceptors_cm3\n",
+                        "node_id,donors_cm3,acceptors_cm3\n0,1e17,1e17\n",
+                        encoding="utf-8",
+                    )
+                    config_path = Path(argv[argv.index("--config") + 1])
+                    policy = json.loads(
+                        config_path.read_text(encoding="utf-8")
+                    )["tdr_doping"]["compensated_node_policy"]
+                    (imported / "doping_metadata.json").write_text(
+                        json.dumps({
+                            "compensated_nodes": {
+                                "policy": policy,
+                                "nodes": [{
+                                    "node_id": 0,
+                                    "resolved": False,
+                                    "resolution_source": (
+                                        "signed_aggregate_zero"
+                                        if policy == "dominant_signed_region"
+                                        else "reported"
+                                    ),
+                                }],
+                            },
+                        }),
                         encoding="utf-8",
                     )
                     (vela / "pn2d_sentaurus2018_iv_materials.json").write_text(
@@ -482,7 +678,7 @@ class CompensatedSgReplayOrchestratorTest(unittest.TestCase):
                     report.mkdir(parents=True, exist_ok=True)
                     (report / "compensated_sg_replay.csv").write_text(
                         "variant,bias_V,y_um,side,edge_id\n"
-                        "legacy_dominant_signed,-12,0,left,9\n",
+                        "legacy_density_gradient,-12,0,left,9\n",
                         encoding="utf-8",
                     )
                     (report / "compensated_sg_replay.json").write_text(
@@ -506,25 +702,28 @@ class CompensatedSgReplayOrchestratorTest(unittest.TestCase):
                     command_runner=fake_runner,
                 )
 
-            self.assertEqual(len(calls), 8)
-            self.assertEqual(len(manifest["commands"]), 8)
+            self.assertEqual(len(calls), 12)
+            self.assertEqual(len(manifest["commands"]), 12)
             self.assertEqual(manifest["parameters"]["implementation"], "current_head")
-            self.assertEqual(manifest["parameters"]["variants"], {
-                "legacy_dominant_signed": "dominant_signed_region",
-                "reported_compensated": "reported",
-            })
+            self.assertEqual(
+                list(manifest["parameters"]["variants"]),
+                [
+                    "legacy_density_gradient",
+                    "legacy_gss_midpoint",
+                    "reported_density_gradient",
+                    "reported_gss_midpoint",
+                ],
+            )
             self.assertTrue(all(
                 command["returncode"] == 0 for command in manifest["commands"]
             ))
             specs = orchestrator.variant_specs(out)
             for spec in specs.values():
-                deck_path = (
-                    spec["run_dir"] / "simulation_pn2d_bv_density_gradient.json"
-                )
+                deck_path = spec["run_dir"] / spec["deck_name"]
                 deck = json.loads(deck_path.read_text(encoding="utf-8"))
                 self.assertEqual(
-                    deck["solver"]["impact_ionization"]["current_approximation"],
-                    "density_gradient",
+                    deck["solver"]["impact_ionization"],
+                    spec["impact_ionization"],
                 )
                 self.assertEqual(len(deck["sweep"]["bias_points"]), 401)
                 self.assertEqual(deck["sweep"]["bias_points"][0], 0.0)
@@ -534,13 +733,13 @@ class CompensatedSgReplayOrchestratorTest(unittest.TestCase):
                 self.assertTrue(
                     deck["sweep"]["diagnostics"]["sg_avalanche_edges"]["enabled"]
                 )
-            self.assertEqual(len(manifest["generated"]["decks"]), 2)
-            self.assertEqual(len(manifest["generated"]["model_configs"]), 2)
-            self.assertEqual(len(manifest["inputs"]["mesh"]), 2)
-            self.assertEqual(len(manifest["inputs"]["doping"]), 2)
-            self.assertEqual(len(manifest["inputs"]["materials"]), 2)
+            self.assertEqual(len(manifest["generated"]["decks"]), 4)
+            self.assertEqual(len(manifest["generated"]["model_configs"]), 4)
+            self.assertEqual(len(manifest["inputs"]["mesh"]), 4)
+            self.assertEqual(len(manifest["inputs"]["doping"]), 4)
+            self.assertEqual(len(manifest["inputs"]["materials"]), 4)
             self.assertEqual(manifest["edge_mapping"], [{
-                "variant": "legacy_dominant_signed",
+                "variant": "legacy_density_gradient",
                 "bias_V": "-12",
                 "y_um": "0",
                 "side": "left",
@@ -559,7 +758,7 @@ class CompensatedSgReplayOrchestratorTest(unittest.TestCase):
                     command_runner=reuse_runner,
                 )
             reuse_runner.assert_not_called()
-            self.assertEqual(len(reused["commands"]), 8)
+            self.assertEqual(len(reused["commands"]), 12)
             self.assertEqual(reused["invocation"]["commands"], [])
             self.assertTrue(reused["invocation"]["reuse_accepted"])
 
@@ -574,7 +773,7 @@ class CompensatedSgReplayOrchestratorTest(unittest.TestCase):
                     args,
                     command_runner=fake_runner,
                 )
-            self.assertEqual(len(calls), 8)
+            self.assertEqual(len(calls), 12)
             self.assertFalse(refreshed_tool["parameters"]["reuse_accepted"])
 
             (source / "pn2d_bv_multibias_0240_des.tdr").write_bytes(b"changed")
@@ -588,7 +787,7 @@ class CompensatedSgReplayOrchestratorTest(unittest.TestCase):
                     args,
                     command_runner=fake_runner,
                 )
-            self.assertEqual(len(calls), 8)
+            self.assertEqual(len(calls), 12)
             self.assertFalse(refreshed["parameters"]["reuse_accepted"])
     def test_main_parses_cli_and_delegates_to_reproduction(self) -> None:
         with mock.patch.object(

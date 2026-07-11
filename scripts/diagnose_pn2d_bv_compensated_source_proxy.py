@@ -22,10 +22,33 @@ from typing import Any
 ELEMENTARY_CHARGE_C = 1.602176634e-19
 BIASES = [-12.0, -19.0, -20.0]
 Y_CUTS = [0.0, 0.25, 0.5]
-REPLAY_VARIANTS = (
-    "legacy_dominant_signed",
-    "reported_compensated",
-)
+REPLAY_VARIANT_MATRIX = {
+    "legacy_density_gradient": {
+        "doping_strategy": "legacy",
+        "compensated_doping_policy": "dominant_signed_region",
+        "current_variant": "density_gradient",
+        "current_approximation": "density_gradient",
+    },
+    "legacy_gss_midpoint": {
+        "doping_strategy": "legacy",
+        "compensated_doping_policy": "dominant_signed_region",
+        "current_variant": "gss_midpoint",
+        "current_approximation": "cell_reconstructed",
+    },
+    "reported_density_gradient": {
+        "doping_strategy": "reported",
+        "compensated_doping_policy": "reported",
+        "current_variant": "density_gradient",
+        "current_approximation": "density_gradient",
+    },
+    "reported_gss_midpoint": {
+        "doping_strategy": "reported",
+        "compensated_doping_policy": "reported",
+        "current_variant": "gss_midpoint",
+        "current_approximation": "cell_reconstructed",
+    },
+}
+REPLAY_VARIANTS = tuple(REPLAY_VARIANT_MATRIX)
 BOLTZMANN_OVER_CHARGE_V_K = 8.617333262145e-5
 ELECTRON_SG_FIELDS = (
     "electron_sg_ni0",
@@ -412,8 +435,8 @@ def require_finite_fields(
         raise ValueError(f"{context}: non-finite required fields: {nonfinite}")
 
 
-def validate_36_row_keys(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Validate the exact 3 bias x 3 cut x 2 side x 2 variant matrix."""
+def validate_72_row_keys(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Validate the exact 3 bias x 3 cut x 2 side x 4 variant matrix."""
     expected = {
         (variant, float(bias), float(y_um), side)
         for variant in REPLAY_VARIANTS
@@ -435,8 +458,8 @@ def validate_36_row_keys(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         keys.append(key)
     if len(keys) != len(set(keys)):
         raise ValueError("duplicate row key in compensated SG replay matrix")
-    if len(keys) != 36:
-        raise ValueError(f"expected 36 replay rows, got {len(keys)}")
+    if len(keys) != 72:
+        raise ValueError(f"expected 72 replay rows, got {len(keys)}")
     actual = set(keys)
     if actual != expected:
         missing = sorted(expected - actual)
@@ -446,22 +469,62 @@ def validate_36_row_keys(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def standard_variant_inputs(variants_root: Path) -> dict[str, dict[str, Any]]:
-    """Resolve standardized current-HEAD density-gradient variant inputs."""
-    policies = {
-        "legacy_dominant_signed": "dominant_signed_region",
-        "reported_compensated": "reported",
-    }
+    """Resolve standardized current-HEAD two-by-two replay inputs."""
     result: dict[str, dict[str, Any]] = {}
-    for name in REPLAY_VARIANTS:
+    for name, metadata in REPLAY_VARIANT_MATRIX.items():
         variant_root = variants_root / name
+        run_root = variant_root / "run"
+        current_variant = metadata["current_variant"]
         result[name] = {
+            "name": name,
             "variant_root": variant_root,
-            "run_root": variant_root / "run",
+            "run_root": run_root,
             "doping_csv": variant_root / "imported" / "vela" / "doping.csv",
-            "compensated_doping_policy": policies[name],
+            "deck_path": run_root / f"simulation_pn2d_bv_{current_variant}.json",
+            "sg_csv": run_root / f"sg_avalanche_edges_{current_variant}.csv",
+            "vtk_root": run_root / "vtk" / current_variant,
             "implementation": "current_head",
-            "current_approximation": "density_gradient",
+            **metadata,
         }
+    return result
+
+
+def variant_run_status(spec: dict[str, Any]) -> dict[str, Any]:
+    result = {
+        "variant": str(spec["name"]),
+        "doping_strategy": str(spec["doping_strategy"]),
+        "current_variant": str(spec["current_variant"]),
+        "run_status": "missing_deck",
+        "last_converged_bias_V": None,
+        "handoff_stage": "",
+    }
+    deck_path = Path(spec["deck_path"])
+    if not deck_path.is_file():
+        return result
+    deck = json.loads(deck_path.read_text(encoding="utf-8-sig"))
+    output_csv = Path(str(deck.get("output_csv", "")))
+    if not output_csv.is_absolute():
+        output_csv = deck_path.parent / output_csv
+    if not output_csv.is_file():
+        result["run_status"] = "prepared"
+        return result
+    rows = read_csv(output_csv)
+    if not rows:
+        result["run_status"] = "empty"
+        return result
+    converged_rows = [
+        row for row in rows
+        if str(row.get("converged", "")).strip().lower() in {"1", "true", "yes"}
+    ]
+    if converged_rows:
+        result["last_converged_bias_V"] = float(converged_rows[-1]["bias_V"])
+    result["handoff_stage"] = str(rows[-1].get("handoff_stage", ""))
+    last_converged = result["last_converged_bias_V"]
+    result["run_status"] = (
+        "complete"
+        if last_converged is not None and last_converged <= -20.0 + 1.0e-12
+        else "partial"
+    )
     return result
 
 
@@ -1007,14 +1070,15 @@ def enrich_edge_with_sentaurus_replay(
 
 
 def validate_enriched_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    validate_36_row_keys(rows)
+    validate_72_row_keys(rows)
     for index, row in enumerate(rows):
         require_finite_fields(
             row,
-            REQUIRED_ENRICHED_FIELDS,
+            REQUIRED_ENRICHED_FIELDS + CURRENT_DISCRETIZATION_RATIO_FIELDS,
             context=f"row {index}",
         )
     return rows
+
 
 def classify_doping(donors: float, acceptors: float) -> tuple[str, float]:
     net = donors - acceptors
@@ -1302,6 +1366,17 @@ def build_legacy_detail_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
     return rows
 
 
+CURRENT_DISCRETIZATION_RATIO_FIELDS = (
+    "edge_source_integral",
+    "electron_source_integral",
+    "hole_source_integral",
+    "electron_alpha_m_inv",
+    "hole_alpha_m_inv",
+    "electron_flux_proxy",
+    "hole_flux_proxy",
+    "electron_mobility_m2_V_s",
+    "hole_mobility_m2_V_s",
+)
 STANDARD_REPLAY_RATIO_FIELDS = (
     "vela_e_sg_production_canonical_signed_flux_m2_s",
     "sentaurus_e_continuity_edge_signed_flux_m2_s",
@@ -1313,7 +1388,7 @@ STANDARD_REPLAY_RATIO_FIELDS = (
     "sentaurus_e_source_on_vela_area_physical_m_inv_s",
     "vela_e_over_sentaurus_source_abs_ratio",
     "vela_e_source_closure_ratio",
-)
+) + CURRENT_DISCRETIZATION_RATIO_FIELDS
 
 
 def _log_gap_from_abs_ratio(ratio: float) -> float:
@@ -1390,6 +1465,9 @@ def _standard_row_classification(enriched: dict[str, Any]) -> dict[str, Any]:
 def _append_standard_ratios(rows: list[dict[str, Any]]) -> None:
     by_pair: dict[tuple[str, float, float], dict[str, dict[str, Any]]] = {}
     for row in rows:
+        metadata = REPLAY_VARIANT_MATRIX[str(row["variant"])]
+        row.setdefault("doping_strategy", metadata["doping_strategy"])
+        row.setdefault("current_variant", metadata["current_variant"])
         by_pair.setdefault(
             (row["variant"], row["bias_V"], row["y_um"]), {}
         )[row["side"]] = row
@@ -1401,18 +1479,78 @@ def _append_standard_ratios(rows: list[dict[str, Any]]) -> None:
             left[f"right_over_left_{field}"] = ratio
             right[f"right_over_left_{field}"] = ratio
 
-    by_variant_pair: dict[tuple[float, float, str], dict[str, dict[str, Any]]] = {}
+    by_current_pair: dict[
+        tuple[str, float, float, str], dict[str, dict[str, Any]]
+    ] = {}
     for row in rows:
-        by_variant_pair.setdefault(
-            (row["bias_V"], row["y_um"], row["side"]), {}
-        )[row["variant"]] = row
-    for pair in by_variant_pair.values():
-        legacy = pair["legacy_dominant_signed"]
-        reported = pair["reported_compensated"]
+        by_current_pair.setdefault(
+            (
+                row["doping_strategy"],
+                row["bias_V"],
+                row["y_um"],
+                row["side"],
+            ),
+            {},
+        )[row["current_variant"]] = row
+    for pair in by_current_pair.values():
+        density = pair["density_gradient"]
+        gss = pair["gss_midpoint"]
+        for field in CURRENT_DISCRETIZATION_RATIO_FIELDS:
+            ratio = abs_ratio(float(gss[field]), float(density[field]))
+            if ratio is None or not math.isfinite(ratio):
+                raise ValueError(f"non-finite GSS/density ratio for {field}")
+            key = f"gss_midpoint_over_density_gradient_{field}"
+            density[key] = ratio
+            gss[key] = ratio
+
+    by_doping_pair: dict[
+        tuple[str, float, float, str], dict[str, dict[str, Any]]
+    ] = {}
+    for row in rows:
+        by_doping_pair.setdefault(
+            (
+                row["current_variant"],
+                row["bias_V"],
+                row["y_um"],
+                row["side"],
+            ),
+            {},
+        )[row["doping_strategy"]] = row
+    for pair in by_doping_pair.values():
+        if "legacy" not in pair or "reported" not in pair:
+            continue
+        legacy = pair["legacy"]
+        reported = pair["reported"]
         for field in STANDARD_REPLAY_RATIO_FIELDS:
             ratio = abs_ratio(float(reported[field]), float(legacy[field]))
             legacy[f"reported_over_legacy_{field}"] = ratio
             reported[f"reported_over_legacy_{field}"] = ratio
+
+
+def current_discretization_pair_rows(
+    rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    pairs: dict[tuple[str, float, float, str], dict[str, Any]] = {}
+    for row in rows:
+        key = (
+            str(row["doping_strategy"]),
+            float(row["bias_V"]),
+            float(row["y_um"]),
+            str(row["side"]),
+        )
+        if str(row["current_variant"]) != "gss_midpoint":
+            continue
+        item = {
+            "doping_strategy": key[0],
+            "bias_V": key[1],
+            "y_um": key[2],
+            "side": key[3],
+        }
+        for field in CURRENT_DISCRETIZATION_RATIO_FIELDS:
+            ratio_key = f"gss_midpoint_over_density_gradient_{field}"
+            item[ratio_key] = float(row[ratio_key])
+        pairs[key] = item
+    return [pairs[key] for key in sorted(pairs)]
 
 
 def build_standard_detail_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
@@ -1420,10 +1558,11 @@ def build_standard_detail_rows(args: argparse.Namespace) -> list[dict[str, Any]]
     variants: dict[str, dict[str, Any]] = {}
     for name, spec in specs.items():
         variants[name] = {
-            "sg": load_sg_edges(spec["run_root"] / "sg_avalanche_edges.csv"),
-            "vtk_root": spec["run_root"] / "vtk",
+            "sg": load_sg_edges(spec["sg_csv"]),
+            "vtk_root": spec["vtk_root"],
             "vtk_prefix": "dc_sweep",
             "doping": load_doping(spec["doping_csv"]),
+            "metadata": spec,
         }
 
     rows: list[dict[str, Any]] = []
@@ -1469,6 +1608,10 @@ def build_standard_detail_rows(args: argparse.Namespace) -> list[dict[str, Any]]
                     sent0, sent1 = sent_pairs[side]
                     item: dict[str, Any] = {
                         "variant": variant_name,
+                        "doping_strategy": variant["metadata"]["doping_strategy"],
+                        "compensated_doping_policy": variant["metadata"]["compensated_doping_policy"],
+                        "current_variant": variant["metadata"]["current_variant"],
+                        "current_approximation": variant["metadata"]["current_approximation"],
                         "bias_V": bias,
                         "y_um": y_um,
                         "side": side,
@@ -1694,8 +1837,12 @@ def summarize_standard(rows: list[dict[str, Any]]) -> dict[str, Any]:
                 row for row in rows
                 if row["variant"] == variant and row["bias_V"] == bias
             ]
+            metadata = REPLAY_VARIANT_MATRIX[variant]
             item: dict[str, Any] = {
                 "variant": variant,
+                "doping_strategy": metadata["doping_strategy"],
+                "current_variant": metadata["current_variant"],
+                "current_approximation": metadata["current_approximation"],
                 "bias_V": bias,
                 "edge_count": len(subset),
             }
@@ -1720,6 +1867,10 @@ def summarize_standard(rows: list[dict[str, Any]]) -> dict[str, Any]:
             classification = classify_root_cause(aggregate_evidence)
             item["classification"] = classification["classification"]
             item["classification_rule"] = classification["rule"]
+            for field in CURRENT_DISCRETIZATION_RATIO_FIELDS:
+                item[f"median_right_over_left_{field}"] = median([
+                    float(row[f"right_over_left_{field}"]) for row in subset
+                ])
             aggregate.append(item)
             classifications.append({
                 "variant": variant,
@@ -1737,19 +1888,14 @@ def summarize_standard(rows: list[dict[str, Any]]) -> dict[str, Any]:
         if non_inconclusive else "inconclusive"
     )
     return {
-        "schema": "vela.pn2d_bv_compensated_sg_replay.summary.v1",
+        "schema": "vela.pn2d_bv_compensated_sg_replay.summary.v2",
         "row_count": len(rows),
         "variants": {
-            "legacy_dominant_signed": {
+            name: {
                 "implementation": "current_head",
-                "compensated_doping_policy": "dominant_signed_region",
-                "role": "historical-policy control",
-            },
-            "reported_compensated": {
-                "implementation": "current_head",
-                "compensated_doping_policy": "reported",
-                "role": "current committed reference policy",
-            },
+                **metadata,
+            }
+            for name, metadata in REPLAY_VARIANT_MATRIX.items()
         },
         "classification_counts": classification_counts,
         "dominant_classification": dominant,
@@ -1762,9 +1908,8 @@ def write_standard_report(path: Path, summary: dict[str, Any]) -> None:
     lines = [
         "# PN2D BV Compensated SG Same-Edge Replay",
         "",
-        "Both variants use the current HEAD density-gradient implementation. "
-        "`legacy_dominant_signed` is only a historical doping-policy control; "
-        "`reported_compensated` is the committed reference policy.",
+        "The matrix compares legacy/reported compensated-doping policies with "
+        "density-gradient SG current and the GSS Bernoulli-midpoint current proxy.",
         "",
         f"- Rows: `{summary['row_count']}`",
         f"- Dominant coarse classification: `{summary['dominant_classification']}`",
@@ -1787,6 +1932,48 @@ def write_standard_report(path: Path, summary: dict[str, Any]) -> None:
                 classification=item["classification"],
             )
         )
+    lines.append("")
+    run_statuses = summary.get("run_statuses", [])
+    if run_statuses:
+        lines.extend([
+            "## Run Status",
+            "",
+            "| variant | status | last converged bias (V) | handoff stage |",
+            "|---|---|---:|---|",
+        ])
+        for status in run_statuses:
+            lines.append(
+                "| {variant} | {run_status} | {last_bias} | {handoff} |".format(
+                    variant=status["variant"],
+                    run_status=status["run_status"],
+                    last_bias=status["last_converged_bias_V"],
+                    handoff=status["handoff_stage"],
+                )
+            )
+        lines.append("")
+    current_pairs = summary.get("current_discretization_pairs", [])
+    if current_pairs:
+        lines.extend([
+            "## GSS Midpoint Over Density Gradient",
+            "",
+            "| doping | bias (V) | y (um) | side | total source | electron source | hole source | e-alpha | e-flux | e-mobility |",
+            "|---|---:|---:|---|---:|---:|---:|---:|---:|---:|",
+        ])
+        for pair in current_pairs:
+            lines.append(
+                "| {doping_strategy} | {bias_V:g} | {y_um:g} | {side} | "
+                "{total:.6g} | {electron:.6g} | {hole:.6g} | {alpha:.6g} | "
+                "{flux:.6g} | {mobility:.6g} |".format(
+                    **pair,
+                    total=pair["gss_midpoint_over_density_gradient_edge_source_integral"],
+                    electron=pair["gss_midpoint_over_density_gradient_electron_source_integral"],
+                    hole=pair["gss_midpoint_over_density_gradient_hole_source_integral"],
+                    alpha=pair["gss_midpoint_over_density_gradient_electron_alpha_m_inv"],
+                    flux=pair["gss_midpoint_over_density_gradient_electron_flux_proxy"],
+                    mobility=pair["gss_midpoint_over_density_gradient_electron_mobility_m2_V_s"],
+                )
+            )
+        lines.append("")
     lines.extend([
         "",
         "`sentaurus_e_source_on_vela_area_physical_m_inv_s` is a same-area "
@@ -1886,16 +2073,30 @@ def main(argv: list[str] | None = None) -> None:
     rows = build_detail_rows(args)
     if args.variants_root is not None:
         validate_enriched_rows(rows)
+        _append_standard_ratios(rows)
+        current_pairs = current_discretization_pair_rows(rows)
+        if len(current_pairs) != 36:
+            raise ValueError(
+                f"expected 36 GSS/density paired rows, got {len(current_pairs)}"
+            )
+        run_statuses = [
+            variant_run_status(spec)
+            for spec in standard_variant_inputs(args.variants_root).values()
+        ]
         summary = summarize_standard(rows)
+        summary["current_discretization_pairs"] = current_pairs
+        summary["run_statuses"] = run_statuses
         csv_path = args.out_dir / "compensated_sg_replay.csv"
         json_path = args.out_dir / "compensated_sg_replay.json"
         report_path = args.out_dir / "compensated_sg_replay_report.md"
         write_csv(csv_path, rows)
         json_path.write_text(json.dumps(clean_json({
-            "schema": "vela.pn2d_bv_compensated_sg_replay.v1",
+            "schema": "vela.pn2d_bv_compensated_sg_replay.v2",
             "row_count": len(rows),
             "summary": summary,
             "classifications": summary["classifications"],
+            "current_discretization_pairs": current_pairs,
+            "run_statuses": run_statuses,
             "rows": rows,
         }), indent=2) + "\n", encoding="utf-8")
         write_standard_report(report_path, summary)

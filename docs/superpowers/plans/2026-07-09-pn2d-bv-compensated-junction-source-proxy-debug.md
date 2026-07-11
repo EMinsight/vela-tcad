@@ -103,3 +103,41 @@ Recorded on 2026-07-10 before local branch commit:
 - The handoff document records the no-clamp/no-zero rule for `phin/phip`.
 - `python -m py_compile scripts/diagnose_pn2d_bv_compensated_source_proxy.py` passed.
 - `git diff --check` passed.
+
+## 2026-07-11 GSS 2x2 Replay
+
+The current-HEAD replay now covers two junction-doping strategies and two
+avalanche-current discretizations:
+
+- `legacy_density_gradient`
+- `legacy_gss_midpoint`
+- `reported_density_gradient`
+- `reported_gss_midpoint`
+
+The coarse Sentaurus TDR reports zero signed aggregate doping at the three
+compensated junction nodes. The existing `dominant_signed_region` importer
+therefore preserves those nodes by design. To reproduce the historical
+`p -> p -> n` Vela baseline without changing the global importer, only the
+isolated legacy variant copies replay unresolved `signed_aggregate_zero`
+junction nodes as p-side nodes. The reported variants retain the raw
+`p -> compensated -> n` import. The orchestrator rejects a run unless all four
+meshes match, both variants within each doping strategy match, and the two
+doping-strategy hashes differ.
+
+Audited output:
+
+`build-release/reference_tcad/pn2d_sentaurus2018_coarse7x3/reports/pn2d_bv_compensated_gss_matrix_v2_20260711`
+
+- Mesh SHA-256: `c9aaf5f3130f2e1e78e399d155390ed8f19a306ff9ab5af4904230b5e328bc7e`.
+- Legacy doping SHA-256: `af212731493ff2fb49be9224a9cecfe0f527561c906cc6b3ec01992f896233df`.
+- Reported doping SHA-256: `714bb5c461d0acba49b1f9211318cc120a2e3891f92367776b636eda4b7fd155`.
+- All four sweeps converged for 401 points through `-20 V`, with final
+  handoff stage `newton`.
+- The detailed matrix contains 72 rows and 36 matched
+  `gss_midpoint / density_gradient` pairs.
+- At `-12`, `-19`, and `-20 V`, GSS midpoint source ratios are approximately
+  `0.995-0.996`, `0.995`, and `0.992-0.993`. The change follows the electron
+  flux proxy; electron alpha and mobility ratios remain approximately one.
+- The dominant residual classification remains
+  `sg_discretization_ni_or_current_semantics`; midpoint reconstruction is a
+  small correction, not a complete explanation of the Sentaurus/Vela gap.

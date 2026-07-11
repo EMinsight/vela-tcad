@@ -110,7 +110,7 @@ class CompensatedSgReplayCoreTest(unittest.TestCase):
                     result["electron_continuity_flux_m2_s"], -expected * 1.0e4 / charge
                 )
 
-    def test_36_row_key_validator_requires_exact_unique_matrix(self) -> None:
+    def test_72_row_key_validator_requires_exact_unique_matrix(self) -> None:
         rows = [
             {"variant": variant, "bias_V": bias, "y_um": y_um, "side": side}
             for variant in diagnostic.REPLAY_VARIANTS
@@ -118,13 +118,13 @@ class CompensatedSgReplayCoreTest(unittest.TestCase):
             for y_um in diagnostic.Y_CUTS
             for side in ("left", "right")
         ]
-        self.assertEqual(len(diagnostic.validate_36_row_keys(rows)), 36)
+        self.assertEqual(len(diagnostic.validate_72_row_keys(rows)), 72)
         duplicate = [dict(row) for row in rows]
         duplicate[-1] = dict(duplicate[0])
         with self.assertRaisesRegex(ValueError, "duplicate"):
-            diagnostic.validate_36_row_keys(duplicate)
-        with self.assertRaisesRegex(ValueError, "expected 36"):
-            diagnostic.validate_36_row_keys(rows[:-1])
+            diagnostic.validate_72_row_keys(duplicate)
+        with self.assertRaisesRegex(ValueError, "expected 72"):
+            diagnostic.validate_72_row_keys(rows[:-1])
 
     def test_required_field_validator_rejects_missing_and_nonfinite_values(self) -> None:
         row = {"a": 1.0, "b": -2.0}
@@ -160,28 +160,89 @@ class CompensatedSgReplayCoreTest(unittest.TestCase):
                 self.assertIn("rule", result)
                 self.assertEqual(result["evidence"], evidence)
 
-    def test_standard_variant_root_resolves_two_explicit_current_head_inputs(self) -> None:
+    def test_standard_variant_root_resolves_explicit_two_by_two_inputs(self) -> None:
         with tempfile.TemporaryDirectory(prefix="vela_compensated_variant_root_") as td:
             root = Path(td)
             specs = diagnostic.standard_variant_inputs(root)
-            self.assertEqual(list(specs), ["legacy_dominant_signed", "reported_compensated"])
+            self.assertEqual(list(specs), [
+                "legacy_density_gradient",
+                "legacy_gss_midpoint",
+                "reported_density_gradient",
+                "reported_gss_midpoint",
+            ])
             self.assertEqual(
-                specs["legacy_dominant_signed"]["run_root"],
-                root / "legacy_dominant_signed" / "run",
+                specs["legacy_density_gradient"]["run_root"],
+                root / "legacy_density_gradient" / "run",
             )
             self.assertEqual(
-                specs["reported_compensated"]["doping_csv"],
-                root / "reported_compensated" / "imported" / "vela" / "doping.csv",
+                specs["reported_gss_midpoint"]["doping_csv"],
+                root / "reported_gss_midpoint" / "imported" / "vela" / "doping.csv",
             )
             self.assertEqual(
-                specs["legacy_dominant_signed"]["compensated_doping_policy"],
+                specs["legacy_gss_midpoint"]["compensated_doping_policy"],
                 "dominant_signed_region",
             )
             self.assertEqual(
-                specs["reported_compensated"]["compensated_doping_policy"], "reported"
+                specs["reported_density_gradient"]["compensated_doping_policy"], "reported"
             )
-            self.assertTrue(all(spec["implementation"] == "current_head" for spec in specs.values()))
-            self.assertTrue(all(spec["current_approximation"] == "density_gradient" for spec in specs.values()))
+            self.assertEqual(
+                [spec["current_variant"] for spec in specs.values()],
+                ["density_gradient", "gss_midpoint", "density_gradient", "gss_midpoint"],
+            )
+            self.assertEqual(
+                [spec["current_approximation"] for spec in specs.values()],
+                ["density_gradient", "cell_reconstructed", "density_gradient", "cell_reconstructed"],
+            )
+
+    def test_gss_midpoint_ratios_pair_with_density_gradient_within_doping(self) -> None:
+        rows = []
+        for variant, current_variant, value in (
+            ("legacy_density_gradient", "density_gradient", 2.0),
+            ("legacy_gss_midpoint", "gss_midpoint", 6.0),
+        ):
+            for side in ("left", "right"):
+                rows.append({
+                    "variant": variant,
+                    "doping_strategy": "legacy",
+                    "current_variant": current_variant,
+                    "bias_V": -12.0,
+                    "y_um": 0.0,
+                    "side": side,
+                    **{
+                        field: value
+                        for field in diagnostic.STANDARD_REPLAY_RATIO_FIELDS
+                    },
+                })
+        diagnostic._append_standard_ratios(rows)
+        pairs = diagnostic.current_discretization_pair_rows(rows)
+
+        self.assertEqual(len(pairs), 2)
+        self.assertTrue(all(
+            item["gss_midpoint_over_density_gradient_edge_source_integral"] == 3.0
+            for item in pairs
+        ))
+
+    def test_variant_run_status_records_last_converged_bias_and_handoff(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="vela_compensated_status_") as td:
+            root = Path(td)
+            spec = diagnostic.standard_variant_inputs(root)["legacy_density_gradient"]
+            spec["run_root"].mkdir(parents=True)
+            spec["deck_path"].write_text(json.dumps({
+                "output_csv": "pn2d_bv_density_gradient.csv",
+            }), encoding="utf-8")
+            (spec["run_root"] / "pn2d_bv_density_gradient.csv").write_text(
+                "bias_V,converged,handoff_stage\n"
+                "0,1,newton\n"
+                "-0.05,1,newton\n"
+                "-0.1,0,newton_failed\n",
+                encoding="utf-8",
+            )
+
+            status = diagnostic.variant_run_status(spec)
+
+            self.assertEqual(status["run_status"], "partial")
+            self.assertEqual(status["last_converged_bias_V"], -0.05)
+            self.assertEqual(status["handoff_stage"], "newton_failed")
 
     def test_cli_accepts_standardized_variant_root_and_legacy_paths(self) -> None:
         standardized = diagnostic.parse_args([
@@ -521,14 +582,14 @@ class CompensatedSgReplayCoreTest(unittest.TestCase):
             ):
                 rows = diagnostic.build_standard_detail_rows(args)
 
-            self.assertEqual(len(rows), 36)
+            self.assertEqual(len(rows), 72)
             self.assertEqual({row["variant"] for row in rows}, set(diagnostic.REPLAY_VARIANTS))
             self.assertTrue(all("root_cause_classification" in row for row in rows))
             self.assertTrue(all("classifier_gap_recovery" in row for row in rows))
             self.assertEqual(
                 [call.args[0] for call in load_sg.call_args_list],
                 [
-                    variants_root / variant / "run" / "sg_avalanche_edges.csv"
+                    diagnostic.standard_variant_inputs(variants_root)[variant]["sg_csv"]
                     for variant in diagnostic.REPLAY_VARIANTS
                 ],
             )
@@ -544,7 +605,10 @@ class CompensatedSgReplayCoreTest(unittest.TestCase):
                     "side": side,
                     "root_cause_classification": "inconclusive",
                     "root_cause_rule": "fixture",
-                    **{field: 1.0 for field in diagnostic.REQUIRED_ENRICHED_FIELDS},
+                    **{field: 1.0 for field in (
+                        diagnostic.REQUIRED_ENRICHED_FIELDS
+                        + diagnostic.CURRENT_DISCRETIZATION_RATIO_FIELDS
+                    )},
                 }
                 for variant in diagnostic.REPLAY_VARIANTS
                 for bias in diagnostic.BIASES
@@ -569,8 +633,11 @@ class CompensatedSgReplayCoreTest(unittest.TestCase):
             self.assertTrue(json_path.exists())
             self.assertTrue(report_path.exists())
             payload = json.loads(json_path.read_text(encoding="utf-8"))
-            self.assertEqual(payload["row_count"], 36)
-            self.assertEqual(len(payload["classifications"]), 6)
+            self.assertEqual(payload["schema"], "vela.pn2d_bv_compensated_sg_replay.v2")
+            self.assertEqual(payload["row_count"], 72)
+            self.assertEqual(len(payload["classifications"]), 12)
+            self.assertEqual(len(payload["current_discretization_pairs"]), 36)
+            self.assertEqual(len(payload["run_statuses"]), 4)
             self.assertTrue(all("evidence" in item for item in payload["classifications"]))
             self.assertIn("Structured Root-Cause Classifications", report_path.read_text(encoding="utf-8"))
 
@@ -581,14 +648,17 @@ class CompensatedSgReplayCoreTest(unittest.TestCase):
                 "bias_V": bias,
                 "y_um": y_um,
                 "side": side,
-                **{field: 1.0 for field in diagnostic.REQUIRED_ENRICHED_FIELDS},
+                **{field: 1.0 for field in (
+                    diagnostic.REQUIRED_ENRICHED_FIELDS
+                    + diagnostic.CURRENT_DISCRETIZATION_RATIO_FIELDS
+                )},
             }
             for variant in diagnostic.REPLAY_VARIANTS
             for bias in diagnostic.BIASES
             for y_um in diagnostic.Y_CUTS
             for side in ("left", "right")
         ]
-        self.assertEqual(len(diagnostic.validate_enriched_rows(rows)), 36)
+        self.assertEqual(len(diagnostic.validate_enriched_rows(rows)), 72)
         del rows[0][diagnostic.REQUIRED_ENRICHED_FIELDS[0]]
         with self.assertRaisesRegex(ValueError, "missing"):
             diagnostic.validate_enriched_rows(rows)

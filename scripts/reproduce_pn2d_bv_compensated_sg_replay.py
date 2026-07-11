@@ -65,7 +65,24 @@ REQUIRED_SCALAR_FIELD_SPECS = {
     "eAlphaAvalanche": "cm^-1",
 }
 ARTIFACT_MANIFEST_NAME = "artifact_manifest.json"
-MANIFEST_SCHEMA = "vela.pn2d_compensated_sg_replay.artifact_manifest.v1"
+MANIFEST_SCHEMA = "vela.pn2d_compensated_sg_replay.artifact_manifest.v2"
+IMPACT_IONIZATION_BASE = {
+    "model": "van_overstraeten",
+    "driving_force": "quasi_fermi_gradient",
+    "generation": "current_density",
+    "current_magnitude_mode": "edge_scalar_abs",
+    "cell_reconstructed_midpoint_density": "bernoulli",
+    "quasi_fermi_gradient_discretization": "edge_difference",
+    "source_volume_policy": "genius_truncated",
+    "source_volume_factor": 0.0,
+    "source_geometry_scale": 1.0,
+    "edge_source_partition": "symmetric",
+}
+LEGACY_DOPING_REPLAY = {
+    "strategy": "legacy_p_side_unresolved_compensated",
+    "source_policy": "dominant_signed_region",
+    "resolution_source": "signed_aggregate_zero",
+}
 
 
 def multibias_index_for_bias(bias: float) -> int:
@@ -216,7 +233,7 @@ def build_artifact_manifest(
     material_files: Iterable[Path] = (),
     edge_mapping: Any = None,
 ) -> dict[str, Any]:
-    """Build schema-v1 data with stable ordering and no self hash."""
+    """Build schema-v2 data with stable ordering and no self hash."""
     normalized_commands = [
         {
             "argv": [str(item) for item in command.get("argv", [])],
@@ -234,7 +251,7 @@ def build_artifact_manifest(
     )
     return {
         "schema": MANIFEST_SCHEMA,
-        "schema_version": 1,
+        "schema_version": 2,
         "git_head": str(git_head),
         "dirty": bool(dirty),
         "parameters": _sorted_mapping(parameters),
@@ -256,23 +273,40 @@ def build_artifact_manifest(
 
 def variant_specs(out_dir: Path) -> dict[str, dict[str, Any]]:
     variants_root = Path(out_dir) / "variants"
-    policies = (
-        ("legacy_dominant_signed", "dominant_signed_region"),
-        ("reported_compensated", "reported"),
+    doping_strategies = (
+        ("legacy", "dominant_signed_region"),
+        ("reported", "reported"),
     )
-    return {
-        name: {
-            "name": name,
-            "implementation": "current_head",
-            "current_approximation": "density_gradient",
-            "compensated_doping_policy": policy,
-            "root": variants_root / name,
-            "reference_config": variants_root / name / "reference_config.json",
-            "imported_dir": variants_root / name / "imported",
-            "run_dir": variants_root / name / "run",
-        }
-        for name, policy in policies
-    }
+    current_variants = (
+        ("density_gradient", "density_gradient"),
+        ("gss_midpoint", "cell_reconstructed"),
+    )
+    specs: dict[str, dict[str, Any]] = {}
+    for doping_strategy, policy in doping_strategies:
+        for current_variant, current_approximation in current_variants:
+            name = f"{doping_strategy}_{current_variant}"
+            impact_ionization = {
+                **IMPACT_IONIZATION_BASE,
+                "current_approximation": current_approximation,
+            }
+            specs[name] = {
+                "name": name,
+                "implementation": "current_head",
+                "doping_strategy": doping_strategy,
+                "current_variant": current_variant,
+                "current_approximation": current_approximation,
+                "impact_ionization": impact_ionization,
+                "compensated_doping_policy": policy,
+                "root": variants_root / name,
+                "reference_config": variants_root / name / "reference_config.json",
+                "imported_dir": variants_root / name / "imported",
+                "run_dir": variants_root / name / "run",
+                "deck_name": f"simulation_pn2d_bv_{current_variant}.json",
+                "output_csv_name": f"pn2d_bv_{current_variant}.csv",
+                "vtk_subdir": f"vtk/{current_variant}",
+                "diagnostics_suffix": f"_{current_variant}",
+            }
+    return specs
 
 
 def export_command(
@@ -420,6 +454,118 @@ def write_variant_reference_configs(
     return specs
 
 
+def apply_variant_doping_strategy(spec: Mapping[str, Any]) -> dict[str, Any]:
+    """Materialize the historical p-side junction convention per variant."""
+    imported_dir = Path(spec["imported_dir"])
+    doping_path = imported_dir / "vela" / "doping.csv"
+    metadata_path = imported_dir / "doping_metadata.json"
+    if not doping_path.is_file() or not metadata_path.is_file():
+        raise FileNotFoundError(
+            "variant doping strategy requires Vela doping and importer metadata: "
+            f"{doping_path}, {metadata_path}"
+        )
+
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8-sig"))
+    compensated = metadata.get("compensated_nodes", {})
+    transformed_nodes: list[int] = []
+    if spec["doping_strategy"] == "legacy":
+        transformed_nodes = sorted(
+            int(node["node_id"])
+            for node in compensated.get("nodes", [])
+            if (
+                not bool(node.get("resolved"))
+                and node.get("resolution_source")
+                == LEGACY_DOPING_REPLAY["resolution_source"]
+            )
+        )
+        transformed = set(transformed_nodes)
+        with doping_path.open(newline="", encoding="utf-8-sig") as handle:
+            reader = csv.DictReader(handle)
+            fieldnames = list(reader.fieldnames or [])
+            rows = [dict(row) for row in reader]
+        required = {"node_id", "donors_cm3", "acceptors_cm3"}
+        if not required.issubset(fieldnames):
+            raise ValueError(f"invalid Vela doping CSV columns: {doping_path}")
+        seen: set[int] = set()
+        for row in rows:
+            node_id = int(row["node_id"])
+            if node_id not in transformed:
+                continue
+            donors = float(row["donors_cm3"])
+            acceptors = float(row["acceptors_cm3"])
+            scale = max(abs(donors), abs(acceptors), 1.0)
+            if donors == 0.0 and acceptors > 0.0:
+                seen.add(node_id)
+                continue
+            if (
+                donors <= 0.0
+                or acceptors <= 0.0
+                or abs(donors - acceptors) > 1.0e-6 * scale
+            ):
+                raise ValueError(
+                    f"legacy replay node {node_id} is not compensated in {doping_path}"
+                )
+            row["donors_cm3"] = "0"
+            row["acceptors_cm3"] = f"{max(donors, acceptors):.17g}"
+            seen.add(node_id)
+        if seen != transformed:
+            raise ValueError(
+                f"legacy replay nodes missing from {doping_path}: "
+                f"{sorted(transformed - seen)}"
+            )
+        with doping_path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(
+                handle,
+                fieldnames=fieldnames,
+                lineterminator="\n",
+            )
+            writer.writeheader()
+            writer.writerows(rows)
+
+    record = {
+        "schema": "vela.pn2d_compensated_doping_strategy.v1",
+        "doping_strategy": spec["doping_strategy"],
+        "import_policy": spec["compensated_doping_policy"],
+        "legacy_replay": dict(LEGACY_DOPING_REPLAY),
+        "transformed_node_ids": transformed_nodes,
+    }
+    write_json(imported_dir / "vela" / "doping_strategy.json", record)
+    return record
+
+
+def validate_doping_strategy_matrix(
+    specs: Mapping[str, Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Require one mesh and exactly two distinct doping strategy snapshots."""
+    mesh_hashes: dict[str, str] = {}
+    doping_hashes: dict[str, list[str]] = {}
+    for name, spec in specs.items():
+        vela_dir = Path(spec["imported_dir"]) / "vela"
+        mesh_hashes[name] = sha256_file(vela_dir / "mesh.json")
+        doping_hashes.setdefault(str(spec["doping_strategy"]), []).append(
+            sha256_file(vela_dir / "doping.csv")
+        )
+    if len(set(mesh_hashes.values())) != 1:
+        raise ValueError("2x2 doping comparison requires identical meshes")
+    normalized = {
+        strategy: sorted(set(hashes))
+        for strategy, hashes in doping_hashes.items()
+    }
+    if any(len(hashes) != 1 for hashes in normalized.values()):
+        raise ValueError("current variants within one doping strategy must match")
+    if (
+        len(normalized) != 2
+        or len({hashes[0] for hashes in normalized.values()}) != 2
+    ):
+        raise ValueError("2x2 doping strategy matrix collapsed to identical inputs")
+    return {
+        "mesh_sha256": next(iter(mesh_hashes.values())),
+        "doping_sha256_by_strategy": {
+            strategy: hashes[0] for strategy, hashes in sorted(normalized.items())
+        },
+    }
+
+
 def _output_files(out_dir: Path) -> list[Path]:
     if not out_dir.exists():
         return []
@@ -473,7 +619,6 @@ def build_reuse_signature(
 ) -> dict[str, Any]:
     return {
         "biases_V": [float(value) for value in biases],
-        "current_approximation": "density_gradient",
         "implementation": "current_head",
         "reference_config": str(reference_config),
         "reference_config_sha256": sha256_file(reference_config),
@@ -485,7 +630,17 @@ def build_reuse_signature(
             "diagnostic_script": input_file_signature(diagnostic_script),
         },
         "variants": {
-            name: spec["compensated_doping_policy"]
+            name: {
+                "compensated_doping_policy": spec["compensated_doping_policy"],
+                "doping_strategy": spec["doping_strategy"],
+                "current_variant": spec["current_variant"],
+                "current_approximation": spec["current_approximation"],
+                "impact_ionization": dict(spec["impact_ionization"]),
+                "doping_strategy_replay": (
+                    dict(LEGACY_DOPING_REPLAY)
+                    if spec["doping_strategy"] == "legacy" else None
+                ),
+            }
             for name, spec in specs.items()
         },
     }
@@ -578,12 +733,12 @@ def write_variant_deck(spec: Mapping[str, Any]) -> Path:
     return module.write_previous_full20_config(
         base_config=base_config,
         out_dir=Path(spec["run_dir"]),
-        output_csv_name="pn2d_bv_density_gradient.csv",
+        output_csv_name=str(spec["output_csv_name"]),
         bias_points=full_bias_points(),
-        config_name="simulation_pn2d_bv_density_gradient.json",
-        vtk_subdir="vtk",
-        diagnostics_suffix="",
-        current_approximation="density_gradient",
+        config_name=str(spec["deck_name"]),
+        vtk_subdir=str(spec["vtk_subdir"]),
+        diagnostics_suffix=str(spec["diagnostics_suffix"]),
+        current_approximation=str(spec["current_approximation"]),
     )
 
 
@@ -739,7 +894,6 @@ def run_reproduction(
                 )
             validate_vector_field_manifest(manifest_path)
 
-    deck_paths: list[Path] = []
     for spec in specs.values():
         base_config = spec["imported_dir"] / "vela" / "simulation_bv.json"
         if not (reuse_allowed and base_config.is_file()):
@@ -754,13 +908,14 @@ def run_reproduction(
                 ),
                 REPO,
                 commands,
-                execute=not args.prepare_only,
                 command_runner=command_runner,
             )
-        planned_deck = (
-            spec["run_dir"] / "simulation_pn2d_bv_density_gradient.json"
-        )
-        deck = planned_deck if args.prepare_only else write_variant_deck(spec)
+        apply_variant_doping_strategy(spec)
+
+    doping_matrix = validate_doping_strategy_matrix(specs)
+    deck_paths: list[Path] = []
+    for spec in specs.values():
+        deck = write_variant_deck(spec)
         deck_paths.append(deck)
 
         if args.skip_vela_run:
@@ -810,6 +965,7 @@ def run_reproduction(
 
     parameters = {
         **reuse_signature,
+        "doping_matrix": doping_matrix,
         "importer": str(importer),
         "prepare_only": bool(args.prepare_only),
         "reuse_existing": bool(args.reuse_existing),
