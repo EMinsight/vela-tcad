@@ -140,26 +140,53 @@ def enforce_shared_edge_area_gate(
     triangle_by_edge: dict[tuple[float, int], dict[str, Any]],
     sg_rows: Iterable[dict[str, Any]],
     tolerance: float = AREA_RELATIVE_TOLERANCE,
+    *,
+    requested_biases: Iterable[float] | None = None,
 ) -> dict[str, Any]:
     sg_by_edge = {_edge_key(row): row for row in sg_rows}
-    common = sorted(set(triangle_by_edge).intersection(sg_by_edge))
-    if not common:
-        raise ValueError("shared edge area gate has no common (bias, edge_id) rows")
+    requested = list(requested_biases) if requested_biases is not None else sorted({
+        key[0] for key in set(triangle_by_edge).union(sg_by_edge)
+    })
+    if not requested:
+        raise ValueError("shared edge area gate has no requested biases")
     errors: list[float] = []
     mismatches: list[dict[str, Any]] = []
-    for key in common:
-        triangle_area = finite_float(triangle_by_edge[key].get("partial_volume_sum_m2"), 0.0)
-        sg_area = finite_float(sg_by_edge[key].get("edge_area_proxy_m2"), 0.0)
-        scale = max(abs(triangle_area), abs(sg_area), 1.0e-300)
-        relative_error = abs(triangle_area - sg_area) / scale
-        errors.append(relative_error)
-        if not relative_error < tolerance:
-            mismatches.append({
-                "bias_V": key[0], "edge_id": key[1],
-                "triangle_partial_volume_sum_m2": triangle_area,
-                "sg_edge_area_proxy_m2": sg_area,
-                "relative_error": relative_error,
-            })
+    common_count = 0
+    triangle_only_count = 0
+    for requested_bias in requested:
+        triangle_at_bias = {
+            edge_id: row for (bias, edge_id), row in triangle_by_edge.items()
+            if math.isclose(bias, requested_bias, rel_tol=0.0, abs_tol=1.0e-12)
+        }
+        sg_at_bias = {
+            edge_id: row for (bias, edge_id), row in sg_by_edge.items()
+            if math.isclose(bias, requested_bias, rel_tol=0.0, abs_tol=1.0e-12)
+        }
+        if not triangle_at_bias or not sg_at_bias:
+            raise ValueError(f"shared edge area gate missing requested bias {requested_bias:g}")
+        triangle_only = sorted(set(triangle_at_bias) - set(sg_at_bias))
+        sg_only = sorted(set(sg_at_bias) - set(triangle_at_bias))
+        if sg_only:
+            raise ValueError(
+                "shared edge area gate edge key mismatch at requested bias "
+                f"{requested_bias:g}: triangle_only={triangle_only}, sg_only={sg_only}"
+            )
+        triangle_only_count += len(triangle_only)
+        common_count += len(sg_at_bias)
+        for edge_id in sorted(sg_at_bias):
+            triangle_area = finite_float(
+                triangle_at_bias[edge_id].get("partial_volume_sum_m2"), 0.0)
+            sg_area = finite_float(sg_at_bias[edge_id].get("edge_area_proxy_m2"), 0.0)
+            scale = max(abs(triangle_area), abs(sg_area), 1.0e-300)
+            relative_error = abs(triangle_area - sg_area) / scale
+            errors.append(relative_error)
+            if not relative_error < tolerance:
+                mismatches.append({
+                    "bias_V": requested_bias, "edge_id": edge_id,
+                    "triangle_partial_volume_sum_m2": triangle_area,
+                    "sg_edge_area_proxy_m2": sg_area,
+                    "relative_error": relative_error,
+                })
     if mismatches:
         first = mismatches[0]
         raise ValueError(
@@ -170,7 +197,8 @@ def enforce_shared_edge_area_gate(
     return {
         "passed": True,
         "tolerance": tolerance,
-        "common_edge_count": len(common),
+        "common_edge_count": common_count,
+        "triangle_only_edge_count": triangle_only_count,
         "max_relative_error": max(errors),
     }
 
@@ -307,7 +335,7 @@ def select_sentaurus_export(root: Path, requested_bias_V: float) -> dict[str, An
         "requested_bias_V": requested_bias_V,
         "selected_bias_V": selected_bias,
         "path": selected_path,
-        "exact_match": math.isclose(selected_bias, requested_bias_V, abs_tol=1.0e-12),
+        "exact_match": math.isclose(selected_bias, requested_bias_V, rel_tol=0.0, abs_tol=1.0e-12),
     }
 
 
@@ -318,7 +346,7 @@ def select_exact_vela_vtk(root: Path, bias_V: float) -> Path:
     matches = []
     for path in root.glob("dc_sweep_*_*V.vtk"):
         match = _VELA_VTK_BIAS_RE.search(path.name)
-        if match and math.isclose(float(match.group(1)), bias_V, abs_tol=1.0e-12):
+        if match and math.isclose(float(match.group(1)), bias_V, rel_tol=0.0, abs_tol=1.0e-12):
             matches.append(path)
     if len(matches) != 1:
         raise FileNotFoundError(
@@ -342,7 +370,7 @@ def percentile(values: Iterable[float], fraction: float) -> float | None:
     return ordered[lower] * (1.0 - weight) + ordered[upper] * weight
 
 
-def summarize_active_support(
+def _summarize_active_group(
     rows: list[dict[str, Any]], candidates: Iterable[str]
 ) -> dict[str, Any]:
     exact = [row for row in rows if bool(row.get("exact_match"))]
@@ -358,6 +386,7 @@ def summarize_active_support(
         and finite_float(row.get("sentaurus_vector_magnitude_flux_m2_s")) > threshold
     ]
     result = {
+        "coverage_unit": "carrier_edge_rows",
         "exact_row_count": len(exact),
         "positive_reference_count": len(positive),
         "positive_p80_threshold": threshold,
@@ -377,6 +406,27 @@ def summarize_active_support(
             "median_abs_log10_error": statistics.median(values) if values else None,
             "p95_abs_log10_error": percentile(values, 0.95),
         }
+    return result
+
+
+def summarize_active_support(
+    rows: list[dict[str, Any]], candidates: Iterable[str]
+) -> dict[str, Any]:
+    candidate_names = list(candidates)
+    result = _summarize_active_group(rows, candidate_names)
+    groups: dict[tuple[float, str], list[dict[str, Any]]] = {}
+    for row in rows:
+        if "bias_V" not in row or "carrier" not in row:
+            continue
+        groups.setdefault((float(row["bias_V"]), str(row["carrier"])), []).append(row)
+    result["by_bias_and_carrier"] = [
+        {
+            "bias_V": bias,
+            "carrier": carrier,
+            **_summarize_active_group(group_rows, candidate_names),
+        }
+        for (bias, carrier), group_rows in sorted(groups.items())
+    ]
     return result
 
 
@@ -406,17 +456,21 @@ def evaluate_contact_policy_gate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         and math.isfinite(finite_float(row.get("fallback_log10_abs_error")))
     ]
     interior_worsening = statistics.median(interior) if interior else None
+    sufficient_data = bool(improvements) and interior_worsening is not None
+    recommended = bool(
+        sufficient_data
+        and coverage >= 0.8
+        and interior_worsening <= 0.1
+    )
     return {
+        "status": "recommended" if recommended else "not_recommended" if sufficient_data else "insufficient_data",
         "exact_contact_active_count": len(contact),
         "comparable_contact_count": len(improvements),
         "improved_by_at_least_0_3_dex_count": len(improved),
         "improvement_coverage": coverage,
         "interior_count": len(interior),
         "interior_median_worsening_dex": interior_worsening,
-        "recommend_explicit_contact_policy": bool(
-            improvements and coverage >= 0.5
-            and interior_worsening is not None and interior_worsening > 0.0
-        ),
+        "recommend_explicit_contact_policy": recommended if sufficient_data else None,
     }
 
 
@@ -471,7 +525,32 @@ def _read_sentaurus_field(export: Path, stem: str) -> dict[int, Any]:
     return result
 
 
+def _validate_sentaurus_current_manifest(export: Path) -> None:
+    manifest_path = export / "field_manifest.json"
+    if not manifest_path.is_file():
+        raise ValueError(f"Sentaurus export lacks {manifest_path.name}")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    fields = manifest.get("fields")
+    if not isinstance(fields, list):
+        raise ValueError("Sentaurus field_manifest.json lacks a fields list")
+    required = {
+        "region": 0,
+        "components": 2,
+        "unit": "A*cm^-2",
+        "mapping_status": "complete",
+        "global_node_mapping": "global_vertex_order",
+    }
+    for name in ("eCurrentDensity", "hCurrentDensity"):
+        matches = [field for field in fields if field.get("name") == name]
+        if not any(all(field.get(key) == value for key, value in required.items()) for field in matches):
+            contract = ", ".join(f"{key}={value!r}" for key, value in required.items())
+            raise ValueError(
+                f"Sentaurus {name} vector field must satisfy {contract}; got {matches}"
+            )
+
+
 def load_sentaurus_export(export: Path) -> dict[str, Any]:
+    _validate_sentaurus_current_manifest(export)
     nodes = read_csv(export / "nodes.csv")
     points = {int(row["id"]): (float(row["x_um"]), float(row["y_um"])) for row in nodes}
     return {
@@ -560,7 +639,8 @@ def build_audit_rows(
 ) -> tuple[list[dict[str, Any]], dict[str, Any], list[str]]:
     requested = list(biases)
     triangle_all = aggregate_triangle_rows(triangle_rows)
-    area_gate = enforce_shared_edge_area_gate(triangle_all, sg_rows)
+    area_gate = enforce_shared_edge_area_gate(
+        triangle_all, sg_rows, requested_biases=requested)
     sg_by_edge = {_edge_key(row): row for row in sg_rows}
     rows: list[dict[str, Any]] = []
     issues: list[str] = []
@@ -579,7 +659,10 @@ def build_audit_rows(
                 f"Requested Sentaurus bias {bias:g} V used nearest export "
                 f"{selection['selected_bias_V']:g} V; exact_match=false and excluded from accuracy summaries."
             )
-        keys = sorted(key for key in set(triangle_all).intersection(sg_by_edge) if math.isclose(key[0], bias, abs_tol=1e-12))
+        keys = sorted(
+            key for key in set(triangle_all).intersection(sg_by_edge)
+            if math.isclose(key[0], bias, rel_tol=0.0, abs_tol=1e-12)
+        )
         for key in keys:
             triangle = triangle_all[key]
             sg = sg_by_edge[key]
@@ -701,6 +784,8 @@ def _candidate_summary_rows(rows: list[dict[str, Any]]) -> tuple[list[dict[str, 
     for row in rows:
         for carrier in ("electron", "hole"):
             item = {
+                "bias_V": row["bias_V"],
+                "carrier": carrier,
                 "exact_match": row["exact_match"],
                 "sentaurus_vector_magnitude_flux_m2_s": row[f"{carrier}_sentaurus_vector_magnitude_flux_m2_s"],
             }
@@ -775,7 +860,7 @@ def write_outputs(
     )[:top_n]
     focus_rows = [row for row in rows if int(row["edge_id"]) == focus_edge]
     payload = {
-        "schema": "vela.pn2d_bv_same_state_edge_current_semantics.v1",
+        "schema": "vela.pn2d_bv_same_state_edge_current_semantics.v2",
         "row_count": len(rows),
         "area_gate": area_gate,
         "active_support": active_summary,
@@ -794,12 +879,13 @@ def write_outputs(
         "## Gates", "",
         f"- Shared-edge area gate: `passed` ({area_gate['common_edge_count']} common edges, "
         f"max relative error `{area_gate['max_relative_error']:.6g}`).",
-        f"- Exact-bias active-support rows: `{active_summary['active_row_count']}` / "
-        f"`{active_summary['exact_row_count']}`; positive p80 threshold "
+        f"- Exact-bias active-support carrier-edge rows: `{active_summary['active_row_count']}` / "
+        f"`{active_summary['exact_row_count']}` (`{active_summary['coverage_unit']}`); positive p80 threshold "
         f"`{active_summary['positive_p80_threshold']}` particle m^-2 s^-1.",
+        f"- Contact policy gate status: `{contact_gate['status']}`.",
         f"- Contact fallback improvement coverage: `{contact_gate['improvement_coverage']:.6g}`.",
         f"- Interior median worsening: `{contact_gate['interior_median_worsening_dex']}` dex.",
-        f"- `recommend_explicit_contact_policy={str(contact_gate['recommend_explicit_contact_policy']).lower()}`.",
+        f"- `recommend_explicit_contact_policy={json.dumps(contact_gate['recommend_explicit_contact_policy'])}`.",
         "", "## Active-Support Accuracy", "",
         "| candidate | coverage | median abs log10 error | p95 abs log10 error |", "|---|---:|---:|---:|",
     ]

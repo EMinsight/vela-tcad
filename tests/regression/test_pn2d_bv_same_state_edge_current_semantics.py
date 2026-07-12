@@ -67,6 +67,7 @@ class TestSameStateCurrentSemantics(unittest.TestCase):
         gate = audit.enforce_shared_edge_area_gate(
             {(-12.0, 50): aggregate},
             [{"bias_V": "-12", "edge_id": "50", "edge_area_proxy_m2": "3"}],
+            requested_biases=[-12.0],
         )
         self.assertEqual(gate["common_edge_count"], 1)
         self.assertLess(gate["max_relative_error"], 1.0e-12)
@@ -77,6 +78,36 @@ class TestSameStateCurrentSemantics(unittest.TestCase):
             audit.enforce_shared_edge_area_gate(
                 aggregate,
                 [{"bias_V": "-12", "edge_id": "50", "edge_area_proxy_m2": "3.01"}],
+                requested_biases=[-12.0],
+            )
+
+    def test_area_gate_scopes_requested_biases_and_requires_exact_edge_sets(self):
+        triangle = {
+            (-12.0, 50): {"partial_volume_sum_m2": 3.0},
+            (-13.0, 60): {"partial_volume_sum_m2": 8.0},
+        }
+        sg = [
+            {"bias_V": "-12", "edge_id": "50", "edge_area_proxy_m2": "3"},
+            {"bias_V": "-13", "edge_id": "61", "edge_area_proxy_m2": "8"},
+        ]
+        gate = audit.enforce_shared_edge_area_gate(
+            triangle, sg, requested_biases=[-12.0]
+        )
+        self.assertEqual(gate["common_edge_count"], 1)
+        triangle_with_boundary_only = dict(triangle)
+        triangle_with_boundary_only[(-12.0, 51)] = {"partial_volume_sum_m2": 9.0}
+        boundary_gate = audit.enforce_shared_edge_area_gate(
+            triangle_with_boundary_only, sg, requested_biases=[-12.0]
+        )
+        self.assertEqual(boundary_gate["common_edge_count"], 1)
+        self.assertEqual(boundary_gate["triangle_only_edge_count"], 1)
+        with self.assertRaisesRegex(ValueError, "edge key mismatch"):
+            audit.enforce_shared_edge_area_gate(
+                triangle, sg, requested_biases=[-12.0, -13.0]
+            )
+        with self.assertRaisesRegex(ValueError, "requested bias"):
+            audit.enforce_shared_edge_area_gate(
+                triangle, sg, requested_biases=[-14.0]
             )
 
     def test_canonical_reversal_and_electron_continuity_sign(self):
@@ -121,24 +152,34 @@ class TestSameStateCurrentSemantics(unittest.TestCase):
             selected = audit.select_sentaurus_export(root, -19.4)
         self.assertEqual(selected["selected_bias_V"], -19.0)
         self.assertFalse(selected["exact_match"])
+        with tempfile.TemporaryDirectory() as tmp:
+            near = Path(tmp)
+            (near / "sentaurus_-19.00000001v").mkdir()
+            strict = audit.select_sentaurus_export(near, -19.0)
+        self.assertFalse(strict["exact_match"])
         rows = [
-            {"exact_match": True, "sentaurus_vector_magnitude_flux_m2_s": 10.0,
+            {"exact_match": True, "bias_V": -12.0, "carrier": "electron",
+             "sentaurus_vector_magnitude_flux_m2_s": 10.0,
              "pdf_log10_abs_error": 1.0},
-            {"exact_match": True, "sentaurus_vector_magnitude_flux_m2_s": 20.0,
+            {"exact_match": True, "bias_V": -12.0, "carrier": "electron",
+             "sentaurus_vector_magnitude_flux_m2_s": 20.0,
              "pdf_log10_abs_error": 2.0},
-            {"exact_match": False, "sentaurus_vector_magnitude_flux_m2_s": 1000.0,
+            {"exact_match": False, "bias_V": -19.4, "carrier": "electron",
+             "sentaurus_vector_magnitude_flux_m2_s": 1000.0,
              "pdf_log10_abs_error": 9.0},
         ]
         summary = audit.summarize_active_support(rows, ["pdf"])
         self.assertEqual(summary["exact_row_count"], 2)
         self.assertAlmostEqual(summary["positive_p80_threshold"], 18.0)
         self.assertEqual(summary["candidates"]["pdf"]["median_abs_log10_error"], 2.0)
+        self.assertEqual(summary["coverage_unit"], "carrier_edge_rows")
+        self.assertEqual(summary["by_bias_and_carrier"][0]["carrier"], "electron")
 
     def test_active_support_median_and_p95(self):
         rows = []
         for magnitude, error in zip([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], range(10)):
             rows.append({
-                "exact_match": True,
+                "exact_match": True, "bias_V": -12.0, "carrier": "electron",
                 "sentaurus_vector_magnitude_flux_m2_s": float(magnitude),
                 "pdf_log10_abs_error": float(error),
             })
@@ -155,18 +196,35 @@ class TestSameStateCurrentSemantics(unittest.TestCase):
             {"exact_match": True, "edge_class": "contact_edge", "active_support": True,
              "qf_log10_abs_error": 0.9, "fallback_log10_abs_error": 0.4},
             {"exact_match": True, "edge_class": "interior_bulk", "active_support": True,
-             "qf_log10_abs_error": 0.2, "fallback_log10_abs_error": 0.4},
+             "qf_log10_abs_error": 0.2, "fallback_log10_abs_error": 0.25},
         ]
         result = audit.evaluate_contact_policy_gate(favorable)
         self.assertEqual(result["improvement_coverage"], 1.0)
         self.assertGreater(result["interior_median_worsening_dex"], 0.0)
+        self.assertEqual(result["status"], "recommended")
         self.assertTrue(result["recommend_explicit_contact_policy"])
         unfavorable = [dict(row) for row in favorable]
         unfavorable[0]["fallback_log10_abs_error"] = 0.9
         unfavorable[1]["fallback_log10_abs_error"] = 0.8
-        self.assertFalse(
-            audit.evaluate_contact_policy_gate(unfavorable)["recommend_explicit_contact_policy"]
-        )
+        rejected = audit.evaluate_contact_policy_gate(unfavorable)
+        self.assertEqual(rejected["status"], "not_recommended")
+        self.assertFalse(rejected["recommend_explicit_contact_policy"])
+        insufficient = audit.evaluate_contact_policy_gate([
+            {"exact_match": True, "edge_class": "contact_edge", "active_support": True,
+             "qf_log10_abs_error": None, "fallback_log10_abs_error": None},
+        ])
+        self.assertEqual(insufficient["status"], "insufficient_data")
+        self.assertIsNone(insufficient["recommend_explicit_contact_policy"])
+
+    def test_sentaurus_manifest_rejects_wrong_current_units(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            export = Path(tmp) / "sentaurus_-12v"
+            self._write_sentaurus(export)
+            manifest = json.loads((export / "field_manifest.json").read_text(encoding="utf-8"))
+            manifest["fields"][0]["unit"] = "A*m^-2"
+            (export / "field_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "A\\*cm\\^-2"):
+                audit.load_sentaurus_export(export)
 
     def test_cli_writes_csv_json_and_markdown(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -271,6 +329,19 @@ class TestSameStateCurrentSemantics(unittest.TestCase):
         fields = path / "fields"
         fields.mkdir(parents=True)
         (path / "nodes.csv").write_text("id,x_um,y_um\n0,0,0\n1,1,0\n", encoding="utf-8")
+        manifest_fields = []
+        for name in ("eCurrentDensity", "hCurrentDensity"):
+            manifest_fields.append({
+                "name": name,
+                "region": 0,
+                "components": 2,
+                "unit": "A*cm^-2",
+                "mapping_status": "complete",
+                "global_node_mapping": "global_vertex_order",
+            })
+        (path / "field_manifest.json").write_text(
+            json.dumps({"fields": manifest_fields}), encoding="utf-8"
+        )
         (fields / "eCurrentDensity_region0.csv").write_text(
             "node_id,component0,component1\n0,-1,0\n1,-1,0\n", encoding="utf-8"
         )
