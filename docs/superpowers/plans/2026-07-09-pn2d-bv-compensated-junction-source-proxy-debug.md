@@ -225,3 +225,62 @@ Next gate: same-state, same-edge audit of the GSS logistic midpoint against
 GSS 0.47 and Sentaurus carrier/current vectors, especially edge 50 near
 -19 V. Keep density_gradient as default and gss_midpoint as the lower-risk
 experimental baseline until the 1.57e6 factor is explained.
+
+## 2026-07-12 Field-Scale Fix And Same-State Audit
+
+The `cell_gradient` branch of `edgeQuasiFermiCoefficientField` omitted the
+caller-provided `fieldFactor`. The branch now returns
+`norm(grad(phi_F)) * fieldFactor`; both carrier call sites pass the same
+factor, while edge-difference and fallback behavior are unchanged. A focused
+test with `fieldFactor=1e4` covers electron and hole impact fields and the
+existing SG raw-flux scaling rule.
+
+The edge-50 hard gate at `-19 V` now reports
+`electron_impact_field=9.709719851e6 V/m`, equal to the triangle diagnostic's
+`electron_cell_qf_field`. The old historical diagnostic was about
+`970.97 V/m`. This fixes a real unit-chain defect, but does not close the
+triangle source discrepancy: the triangle evaluator was already using the SI
+cell gradient. At `-19 V`, its total source changed only by about `2.15e-13`
+relative and terminal current stayed at approximately
+`-1.3008917041e-6 A/um`.
+
+A short restart/window run reached `-19.43 V` and rejected the next trial at
+approximately `-19.4325007713 V` with `line_search_non_decrease`. Carrier
+densities remained positive and finite. This is solver evidence only; it is
+not used as evidence that the source formula is physically correct.
+
+The offline same-state audit is under
+`same_state_current_semantics_fieldscale_debug_20260712` in the v3 full-status
+report root. It validates the Sentaurus vector-current manifest contract
+(`region=0`, two components, `A*cm^-2`, complete global-vertex mapping), uses
+strict exact-bias matching, and reports coverage in carrier-edge rows.
+
+- 126 detail rows were generated for `-12`, `-19`, and `-19.4 V`.
+- All 126 SG shared faces satisfy the partial-volume area gate with zero
+  measured relative error; 48 triangle-only boundary records are reported but
+  are not compared to a nonexistent SG face.
+- The `-19.4 V` Sentaurus comparison uses the nearest `-19 V` export only for
+  traceability and is excluded from accuracy statistics.
+- Across 34 exact active carrier-edge rows, PDF grad-qF covers `55.9%` with
+  `6.08 dex` median error, Genius SG covers `52.9%` with `7.26 dex`, Vela
+  vector projection covers `79.4%` with `4.65 dex`, and Vela vector magnitude
+  covers `100%` with `4.64 dex`.
+- At `-12 V`, the best electron medians are about `0.78-0.92 dex`; at `-19 V`,
+  Vela vector-magnitude medians are about `5.44 dex` for electrons and
+  `5.11 dex` for holes. The bias dependence rules out treating aggregate
+  coverage alone as physical agreement.
+- Contact-policy status is `insufficient_data`: ten contact active rows exist,
+  but none has both QF and electric-fallback source errors available. No
+  explicit contact policy is recommended.
+
+The physical audit therefore does not pass the plan's `80%` evidence gate.
+Do not add a contact fallback, QF clamp, source limiter, alpha scale, Newton
+change, or a replacement default current mode from this evidence. The
+conditional Newton/Jacobian replay and the full six-variant rerun are deferred
+until exact same-state current semantics improve; in particular, an exact
+Sentaurus `-19.4 V` vector export and the missing hole endpoint `p/phip`
+diagnostics are still needed.
+
+The static figure group now includes
+`figures_static/pn2d-bv-current-semantics-audit.{png,pdf}`, which separates
+median magnitude error from finite-candidate coverage and marks the 80% gate.

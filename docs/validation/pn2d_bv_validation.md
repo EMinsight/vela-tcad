@@ -1199,3 +1199,50 @@ A low-bias iteration-count caveat remains for the `cell_reconstructed` release p
 The `grad_qf` control still fails at the same transition after the same last converged point: last converged bias `-15.2432189285 V`, failed bias `-15.569175793280028 V`, failure `carrier_row_convergence_line_search_rejected`. This confirms that the `grad_qf` high-field blocker is not caused by the 0 V initialization path.
 
 Full release regression after the validation run passed: `ctest --test-dir build-release --output-on-failure` reported `428/428` tests passing.
+
+## PN2D Triangle-GSS Field Units And Current Semantics (2026-07-12)
+
+A missing `fieldFactor` multiplication in the historical cell-gradient
+coefficient-field diagnostic has been fixed. At edge 50 and `-19 V`, the
+historical impact field now equals the triangle cell-QF field at
+`9.709719851e6 V/m` instead of about `970.97 V/m`. Electron and hole scaling
+are covered by regression tests.
+
+This correction does not materially change the triangle-GSS production path,
+which already used an SI cell gradient. The `-19 V` triangle terminal current
+remains approximately `-1.3008917041e-6 A/um`, and its total-source relative
+change is about `2.15e-13`. The previously observed approximately `1.57e6`
+triangle/historical-midpoint source ratio is therefore not explained by the
+diagnostic unit bug.
+
+The minimum post-fix replay passed the edge-50 field gate at `-12 V` and
+`-19 V`. A `0.01 V` near-critical window reached `-19.43 V` and failed the
+next adaptive trial at about `-19.4325007713 V` with
+`line_search_non_decrease`; all carrier densities were positive and finite.
+No solver parameter was changed.
+
+A new same-state edge audit compares PDF grad-qF, local Genius SG, Vela vector
+projection, and Vela vector magnitude against manifest-validated Sentaurus
+carrier-current vectors. Its v2 JSON, CSV, and Markdown outputs are under:
+
+`build-release/reference_tcad/pn2d_sentaurus2018_coarse7x3/reports/pn2d_bv_compensated_gss_matrix_v3_full_status_20260712/same_state_current_semantics_fieldscale_debug_20260712/`
+
+| candidate | active carrier-edge coverage | median abs log10 error | p95 abs log10 error |
+|---|---:|---:|---:|
+| PDF grad-qF | 0.5588 | 6.0776 | 7.8899 |
+| Genius SG | 0.5294 | 7.2638 | 10.0640 |
+| Vela vector projection | 0.7941 | 4.6482 | 5.6411 |
+| Vela vector magnitude | 1.0000 | 4.6424 | 5.5270 |
+
+The area gate closes all 126 requested SG shared faces exactly. The `-19.4 V`
+Sentaurus export is inexact (`-19 V`) and is excluded from the accuracy table.
+The contact-policy gate is `insufficient_data`, so production contact behavior
+remains unchanged.
+
+Classification: `current_semantics_not_yet_validated`. Coverage and magnitude
+accuracy do not jointly meet the 80% physical gate. Accordingly, Newton source
+block debugging and a new full six-variant matrix were not started. This is an
+intentional stop condition, not an incomplete report: the current formula must
+first be reconciled using exact same-state vectors and complete hole endpoint
+diagnostics. The static figure group adds
+`pn2d-bv-current-semantics-audit.{png,pdf}` for this result.
