@@ -1699,13 +1699,14 @@ inline Real edgeQuasiFermiCoefficientField(
     const DeviceMesh&                      mesh,
     Index                                  edgeId,
     const std::vector<bool>&               contactNodes,
-    const CellScalarGradientCache&         qfGradientCache)
+    const CellScalarGradientCache&         qfGradientCache,
+    Real                                   fieldFactor)
 {
     if (usesCellGradientQuasiFermiAvalancheDrive(config)) {
         bool validGradient = false;
         const Point2 gradient = edgeAveragedCellScalarGradient(
             edgeCells, edgeId, qfGradientCache, validGradient);
-        return validGradient ? gradient.norm() : edgeQfField;
+        return validGradient ? gradient.norm() * fieldFactor : edgeQfField;
     }
     if (config.debugRawVanOverstraeten)
         return edgeQfField;
@@ -2257,12 +2258,12 @@ inline std::vector<SgEdgeCurrentAvalancheSourceRecord> sgEdgeCurrentAvalancheSou
         const Real electronCoefficientField = qfImpact
             ? edgeQuasiFermiCoefficientField(
                 config, electronQfField, electricField, edgeCells, mesh, e,
-                contactNodes, electronQfGradientCache)
+                contactNodes, electronQfGradientCache, fieldFactor)
             : electricField;
         const Real holeCoefficientField = qfImpact
             ? edgeQuasiFermiCoefficientField(
                 config, holeQfField, electricField, edgeCells, mesh, e,
-                contactNodes, holeQfGradientCache)
+                contactNodes, holeQfGradientCache, fieldFactor)
             : electricField;
         const Real electronMobilityField = qfMobility ? electronQfField : electricField;
         const Real holeMobilityField = qfMobility ? holeQfField : electricField;

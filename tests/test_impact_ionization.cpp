@@ -2420,6 +2420,37 @@ TEST_CASE("Genius-style Grad-QF avalanche source uses cell-gradient magnitude",
             sawDifferentEdgeDifference = true;
     }
     REQUIRE(sawDifferentEdgeDifference);
+
+    constexpr Real fieldFactor = 1.0e4;
+    const auto scaledRecords = detail::sgEdgeCurrentAvalancheSourceRecords(
+        impactConfig,
+        *impact,
+        mobilityConfig,
+        *mobility,
+        edgeCells,
+        mesh,
+        doping,
+        cellMaterials,
+        sol.psi,
+        sol.phin,
+        sol.phip,
+        sol.n,
+        sol.p,
+        ni,
+        Vt,
+        fieldFactor);
+
+    REQUIRE(scaledRecords.size() == records.size());
+    for (std::size_t i = 0; i < records.size(); ++i) {
+        REQUIRE(scaledRecords[i].electronImpactField ==
+                Catch::Approx(records[i].electronImpactField * fieldFactor));
+        REQUIRE(scaledRecords[i].holeImpactField ==
+                Catch::Approx(records[i].holeImpactField * fieldFactor));
+        REQUIRE(scaledRecords[i].electronRawFluxProxy ==
+                Catch::Approx(records[i].electronRawFluxProxy * fieldFactor));
+        REQUIRE(scaledRecords[i].holeRawFluxProxy ==
+                Catch::Approx(records[i].holeRawFluxProxy * fieldFactor));
+    }
 }
 
 TEST_CASE("Genius-style Grad-QF contact edges keep cell-gradient drive",
