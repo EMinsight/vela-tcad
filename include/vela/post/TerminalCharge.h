@@ -1,6 +1,7 @@
 #pragma once
 
 #include "vela/core/PhysicalConstants.h"
+#include "vela/core/UnitScaling.h"
 #include "vela/core/Types.h"
 #include "vela/mesh/DeviceMesh.h"
 #include "vela/physics/DopingModel.h"
@@ -28,7 +29,8 @@ struct TerminalChargeResult {
 
 class TerminalCharge {
 public:
-    TerminalCharge(const DeviceMesh& mesh, const DopingModel& doping);
+    TerminalCharge(const DeviceMesh& mesh, const DopingModel& doping,
+                   PhysicalUnitSystem unitSystem = PhysicalUnitSystem::legacySI());
 
     TerminalChargeResult compute(const DDSolution& solution,
                                  const TerminalChargeConfig& config) const;
@@ -41,6 +43,7 @@ public:
 private:
     const DeviceMesh& mesh_;
     const DopingModel& doping_;
+    PhysicalUnitSystem unitSystem_;
 };
 
 } // namespace vela

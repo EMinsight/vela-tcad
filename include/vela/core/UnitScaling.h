@@ -10,10 +10,130 @@ enum class UnitScalingMode {
     UnitScaling,
 };
 
+class PhysicalUnitSystem {
+public:
+    static PhysicalUnitSystem legacySI();
+    static PhysicalUnitSystem tcadInternal();
+
+    Real lengthMPerInternal() const { return lengthMPerInternal_; }
+    Real areaM2PerInternal() const { return lengthMPerInternal_ * lengthMPerInternal_; }
+    Real volumeM3PerInternal() const { return areaM2PerInternal() * lengthMPerInternal_; }
+    Real concentrationM3PerInternal() const { return concentrationM3PerInternal_; }
+    Real sheetDensityM2PerInternal() const { return sheetDensityM2PerInternal_; }
+    Real mobilityM2PerVSPerInternal() const { return mobilityM2PerVSPerInternal_; }
+    Real electricFieldVPerMPerInternal() const { return electricFieldVPerMPerInternal_; }
+    Real inverseLengthMInvPerInternal() const { return inverseLengthMInvPerInternal_; }
+    Real surfaceFieldCoefficientMPerVPerInternal() const
+    {
+        return surfaceFieldCoefficientMPerVPerInternal_;
+    }
+    Real currentDensityAM2PerInternal() const { return currentDensityAM2PerInternal_; }
+
+    Real chargeVolumeFactor() const;
+    Real chargeSheetFactor() const;
+    Real fieldFromCoordinateDeltaFactor() const;
+    Real currentPerInternalDepthFactor() const;
+
+    Real internalLengthToMeters(Real value) const { return value * lengthMPerInternal_; }
+    Real metersToInternalLength(Real value) const { return value / lengthMPerInternal_; }
+    Real internalConcentrationToM3(Real value) const
+    {
+        return value * concentrationM3PerInternal_;
+    }
+    Real m3ToInternalConcentration(Real value) const
+    {
+        return value / concentrationM3PerInternal_;
+    }
+    Real internalSheetDensityToM2(Real value) const { return value * sheetDensityM2PerInternal_; }
+    Real m2ToInternalSheetDensity(Real value) const { return value / sheetDensityM2PerInternal_; }
+    Real internalMobilityToM2PerVS(Real value) const
+    {
+        return value * mobilityM2PerVSPerInternal_;
+    }
+    Real m2PerVSToInternalMobility(Real value) const
+    {
+        return value / mobilityM2PerVSPerInternal_;
+    }
+    Real internalElectricFieldToVPerM(Real value) const
+    {
+        return value * electricFieldVPerMPerInternal_;
+    }
+    Real vPerMToInternalElectricField(Real value) const
+    {
+        return value / electricFieldVPerMPerInternal_;
+    }
+    Real internalInverseLengthToMInv(Real value) const
+    {
+        return value * inverseLengthMInvPerInternal_;
+    }
+    Real mInvToInternalInverseLength(Real value) const
+    {
+        return value / inverseLengthMInvPerInternal_;
+    }
+    Real internalSurfaceFieldCoefficientToMPerV(Real value) const
+    {
+        return value * surfaceFieldCoefficientMPerVPerInternal_;
+    }
+    Real mPerVToInternalSurfaceFieldCoefficient(Real value) const
+    {
+        return value / surfaceFieldCoefficientMPerVPerInternal_;
+    }
+    Real internalCurrentDensityToAPerM2(Real value) const
+    {
+        return value * currentDensityAM2PerInternal_;
+    }
+    /**
+     * Native continuity particle flux uses the same area scale as native
+     * current density because the elementary charge is already in SI units.
+     */
+    Real internalContinuityParticleFluxToPerM2PerS(Real value) const
+    {
+        return value * currentDensityAM2PerInternal_;
+    }
+
+    Real aPerM2ToInternalCurrentDensity(Real value) const
+    {
+        return value / currentDensityAM2PerInternal_;
+    }
+    Real internalCurrentPerDeviceDepthToAPerUm(Real value) const;
+
+private:
+    PhysicalUnitSystem(Real lengthMPerInternal,
+                       Real concentrationM3PerInternal,
+                       Real sheetDensityM2PerInternal,
+                       Real mobilityM2PerVSPerInternal,
+                       Real electricFieldVPerMPerInternal,
+                       Real inverseLengthMInvPerInternal,
+                       Real surfaceFieldCoefficientMPerVPerInternal,
+                       Real currentDensityAM2PerInternal);
+
+    Real lengthMPerInternal_ = 1.0;
+    Real concentrationM3PerInternal_ = 1.0;
+    Real sheetDensityM2PerInternal_ = 1.0;
+    Real mobilityM2PerVSPerInternal_ = 1.0;
+    Real electricFieldVPerMPerInternal_ = 1.0;
+    Real inverseLengthMInvPerInternal_ = 1.0;
+    Real surfaceFieldCoefficientMPerVPerInternal_ = 1.0;
+    Real currentDensityAM2PerInternal_ = 1.0;
+};
+
 struct UnitScalingConfig {
     UnitScalingMode mode = UnitScalingMode::LegacySI;
+    PhysicalUnitSystem physicalUnitSystem = PhysicalUnitSystem::legacySI();
+
+    UnitScalingConfig() = default;
+    explicit UnitScalingConfig(UnitScalingMode mode);
 
     bool isUnitScaling() const { return mode == UnitScalingMode::UnitScaling; }
+    const PhysicalUnitSystem& unitSystem() const { return physicalUnitSystem; }
+
+    Real lengthToInternal(Real value) const { return value; }
+    Real concentrationToInternal(Real value) const { return value; }
+    Real sheetDensityToInternal(Real value) const { return value; }
+    Real mobilityToInternal(Real value) const { return value; }
+    Real electricFieldToInternal(Real value) const { return value; }
+    Real inverseLengthToInternal(Real value) const { return value; }
+    Real surfaceFieldCoefficientToInternal(Real value) const { return value; }
 
     Real lengthToSI(Real value) const;
     Real concentrationToSI(Real value) const;

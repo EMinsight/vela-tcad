@@ -1,6 +1,7 @@
 #pragma once
 
 #include "vela/core/Types.h"
+#include "vela/core/UnitScaling.h"
 #include <nlohmann/json_fwd.hpp>
 #include <optional>
 
@@ -32,12 +33,14 @@ public:
                       Real epsRef_F_per_m,
                       Real concentrationScale_m3,
                       Real lengthScale_m,
-                      Real mobilityScale_m2_V_s);
+                      Real mobilityScale_m2_V_s,
+                      PhysicalUnitSystem unitSystem = PhysicalUnitSystem::legacySI());
 
     static UnitScalingSystem fromInputs(Real temperature_K,
                                         Real epsRef_F_per_m,
                                         const AutoInputs& inputs,
-                                        const UnitScalingReferenceConfig& refs = {});
+                                        const UnitScalingReferenceConfig& refs = {},
+                                        PhysicalUnitSystem unitSystem = PhysicalUnitSystem::legacySI());
 
     static AutoInputs autoInputsFrom(const DeviceMesh& mesh,
                                      const DopingModel& doping,

@@ -152,7 +152,7 @@ TEST_CASE("ConfigParsing: interface region selectors validate preferred and lega
     REQUIRE(specs[0].sheetCharge == Catch::Approx(2.0e14));
 }
 
-TEST_CASE("ConfigParsing unit_scaling converts cm^-2 interface charge to m^-2",
+TEST_CASE("ConfigParsing unit_scaling keeps cm^-2 interface charge internal",
           "[interface][config][scaling]")
 {
     const nlohmann::json cfg = {
@@ -166,9 +166,9 @@ TEST_CASE("ConfigParsing unit_scaling converts cm^-2 interface charge to m^-2",
 
     const auto specs = parseInterfaceSheetChargeSpecs(cfg, parseUnitScalingConfig(cfg));
     REQUIRE(specs.size() == 1);
-    REQUIRE(specs[0].sheetCharge == Catch::Approx(2.0e15));
-    REQUIRE(specs[0].fixedCharge == Catch::Approx(-3.0e15));
-    REQUIRE(specs[0].trapDensity == Catch::Approx(4.0e15));
+    REQUIRE(specs[0].sheetCharge == Catch::Approx(2.0e11));
+    REQUIRE(specs[0].fixedCharge == Catch::Approx(-3.0e11));
+    REQUIRE(specs[0].trapDensity == Catch::Approx(4.0e11));
     REQUIRE(specs[0].trapOccupancy == Catch::Approx(0.25));
 }
 

@@ -26,7 +26,7 @@ Real requirePositive(Real value, const char* name)
 
 std::optional<Real> parseAutoOrPositiveNumber(const nlohmann::json& scaling,
                                               const char* key,
-                                              Real (UnitScalingConfig::*toSI)(Real) const)
+                                              Real (UnitScalingConfig::*toInternal)(Real) const)
 {
     if (!scaling.contains(key)) {
         return std::nullopt;
@@ -48,7 +48,7 @@ std::optional<Real> parseAutoOrPositiveNumber(const nlohmann::json& scaling,
     }
 
     const UnitScalingConfig unit{UnitScalingMode::UnitScaling};
-    const Real numericValue = (unit.*toSI)(value.get<Real>());
+    const Real numericValue = (unit.*toInternal)(value.get<Real>());
     if (numericValue <= 0.0) {
         throw std::invalid_argument(std::string("scaling.") + key + " must be positive.");
     }
@@ -91,15 +91,15 @@ UnitScalingReferenceConfig parseUnitScalingReferenceConfig(const nlohmann::json&
     refs.characteristicLength_m =
         parseAutoOrPositiveNumber(scaling,
                                   "characteristic_length_um",
-                                  &UnitScalingConfig::lengthToSI);
+                                  &UnitScalingConfig::lengthToInternal);
     refs.referenceConcentration_m3 =
         parseAutoOrPositiveNumber(scaling,
                                   "reference_concentration_cm3",
-                                  &UnitScalingConfig::concentrationToSI);
+                                  &UnitScalingConfig::concentrationToInternal);
     refs.referenceMobility_m2_V_s =
         parseAutoOrPositiveNumber(scaling,
                                   "reference_mobility_cm2_V_s",
-                                  &UnitScalingConfig::mobilityToSI);
+                                  &UnitScalingConfig::mobilityToInternal);
 
     return refs;
 }
@@ -108,7 +108,8 @@ UnitScalingSystem::UnitScalingSystem(Real temperature_K,
                                      Real epsRef_F_per_m,
                                      Real concentrationScale_m3,
                                      Real lengthScale_m,
-                                     Real mobilityScale_m2_V_s)
+                                     Real mobilityScale_m2_V_s,
+                                     PhysicalUnitSystem unitSystem)
 {
     using namespace constants;
 
@@ -118,20 +119,29 @@ UnitScalingSystem::UnitScalingSystem(Real temperature_K,
     L0_ = requirePositive(lengthScale_m, "characteristic length");
     mu0_ = requirePositive(mobilityScale_m2_V_s, "reference mobility");
 
-    V0_ = kb * T / q;
-    D0_ = mu0_ * V0_;
-    E0_ = V0_ / L0_;
-    rho0_ = q * C0_;
-    lambda2_ = epsRef * V0_ / (q * C0_ * L0_ * L0_);
-    J0_ = q * D0_ * C0_ / L0_;
-    R0_ = D0_ * C0_ / (L0_ * L0_);
-}
+    const Real C0_si = unitSystem.internalConcentrationToM3(C0_);
+    const Real L0_si = unitSystem.internalLengthToMeters(L0_);
+    const Real mu0_si = unitSystem.internalMobilityToM2PerVS(mu0_);
 
+    V0_ = kb * T / q;
+    const Real D0_si = mu0_si * V0_;
+    const Real E0_si = V0_ / L0_si;
+    const Real rho0_si = q * C0_si;
+    const Real J0_si = q * D0_si * C0_si / L0_si;
+    const Real R0_si = D0_si * C0_si / (L0_si * L0_si);
+
+    D0_ = D0_si / unitSystem.mobilityM2PerVSPerInternal();
+    E0_ = E0_si / unitSystem.electricFieldVPerMPerInternal();
+    rho0_ = rho0_si / unitSystem.concentrationM3PerInternal();
+    lambda2_ = epsRef * V0_ / (q * C0_si * L0_si * L0_si);
+    J0_ = J0_si / unitSystem.currentDensityAM2PerInternal();
+    R0_ = R0_si / unitSystem.concentrationM3PerInternal();
+}
 UnitScalingSystem UnitScalingSystem::fromInputs(Real temperature_K,
                                                 Real epsRef_F_per_m,
                                                 const AutoInputs& inputs,
-                                                const UnitScalingReferenceConfig& refs)
-{
+                                                const UnitScalingReferenceConfig& refs,
+                                                PhysicalUnitSystem unitSystem){
     const Real autoC0 = std::max(std::abs(inputs.maxAbsNetDoping_m3),
                                  requirePositive(inputs.niFloor_m3, "ni_floor"));
     const Real autoL0 = requirePositive(inputs.meshMaxLength_m, "mesh max length");
@@ -141,7 +151,7 @@ UnitScalingSystem UnitScalingSystem::fromInputs(Real temperature_K,
     const Real L0 = refs.characteristicLength_m.value_or(autoL0);
     const Real mu0 = refs.referenceMobility_m2_V_s.value_or(autoMu0);
 
-    return UnitScalingSystem(temperature_K, epsRef_F_per_m, C0, L0, mu0);
+    return UnitScalingSystem(temperature_K, epsRef_F_per_m, C0, L0, mu0, unitSystem);
 }
 
 UnitScalingSystem::AutoInputs UnitScalingSystem::autoInputsFrom(const DeviceMesh& mesh,

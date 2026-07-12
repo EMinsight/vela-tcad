@@ -89,9 +89,10 @@ bool withinContactRadius(const DeviceMesh& mesh,
 
 } // namespace
 
-TerminalCharge::TerminalCharge(const DeviceMesh& mesh, const DopingModel& doping)
+TerminalCharge::TerminalCharge(const DeviceMesh& mesh, const DopingModel& doping, PhysicalUnitSystem unitSystem)
     : mesh_(mesh)
     , doping_(doping)
+    , unitSystem_(unitSystem)
 {}
 
 TerminalChargeResult TerminalCharge::compute(const DDSolution& solution,
@@ -122,19 +123,19 @@ TerminalChargeResult TerminalCharge::compute(const DDSolution& solution,
         }
     }
 
-    Real chargePerMeter = 0.0;
+    Real chargePerInternalDepth = 0.0;
     for (const auto& [nodeId, volume] : selectedVolumes) {
         Real rho = 0.0;
         if (config.includeMobileCharge)
             rho += solution.p(static_cast<int>(nodeId)) - solution.n(static_cast<int>(nodeId));
         if (config.includeIonizedDopants)
             rho += doping_.netDoping(nodeId);
-        chargePerMeter += constants::q * rho * volume;
+        chargePerInternalDepth += constants::q * rho * volume * unitSystem_.chargeVolumeFactor();
     }
 
     TerminalChargeResult result;
     result.perMeter = config.perMeter;
-    result.charge = config.perMeter ? chargePerMeter : chargePerMeter * config.depth_m;
+    result.charge = config.perMeter ? chargePerInternalDepth : chargePerInternalDepth * config.depth_m;
     return result;
 }
 

@@ -51,6 +51,23 @@ Real sgElectronContinuityFluxFromQuasiFermi(Real ni0,
                                             Real coef);
 
 /**
+ * @brief Cancellation-robust balanced electron continuity flux.
+ *
+ * Numerically equivalent to sgElectronContinuityFluxFromQuasiFermi but factors
+ * out the larger carrier-density exponential, so the weighted subtraction stays
+ * at O(1) magnitude. This avoids catastrophic cancellation when (psi - phin)/Vt
+ * is large (heavy band bending) and the exp(psi/Vt) overflow of the separated
+ * factor form when |psi| is large. Both edge potentials are passed explicitly.
+ */
+Real sgElectronContinuityFluxFromQuasiFermiStable(Real ni0,
+                                                  Real psi0,
+                                                  Real psi1,
+                                                  Real phin0,
+                                                  Real phin1,
+                                                  Real Vt,
+                                                  Real coef);
+
+/**
  * @brief Balanced electron continuity flux with precomputed Boltzmann factors.
  *
  * Uses expPsi1 = exp(psi1/Vt) and expNegPhin0/1 = exp(-phin0/1 / Vt), allowing
@@ -63,6 +80,83 @@ Real sgElectronContinuityFluxFromQuasiFermiFactors(Real ni0,
                                                    Real dpsi,
                                                    Real Vt,
                                                    Real coef);
+
+/**
+ * @brief Balanced electron continuity flux for edge-varying intrinsic density.
+ *
+ * This generalizes the quasi-Fermi form to BGN/effective-ni edges. It cancels
+ * exactly for flat electron quasi-Fermi potential even when ni0 != ni1.
+ *
+ * When includeNiGradientDrift is false the intrinsic-density gradient term
+ * log(ni1/ni0) is dropped from the Scharfetter-Gummel argument, reducing the
+ * flux to the plain density-based form. This is appropriate when the per-node
+ * ni variation is a material discontinuity rather than a smooth bandgap-
+ * narrowing gradient.
+ */
+Real sgElectronContinuityFluxFromQuasiFermiVariableNi(Real ni0,
+                                                      Real ni1,
+                                                      Real psi0,
+                                                      Real psi1,
+                                                      Real phin0,
+                                                      Real phin1,
+                                                      Real Vt,
+                                                      Real coef,
+                                                      bool includeNiGradientDrift = true);
+
+/**
+ * @brief Read-only term decomposition of the production variable-ni electron SG flux.
+ *
+ * All values retain the caller's native solver units. The reconstructed flux
+ * mirrors the production endpoint exponent clamp [-500, 500] and its exact
+ * flat-quasi-Fermi short circuit; the production flux implementation itself is
+ * not replaced by the stable diagnostic value.
+ *
+ * cancellationCondition is (abs(leftTerm) + abs(rightTerm)) /
+ * abs(signedDifference). Exact cancellation with nonzero terms is represented
+ * by max<Real>, a finite saturation sentinel; two zero terms report 0.
+ */
+struct SgElectronVariableNiFluxDecomposition {
+    Real ni0 = 0.0;
+    Real ni1 = 0.0;
+    Real n0 = 0.0;
+    Real n1 = 0.0;
+    Real psi0 = 0.0;
+    Real psi1 = 0.0;
+    Real phin0 = 0.0;
+    Real phin1 = 0.0;
+    Real eta = 0.0;
+    Real bernoulliMinusEta = 0.0;
+    Real bernoulliEta = 0.0;
+    Real coef = 0.0;
+    Real leftTerm = 0.0;
+    Real rightTerm = 0.0;
+    Real signedDifference = 0.0;
+    Real reconstructedFlux = 0.0;
+    Real stableFactorizedFlux = 0.0;
+    Real highPrecisionReferenceFlux = 0.0;
+    Real highPrecisionReferenceTermScale = 0.0;
+
+    Real cancellationCondition = 0.0;
+    bool node0ExponentClampedLow = false;
+    bool node0ExponentClampedHigh = false;
+    bool node1ExponentClampedLow = false;
+    bool node1ExponentClampedHigh = false;
+    bool includeNiGradientDrift = true;
+    bool flatQuasiFermiShortCircuit = false;
+};
+
+SgElectronVariableNiFluxDecomposition
+sgElectronContinuityFluxFromQuasiFermiVariableNiDecomposition(
+    Real ni0,
+    Real ni1,
+    Real psi0,
+    Real psi1,
+    Real phin0,
+    Real phin1,
+    Real Vt,
+    Real coef,
+    bool includeNiGradientDrift = true);
+
 
 /**
  * @brief Balanced hole continuity flux for Boltzmann quasi-Fermi variables.
@@ -80,6 +174,20 @@ Real sgHoleContinuityFluxFromQuasiFermi(Real ni0,
                                         Real coef);
 
 /**
+ * @brief Cancellation-robust balanced hole continuity flux.
+ *
+ * See sgElectronContinuityFluxFromQuasiFermiStable for the numerical rationale.
+ * Both edge potentials are passed explicitly.
+ */
+Real sgHoleContinuityFluxFromQuasiFermiStable(Real ni0,
+                                              Real psi0,
+                                              Real psi1,
+                                              Real phip0,
+                                              Real phip1,
+                                              Real Vt,
+                                              Real coef);
+
+/**
  * @brief Balanced hole continuity flux with precomputed Boltzmann factors.
  *
  * Uses expNegPsi0 = exp(-psi0/Vt) and expPhip0/1 = exp(phip0/1 / Vt), allowing
@@ -92,6 +200,28 @@ Real sgHoleContinuityFluxFromQuasiFermiFactors(Real ni0,
                                                Real dpsi,
                                                Real Vt,
                                                Real coef);
+
+/**
+ * @brief Balanced hole continuity flux for edge-varying intrinsic density.
+ *
+ * This generalizes the quasi-Fermi form to BGN/effective-ni edges. It cancels
+ * exactly for flat hole quasi-Fermi potential even when ni0 != ni1.
+ *
+ * When includeNiGradientDrift is false the intrinsic-density gradient term
+ * log(ni0/ni1) is dropped from the Scharfetter-Gummel argument, reducing the
+ * flux to the plain density-based form. This is appropriate when the per-node
+ * ni variation is a material discontinuity rather than a smooth bandgap-
+ * narrowing gradient.
+ */
+Real sgHoleContinuityFluxFromQuasiFermiVariableNi(Real ni0,
+                                                  Real ni1,
+                                                  Real psi0,
+                                                  Real psi1,
+                                                  Real phip0,
+                                                  Real phip1,
+                                                  Real Vt,
+                                                  Real coef,
+                                                  bool includeNiGradientDrift = true);
 
 /**
  * @brief Scharfetter-Gummel edge fluxes for drift-diffusion.

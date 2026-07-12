@@ -118,8 +118,8 @@ DeviceMesh JsonMeshReader::read(const std::string& filename, UnitScalingConfig s
         for (const auto& jn : j.at("nodes")) {
             Node n;
             n.id = jn.at("id").get<Index>();
-            n.x  = scaling.lengthToSI(jn.at("x").get<Real>());
-            n.y  = scaling.lengthToSI(jn.at("y").get<Real>());
+            n.x  = scaling.lengthToInternal(jn.at("x").get<Real>());
+            n.y  = scaling.lengthToInternal(jn.at("y").get<Real>());
             mesh.addNode(n);
         }
 

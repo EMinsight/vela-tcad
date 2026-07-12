@@ -7,7 +7,12 @@
 #include "vela/post/ContactCurrent.h"
 #include "vela/post/TerminalCharge.h"
 #include "vela/post/StoredCharge.h"
+#include "vela/simulation/PseudoArclength.h"
+#include "vela/simulation/QfBoundsGuard.h"
 #include "vela/solver/GummelSolver.h"
+#include "vela/solver/NewtonSolver.h"
+#include <limits>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -22,11 +27,122 @@ struct BVReverseCriteria {
 
 struct ContactEdgeDiagnosticsConfig {
     bool enabled = false;
+    std::vector<std::string> contacts;
     std::string csvFile;
 };
 
+struct TerminalBalanceDiagnosticsConfig {
+    bool enabled = false;
+    std::vector<std::string> contacts;
+    std::string csvFile;
+};
+
+struct TransportDiagnosticsConfig {
+    bool enabled = false;
+};
+
+struct ContinuityBalanceDiagnosticsConfig {
+    bool enabled = false;
+    std::vector<std::string> contacts;
+    std::string csvFile;
+};
+
+struct SgAvalancheEdgeDiagnosticsConfig {
+    bool enabled = false;
+    std::string csvFile;
+};
+
+struct TriangleGssSourceDiagnosticsConfig {
+    bool enabled = false;
+    std::string csvFile;
+};
+
+struct AvalancheInternalSourceCurrentAuditConfig {
+    bool enabled = false;
+    std::string csvFile;
+    std::string summaryFile;
+};
+
+struct ReleaseBVConfigAuditConfig {
+    bool enabled = false;
+    std::string csvFile;
+    std::string summaryFile;
+    Real diagnosticReferenceAScale = 2.0;
+    Real diagnosticReferenceBScale = 1.05;
+    std::string diagnosticReferenceSourceMappingMode = "edge_F_edge_alpha_edge_G_to_node";
+    Real diagnosticReferenceQGFull_A_per_um = 0.0;
+    Real diagnosticReferenceQGJunction_A_per_um = 0.0;
+};
+
+struct TerminalCurrentMethodCompareDiagnosticsConfig {
+    bool enabled = false;
+    std::vector<std::string> contacts;
+    std::string csvFile;
+};
+
+struct NewtonHistoryDiagnosticsConfig {
+    bool enabled = false;
+    std::string csvFile;
+};
+
+struct ContactCurrentQfFloorDiagnosticsConfig {
+    bool enabled = false;
+    std::vector<std::string> contacts;
+};
+
 struct SweepDiagnosticsConfig {
+    TerminalBalanceDiagnosticsConfig terminalBalance;
     ContactEdgeDiagnosticsConfig contactEdge;
+    TransportDiagnosticsConfig transport;
+    ContinuityBalanceDiagnosticsConfig continuityBalance;
+    SgAvalancheEdgeDiagnosticsConfig sgAvalancheEdges;
+    TriangleGssSourceDiagnosticsConfig triangleGssSources;
+    AvalancheInternalSourceCurrentAuditConfig avalancheInternalSourceCurrentAudit;
+    ReleaseBVConfigAuditConfig releaseBVConfigAudit;
+    TerminalCurrentMethodCompareDiagnosticsConfig terminalCurrentMethodCompare;
+    NewtonHistoryDiagnosticsConfig newtonHistory;
+    QfBoundsDiagnosticsConfig qfBounds;
+    ContactCurrentQfFloorDiagnosticsConfig contactCurrentQfFloor;
+};
+
+struct SweepPredictorConfig {
+    std::string mode = "none";
+    std::vector<std::string> fields;
+    Real maxExtrapolationRatio = 2.0;
+};
+
+struct SweepBranchAcceptanceConfig {
+    bool terminalCurrentConsistency = false;
+    Real minTerminalCurrentRatio = 0.0;
+    bool psiPhinJump = false;
+    Real maxPsiPhinJump_V = 0.0;
+    bool carrierDensityJump = false;
+    Real maxElectronDensityJumpDex = 0.0;
+    Real maxElectronDensityJumpP95AbsDex =
+        std::numeric_limits<Real>::infinity();
+};
+
+struct SweepArclengthConfig {
+    bool enabled = false;
+    /// Arclength predictor type. Only "tangent" is currently supported.
+    std::string predictor = "tangent";
+    /// Numerical parameters forwarded to PseudoArclengthContinuation. The bias
+    /// voltage acts as the continuation parameter lambda.
+    PseudoArclengthConfig core;
+    /// Finite-difference step (in volts) used to estimate dF/dV at the active contact.
+    Real biasFiniteDifferenceStep_V = 1.0e-4;
+};
+
+struct SweepContinuationConfig {
+    SweepPredictorConfig predictor;
+    SweepBranchAcceptanceConfig branchAcceptance;
+    SweepArclengthConfig arclength;
+};
+
+struct SweepInitializationConfig {
+    std::string mode = "none";
+    std::string diagnosticCsv;
+    std::string writeStateFile;
 };
 
 struct DCSweepConfig {
@@ -35,6 +151,7 @@ struct DCSweepConfig {
     Real start = 0.0;
     Real stop = 0.0;
     Real step = 0.0;
+    std::vector<Real> biasPoints;
     Real minStep = 0.0;
     Real maxStep = 0.0;
     Real growthFactor = 1.0;
@@ -45,6 +162,10 @@ struct DCSweepConfig {
     bool writeVtk = false;
     std::string vtkPrefix;
     std::string csvFile = "dc_sweep.csv";
+    std::string initialStateFile;
+    std::string writeStateFile;
+    SweepInitializationConfig initialization;
+    std::string writeStateEveryPointPrefix;
     std::string chargeContact;
     std::vector<std::string> chargeRegions;
     Real chargeContactRadius = 0.0;
@@ -55,6 +176,7 @@ struct DCSweepConfig {
     StoredChargeConfig storedCharge;
     BVReverseCriteria breakdown;
     SweepDiagnosticsConfig diagnostics;
+    SweepContinuationConfig continuation;
     UnitScalingConfig scaling;
 };
 
@@ -74,6 +196,17 @@ struct DCSweepPoint {
     int gummelIterations = 0;
     int newtonIterations = 0;
     std::string handoffStage;
+    std::string newtonConvergenceReason;
+    int carrierRowViolations = 0;
+    Real carrierRowMaxRatio = 0.0;
+    bool carrierRowRecoveryAttempted = false;
+    int carrierRowRecoveryElectronRows = 0;
+    int carrierRowRecoveryHoleRows = 0;
+    int carrierRowRecoveryDensityPasses = 0;
+    int carrierRowRecoveryCycles = 0;
+    Real carrierRowRecoveryMaxDensityRelativeChange = 0.0;
+    Real carrierRowRecoveryMaxPsiDelta_V = 0.0;
+    Real carrierRowRecoveryMaxDensityRatio = 0.0;
     Real attemptedStep = 0.0;
     Real acceptedStep = 0.0;
     int retryCount = 0;
@@ -91,14 +224,52 @@ struct DCSweepPoint {
     Real lastStableBias = 0.0;
     Real failedBias = 0.0;
     std::string failureReason;
+    std::string newtonFailureClass;
+    std::string failureDiagnosticsJson;
+    NewtonFailureDiagnostics newtonFailureDiagnostics;
     std::string validationDiagnostics;
+    int qfBoundsViolations = 0;
+    bool qfBoundsRecovered = false;
+    std::string predictorMode;
+    bool predictedInitialState = false;
+    std::string branchAcceptanceStatus;
+    std::string branchAcceptanceReason;
+    Real terminalCurrentConsistencyRatio = 1.0;
+    Real psiPhinMaxJump_V = 0.0;
+    Real electronDensityJumpMedianDex = 0.0;
+    Real electronDensityJumpP95AbsDex = 0.0;
+    Real electronDensityJumpMaxAbsDex = 0.0;
+    Index electronDensityJumpMaxNode = -1;
     std::string outputCsv;
     std::string outputVtk;
+};
+
+struct ReleaseBVConfigAuditMetadata {
+    bool enabled = false;
+    std::string model;
+    std::string drivingForce;
+    std::string parameterSet;
+    Real aScale = 1.0;
+    Real bScale = 1.0;
+    Real switchField_V_per_cm = 0.0;
+    Real minimumField_V_per_cm = 0.0;
+    std::string smoothing;
+    Real electronRefDens_cm3 = 0.0;
+    Real holeRefDens_cm3 = 0.0;
+    std::string sourceMappingMode;
+    std::string currentMagnitudeMode;
+    std::string lambdaAva;
+    Real depth2D_um = 1.0;
+    std::string currentNormalization;
+    std::string qGNormalization;
+    std::string auditCsvFile;
+    std::string auditSummaryFile;
 };
 
 struct DCSweepResult {
     DeviceMesh mesh;
     std::vector<DCSweepPoint> points;
+    std::optional<ReleaseBVConfigAuditMetadata> releaseBVConfigAudit;
 };
 
 class DCSweep {

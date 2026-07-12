@@ -10,8 +10,10 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -23,7 +25,6 @@ UNSUPPORTED_PHYSICS = [
     "IALMob",
     "Trap",
     "Traps",
-    "Avalanche",
     "eTemperature",
     "hTemperature",
 ]
@@ -436,7 +437,6 @@ def unsupported_report(tokens: list[str]) -> list[dict[str, str]]:
         "IALMob": "IALMob surface-orientation mobility is not represented by the current mobility model.",
         "Trap": "Interface and bulk trap kinetics are imported as metadata only.",
         "Traps": "Interface and bulk trap kinetics are imported as metadata only.",
-        "Avalanche": "Avalanche generation is not calibrated to Sentaurus model semantics yet.",
         "eTemperature": "Carrier temperature transport is not supported in the Vela runner.",
         "hTemperature": "Carrier temperature transport is not supported in the Vela runner.",
     }
@@ -481,10 +481,14 @@ def apply_solver_physics(deck: dict[str, Any],
     solver = deck.setdefault("solver", {})
     warnings: list[str] = []
 
-    if "DopingDep" in models:
-        solver["mobility"] = {"model": "caughey_thomas"}
-    if {"Mobility", "HighFieldSaturation"} <= models:
-        solver["mobility"] = {"model": "caughey_thomas_field"}
+    has_doping_dependence = bool({"DopingDep", "DopingDependence"} & models)
+    if has_doping_dependence:
+        solver["mobility"] = {"model": "masetti"}
+    if has_doping_dependence and {"Mobility", "HighFieldSaturation"} <= models:
+        solver["mobility"] = {
+            "model": "masetti_field",
+            "high_field_driving_force": "quasi_fermi_gradient",
+        }
 
     recombination = []
     if "SRH" in models:
@@ -495,10 +499,18 @@ def apply_solver_physics(deck: dict[str, Any],
         solver["recombination"] = recombination
 
     if "OldSlotboom" in models:
-        solver["bandgap_narrowing"] = "slotboom"
+        solver["bandgap_narrowing"] = "old_slotboom"
 
     if "Avalanche" in models:
-        solver["impact_ionization"] = {"model": "selberherr"}
+        if "VanOverstraeten" in models:
+            solver["impact_ionization"] = {
+                "model": "van_overstraeten",
+                "driving_force": "quasi_fermi_gradient",
+                "generation": "current_density",
+                "current_approximation": "density_gradient",
+            }
+        else:
+            solver["impact_ionization"] = {"model": "selberherr"}
         if "OkutoCrowell" in models:
             warnings.append("OkutoCrowell approximated by Selberherr")
 
@@ -650,10 +662,21 @@ def build_runner_deck(summary: dict[str, Any], mesh_json: str, output_csv: str) 
     start = electrodes.get(str(final_sweep["contact"]), 0.0)
     intervals = final_sweep.get("current_plot", {}).get("intervals") if isinstance(final_sweep.get("current_plot"), dict) else None
     step = (final_stop - start) / float(intervals) if intervals else final_stop / 80.0 if final_stop != 0.0 else 1.0
+    step_control = final_sweep.get("step_control", {}) if isinstance(final_sweep.get("step_control"), dict) else {}
     contacts = [
         {"name": name, "bias": voltage}
         for name, voltage in electrodes.items()
     ]
+    sweep = {
+        "mode": "iv",
+        "contact": final_sweep["contact"],
+        "current_contact": final_sweep["contact"],
+        "start": start,
+        "stop": final_stop,
+        "step": step,
+        "write_vtk": False,
+    }
+    apply_step_control_to_vela_sweep(sweep, step_control)
     return {
         "simulation_type": "dc_sweep",
         "mesh_file": mesh_json,
@@ -666,15 +689,7 @@ def build_runner_deck(summary: dict[str, Any], mesh_json: str, output_csv: str) 
             "max_iter": 100,
             "reltol": 1.0e-5,
         },
-        "sweep": {
-            "mode": "iv",
-            "contact": final_sweep["contact"],
-            "current_contact": final_sweep["contact"],
-            "start": start,
-            "stop": final_stop,
-            "step": step,
-            "write_vtk": False,
-        },
+        "sweep": sweep,
         "sentaurus_import": {
             "unsupported_physics": summary.get("unsupported_physics", []),
             "unsupported_report": summary.get("unsupported_report", []),
@@ -826,12 +841,47 @@ def run_tdr_importer(tdr_importer: str | None,
     run_command(command, cwd=REPO)
 
 
+def deck_template_type(sim: dict[str, Any]) -> str:
+    return "bv" if str(sim.get("kind", "iv")).lower() == "bv" else "iv"
+
+
+def apply_step_control_to_vela_sweep(vela_sweep: dict[str, Any],
+                                     step_control: dict[str, Any]) -> None:
+    max_step = numeric_or_none(step_control.get("MaxStep"))
+    min_step = numeric_or_none(step_control.get("MinStep"))
+    increment = numeric_or_none(step_control.get("Increment"))
+    decrement = numeric_or_none(step_control.get("Decrement"))
+    if max_step is not None and max_step > 0.0:
+        vela_sweep["max_step"] = max_step
+    if min_step is not None and min_step > 0.0:
+        vela_sweep["min_step"] = min_step
+    if increment is not None and increment >= 1.0:
+        vela_sweep["growth_factor"] = increment
+    if decrement is not None and decrement > 1.0:
+        shrink_factor = 1.0 / decrement
+        vela_sweep["shrink_factor"] = shrink_factor
+        if (
+            max_step is not None and max_step > 0.0
+            and min_step is not None and min_step > 0.0
+            and min_step < max_step
+        ):
+            retries = int(math.ceil(math.log(min_step / max_step) / math.log(shrink_factor)))
+            vela_sweep["max_retries"] = max(int(vela_sweep.get("max_retries", 0)), retries)
+
+
+def signed_step_toward(start: float, stop: float, magnitude: float) -> float:
+    if magnitude == 0.0:
+        return 0.0
+    return math.copysign(abs(magnitude), stop - start if stop != start else magnitude)
+
+
 def patch_reference_deck(deck_path: Path,
                          cmd_summary: dict[str, Any],
                          sim: dict[str, Any],
                          output_csv: str,
                          solver_override: dict[str, Any] | None = None) -> list[str]:
     deck = read_json(deck_path)
+    kind = str(sim.get("kind", "iv")).lower()
     sweeps = cmd_summary.get("sweeps", [])
     sweep = sweeps[-1] if sweeps else {"contact": "Anode", "stop": 0.0, "step_control": {}}
     stop = numeric_or_none(sweep.get("stop")) or 0.0
@@ -842,19 +892,60 @@ def patch_reference_deck(deck_path: Path,
     deck.setdefault("contacts", [])
     for contact in deck["contacts"]:
         contact["bias"] = 0.0
+    contact_overrides = sim.get("vela_contact_overrides", [])
+    if isinstance(contact_overrides, list):
+        by_name = {
+            str(contact.get("name")): contact
+            for contact in deck["contacts"]
+            if isinstance(contact, dict) and "name" in contact
+        }
+        for override in contact_overrides:
+            if not isinstance(override, dict) or "name" not in override:
+                continue
+            target = by_name.get(str(override["name"]))
+            if target is None:
+                continue
+            for key, value in override.items():
+                if key != "name":
+                    target[key] = value
+    if sim.get("vela_node_doping_file") is False:
+        deck.pop("node_doping_file", None)
     deck.setdefault("sweep", {})
-    deck["sweep"]["mode"] = "bv_reverse" if sim.get("kind") == "bv" else "iv"
-    deck["sweep"]["contact"] = sweep.get("contact")
-    deck["sweep"]["current_contact"] = sim.get("vela_current_contact", sweep.get("contact"))
+    if kind in ("equilibrium", "0v"):
+        stop = 0.0
+        max_step = 0.0
+        deck["sweep"]["mode"] = "equilibrium"
+    else:
+        deck["sweep"]["mode"] = "bv_reverse" if kind == "bv" else "iv"
+    contact = sweep.get("contact") or sim.get("vela_current_contact", "Anode")
+    deck["sweep"]["contact"] = contact
+    deck["sweep"]["current_contact"] = sim.get("vela_current_contact", contact)
     deck["sweep"]["start"] = start
     deck["sweep"]["stop"] = stop
-    deck["sweep"]["step"] = max_step if max_step is not None and max_step > 0.0 else (stop - start) / 80.0
+    deck["sweep"]["step"] = (
+        signed_step_toward(start, stop, max_step)
+        if max_step is not None and max_step > 0.0
+        else (stop - start) / 80.0
+    )
+    apply_step_control_to_vela_sweep(deck["sweep"], step_control)
+    if kind in ("equilibrium", "0v"):
+        deck["sweep"]["step"] = 0.0
     if "vela_stop" in sim:
         deck["sweep"]["stop"] = float(sim["vela_stop"])
     if "vela_step" in sim:
         deck["sweep"]["step"] = float(sim["vela_step"])
     deck["sweep"]["write_vtk"] = False
-    if sim.get("kind") == "bv":
+    sweep_diagnostics = sim.get("vela_sweep_diagnostics")
+    if sweep_diagnostics is not None:
+        if not isinstance(sweep_diagnostics, dict):
+            raise ValueError("vela_sweep_diagnostics must be an object")
+        deck["sweep"]["diagnostics"] = json.loads(json.dumps(sweep_diagnostics))
+    sweep_initialization = sim.get("vela_sweep_initialization")
+    if sweep_initialization is not None:
+        if not isinstance(sweep_initialization, dict):
+            raise ValueError("vela_sweep_initialization must be an object")
+        deck["sweep"]["initialization"] = json.loads(json.dumps(sweep_initialization))
+    if kind == "bv":
         deck["sweep"].setdefault("breakdown", {
             "max_electric_field_V_per_m": 1.0e12,
             "current_jump_ratio": 1.0e12,
@@ -865,7 +956,7 @@ def patch_reference_deck(deck_path: Path,
         "source_simulation": sim,
     }
     solver_method = str(deck.get("solver", {}).get("method", "gummel")).lower()
-    if sim.get("kind") == "iv" and solver_method == "gummel":
+    if kind == "iv" and solver_method == "gummel":
         solver = deck.setdefault("solver", {})
         solver["max_iter"] = max(int(solver.get("max_iter", 0)), 150)
         solver["reltol"] = min(float(solver.get("reltol", 1.0e-6)), 1.0e-6)
@@ -1042,7 +1133,7 @@ def reference_command(args: argparse.Namespace) -> None:
             "--device",
             device,
             "--simulation-types",
-            ",".join("bv" if sim.get("kind") == "bv" else "iv" for sim in simulations),
+            ",".join(dict.fromkeys(deck_template_type(sim) for sim in simulations)),
         ],
         cwd=REPO,
     )
@@ -1053,9 +1144,9 @@ def reference_command(args: argparse.Namespace) -> None:
         sim_name = str(sim["name"])
         kind = str(sim.get("kind", "iv"))
         deck_path = vela_dir / f"simulation_{sim_name}.json"
-        generated_deck = vela_dir / ("simulation_bv.json" if kind == "bv" else "simulation_iv.json")
+        generated_deck = vela_dir / f"simulation_{deck_template_type(sim)}.json"
         if generated_deck != deck_path:
-            generated_deck.replace(deck_path)
+            shutil.copyfile(generated_deck, deck_path)
         cmd_summary = read_json(output_dir / "cmd" / f"{sim_name}_summary.json")
         candidate_csv = f"{case_name}_{sim_name}.csv"
         solver_override: dict[str, Any] = {}
@@ -1113,10 +1204,16 @@ def reference_command(args: argparse.Namespace) -> None:
             ]
             if "candidate_scale" in comparison:
                 compare_command.extend(["--candidate-scale", str(comparison["candidate_scale"])])
+            if "candidate_bias_scale" in comparison:
+                compare_command.extend(["--candidate-bias-scale", str(comparison["candidate_bias_scale"])])
+            if "candidate_bias_offset" in comparison:
+                compare_command.extend(["--candidate-bias-offset", str(comparison["candidate_bias_offset"])])
             if "reference_column" in comparison:
                 compare_command.extend(["--reference-column", str(comparison["reference_column"])])
             if "candidate_column" in comparison:
                 compare_command.extend(["--candidate-column", str(comparison["candidate_column"])])
+            if "interpolation" in comparison:
+                compare_command.extend(["--interpolation", str(comparison["interpolation"])])
             if "bias_min" in comparison:
                 compare_command.extend(["--bias-min", str(comparison["bias_min"])])
             if "bias_max" in comparison:

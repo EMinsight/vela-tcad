@@ -53,8 +53,9 @@ std::unordered_map<Index, Real> selectedNodeVolumes(
 }
 } // namespace
 
-StoredCharge::StoredCharge(const DeviceMesh& mesh)
-    : mesh_(mesh)
+StoredCharge::StoredCharge(const DeviceMesh& mesh, PhysicalUnitSystem unitSystem)
+    : mesh_(mesh),
+      unitSystem_(unitSystem)
 {}
 
 StoredChargeResult StoredCharge::compute(const DDSolution& solution,
@@ -69,15 +70,17 @@ StoredChargeResult StoredCharge::compute(const DDSolution& solution,
 
     const std::unordered_map<Index, Real> selectedVolumes = selectedNodeVolumes(mesh_, config.regions);
 
-    Real chargePerMeter = 0.0;
+    Real chargePerInternalDepth = 0.0;
     for (const auto& [nodeId, volume] : selectedVolumes) {
         const Real mobileSum = solution.n(static_cast<int>(nodeId)) + solution.p(static_cast<int>(nodeId));
-        chargePerMeter += constants::q * mobileSum * volume;
+        chargePerInternalDepth += constants::q * mobileSum * volume * unitSystem_.chargeVolumeFactor();
     }
 
     StoredChargeResult result;
     result.perMeter = config.perMeter;
-    result.charge = config.perMeter ? chargePerMeter : chargePerMeter * config.depth_m;
+    result.charge = config.perMeter
+        ? chargePerInternalDepth
+        : chargePerInternalDepth * config.depth_m;
     return result;
 }
 

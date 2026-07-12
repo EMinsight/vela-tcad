@@ -1,0 +1,305 @@
+{
+  "case": "pn2d_sentaurus2018",
+  "device": "pn_diode",
+  "mesh_tdr": "pn2d_msh.tdr",
+  "sde_cmd": "pn2d_sde.cmd",
+  "tdr_doping": {
+    "compensated_node_policy": "reported"
+  },
+  "vela_solver": {
+    "method": "gummel_newton",
+    "max_iter": 40,
+    "reltol": 1.0e-8,
+    "abstol": 1.0e-18,
+    "damping_psi": 0.2,
+    "damping_factor": 1.0,
+    "max_update": 5.0,
+    "line_search": true,
+    "warm_start": true,
+    "contact_boundary_reconstruction": "dominant_signed_contact_mean",
+    "verbose": false,
+    "handoff": {
+      "fallback": "none",
+      "require_gummel_convergence": false,
+      "gummel_max_iter": 0,
+      "newton_max_iter": 40
+    }
+  },
+  "tdx_comparison": {
+    "mesh": "pn2d_msh.grd",
+    "doping": "pn2d_msh.dat",
+    "state_0v": "pn2d_0v_des.dat",
+    "state_fields": [
+      "ElectrostaticPotential",
+      "eDensity",
+      "hDensity",
+      "eQuasiFermiPotential",
+      "hQuasiFermiPotential",
+      "ElectricField",
+      "SRHRecombination",
+      "srhRecombination"
+    ],
+    "bv_fields": [
+      "ImpactIonization"
+    ]
+  },
+  "simulations": [
+    {
+      "name": "0v",
+      "kind": "equilibrium",
+      "tdr": "pn2d_0v_des.tdr",
+      "cmd": "pn2d_0v_sdevice.cmd",
+      "plt": "pn2d_0v.plt",
+      "bias_column": "Anode OuterVoltage",
+      "current_column": "Anode TotalCurrent",
+      "vela_current_contact": "Anode",
+      "vela_materials_file": "pn2d_sentaurus2018_iv_materials.json",
+      "vela_solver": {
+        "max_iter": 80,
+        "reltol": 1.0e-10,
+        "abstol": 1.0e-24,
+        "max_update": 2.0,
+        "handoff": {
+          "fallback": "none",
+          "require_gummel_convergence": false,
+          "gummel_max_iter": 0,
+          "newton_max_iter": 80
+        }
+      },
+      "execute": false,
+      "comparison": {
+        "reference_column": "current_total",
+        "min_points": 2,
+        "bias_min": 0.0,
+        "bias_max": 0.0,
+        "max_abs_current": 1.0e-20,
+        "require_trend_match": false
+      }
+    },
+    {
+      "name": "iv",
+      "kind": "iv",
+      "tdr": "pn2d_iv_des.tdr",
+      "cmd": "pn2d_iv_sdevice.cmd",
+      "plt": "pn2d_iv.plt",
+      "bias_column": "Anode OuterVoltage",
+      "current_column": "Anode TotalCurrent",
+      "vela_current_contact": "Cathode",
+      "vela_stop": 0.3,
+      "vela_step": 0.02,
+      "comparison_min_points": 10,
+      "require_trend_match": false,
+      "vela_materials_file": "pn2d_sentaurus2018_iv_materials.json",
+      "vela_solver": {
+        "contact_boundary_minority_electron_relaxation": false,
+        "taun": 1.0e-5,
+        "taup": 3.0e-6,
+        "mobility": {
+          "model": "masetti"
+        }
+      },
+      "comparison": {
+        "candidate_scale": -1.0,
+        "candidate_column": "current_total_A_per_um",
+        "interpolation": "log_current",
+        "bias_min": 0.2,
+        "bias_max": 0.3,
+        "max_orders_of_magnitude": 0.4,
+        "require_trend_match": true,
+        "min_points": 2
+      },
+      "runtime_diagnostic": {
+        "enabled": false,
+        "doping_scale": 0.0001,
+        "step": 0.1
+      }
+    },
+    {
+      "name": "iv_low_bias_debug",
+      "kind": "iv",
+      "tdr": "pn2d_iv_des.tdr",
+      "cmd": "pn2d_iv_sdevice.cmd",
+      "plt": "pn2d_iv.plt",
+      "bias_column": "Anode OuterVoltage",
+      "current_column": "Anode TotalCurrent",
+      "vela_current_contact": "Cathode",
+      "vela_stop": 0.3,
+      "vela_step": 0.01,
+      "execute": false,
+      "vela_materials_file": "pn2d_sentaurus2018_iv_materials.json",
+      "vela_solver": {
+        "contact_boundary_minority_electron_relaxation": false,
+        "taun": 1.0e-5,
+        "taup": 3.0e-6,
+        "mobility": {
+          "model": "masetti"
+        }
+      },
+      "vela_sweep_diagnostics": {
+        "terminal_balance": {
+          "enabled": true,
+          "contacts": [
+            "Anode",
+            "Cathode"
+          ]
+        },
+        "contact_edge": {
+          "enabled": true,
+          "contacts": [
+            "Anode",
+            "Cathode"
+          ]
+        },
+        "newton_history": {
+          "enabled": true
+        },
+        "terminal_current_method_compare": {
+          "enabled": true,
+          "contacts": [
+            "Anode",
+            "Cathode"
+          ]
+        }
+      },
+      "comparison": {
+        "candidate_scale": -1.0,
+        "candidate_column": "current_total_A_per_um",
+        "interpolation": "log_current",
+        "bias_min": 0.2,
+        "bias_max": 0.3,
+        "max_orders_of_magnitude": 0.4,
+        "require_trend_match": true,
+        "min_points": 2
+      }
+    },
+    {
+      "name": "iv_full_sentaurus_range",
+      "kind": "iv",
+      "tdr": "pn2d_iv_des.tdr",
+      "cmd": "pn2d_iv_sdevice.cmd",
+      "plt": "pn2d_iv.plt",
+      "bias_column": "Anode OuterVoltage",
+      "current_column": "Anode TotalCurrent",
+      "vela_current_contact": "Cathode",
+      "vela_stop": 10.0,
+      "vela_step": 0.05,
+      "execute": false,
+      "vela_materials_file": "pn2d_sentaurus2018_iv_materials.json",
+      "vela_solver": {
+        "contact_boundary_minority_electron_relaxation": false,
+        "taun": 1.0e-5,
+        "taup": 3.0e-6,
+        "mobility": {
+          "model": "masetti"
+        }
+      },
+      "vela_sweep_diagnostics": {
+        "terminal_balance": {
+          "enabled": true,
+          "contacts": [
+            "Anode",
+            "Cathode"
+          ]
+        },
+        "contact_edge": {
+          "enabled": true,
+          "contacts": [
+            "Anode",
+            "Cathode"
+          ]
+        },
+        "newton_history": {
+          "enabled": true
+        },
+        "terminal_current_method_compare": {
+          "enabled": true,
+          "contacts": [
+            "Anode",
+            "Cathode"
+          ]
+        }
+      },
+      "comparison": {
+        "candidate_scale": -1.0,
+        "candidate_column": "current_total_A_per_um",
+        "interpolation": "log_current",
+        "bias_min": 0.0,
+        "bias_max": 10.0,
+        "max_orders_of_magnitude": 0.3,
+        "require_trend_match": true,
+        "min_points": 180
+      }
+    },
+    {
+      "name": "bv",
+      "kind": "bv",
+      "tdr": "pn2d_bv_des.tdr",
+      "cmd": "pn2d_bv_sdevice.cmd",
+      "plt": "pn2d_bv.plt",
+      "bias_column": "Anode OuterVoltage",
+      "current_column": "Anode TotalCurrent",
+      "vela_current_contact": "Anode",
+      "vela_stop": -0.05,
+      "vela_step": -0.05,
+      "vela_materials_file": "pn2d_sentaurus2018_iv_materials.json",
+      "vela_sweep_initialization": {
+        "mode": "poisson_block",
+        "diagnostic_csv": "poisson_block_initialization.csv",
+        "write_state_file": "poisson_block_initial_state.csv"
+      },
+      "comparison_kind": "iv",
+      "vela_solver": {
+        "abstol": 1.0e-9,
+        "contact_boundary_minority_electron_relaxation": false,
+        "mobility": {
+          "model": "masetti_field",
+          "high_field_driving_force": "quasi_fermi_gradient",
+          "jacobian_field_derivatives": false
+        },
+        "bandgap_narrowing": "old_slotboom",
+        "recombination": [
+          "srh"
+        ],
+        "impact_ionization": {
+          "model": "van_overstraeten",
+          "driving_force": "quasi_fermi_gradient",
+          "generation": "current_density",
+          "current_approximation": "density_gradient"
+        },
+        "max_update": 0.0,
+        "quasi_fermi_update_limit_V": 0.1
+      },
+      "require_trend_match": false,
+      "comparison": {
+        "candidate_scale": -1.0,
+        "candidate_column": "current_total_A_per_um",
+        "bias_min": -0.05,
+        "bias_max": -0.01,
+        "max_orders_of_magnitude": 2.0,
+        "require_trend_match": false,
+        "min_points": 1
+      },
+      "low_bias_three_point_probe": {
+        "enabled": false,
+        "bias_points": [
+          -0.1,
+          -0.2,
+          -0.3
+        ],
+        "edge_source_partition": "symmetric"
+      },
+      "runtime_diagnostic": {
+        "enabled": false,
+        "doping_scale": 0.0001,
+        "step": 0.05,
+        "bias_points": [
+          -0.5,
+          -2.0,
+          -5.0,
+          -10.0,
+          -20.0
+        ]
+      }
+    }
+  ]
+}

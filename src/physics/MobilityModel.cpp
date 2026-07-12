@@ -17,11 +17,56 @@ void parseCaugheyThomas(const nlohmann::json& json,
 {
     const std::string muMinKey = std::string(prefix) + "_mu_min_m2_V_s";
     if (json.contains(muMinKey))
-        params.muMin = scaling.mobilityToSI(json.at(muMinKey).get<Real>());
+        params.muMin = scaling.mobilityToInternal(json.at(muMinKey).get<Real>());
     const std::string nRefKey = std::string(prefix) + "_nref_m3";
     if (json.contains(nRefKey))
-        params.nRef = scaling.concentrationToSI(json.at(nRefKey).get<Real>());
+        params.nRef = scaling.concentrationToInternal(json.at(nRefKey).get<Real>());
     params.alpha = json.value((std::string(prefix) + "_alpha").c_str(), params.alpha);
+}
+
+void parseMasetti(const nlohmann::json& json,
+                  MasettiParameters& params,
+                  const char* prefix,
+                  UnitScalingConfig scaling)
+{
+    const std::string base = std::string(prefix) + "_";
+    const std::pair<const char*, Real*> mobilityFields[] = {
+        {"mu_const_m2_V_s", &params.muConst},
+        {"mumin1_m2_V_s", &params.muMin1},
+        {"mumin2_m2_V_s", &params.muMin2},
+        {"mu1_m2_V_s", &params.mu1},
+    };
+    for (const auto& [name, target] : mobilityFields) {
+        const std::string key = base + name;
+        if (json.contains(key))
+            *target = scaling.mobilityToInternal(json.at(key).get<Real>());
+    }
+
+    const std::pair<const char*, Real*> concentrationFields[] = {
+        {"pc_m3", &params.pc},
+        {"cr_m3", &params.cr},
+        {"cs_m3", &params.cs},
+    };
+    for (const auto& [name, target] : concentrationFields) {
+        const std::string key = base + name;
+        if (json.contains(key))
+            *target = scaling.concentrationToInternal(json.at(key).get<Real>());
+    }
+
+    params.alpha = json.value((base + "masetti_alpha").c_str(), params.alpha);
+    params.beta = json.value((base + "masetti_beta").c_str(), params.beta);
+}
+
+bool isMasettiModel(const std::string& model)
+{
+    return model == "masetti" || model == "masetti_field";
+}
+
+bool isFieldMobilityModel(const std::string& model)
+{
+    return model == "caughey_thomas_field" ||
+           model == "caughey_thomas_field_surface" ||
+           model == "masetti_field";
 }
 
 void parseField(const nlohmann::json& json,
@@ -32,6 +77,46 @@ void parseField(const nlohmann::json& json,
         (std::string(prefix) + "_saturation_velocity_m_s").c_str(),
         params.saturationVelocity);
     params.beta = json.value((std::string(prefix) + "_field_beta").c_str(), params.beta);
+}
+
+void validateHighFieldDrivingForce(const std::string& value)
+{
+    if (value != "electric_field" && value != "quasi_fermi_gradient")
+        throw std::invalid_argument(
+            "mobility.high_field_driving_force must be 'electric_field' or "
+            "'quasi_fermi_gradient'.");
+}
+void convertMobilityDefaultsToInternal(MobilityModelConfig& config,
+                                       UnitScalingConfig scaling)
+{
+    if (!scaling.isUnitScaling())
+        return;
+
+    const PhysicalUnitSystem& units = scaling.unitSystem();
+    auto convertCT = [&](CaugheyThomasParameters& params) {
+        params.muMin = units.m2PerVSToInternalMobility(params.muMin);
+        params.nRef = units.m3ToInternalConcentration(params.nRef);
+    };
+    auto convertMasetti = [&](MasettiParameters& params) {
+        params.muConst = units.m2PerVSToInternalMobility(params.muConst);
+        params.muMin1 = units.m2PerVSToInternalMobility(params.muMin1);
+        params.muMin2 = units.m2PerVSToInternalMobility(params.muMin2);
+        params.mu1 = units.m2PerVSToInternalMobility(params.mu1);
+        params.pc = units.m3ToInternalConcentration(params.pc);
+        params.cr = units.m3ToInternalConcentration(params.cr);
+        params.cs = units.m3ToInternalConcentration(params.cs);
+    };
+
+    convertCT(config.electronCT);
+    convertCT(config.holeCT);
+    convertMasetti(config.electronMasetti);
+    convertMasetti(config.holeMasetti);
+    config.surface.thetaElectron =
+        units.mPerVToInternalSurfaceFieldCoefficient(config.surface.thetaElectron);
+    config.surface.thetaHole =
+        units.mPerVToInternalSurfaceFieldCoefficient(config.surface.thetaHole);
+    config.surface.referenceField =
+        units.vPerMToInternalElectricField(config.surface.referenceField);
 }
 
 } // namespace
@@ -67,9 +152,10 @@ Real DopingDependentMobility::electronMobility(const Material& material,
                                                Real electricField,
                                                Real surfaceNormalField) const
 {
-    Real mobility = caugheyThomas(material.mun, netDoping, config_.electronCT);
-    if (config_.model == "caughey_thomas_field" ||
-        config_.model == "caughey_thomas_field_surface")
+    Real mobility = isMasettiModel(config_.model)
+        ? masetti(netDoping, config_.electronMasetti)
+        : caugheyThomas(material.mun, netDoping, config_.electronCT);
+    if (isFieldMobilityModel(config_.model))
         mobility = fieldLimit(mobility, electricField, config_.electronField);
     if (isSurfaceMobilityModel(config_))
         mobility = surfaceLimit(
@@ -84,9 +170,10 @@ Real DopingDependentMobility::holeMobility(const Material& material,
                                            Real electricField,
                                            Real surfaceNormalField) const
 {
-    Real mobility = caugheyThomas(material.mup, netDoping, config_.holeCT);
-    if (config_.model == "caughey_thomas_field" ||
-        config_.model == "caughey_thomas_field_surface")
+    Real mobility = isMasettiModel(config_.model)
+        ? masetti(netDoping, config_.holeMasetti)
+        : caugheyThomas(material.mup, netDoping, config_.holeCT);
+    if (isFieldMobilityModel(config_.model))
         mobility = fieldLimit(mobility, electricField, config_.holeField);
     if (isSurfaceMobilityModel(config_))
         mobility = surfaceLimit(
@@ -109,6 +196,30 @@ Real DopingDependentMobility::caugheyThomas(
     const Real normalizedDoping = std::abs(netDoping) / params.nRef;
     const Real rolloff = std::pow(normalizedDoping, params.alpha);
     return muMin + (muMax - muMin) / (1.0 + rolloff);
+}
+
+Real DopingDependentMobility::masetti(Real netDoping,
+                                      const MasettiParameters& params)
+{
+    if (params.muConst <= 0.0)
+        return 0.0;
+    if (params.cr <= 0.0 || params.cs <= 0.0 || params.alpha <= 0.0 ||
+        params.beta <= 0.0)
+        throw std::invalid_argument(
+            "DopingDependentMobility: Masetti cr, cs, alpha, and beta must be positive.");
+
+    const Real doping = std::abs(netDoping);
+    if (doping <= 0.0)
+        return params.muConst;
+
+    const Real exponential =
+        params.muMin1 * std::exp(-std::max<Real>(0.0, params.pc) / doping);
+    const Real rolloff = (params.muConst - params.muMin2) /
+        (1.0 + std::pow(doping / params.cr, params.alpha));
+    const Real highDopingCorrection = params.mu1 /
+        (1.0 + std::pow(params.cs / doping, params.beta));
+    const Real mobility = exponential + rolloff - highDopingCorrection;
+    return std::max<Real>(0.0, mobility);
 }
 
 Real DopingDependentMobility::fieldLimit(Real lowFieldMobility,
@@ -157,6 +268,7 @@ MobilityModelConfig mobilityModelConfig(std::string modelName)
 {
     MobilityModelConfig config;
     config.model = std::move(modelName);
+    validateHighFieldDrivingForce(config.highFieldDrivingForce);
     return config;
 }
 
@@ -166,16 +278,29 @@ MobilityModelConfig mobilityModelConfigFromJson(
 {
     if (value.is_null())
         return {};
-    if (value.is_string())
-        return mobilityModelConfig(value.get<std::string>());
+    if (value.is_string()) {
+        MobilityModelConfig config;
+        convertMobilityDefaultsToInternal(config, scaling);
+        config.model = value.get<std::string>();
+        validateHighFieldDrivingForce(config.highFieldDrivingForce);
+        return config;
+    }
     if (!value.is_object())
         throw std::invalid_argument("mobility config must be a string or object.");
 
     MobilityModelConfig config;
+    convertMobilityDefaultsToInternal(config, scaling);
     config.model = value.value("model", config.model);
+    config.highFieldDrivingForce = value.value(
+        "high_field_driving_force", config.highFieldDrivingForce);
+    config.jacobianFieldDerivatives = value.value(
+        "jacobian_field_derivatives", config.jacobianFieldDerivatives);
+    validateHighFieldDrivingForce(config.highFieldDrivingForce);
 
     parseCaugheyThomas(value, config.electronCT, "electron", scaling);
     parseCaugheyThomas(value, config.holeCT, "hole", scaling);
+    parseMasetti(value, config.electronMasetti, "electron", scaling);
+    parseMasetti(value, config.holeMasetti, "hole", scaling);
     parseField(value, config.electronField, "electron");
     parseField(value, config.holeField, "hole");
 
@@ -184,16 +309,16 @@ MobilityModelConfig mobilityModelConfigFromJson(
         if (!surface.is_object())
             throw std::invalid_argument("mobility.surface must be an object.");
         if (surface.contains("theta_electron_m_per_V")) {
-            config.surface.thetaElectron = scaling.surfaceFieldCoefficientToSI(
+            config.surface.thetaElectron = scaling.surfaceFieldCoefficientToInternal(
                 surface.at("theta_electron_m_per_V").get<Real>());
         }
         if (surface.contains("theta_hole_m_per_V")) {
-            config.surface.thetaHole = scaling.surfaceFieldCoefficientToSI(
+            config.surface.thetaHole = scaling.surfaceFieldCoefficientToInternal(
                 surface.at("theta_hole_m_per_V").get<Real>());
         }
         config.surface.beta = surface.value("beta", config.surface.beta);
         if (surface.contains("reference_field_V_per_m")) {
-            config.surface.referenceField = scaling.electricFieldToSI(
+            config.surface.referenceField = scaling.electricFieldToInternal(
                 surface.at("reference_field_V_per_m").get<Real>());
         }
         config.surface.minFactor = surface.value("min_factor", config.surface.minFactor);
@@ -250,6 +375,7 @@ std::unique_ptr<MobilityModel> makeMobilityModel(const MobilityModelConfig& conf
         return std::make_unique<ConstantMobility>();
     if (config.model == "caughey_thomas" ||
         config.model == "caughey_thomas_field" ||
+        isMasettiModel(config.model) ||
         isSurfaceMobilityModel(config))
         return std::make_unique<DopingDependentMobility>(config);
 

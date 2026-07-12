@@ -34,15 +34,15 @@ Material materialFromJson(const nlohmann::json& j,
     Material mat = base != nullptr ? *base : Material{};
     mat.name = j.at("name").get<std::string>();
     if (j.contains("eps_r")) mat.eps_r = j.at("eps_r").get<Real>();
-    if (j.contains("ni")) mat.ni = scaling.concentrationToSI(j.at("ni").get<Real>());
-    if (j.contains("mun")) mat.mun = scaling.mobilityToSI(j.at("mun").get<Real>());
-    if (j.contains("mup")) mat.mup = scaling.mobilityToSI(j.at("mup").get<Real>());
+    if (j.contains("ni")) mat.ni = scaling.concentrationToInternal(j.at("ni").get<Real>());
+    if (j.contains("mun")) mat.mun = scaling.mobilityToInternal(j.at("mun").get<Real>());
+    if (j.contains("mup")) mat.mup = scaling.mobilityToInternal(j.at("mup").get<Real>());
     setOptionalReal(j, "bandgap_eV", mat.bandgap_eV);
     setOptionalReal(j, "electron_affinity_eV", mat.electron_affinity_eV);
     setOptionalScaledReal(
-        j, "Nc_m3", mat.Nc_m3, &UnitScalingConfig::concentrationToSI, scaling);
+        j, "Nc_m3", mat.Nc_m3, &UnitScalingConfig::concentrationToInternal, scaling);
     setOptionalScaledReal(
-        j, "Nv_m3", mat.Nv_m3, &UnitScalingConfig::concentrationToSI, scaling);
+        j, "Nv_m3", mat.Nv_m3, &UnitScalingConfig::concentrationToInternal, scaling);
     setOptionalReal(j, "temperature_K", mat.temperature_K);
     return mat;
 }
@@ -102,6 +102,23 @@ MaterialDatabase::MaterialDatabase()
     sio2.temperature_K = 300.0;
     db_["SiO2"] = sio2;
 }
+MaterialDatabase::MaterialDatabase(UnitScalingConfig scaling)
+    : MaterialDatabase()
+{
+    if (!scaling.isUnitScaling())
+        return;
+
+    const PhysicalUnitSystem& units = scaling.unitSystem();
+    for (auto& [_, mat] : db_) {
+        mat.ni = units.m3ToInternalConcentration(mat.ni);
+        mat.mun = units.m2PerVSToInternalMobility(mat.mun);
+        mat.mup = units.m2PerVSToInternalMobility(mat.mup);
+        if (mat.Nc_m3)
+            mat.Nc_m3 = units.m3ToInternalConcentration(*mat.Nc_m3);
+        if (mat.Nv_m3)
+            mat.Nv_m3 = units.m3ToInternalConcentration(*mat.Nv_m3);
+    }
+}
 
 MaterialDatabase::MaterialDatabase(const std::string& jsonPath)
     : MaterialDatabase()
@@ -110,7 +127,7 @@ MaterialDatabase::MaterialDatabase(const std::string& jsonPath)
 }
 
 MaterialDatabase::MaterialDatabase(const std::string& jsonPath, UnitScalingConfig scaling)
-    : MaterialDatabase()
+    : MaterialDatabase(scaling)
 {
     loadJson(jsonPath, scaling);
 }

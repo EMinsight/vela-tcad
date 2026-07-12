@@ -1,21 +1,61 @@
 #include "vela/solver/NewtonSolver.h"
 #include "vela/core/PhysicalConstants.h"
 #include "vela/core/UnitScalingSystem.h"
+#include "vela/equation/AssemblerUtils.h"
 #include "vela/numerics/ResidualNorm.h"
 #include "vela/physics/CarrierStatistics.h"
 #include "vela/solver/LinearSolver.h"
 #include <nlohmann/json.hpp>
+#include <Eigen/SparseLU>
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <limits>
+#include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace vela {
 namespace {
+
+void parseImpactIonizationDrivingForceInterpolation(
+    const nlohmann::json& value,
+    const UnitScalingConfig& scaling,
+    ImpactIonizationModelConfig& config,
+    const char* context)
+{
+    if (!value.contains("driving_force_interpolation"))
+        return;
+
+    const auto& interpolation = value.at("driving_force_interpolation");
+    if (interpolation.is_string()) {
+        config.drivingForceInterpolation = interpolation.get<std::string>();
+        return;
+    }
+    if (!interpolation.is_object()) {
+        throw std::invalid_argument(
+            std::string(context) +
+            ": impact_ionization.driving_force_interpolation must be a string or object.");
+    }
+
+    config.drivingForceInterpolation = interpolation.value(
+        "mode", config.drivingForceInterpolation);
+    if (interpolation.contains("electron_ref_density_m3")) {
+        config.electronDrivingForceRefDensity = scaling.concentrationToInternal(
+            interpolation.at("electron_ref_density_m3").get<Real>());
+    }
+    if (interpolation.contains("hole_ref_density_m3")) {
+        config.holeDrivingForceRefDensity = scaling.concentrationToInternal(
+            interpolation.at("hole_ref_density_m3").get<Real>());
+    }
+}
 
 std::string normalizeToken(std::string value)
 {
@@ -153,6 +193,412 @@ ResidualBlockNormValue residualScalesFromConfig(
     return scales;
 }
 
+NewtonBlockResidualInfo blockResidualInfo(const VectorXd& residual, Index nodeCount)
+{
+    const ResidualBlockNormValue blocks = ResidualNorm::computeBlocks(residual, nodeCount);
+    return {blocks.psi, blocks.phin, blocks.phip, blocks.combined};
+}
+
+bool isPoissonLineSearchStall(const LineSearchResult& lineSearch,
+                              const NewtonBlockResidualInfo& blocks,
+                              Real stalledNorm,
+                              Real maxContactMajorityQfDrop,
+                              const NewtonConfig& cfg)
+{
+    if (lineSearch.failureReason != "line_search_non_decrease" ||
+        !lineSearch.bestRejectedCandidate ||
+        !std::isfinite(stalledNorm) ||
+        !std::isfinite(lineSearch.bestRejectedResidualNorm) ||
+        stalledNorm > cfg.poissonLineSearchStallResidualFloor) {
+        return false;
+    }
+
+    const Real allowedResidual = cfg.poissonLineSearchStallResidualFloor *
+        (1.0 + cfg.poissonLineSearchStallRelativeIncrease);
+    if (lineSearch.bestRejectedResidualNorm > allowedResidual)
+        return false;
+
+    if (!std::isfinite(blocks.psi) || !std::isfinite(blocks.phin) ||
+        !std::isfinite(blocks.phip) || !std::isfinite(blocks.combined)) {
+        return false;
+    }
+    if (blocks.psi > cfg.poissonLineSearchStallResidualFloor)
+        return false;
+    if (blocks.phin > cfg.poissonLineSearchStallCarrierResidualFloor ||
+        blocks.phip > cfg.poissonLineSearchStallCarrierResidualFloor) {
+        return false;
+    }
+    if (cfg.poissonLineSearchStallContactMajorityQfDropLimit_V > 0.0 &&
+        (!std::isfinite(maxContactMajorityQfDrop) ||
+         maxContactMajorityQfDrop > cfg.poissonLineSearchStallContactMajorityQfDropLimit_V)) {
+        return false;
+    }
+
+    return blocks.combined <= 0.0 || blocks.psi >= 0.5 * blocks.combined;
+}
+
+std::vector<int> jacobianAuditRows(const std::string& block,
+                                   int nodeCount,
+                                   const CoupledDDBoundaryConditions& bcs = {})
+{
+    std::vector<int> rows;
+    if (block == "poisson") {
+        for (int i = 0; i < nodeCount; ++i)
+            rows.push_back(i);
+    } else if (block == "transport" ||
+               block == "srh_auger" ||
+               block == "sg_avalanche") {
+        for (int i = nodeCount; i < 3 * nodeCount; ++i)
+            rows.push_back(i);
+    } else if (block == "dirichlet_or_gauge") {
+        for (const auto& [node, value] : bcs.psi) {
+            (void)value;
+            if (node < static_cast<Index>(nodeCount))
+                rows.push_back(static_cast<int>(node));
+        }
+        for (const auto& [node, value] : bcs.phin) {
+            (void)value;
+            if (node < static_cast<Index>(nodeCount))
+                rows.push_back(nodeCount + static_cast<int>(node));
+        }
+        for (const auto& [node, value] : bcs.phip) {
+            (void)value;
+            if (node < static_cast<Index>(nodeCount))
+                rows.push_back(2 * nodeCount + static_cast<int>(node));
+        }
+    }
+    return rows;
+}
+
+Real restrictedSparseNorm(const SparseMatrixd& matrix,
+                          const std::vector<int>& rows)
+{
+    std::vector<char> rowMask(static_cast<std::size_t>(matrix.rows()), 0);
+    for (int row : rows) {
+        if (row >= 0 && row < matrix.rows())
+            rowMask[static_cast<std::size_t>(row)] = 1;
+    }
+
+    Real sum = 0.0;
+    for (int outer = 0; outer < matrix.outerSize(); ++outer) {
+        for (SparseMatrixd::InnerIterator it(matrix, outer); it; ++it) {
+            if (rowMask[static_cast<std::size_t>(it.row())]) {
+                const Real value = it.value();
+                sum += value * value;
+            }
+        }
+    }
+    return std::sqrt(sum);
+}
+
+NewtonJacobianBlockAuditRow jacobianAuditRow(
+    const std::string& block,
+    const SparseMatrixd& analytic,
+    const SparseMatrixd& fd,
+    const std::vector<int>& rows)
+{
+    const SparseMatrixd diff = analytic - fd;
+    NewtonJacobianBlockAuditRow row;
+    row.block = block;
+    row.analyticNorm = restrictedSparseNorm(analytic, rows);
+    row.fdNorm = restrictedSparseNorm(fd, rows);
+    row.diffNorm = restrictedSparseNorm(diff, rows);
+    row.relDiff = row.diffNorm / std::max<Real>(1.0, row.fdNorm);
+    return row;
+}
+
+SparseMatrixd sparseBlock(const SparseMatrixd& matrix,
+                          int rowStart,
+                          int colStart,
+                          int rows,
+                          int cols)
+{
+    SparseMatrixd block = matrix.block(rowStart, colStart, rows, cols);
+    block.makeCompressed();
+    return block;
+}
+
+Real addCarrierRowRegularization(SparseMatrixd& matrix,
+                                 int nodeCount,
+                                 Real regularizationScale)
+{
+    if (regularizationScale <= 0.0)
+        return 0.0;
+
+    std::vector<Real> rowAbsSums(static_cast<std::size_t>(2 * nodeCount), 0.0);
+    for (int col = 0; col < 3 * nodeCount; ++col) {
+        for (SparseMatrixd::InnerIterator it(matrix, col); it; ++it) {
+            const int row = static_cast<int>(it.row());
+            if (row >= nodeCount && row < 3 * nodeCount) {
+                rowAbsSums[static_cast<std::size_t>(row - nodeCount)] +=
+                    std::abs(it.value());
+            }
+        }
+    }
+
+    Real diagonalNormSq = 0.0;
+    for (int localRow = 0; localRow < 2 * nodeCount; ++localRow) {
+        const int row = nodeCount + localRow;
+        const Real diagonal = matrix.coeff(row, row);
+        const Real sign = diagonal < 0.0 ? -1.0 : 1.0;
+        const Real addition =
+            sign * regularizationScale * rowAbsSums[static_cast<std::size_t>(localRow)];
+        matrix.coeffRef(row, row) += addition;
+        diagonalNormSq += addition * addition;
+    }
+    matrix.makeCompressed();
+    return std::sqrt(diagonalNormSq);
+}
+
+bool clampQuasiFermiStep(VectorXd& step,
+                         const DopingModel& doping,
+                         Real globalLimit,
+                         Real minorityLimit,
+                         int nodeCount)
+{
+    if (globalLimit <= 0.0 && minorityLimit <= 0.0)
+        return false;
+
+    const auto resolveLimit = [&](bool isMinority) -> Real {
+        if (isMinority && minorityLimit > 0.0)
+            return globalLimit > 0.0 ? std::min(globalLimit, minorityLimit)
+                                     : minorityLimit;
+        return globalLimit;
+    };
+    const auto clampEntry = [&](int index, Real limit) -> bool {
+        if (limit <= 0.0)
+            return false;
+        if (step(index) > limit) {
+            step(index) = limit;
+            return true;
+        }
+        if (step(index) < -limit) {
+            step(index) = -limit;
+            return true;
+        }
+        return false;
+    };
+
+    bool clippedQuasiFermi = false;
+    for (int i = 0; i < nodeCount; ++i) {
+        const Real net = doping.netDoping(i);
+        const bool electronMinority = net < 0.0; // p-type node
+        const bool holeMinority = net > 0.0;     // n-type node
+        clippedQuasiFermi |= clampEntry(nodeCount + i, resolveLimit(electronMinority));
+        clippedQuasiFermi |= clampEntry(2 * nodeCount + i, resolveLimit(holeMinority));
+    }
+    return clippedQuasiFermi;
+}
+
+bool applyConfiguredQuasiFermiStepCaps(VectorXd& step,
+                                       const NewtonConfig& cfg,
+                                       int nodeCount,
+                                       Real potentialScale,
+                                       const DopingModel& doping)
+{
+    const Real globalLimit = cfg.quasiFermiUpdateLimit_V > 0.0
+        ? cfg.quasiFermiUpdateLimit_V / potentialScale
+        : 0.0;
+    const Real minorityLimit = cfg.quasiFermiUpdateLimitMinority_V > 0.0
+        ? cfg.quasiFermiUpdateLimitMinority_V / potentialScale
+        : 0.0;
+    return clampQuasiFermiStep(step, doping, globalLimit, minorityLimit, nodeCount);
+}
+
+bool applyConfiguredStepCaps(VectorXd& step,
+                             const NewtonConfig& cfg,
+                             int nodeCount,
+                             Real potentialScale,
+                             const DopingModel& doping)
+{
+    if (cfg.maxUpdate > 0.0) {
+        const Real maxAbsStep = step.cwiseAbs().maxCoeff();
+        if (maxAbsStep > cfg.maxUpdate)
+            step *= cfg.maxUpdate / maxAbsStep;
+    }
+
+    return applyConfiguredQuasiFermiStepCaps(
+        step, cfg, nodeCount, potentialScale, doping);
+}
+
+void recorrectPoissonStepForClippedQuasiFermi(VectorXd& step,
+                                              const SparseMatrixd& J,
+                                              const VectorXd& residual,
+                                              int nodeCount)
+{
+    if (nodeCount <= 0)
+        return;
+
+    const SparseMatrixd poissonBlock = sparseBlock(J, 0, 0, nodeCount, nodeCount);
+    const SparseMatrixd poissonCarrierCoupling = sparseBlock(
+        J, 0, nodeCount, nodeCount, 2 * nodeCount);
+    const VectorXd qfStep = step.segment(nodeCount, 2 * nodeCount);
+    const VectorXd rhs = -residual.segment(0, nodeCount) - poissonCarrierCoupling * qfStep;
+    LinearSolver linearSolver;
+    step.segment(0, nodeCount) = linearSolver.solve(poissonBlock, rhs);
+}
+
+void applyConfiguredStepCapsAndPoissonRecorrection(VectorXd& step,
+                                                   const SparseMatrixd& J,
+                                                   const VectorXd& residual,
+                                                   const NewtonConfig& cfg,
+                                                   int nodeCount,
+                                                   Real potentialScale,
+                                                   const DopingModel& doping)
+{
+    const bool clippedQuasiFermi = applyConfiguredStepCaps(
+        step, cfg, nodeCount, potentialScale, doping);
+    if (clippedQuasiFermi)
+        recorrectPoissonStepForClippedQuasiFermi(step, J, residual, nodeCount);
+}
+
+NewtonCarrierDiagnostics carrierDiagnostics(const CoupledDDAssembler& assembler,
+                                            const VectorXd& x)
+{
+    NewtonCarrierDiagnostics diagnostics;
+    const VectorXd n = assembler.electronDensity(x);
+    const VectorXd p = assembler.holeDensity(x);
+    diagnostics.minElectronDensity = n.size() > 0
+        ? std::numeric_limits<Real>::infinity()
+        : 0.0;
+    diagnostics.minHoleDensity = p.size() > 0
+        ? std::numeric_limits<Real>::infinity()
+        : 0.0;
+
+    for (int i = 0; i < n.size(); ++i) {
+        if (!std::isfinite(n(i)))
+            ++diagnostics.nonfiniteElectronCount;
+        else
+            diagnostics.minElectronDensity = std::min(diagnostics.minElectronDensity, n(i));
+        if (!std::isfinite(p(i)))
+            ++diagnostics.nonfiniteHoleCount;
+        else
+            diagnostics.minHoleDensity = std::min(diagnostics.minHoleDensity, p(i));
+        if (!(n(i) > 0.0))
+            ++diagnostics.nonpositiveElectronCount;
+        if (!(p(i) > 0.0))
+            ++diagnostics.nonpositiveHoleCount;
+    }
+
+    if (!std::isfinite(diagnostics.minElectronDensity))
+        diagnostics.minElectronDensity = 0.0;
+    if (!std::isfinite(diagnostics.minHoleDensity))
+        diagnostics.minHoleDensity = 0.0;
+    diagnostics.positiveFinite = diagnostics.nonfiniteElectronCount == 0 &&
+        diagnostics.nonfiniteHoleCount == 0 &&
+        diagnostics.nonpositiveElectronCount == 0 &&
+        diagnostics.nonpositiveHoleCount == 0;
+    return diagnostics;
+}
+
+std::vector<NewtonTopResidualNode> topPoissonResidualNodes(
+    const DeviceMesh& mesh,
+    const DopingModel& doping,
+    const CoupledDDAssembler& assembler,
+    const VectorXd& residual,
+    std::size_t limit = 10)
+{
+    struct RankedNode {
+        Index nodeId = 0;
+        Real absResidual = 0.0;
+    };
+
+    const Index nodeCount = mesh.numNodes();
+    std::vector<RankedNode> ranked;
+    ranked.reserve(static_cast<std::size_t>(nodeCount));
+    for (Index nodeId = 0; nodeId < nodeCount; ++nodeId) {
+        const Real value = residual(static_cast<int>(nodeId));
+        ranked.push_back({nodeId, std::abs(value)});
+    }
+    std::sort(ranked.begin(), ranked.end(), [](const RankedNode& a, const RankedNode& b) {
+        if (a.absResidual == b.absResidual)
+            return a.nodeId < b.nodeId;
+        return a.absResidual > b.absResidual;
+    });
+
+    const std::vector<Real>& ni = assembler.intrinsicDensity();
+    const std::size_t count = std::min(limit, ranked.size());
+    std::vector<NewtonTopResidualNode> out;
+    out.reserve(count);
+    for (std::size_t index = 0; index < count; ++index) {
+        const Index nodeId = ranked[index].nodeId;
+        const Node& node = mesh.getNode(nodeId);
+        const Real poissonResidual = residual(static_cast<int>(nodeId));
+        out.push_back({
+            nodeId,
+            node.x,
+            node.y,
+            poissonResidual,
+            std::abs(poissonResidual),
+            doping.donors(nodeId),
+            doping.acceptors(nodeId),
+            doping.netDoping(nodeId),
+            nodeId < static_cast<Index>(ni.size()) ? ni[static_cast<std::size_t>(nodeId)] : 0.0});
+    }
+    return out;
+}
+
+NewtonFailureDiagnostics buildFailureDiagnostics(
+    const DeviceMesh& mesh,
+    const DopingModel& doping,
+    const CoupledDDAssembler& assembler,
+    const VectorXd& x,
+    const VectorXd& residual,
+    const std::string& failureReason,
+    int failedIteration,
+    Real residualNorm,
+    Real stepNorm,
+    Real dampingFactor,
+    int lineSearchAttempts,
+    const std::string& lineSearchFailureReason,
+    Real maxContactMajorityQfDrop = 0.0,
+    Real bestRejectedContactMajorityQfDrop = 0.0,
+    std::vector<LineSearchIterationInfo> lineSearchHistory = {})
+{
+    NewtonFailureDiagnostics diagnostics;
+    diagnostics.failureReason = failureReason;
+    diagnostics.failedIteration = failedIteration;
+    diagnostics.residualNorm = residualNorm;
+    diagnostics.stepNorm = stepNorm;
+    diagnostics.dampingFactor = dampingFactor;
+    diagnostics.lineSearchAttempts = lineSearchAttempts;
+    diagnostics.lineSearchFailureReason = lineSearchFailureReason;
+    diagnostics.blockResiduals = blockResidualInfo(residual, mesh.numNodes());
+    diagnostics.carrierDiagnostics = carrierDiagnostics(assembler, x);
+    diagnostics.maxContactMajorityQfDrop = maxContactMajorityQfDrop;
+    diagnostics.bestRejectedContactMajorityQfDrop = bestRejectedContactMajorityQfDrop;
+    diagnostics.lineSearchHistory = std::move(lineSearchHistory);
+    diagnostics.topPoissonResidualNodes = topPoissonResidualNodes(mesh, doping, assembler, residual);
+    return diagnostics;
+}
+
+void printFailureDiagnostics(const NewtonFailureDiagnostics& diagnostics)
+{
+    std::cerr << "  failure_reason=" << diagnostics.failureReason
+              << " line_search_reason=" << diagnostics.lineSearchFailureReason
+              << " blocks=(" << diagnostics.blockResiduals.psi << ','
+              << diagnostics.blockResiduals.phin << ','
+              << diagnostics.blockResiduals.phip << ")"
+              << " max_contact_majority_qf_drop_V=" << diagnostics.maxContactMajorityQfDrop
+              << " best_rejected_contact_majority_qf_drop_V="
+              << diagnostics.bestRejectedContactMajorityQfDrop
+              << " carriers_positive_finite="
+              << (diagnostics.carrierDiagnostics.positiveFinite ? "1" : "0")
+              << '\n';
+    if (!diagnostics.topPoissonResidualNodes.empty()) {
+        const NewtonTopResidualNode& node = diagnostics.topPoissonResidualNodes.front();
+        std::cerr << "  top_poisson_residual_node=" << node.nodeId
+                  << " x=" << node.x
+                  << " y=" << node.y
+                  << " residual=" << node.poissonResidual
+                  << " donors=" << node.donors
+                  << " acceptors=" << node.acceptors
+                  << " net=" << node.netDoping
+                  << " ni_eff=" << node.effectiveIntrinsicDensity
+                  << '\n';
+    }
+}
+
 Real maxRelativePermittivityAcrossRegions(const DeviceMesh& mesh,
                                           const MaterialDatabase& matdb,
                                           Real temperature_K)
@@ -179,7 +625,285 @@ Real maxIntrinsicDensityAcrossRegions(const DeviceMesh& mesh,
 
 } // namespace
 
+NewtonCarrierRowConvergenceEvaluation evaluateCarrierRowConvergence(
+    const std::vector<CoupledDDCarrierTermDiagnostic>& rows,
+    const NewtonCarrierRowConvergenceConfig& cfg)
+{
+    NewtonCarrierRowConvergenceEvaluation evaluation;
+    evaluation.enabled = cfg.mode != "off";
+    evaluation.enforced = cfg.mode == "enforce";
+    evaluation.epsRow = cfg.epsRow;
+    if (!evaluation.enabled)
+        return evaluation;
 
+    const Real eps = cfg.epsRow;
+    const Real floor = std::max<Real>(cfg.scaleFloor, 0.0);
+    auto checkCarrier = [&](const CoupledDDCarrierTermDiagnostic& row,
+                            const std::string& carrier,
+                            Real residual,
+                            Real flux,
+                            Real fluxAbsSum,
+                            Real recombination,
+                            Real impact) {
+        const Real sourceScale = std::max(std::abs(recombination), std::abs(impact));
+        const Real scale = std::max({std::abs(fluxAbsSum), sourceScale, floor});
+        const bool sourceQualified = scale > 0.0 &&
+            sourceScale >= cfg.minSourceScaleFraction * scale;
+        const Real ratio = scale > 0.0 ? std::abs(residual) / scale : 0.0;
+        if (sourceQualified && ratio > evaluation.maxRatio) {
+            evaluation.maxRatio = ratio;
+            evaluation.maxRatioNode = row.nodeId;
+            evaluation.maxRatioCarrier = carrier;
+        }
+        if (sourceQualified && ratio > eps) {
+            NewtonCarrierRowConvergenceViolation violation;
+            violation.nodeId = row.nodeId;
+            violation.carrier = carrier;
+            violation.residual = residual;
+            violation.scale = scale;
+            violation.ratio = ratio;
+            violation.flux = flux;
+            violation.recombination = recombination;
+            violation.impact = impact;
+            evaluation.violations.push_back(std::move(violation));
+        }
+    };
+
+    for (const CoupledDDCarrierTermDiagnostic& row : rows) {
+        checkCarrier(row, "electron", row.electronResidual, row.electronFlux,
+                     row.electronFluxAbsSum, row.electronRecombination, row.electronImpact);
+        checkCarrier(row, "hole", row.holeResidual, row.holeFlux,
+                     row.holeFluxAbsSum, row.holeRecombination, row.holeImpact);
+    }
+    evaluation.satisfied = evaluation.violations.empty();
+    return evaluation;
+}
+
+namespace {
+
+DDScalingSpec buildRecoveryScalingSpec(const DeviceMesh& mesh,
+                                       const MaterialDatabase& matdb,
+                                       const DopingModel& doping,
+                                       const NewtonConfig& cfg)
+{
+    DDScalingSpec scaling;
+    if (!cfg.inputScaling.isUnitScaling())
+        return scaling;
+
+    const Real epsRef = constants::eps0 *
+        maxRelativePermittivityAcrossRegions(mesh, matdb, cfg.temperature_K);
+    const Real niFloor =
+        maxIntrinsicDensityAcrossRegions(mesh, matdb, cfg.temperature_K);
+    const UnitScalingSystem::AutoInputs autoInputs =
+        UnitScalingSystem::autoInputsFrom(mesh, doping, matdb, niFloor);
+    const UnitScalingSystem sc = UnitScalingSystem::fromInputs(
+        cfg.temperature_K, epsRef, autoInputs, cfg.unitScalingRefs, cfg.inputScaling.unitSystem());
+
+    scaling.enabled = true;
+    scaling.V0 = sc.V0();
+    scaling.C0 = sc.C0();
+    scaling.mu0 = sc.mu0();
+    scaling.D0 = sc.D0();
+    scaling.L0 = sc.L0();
+    scaling.permittivityReference_F_per_m = epsRef;
+    scaling.unitSystem = cfg.inputScaling.unitSystem();
+    scaling.chargeVolumeFactor = cfg.inputScaling.unitSystem().chargeVolumeFactor();
+    scaling.chargeSheetFactor = cfg.inputScaling.unitSystem().chargeSheetFactor();
+    scaling.fieldFromCoordinateDeltaFactor = cfg.inputScaling.unitSystem().fieldFromCoordinateDeltaFactor();
+    scaling.currentDensityLineIntegralFactor =
+        cfg.inputScaling.unitSystem().currentDensityAM2PerInternal() *
+        cfg.inputScaling.unitSystem().lengthMPerInternal();
+    return scaling;
+}
+
+bool hasContactBiasForRecovery(const std::unordered_map<std::string, Real>& biases,
+                               const std::string& name)
+{
+    if (biases.find(name) != biases.end())
+        return true;
+    auto lower = [](std::string s) {
+        std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+        });
+        return s;
+    };
+    const std::string target = lower(name);
+    for (const auto& [key, value] : biases) {
+        (void)value;
+        if (lower(key) == target)
+            return true;
+    }
+    return false;
+}
+
+} // namespace
+
+NewtonCarrierRowRecoveryResult recoverCarrierRowsWithGummelDensity(
+    const DeviceMesh& mesh,
+    const MaterialDatabase& matdb,
+    const DopingModel& doping,
+    const std::unordered_map<std::string, Real>& contactBiases,
+    const NewtonConfig& cfg,
+    const DDSolution& state,
+    const std::vector<NewtonCarrierRowConvergenceViolation>& violations,
+    const NewtonCarrierRowRecoveryConfig& recovery)
+{
+    NewtonCarrierRowRecoveryResult result;
+    result.solution = state;
+    result.mode = recovery.mode;
+    if (recovery.mode != "gummel_density" || violations.empty())
+        return result;
+    result.attempted = true;
+    result.cyclesAttempted = 1;
+
+    const double Vt = thermalVoltage(cfg.temperature_K);
+    MobilityModelConfig mobilityConfig = cfg.mobility;
+    RecombinationModelConfig recombinationConfig =
+        recombinationModelConfig(cfg.recombination, cfg.taun, cfg.taup);
+    recombinationConfig.augerCn = cfg.augerCn;
+    recombinationConfig.augerCp = cfg.augerCp;
+    const DDScalingSpec scaling = buildRecoveryScalingSpec(mesh, matdb, doping, cfg);
+
+    DDAssembler densityAssembler(
+        mesh,
+        matdb,
+        doping,
+        Vt,
+        mobilityConfig,
+        recombinationConfig,
+        cfg.bandgapNarrowing,
+        cfg.impactIonization,
+        {},
+        {},
+        scaling);
+    CoupledDDAssembler qfAssembler(
+        mesh,
+        matdb,
+        doping,
+        Vt,
+        mobilityConfig,
+        recombinationConfig,
+        cfg.bandgapNarrowing,
+        cfg.impactIonization,
+        {},
+        {},
+        scaling,
+        cfg.carrierDiagonalFloor);
+
+    const int nNodes = static_cast<int>(mesh.numNodes());
+    if (state.psi.size() != nNodes || state.phin.size() != nNodes ||
+        state.phip.size() != nNodes || state.n.size() != nNodes ||
+        state.p.size() != nNodes) {
+        throw std::invalid_argument(
+            "recoverCarrierRowsWithGummelDensity: state size does not match mesh.");
+    }
+
+    VectorXd psi = scaling.enabled ? (state.psi / scaling.V0) : state.psi;
+    VectorXd nOld = scaling.enabled ? (state.n / scaling.C0) : state.n;
+    VectorXd pOld = scaling.enabled ? (state.p / scaling.C0) : state.p;
+
+    std::unordered_map<Index, Real> nBC;
+    std::unordered_map<Index, Real> pBC;
+    const auto& ni = qfAssembler.intrinsicDensity();
+    const bool dominantSignedContactMean =
+        cfg.contactBoundaryReconstruction == "dominant_signed_contact_mean";
+    for (Index c = 0; c < mesh.numContacts(); ++c) {
+        const Contact& contact = mesh.getContact(c);
+        if (!hasContactBiasForRecovery(contactBiases, contact.name))
+            continue;
+        for (Index node : contact.node_ids) {
+            const Real niNode = ni[static_cast<std::size_t>(node)];
+            const Real ndop = ohmicContactNetDoping(
+                mesh, doping, contact, node, dominantSignedContactMean);
+            const Real nEqValue = nEq(ndop, niNode);
+            const Real pEqValue = nEqValue > 0.0 ? (niNode * niNode / nEqValue) : 0.0;
+            nBC[node] = scaling.enabled ? (nEqValue / scaling.C0) : nEqValue;
+            pBC[node] = scaling.enabled ? (pEqValue / scaling.C0) : pEqValue;
+        }
+    }
+
+    LinearSolver linearSolver;
+    VectorXd nNew = nOld;
+    VectorXd pNew = pOld;
+    const int densityPasses = std::max(1, recovery.maxAttempts);
+    const Real densityChangeReltol = std::max<Real>(0.0, recovery.densityChangeReltol);
+    for (int pass = 0; pass < densityPasses; ++pass) {
+        const VectorXd nBefore = nNew;
+        const VectorXd pBefore = pNew;
+        densityAssembler.assembleElectronContinuity(psi, nNew, pNew);
+        densityAssembler.applyDirichlet(nBC);
+        VectorXd nCandidate = linearSolver.solve(densityAssembler.matrix(), densityAssembler.rhs());
+        for (int i = 0; i < nNodes; ++i) {
+            if (nBC.find(static_cast<Index>(i)) == nBC.end() && nCandidate(i) <= 0.0)
+                nCandidate(i) = std::numeric_limits<Real>::min();
+        }
+
+        densityAssembler.assembleHoleContinuity(psi, nCandidate, pNew);
+        densityAssembler.applyDirichlet(pBC);
+        VectorXd pCandidate = linearSolver.solve(densityAssembler.matrix(), densityAssembler.rhs());
+        for (int i = 0; i < nNodes; ++i) {
+            if (pBC.find(static_cast<Index>(i)) == pBC.end() && pCandidate(i) <= 0.0)
+                pCandidate(i) = std::numeric_limits<Real>::min();
+        }
+
+        Real maxRelChange = 0.0;
+        for (int i = 0; i < nNodes; ++i) {
+            const Real nDenom = std::max({std::abs(nBefore(i)), std::abs(nCandidate(i)), std::numeric_limits<Real>::min()});
+            const Real pDenom = std::max({std::abs(pBefore(i)), std::abs(pCandidate(i)), std::numeric_limits<Real>::min()});
+            maxRelChange = std::max(maxRelChange, std::abs(nCandidate(i) - nBefore(i)) / nDenom);
+            maxRelChange = std::max(maxRelChange, std::abs(pCandidate(i) - pBefore(i)) / pDenom);
+        }
+        nNew = std::move(nCandidate);
+        pNew = std::move(pCandidate);
+        result.maxDensityRelativeChange = maxRelChange;
+        result.densityPasses = pass + 1;
+        if (maxRelChange <= densityChangeReltol) {
+            result.densityConverged = true;
+            break;
+        }
+    }
+
+    bool recoverElectrons = false;
+    bool recoverHoles = false;
+    for (const auto& violation : violations) {
+        if (violation.nodeId >= mesh.numNodes())
+            continue;
+        if (violation.carrier == "electron")
+            recoverElectrons = true;
+        else if (violation.carrier == "hole")
+            recoverHoles = true;
+    }
+
+    for (int i = 0; i < nNodes; ++i) {
+        const Index node = static_cast<Index>(i);
+        const Real psiSi = state.psi(i);
+        const Real niNode = ni[static_cast<std::size_t>(i)];
+        if (recoverElectrons && nBC.find(node) == nBC.end() && niNode > 0.0) {
+            const Real recoveredN = scaling.enabled ? (nNew(i) * scaling.C0) : nNew(i);
+            if (recoveredN > 0.0 && std::isfinite(recoveredN)) {
+                const Real before = std::max(std::abs(state.n(i)), std::numeric_limits<Real>::min());
+                result.solution.n(i) = recoveredN;
+                result.solution.phin(i) = psiSi - Vt * std::log(recoveredN / niNode);
+                result.maxCarrierDensityRatio = std::max(
+                    result.maxCarrierDensityRatio, recoveredN / before);
+                ++result.electronRowsUpdated;
+            }
+        }
+        if (recoverHoles && pBC.find(node) == pBC.end() && niNode > 0.0) {
+            const Real recoveredP = scaling.enabled ? (pNew(i) * scaling.C0) : pNew(i);
+            if (recoveredP > 0.0 && std::isfinite(recoveredP)) {
+                const Real before = std::max(std::abs(state.p(i)), std::numeric_limits<Real>::min());
+                result.solution.p(i) = recoveredP;
+                result.solution.phip(i) = psiSi + Vt * std::log(recoveredP / niNode);
+                result.maxCarrierDensityRatio = std::max(
+                    result.maxCarrierDensityRatio, recoveredP / before);
+                ++result.holeRowsUpdated;
+            }
+        }
+    }
+    result.maxPsiDelta_V = 0.0;
+    return result;
+}
 NewtonConfig newtonConfigFromJson(const nlohmann::json& json, UnitScalingConfig scaling)
 {
     NewtonConfig cfg;
@@ -195,6 +919,143 @@ NewtonConfig newtonConfigFromJson(const nlohmann::json& json, UnitScalingConfig 
     cfg.diagnostics = json.value("diagnostics", cfg.diagnostics);
     cfg.diagnostics = json.value("diagnostic_history", cfg.diagnostics);
     cfg.maxUpdate = json.value("max_update", cfg.maxUpdate);
+    cfg.quasiFermiUpdateLimit_V = json.value(
+        "quasi_fermi_update_limit_V",
+        cfg.quasiFermiUpdateLimit_V);
+    cfg.quasiFermiUpdateLimitMinority_V = json.value(
+        "quasi_fermi_update_limit_minority_V",
+        cfg.quasiFermiUpdateLimitMinority_V);
+    cfg.stallResidualFloor = json.value("stall_residual_floor", cfg.stallResidualFloor);
+    cfg.poissonLineSearchStallResidualFloor = json.value(
+        "poisson_line_search_stall_residual_floor",
+        cfg.poissonLineSearchStallResidualFloor);
+    cfg.poissonLineSearchStallRelativeIncrease = json.value(
+        "poisson_line_search_stall_relative_increase",
+        cfg.poissonLineSearchStallRelativeIncrease);
+    cfg.poissonLineSearchStallCarrierResidualFloor = json.value(
+        "poisson_line_search_stall_carrier_residual_floor",
+        cfg.poissonLineSearchStallCarrierResidualFloor);
+    cfg.poissonLineSearchStallContactMajorityQfDropLimit_V = json.value(
+        "poisson_line_search_stall_contact_majority_qf_drop_limit_V",
+        cfg.poissonLineSearchStallContactMajorityQfDropLimit_V);
+    cfg.carrierRegularizationScale = json.value(
+        "carrier_regularization_scale",
+        cfg.carrierRegularizationScale);
+    auto parseCarrierDiagonalFloor = [&](const nlohmann::json& value) {
+        if (value.is_boolean()) {
+            cfg.carrierDiagonalFloor.enabled = value.get<bool>();
+            return;
+        }
+        if (!value.is_object()) {
+            throw std::invalid_argument(
+                "newtonConfigFromJson: carrier_diagonal_floor must be a boolean or object.");
+        }
+        cfg.carrierDiagonalFloor.enabled = value.value(
+            "enabled", cfg.carrierDiagonalFloor.enabled);
+        cfg.carrierDiagonalFloor.scale = value.value(
+            "scale", cfg.carrierDiagonalFloor.scale);
+        cfg.carrierDiagonalFloor.minorityDensityRatio = value.value(
+            "minority_density_ratio", cfg.carrierDiagonalFloor.minorityDensityRatio);
+    };
+    if (json.contains("carrier_diagonal_floor_regularization"))
+        parseCarrierDiagonalFloor(json.at("carrier_diagonal_floor_regularization"));
+    if (json.contains("carrier_diagonal_floor"))
+        parseCarrierDiagonalFloor(json.at("carrier_diagonal_floor"));
+    if (json.contains("carrier_row_convergence")) {
+        const auto& value = json.at("carrier_row_convergence");
+        if (value.is_boolean()) {
+            cfg.carrierRowConvergence.mode = value.get<bool>() ? "report" : "off";
+        } else if (value.is_object()) {
+            cfg.carrierRowConvergence.mode = value.value(
+                "mode", cfg.carrierRowConvergence.mode);
+            if (value.contains("enabled") && !value.at("enabled").get<bool>())
+                cfg.carrierRowConvergence.mode = "off";
+            cfg.carrierRowConvergence.epsRow = value.value(
+                "eps_row", cfg.carrierRowConvergence.epsRow);
+            cfg.carrierRowConvergence.scaleFloor = value.value(
+                "scale_floor", cfg.carrierRowConvergence.scaleFloor);
+            cfg.carrierRowConvergence.minSourceScaleFraction = value.value(
+                "min_source_scale_fraction", cfg.carrierRowConvergence.minSourceScaleFraction);
+            cfg.carrierRowConvergence.minEnforceMaxIter = value.value(
+                "min_newton_max_iter", cfg.carrierRowConvergence.minEnforceMaxIter);
+            cfg.carrierRowConvergence.diagnosticCsvFile = value.value(
+                "diagnostic_csv", cfg.carrierRowConvergence.diagnosticCsvFile);
+            cfg.carrierRowConvergence.traceCsvFile = value.value(
+                "trace_csv", cfg.carrierRowConvergence.traceCsvFile);
+            cfg.carrierRowConvergence.traceNodes = value.value(
+                "trace_nodes", cfg.carrierRowConvergence.traceNodes);
+            cfg.carrierRowConvergence.traceFirstIterations = value.value(
+                "trace_first_iterations", cfg.carrierRowConvergence.traceFirstIterations);
+            cfg.carrierRowConvergence.traceEveryIterations = value.value(
+                "trace_every_iterations", cfg.carrierRowConvergence.traceEveryIterations);
+            if (value.contains("recovery")) {
+                const auto& recovery = value.at("recovery");
+                if (recovery.is_string()) {
+                    cfg.carrierRowRecovery.mode = recovery.get<std::string>();
+                } else if (recovery.is_object()) {
+                    cfg.carrierRowRecovery.mode = recovery.value(
+                        "mode", cfg.carrierRowRecovery.mode);
+                    cfg.carrierRowRecovery.maxAttempts = recovery.value(
+                        "max_attempts", cfg.carrierRowRecovery.maxAttempts);
+                    cfg.carrierRowRecovery.maxCycles = recovery.value(
+                        "max_cycles", cfg.carrierRowRecovery.maxCycles);
+                    cfg.carrierRowRecovery.densityChangeReltol = recovery.value(
+                        "density_change_reltol", cfg.carrierRowRecovery.densityChangeReltol);
+                } else if (recovery.is_boolean()) {
+                    cfg.carrierRowRecovery.mode = recovery.get<bool>() ? "gummel_density" : "off";
+                } else {
+                    throw std::invalid_argument(
+                        "newtonConfigFromJson: carrier_row_convergence.recovery must be a string, boolean, or object.");
+                }
+            }
+        } else {
+            throw std::invalid_argument(
+                "newtonConfigFromJson: carrier_row_convergence must be a boolean or object.");
+        }
+        if (cfg.carrierRowConvergence.mode != "off" &&
+            cfg.carrierRowConvergence.mode != "report" &&
+            cfg.carrierRowConvergence.mode != "enforce") {
+            throw std::invalid_argument(
+                "newtonConfigFromJson: carrier_row_convergence.mode must be 'off', 'report', or 'enforce'.");
+        }
+        if (!(cfg.carrierRowConvergence.epsRow > 0.0) ||
+            !std::isfinite(cfg.carrierRowConvergence.epsRow)) {
+            throw std::invalid_argument(
+                "newtonConfigFromJson: carrier_row_convergence.eps_row must be positive and finite.");
+        }
+        if (cfg.carrierRowConvergence.scaleFloor < 0.0 ||
+            !std::isfinite(cfg.carrierRowConvergence.scaleFloor)) {
+            throw std::invalid_argument(
+                "newtonConfigFromJson: carrier_row_convergence.scale_floor must be finite and nonnegative.");
+        }
+        if (cfg.carrierRowConvergence.minSourceScaleFraction < 0.0 ||
+            !std::isfinite(cfg.carrierRowConvergence.minSourceScaleFraction)) {
+            throw std::invalid_argument(
+                "newtonConfigFromJson: carrier_row_convergence.min_source_scale_fraction must be finite and nonnegative.");
+        }
+        if (cfg.carrierRowRecovery.mode != "off" &&
+            cfg.carrierRowRecovery.mode != "gummel_density") {
+            throw std::invalid_argument(
+                "newtonConfigFromJson: carrier_row_convergence.recovery.mode must be 'off' or 'gummel_density'.");
+        }
+        if (cfg.carrierRowRecovery.maxAttempts < 0) {
+            throw std::invalid_argument(
+                "newtonConfigFromJson: carrier_row_convergence.recovery.max_attempts must be nonnegative.");
+        }
+        if (cfg.carrierRowRecovery.maxCycles < 0) {
+            throw std::invalid_argument(
+                "newtonConfigFromJson: carrier_row_convergence.recovery.max_cycles must be nonnegative.");
+        }
+        if (cfg.carrierRowRecovery.densityChangeReltol < 0.0 ||
+            !std::isfinite(cfg.carrierRowRecovery.densityChangeReltol)) {
+            throw std::invalid_argument(
+                "newtonConfigFromJson: carrier_row_convergence.recovery.density_change_reltol must be finite and nonnegative.");
+        }
+        if (cfg.carrierRowConvergence.mode == "enforce" &&
+            cfg.maxIter < cfg.carrierRowConvergence.minEnforceMaxIter) {
+            cfg.maxIter = cfg.carrierRowConvergence.minEnforceMaxIter;
+        }
+    }
     cfg.finiteDifferenceStep = json.value("finite_difference_step", cfg.finiteDifferenceStep);
     cfg.jacobian = json.value("jacobian", cfg.jacobian);
     cfg.residualNorm = json.value("residual_norm", cfg.residualNorm);
@@ -224,17 +1085,20 @@ NewtonConfig newtonConfigFromJson(const nlohmann::json& json, UnitScalingConfig 
     if (json.contains("bandgap_narrowing")) {
         const auto& value = json.at("bandgap_narrowing");
         if (value.is_string()) {
-            cfg.bandgapNarrowing.model = value.get<std::string>();
+            cfg.bandgapNarrowing = bandgapNarrowingConfig(value.get<std::string>());
         } else if (value.is_object()) {
-            cfg.bandgapNarrowing.model = value.value("model", cfg.bandgapNarrowing.model);
+            cfg.bandgapNarrowing = bandgapNarrowingConfig(
+                value.value("model", cfg.bandgapNarrowing.model));
             if (value.contains("reference_doping_m3")) {
-                cfg.bandgapNarrowing.referenceDoping = scaling.concentrationToSI(
+                cfg.bandgapNarrowing.referenceDoping = scaling.concentrationToInternal(
                     value.at("reference_doping_m3").get<Real>());
             }
             cfg.bandgapNarrowing.coefficient = value.value(
                 "coefficient_eV", cfg.bandgapNarrowing.coefficient);
             cfg.bandgapNarrowing.smoothing = value.value(
                 "smoothing", cfg.bandgapNarrowing.smoothing);
+            cfg.bandgapNarrowing.offset = value.value(
+                "offset_eV", cfg.bandgapNarrowing.offset);
         } else {
             throw std::invalid_argument(
                 "newtonConfigFromJson: bandgap_narrowing must be a string or object.");
@@ -266,25 +1130,112 @@ NewtonConfig newtonConfigFromJson(const nlohmann::json& json, UnitScalingConfig 
     if (json.contains("impact_ionization")) {
         const auto& value = json.at("impact_ionization");
         if (value.is_string()) {
-            cfg.impactIonization.model = value.get<std::string>();
+            cfg.impactIonization = impactIonizationModelConfig(
+                value.get<std::string>(), scaling);
         } else if (value.is_object()) {
-            cfg.impactIonization.model = value.value("model", cfg.impactIonization.model);
+            cfg.impactIonization = impactIonizationModelConfig(
+                value.value("model", cfg.impactIonization.model), scaling);
+            cfg.impactIonization.parameterSet = value.value(
+                "parameter_set", cfg.impactIonization.parameterSet);
+            cfg.impactIonization.drivingForce = value.value(
+                "driving_force", cfg.impactIonization.drivingForce);
+            cfg.impactIonization.generation = value.value(
+                "generation", cfg.impactIonization.generation);
+            cfg.impactIonization.currentApproximation = value.value(
+                "current_approximation", cfg.impactIonization.currentApproximation);
+            cfg.impactIonization.currentMagnitudeMode = value.value(
+                "current_magnitude_mode", cfg.impactIonization.currentMagnitudeMode);
+            cfg.impactIonization.cellReconstructedMidpointDensity = value.value(
+                "cell_reconstructed_midpoint_density",
+                cfg.impactIonization.cellReconstructedMidpointDensity);
+            cfg.impactIonization.quasiFermiGradientDiscretization = value.value(
+                "quasi_fermi_gradient_discretization",
+                cfg.impactIonization.quasiFermiGradientDiscretization);
+            parseImpactIonizationDrivingForceInterpolation(
+                value, scaling, cfg.impactIonization, "newtonConfigFromJson");
+            cfg.impactIonization.sourceGeometryScale = value.value(
+                "source_geometry_scale", cfg.impactIonization.sourceGeometryScale);
+            cfg.impactIonization.sourceVolumePolicy = value.value(
+                "source_volume_policy", cfg.impactIonization.sourceVolumePolicy);
+            cfg.impactIonization.sourceVolumeFactor = value.value(
+                "source_volume_factor", cfg.impactIonization.sourceVolumeFactor);
+            cfg.impactIonization.sourceMappingMode = value.value(
+                "source_mapping_mode", cfg.impactIonization.sourceMappingMode);
+            cfg.impactIonization.edgeSourcePartition = value.value(
+                "edge_source_partition", cfg.impactIonization.edgeSourcePartition);
+            cfg.impactIonization.quasiFermiCarrierTruncation = value.value(
+                "quasi_fermi_carrier_truncation",
+                cfg.impactIonization.quasiFermiCarrierTruncation);
+            cfg.impactIonization.quasiFermiCarrierTruncation = value.value(
+                "quasi_fermi_carrier_trucation",
+                cfg.impactIonization.quasiFermiCarrierTruncation);
+            cfg.impactIonization.minimumField = scaling.electricFieldToInternal(value.value(
+                "minimum_field_V_m", cfg.impactIonization.minimumField));
+            cfg.impactIonization.debugRawVanOverstraeten = value.value(
+                "debug_raw_vanoverstraeten",
+                cfg.impactIonization.debugRawVanOverstraeten);
+            cfg.impactIonization.aScale = value.value(
+                "A_scale", cfg.impactIonization.aScale);
+            cfg.impactIonization.bScale = value.value(
+                "B_scale", cfg.impactIonization.bScale);
             if (value.contains("electron_A_m_inv")) {
-                cfg.impactIonization.electronA = scaling.inverseLengthToSI(
+                cfg.impactIonization.electronA = scaling.inverseLengthToInternal(
                     value.at("electron_A_m_inv").get<Real>());
             }
             if (value.contains("electron_B_V_m")) {
-                cfg.impactIonization.electronB = scaling.electricFieldToSI(
+                cfg.impactIonization.electronB = scaling.electricFieldToInternal(
                     value.at("electron_B_V_m").get<Real>());
             }
             if (value.contains("hole_A_m_inv")) {
-                cfg.impactIonization.holeA = scaling.inverseLengthToSI(
+                cfg.impactIonization.holeA = scaling.inverseLengthToInternal(
                     value.at("hole_A_m_inv").get<Real>());
             }
             if (value.contains("hole_B_V_m")) {
-                cfg.impactIonization.holeB = scaling.electricFieldToSI(
+                cfg.impactIonization.holeB = scaling.electricFieldToInternal(
                     value.at("hole_B_V_m").get<Real>());
             }
+            if (value.contains("electron_a_low_m_inv")) {
+                cfg.impactIonization.electronALow = scaling.inverseLengthToInternal(
+                    value.at("electron_a_low_m_inv").get<Real>());
+            }
+            if (value.contains("electron_a_high_m_inv")) {
+                cfg.impactIonization.electronAHigh = scaling.inverseLengthToInternal(
+                    value.at("electron_a_high_m_inv").get<Real>());
+            }
+            if (value.contains("electron_b_low_V_m")) {
+                cfg.impactIonization.electronBLow = scaling.electricFieldToInternal(
+                    value.at("electron_b_low_V_m").get<Real>());
+            }
+            if (value.contains("electron_b_high_V_m")) {
+                cfg.impactIonization.electronBHigh = scaling.electricFieldToInternal(
+                    value.at("electron_b_high_V_m").get<Real>());
+            }
+            if (value.contains("hole_a_low_m_inv")) {
+                cfg.impactIonization.holeALow = scaling.inverseLengthToInternal(
+                    value.at("hole_a_low_m_inv").get<Real>());
+            }
+            if (value.contains("hole_a_high_m_inv")) {
+                cfg.impactIonization.holeAHigh = scaling.inverseLengthToInternal(
+                    value.at("hole_a_high_m_inv").get<Real>());
+            }
+            if (value.contains("hole_b_low_V_m")) {
+                cfg.impactIonization.holeBLow = scaling.electricFieldToInternal(
+                    value.at("hole_b_low_V_m").get<Real>());
+            }
+            if (value.contains("hole_b_high_V_m")) {
+                cfg.impactIonization.holeBHigh = scaling.electricFieldToInternal(
+                    value.at("hole_b_high_V_m").get<Real>());
+            }
+            if (value.contains("switch_field_V_m")) {
+                cfg.impactIonization.switchField = scaling.electricFieldToInternal(
+                    value.at("switch_field_V_m").get<Real>());
+            }
+            cfg.impactIonization.phononEnergy = value.value(
+                "phonon_energy_eV", cfg.impactIonization.phononEnergy);
+            cfg.impactIonization.referenceTemperature_K = value.value(
+                "reference_temperature_K", cfg.impactIonization.referenceTemperature_K);
+            cfg.impactIonization.temperature_K = value.value(
+                "temperature_K", cfg.impactIonization.temperature_K);
             cfg.impactIonization.carrierVelocity = value.value(
                 "carrier_velocity_m_s", cfg.impactIonization.carrierVelocity);
         } else {
@@ -292,6 +1243,7 @@ NewtonConfig newtonConfigFromJson(const nlohmann::json& json, UnitScalingConfig 
                 "newtonConfigFromJson: impact_ionization must be a string or object.");
         }
     }
+    detail::validateImpactIonizationDrivingForce(cfg.impactIonization, "newtonConfigFromJson");
 
     if (cfg.jacobian != "analytic" && cfg.jacobian != "finite_difference")
         throw std::invalid_argument(
@@ -299,6 +1251,43 @@ NewtonConfig newtonConfigFromJson(const nlohmann::json& json, UnitScalingConfig 
     if (cfg.maxUpdate < 0.0 || !std::isfinite(cfg.maxUpdate))
         throw std::invalid_argument(
             "newtonConfigFromJson: max_update must be non-negative and finite.");
+    if (cfg.quasiFermiUpdateLimit_V < 0.0 || !std::isfinite(cfg.quasiFermiUpdateLimit_V))
+        throw std::invalid_argument(
+            "newtonConfigFromJson: quasi_fermi_update_limit_V must be non-negative and finite.");
+    if (cfg.quasiFermiUpdateLimitMinority_V < 0.0 ||
+        !std::isfinite(cfg.quasiFermiUpdateLimitMinority_V))
+        throw std::invalid_argument(
+            "newtonConfigFromJson: quasi_fermi_update_limit_minority_V must be non-negative and finite.");
+    if (cfg.stallResidualFloor < 0.0 || !std::isfinite(cfg.stallResidualFloor))
+        throw std::invalid_argument(
+            "newtonConfigFromJson: stall_residual_floor must be non-negative and finite.");
+    if (cfg.poissonLineSearchStallResidualFloor < 0.0 ||
+        !std::isfinite(cfg.poissonLineSearchStallResidualFloor))
+        throw std::invalid_argument(
+            "newtonConfigFromJson: poisson_line_search_stall_residual_floor must be non-negative and finite.");
+    if (cfg.poissonLineSearchStallRelativeIncrease < 0.0 ||
+        !std::isfinite(cfg.poissonLineSearchStallRelativeIncrease))
+        throw std::invalid_argument(
+            "newtonConfigFromJson: poisson_line_search_stall_relative_increase must be non-negative and finite.");
+    if (cfg.poissonLineSearchStallCarrierResidualFloor < 0.0 ||
+        !std::isfinite(cfg.poissonLineSearchStallCarrierResidualFloor))
+        throw std::invalid_argument(
+            "newtonConfigFromJson: poisson_line_search_stall_carrier_residual_floor must be non-negative and finite.");
+    if (cfg.poissonLineSearchStallContactMajorityQfDropLimit_V < 0.0 ||
+        !std::isfinite(cfg.poissonLineSearchStallContactMajorityQfDropLimit_V))
+        throw std::invalid_argument(
+            "newtonConfigFromJson: poisson_line_search_stall_contact_majority_qf_drop_limit_V must be non-negative and finite.");
+    if (cfg.carrierRegularizationScale < 0.0 || !std::isfinite(cfg.carrierRegularizationScale))
+        throw std::invalid_argument(
+            "newtonConfigFromJson: carrier_regularization_scale must be non-negative and finite.");
+    if (cfg.carrierDiagonalFloor.scale < 0.0 ||
+        !std::isfinite(cfg.carrierDiagonalFloor.scale))
+        throw std::invalid_argument(
+            "newtonConfigFromJson: carrier_diagonal_floor scale must be non-negative and finite.");
+    if (cfg.carrierDiagonalFloor.minorityDensityRatio < 0.0 ||
+        !std::isfinite(cfg.carrierDiagonalFloor.minorityDensityRatio))
+        throw std::invalid_argument(
+            "newtonConfigFromJson: carrier_diagonal_floor minority_density_ratio must be non-negative and finite.");
     if (cfg.finiteDifferenceStep <= 0.0 || !std::isfinite(cfg.finiteDifferenceStep))
         throw std::invalid_argument(
             "newtonConfigFromJson: finite_difference_step must be positive and finite.");
@@ -353,6 +1342,45 @@ NewtonSolver::NewtonSolver(
     if (cfg_.residualNorm != "block" && cfg_.residualNorm != "l2")
         throw std::invalid_argument(
             "NewtonSolver: residual_norm must be 'block' or 'l2'.");
+    if (cfg_.stallResidualFloor < 0.0 || !std::isfinite(cfg_.stallResidualFloor)) {
+        throw std::invalid_argument(
+            "NewtonSolver: stall_residual_floor must be non-negative and finite.");
+    }
+    if (cfg_.poissonLineSearchStallResidualFloor < 0.0 ||
+        !std::isfinite(cfg_.poissonLineSearchStallResidualFloor)) {
+        throw std::invalid_argument(
+            "NewtonSolver: poisson_line_search_stall_residual_floor must be non-negative and finite.");
+    }
+    if (cfg_.poissonLineSearchStallRelativeIncrease < 0.0 ||
+        !std::isfinite(cfg_.poissonLineSearchStallRelativeIncrease)) {
+        throw std::invalid_argument(
+            "NewtonSolver: poisson_line_search_stall_relative_increase must be non-negative and finite.");
+    }
+    if (cfg_.poissonLineSearchStallCarrierResidualFloor < 0.0 ||
+        !std::isfinite(cfg_.poissonLineSearchStallCarrierResidualFloor)) {
+        throw std::invalid_argument(
+            "NewtonSolver: poisson_line_search_stall_carrier_residual_floor must be non-negative and finite.");
+    }
+    if (cfg_.poissonLineSearchStallContactMajorityQfDropLimit_V < 0.0 ||
+        !std::isfinite(cfg_.poissonLineSearchStallContactMajorityQfDropLimit_V)) {
+        throw std::invalid_argument(
+            "NewtonSolver: poisson_line_search_stall_contact_majority_qf_drop_limit_V must be non-negative and finite.");
+    }
+    if (cfg_.carrierRegularizationScale < 0.0 ||
+        !std::isfinite(cfg_.carrierRegularizationScale)) {
+        throw std::invalid_argument(
+            "NewtonSolver: carrier_regularization_scale must be non-negative and finite.");
+    }
+    if (cfg_.carrierDiagonalFloor.scale < 0.0 ||
+        !std::isfinite(cfg_.carrierDiagonalFloor.scale)) {
+        throw std::invalid_argument(
+            "NewtonSolver: carrier_diagonal_floor scale must be non-negative and finite.");
+    }
+    if (cfg_.carrierDiagonalFloor.minorityDensityRatio < 0.0 ||
+        !std::isfinite(cfg_.carrierDiagonalFloor.minorityDensityRatio)) {
+        throw std::invalid_argument(
+            "NewtonSolver: carrier_diagonal_floor minority_density_ratio must be non-negative and finite.");
+    }
     validateResidualWeights(
         cfg_.residualWeightPsi,
         cfg_.residualWeightPhin,
@@ -373,7 +1401,7 @@ DDScalingSpec NewtonSolver::buildScalingSpec() const
     const UnitScalingSystem::AutoInputs autoInputs =
         UnitScalingSystem::autoInputsFrom(mesh_, doping_, matdb_, niFloor);
     const UnitScalingSystem sc = UnitScalingSystem::fromInputs(
-        cfg_.temperature_K, epsRef, autoInputs, cfg_.unitScalingRefs);
+        cfg_.temperature_K, epsRef, autoInputs, cfg_.unitScalingRefs, cfg_.inputScaling.unitSystem());
 
     scaling.enabled = true;
     scaling.V0 = sc.V0();
@@ -382,11 +1410,25 @@ DDScalingSpec NewtonSolver::buildScalingSpec() const
     scaling.D0 = sc.D0();
     scaling.L0 = sc.L0();
     scaling.permittivityReference_F_per_m = epsRef;
+    scaling.unitSystem = cfg_.inputScaling.unitSystem();
+    scaling.chargeVolumeFactor = cfg_.inputScaling.unitSystem().chargeVolumeFactor();
+    scaling.chargeSheetFactor = cfg_.inputScaling.unitSystem().chargeSheetFactor();
+    scaling.fieldFromCoordinateDeltaFactor = cfg_.inputScaling.unitSystem().fieldFromCoordinateDeltaFactor();
+    scaling.currentDensityLineIntegralFactor =
+        cfg_.inputScaling.unitSystem().currentDensityAM2PerInternal() *
+        cfg_.inputScaling.unitSystem().lengthMPerInternal();
     return scaling;
 }
 
 CoupledDDBoundaryConditions NewtonSolver::buildBoundaryConditions(
     const CoupledDDAssembler& assembler) const
+{
+    return buildBoundaryConditions(assembler, contactBiases_);
+}
+
+CoupledDDBoundaryConditions NewtonSolver::buildBoundaryConditions(
+    const CoupledDDAssembler& assembler,
+    const std::unordered_map<std::string, Real>& contactBiases) const
 {
     CoupledDDBoundaryConditions bcs;
     const auto& ni = assembler.intrinsicDensity();
@@ -408,8 +1450,8 @@ CoupledDDBoundaryConditions NewtonSolver::buildBoundaryConditions(
 
     for (Index c = 0; c < mesh_.numContacts(); ++c) {
         const Contact& contact = mesh_.getContact(c);
-        auto it = contactBiases_.find(contact.name);
-        if (it == contactBiases_.end()) continue;
+        auto it = contactBiases.find(contact.name);
+        if (it == contactBiases.end()) continue;
 
         const double Vbias = it->second;
         const bool relaxByBiasAndTopology =
@@ -514,6 +1556,831 @@ DDSolution NewtonSolver::makeSolution(const CoupledDDAssembler& assembler,
     return sol;
 }
 
+std::shared_ptr<CoupledDDAssembler> NewtonSolver::makeArclengthAssembler() const
+{
+    const double Vt = thermalVoltage(cfg_.temperature_K);
+    const MobilityModelConfig mobilityConfig = cfg_.mobility;
+    RecombinationModelConfig recombinationConfig =
+        recombinationModelConfig(cfg_.recombination, cfg_.taun, cfg_.taup);
+    recombinationConfig.augerCn = cfg_.augerCn;
+    recombinationConfig.augerCp = cfg_.augerCp;
+    const DDScalingSpec scaling = buildScalingSpec();
+    return std::make_shared<CoupledDDAssembler>(
+        mesh_,
+        matdb_,
+        doping_,
+        Vt,
+        mobilityConfig,
+        recombinationConfig,
+        cfg_.bandgapNarrowing,
+        cfg_.impactIonization,
+        fixedCharges_,
+        sheetCharges_,
+        scaling,
+        cfg_.carrierDiagonalFloor);
+}
+
+ArclengthSystem NewtonSolver::makeArclengthSystem(const std::string& activeContact,
+                                                  Real biasFiniteDifferenceStep_V) const
+{
+    if (!(biasFiniteDifferenceStep_V > 0.0) ||
+        !std::isfinite(biasFiniteDifferenceStep_V)) {
+        throw std::invalid_argument(
+            "NewtonSolver::makeArclengthSystem: biasFiniteDifferenceStep_V must be "
+            "finite and positive.");
+    }
+    if (contactBiases_.find(activeContact) == contactBiases_.end()) {
+        throw std::invalid_argument(
+            "NewtonSolver::makeArclengthSystem: active contact '" + activeContact +
+            "' is not present in the contact bias map.");
+    }
+
+    auto assembler = makeArclengthAssembler();
+    const NewtonSolver* self = this;
+    const std::unordered_map<std::string, Real> baseBiases = contactBiases_;
+    const Real h = biasFiniteDifferenceStep_V;
+    const int nodeCount = static_cast<int>(mesh_.numNodes());
+    const Real potentialScale = assembler->usesScaledState()
+        ? assembler->potentialScale()
+        : 1.0;
+
+    auto biasesAt = [baseBiases, activeContact](Real lambda) {
+        std::unordered_map<std::string, Real> biases = baseBiases;
+        biases[activeContact] = lambda;
+        return biases;
+    };
+
+    ArclengthSystem system;
+    system.residual = [self, assembler, biasesAt](const VectorXd& x, Real lambda) {
+        const CoupledDDBoundaryConditions bcs =
+            self->buildBoundaryConditions(*assembler, biasesAt(lambda));
+        return assembler->residual(x, bcs);
+    };
+    system.parameterDerivative =
+        [self, assembler, biasesAt, h](const VectorXd& x, Real lambda) {
+            const CoupledDDBoundaryConditions bcsPlus =
+                self->buildBoundaryConditions(*assembler, biasesAt(lambda + h));
+            const CoupledDDBoundaryConditions bcsMinus =
+                self->buildBoundaryConditions(*assembler, biasesAt(lambda - h));
+            const VectorXd fPlus = assembler->residual(x, bcsPlus);
+            const VectorXd fMinus = assembler->residual(x, bcsMinus);
+            return VectorXd((fPlus - fMinus) / (2.0 * h));
+        };
+    system.solveJacobian =
+        [self, assembler, biasesAt](const VectorXd& x, Real lambda,
+                                    const VectorXd& b, VectorXd& y) {
+            const CoupledDDBoundaryConditions bcs =
+                self->buildBoundaryConditions(*assembler, biasesAt(lambda));
+            const SparseMatrixd jacobian = assembler->assembleJacobian(x, bcs);
+            Eigen::SparseLU<SparseMatrixd> lu;
+            lu.compute(jacobian);
+            if (lu.info() != Eigen::Success)
+                return false;
+            y = lu.solve(b);
+            if (lu.info() != Eigen::Success)
+                return false;
+            return y.allFinite();
+        };
+    if (cfg_.quasiFermiUpdateLimit_V > 0.0 ||
+        cfg_.quasiFermiUpdateLimitMinority_V > 0.0) {
+        system.limitUpdate = [self, nodeCount, potentialScale](
+            const VectorXd&, VectorXd& deltaX, Real&) {
+            applyConfiguredQuasiFermiStepCaps(
+                deltaX, self->cfg_, nodeCount, potentialScale, self->doping_);
+        };
+    }
+    return system;
+}
+
+VectorXd NewtonSolver::packArclengthState(const DDSolution& state) const
+{
+    auto assembler = makeArclengthAssembler();
+    const Real potentialScale =
+        assembler->usesScaledState() ? assembler->potentialScale() : 1.0;
+    return assembler->pack({
+        state.psi / potentialScale,
+        state.phin / potentialScale,
+        state.phip / potentialScale});
+}
+
+DDSolution NewtonSolver::unpackArclengthState(const VectorXd& x) const
+{
+    auto assembler = makeArclengthAssembler();
+    return makeSolution(*assembler, x, 0);
+}
+
+Real NewtonSolver::maxContactMajorityQuasiFermiDrop(const DDSolution& state) const
+{
+    if (state.phin.size() < static_cast<int>(mesh_.numNodes()) ||
+        state.phip.size() < static_cast<int>(mesh_.numNodes())) {
+        return std::numeric_limits<Real>::infinity();
+    }
+
+    Real maxDrop = 0.0;
+    for (const Contact& contact : mesh_.contacts()) {
+        std::vector<bool> isContactNode(mesh_.numNodes(), false);
+        Real netDopingSum = 0.0;
+        int netDopingCount = 0;
+        for (Index node : contact.node_ids) {
+            if (node >= mesh_.numNodes())
+                continue;
+            isContactNode[node] = true;
+            netDopingSum += doping_.netDoping(node);
+            ++netDopingCount;
+        }
+        if (netDopingCount == 0)
+            continue;
+
+        const Real meanNetDoping = netDopingSum / static_cast<Real>(netDopingCount);
+        const bool electronMajority = meanNetDoping > 0.0;
+        const bool holeMajority = meanNetDoping < 0.0;
+        for (Index e = 0; e < mesh_.numEdges(); ++e) {
+            const Edge& edge = mesh_.getEdge(e);
+            const bool n0Contact = isContactNode[edge.n0];
+            const bool n1Contact = isContactNode[edge.n1];
+            if (n0Contact == n1Contact)
+                continue;
+            const int i = static_cast<int>(edge.n0);
+            const int j = static_cast<int>(edge.n1);
+            if (electronMajority || !holeMajority)
+                maxDrop = std::max(maxDrop, std::abs(state.phin(i) - state.phin(j)));
+            if (holeMajority || !electronMajority)
+                maxDrop = std::max(maxDrop, std::abs(state.phip(i) - state.phip(j)));
+        }
+    }
+    return maxDrop;
+}
+NewtonResidualEvaluation NewtonSolver::evaluateResidual(const DDSolution& state) const
+{
+    const double Vt = thermalVoltage(cfg_.temperature_K);
+    const MobilityModelConfig mobilityConfig = cfg_.mobility;
+    RecombinationModelConfig recombinationConfig =
+        recombinationModelConfig(cfg_.recombination, cfg_.taun, cfg_.taup);
+    recombinationConfig.augerCn = cfg_.augerCn;
+    recombinationConfig.augerCp = cfg_.augerCp;
+    const DDScalingSpec scaling = buildScalingSpec();
+    CoupledDDAssembler assembler(
+        mesh_,
+        matdb_,
+        doping_,
+        Vt,
+        mobilityConfig,
+        recombinationConfig,
+        cfg_.bandgapNarrowing,
+        cfg_.impactIonization,
+        fixedCharges_,
+        sheetCharges_,
+        scaling,
+        cfg_.carrierDiagonalFloor);
+    const CoupledDDBoundaryConditions bcs = buildBoundaryConditions(assembler);
+    const Real potentialScale =
+        assembler.usesScaledState() ? assembler.potentialScale() : 1.0;
+    const VectorXd x = assembler.pack({
+        state.psi / potentialScale,
+        state.phin / potentialScale,
+        state.phip / potentialScale});
+    const VectorXd raw = assembler.residual(x, bcs);
+    const NewtonBlockResidualInfo blocks = blockResidualInfo(raw, mesh_.numNodes());
+
+    NewtonResidualEvaluation evaluation;
+    evaluation.raw = raw;
+    evaluation.blockNorms = blocks;
+    evaluation.intrinsicDensity = assembler.intrinsicDensity();
+    evaluation.scaledState = assembler.usesScaledState();
+    evaluation.potentialScale = potentialScale;
+    return evaluation;
+}
+
+NewtonStepEvaluation NewtonSolver::evaluateStep(const DDSolution& state) const
+{
+    const double Vt = thermalVoltage(cfg_.temperature_K);
+    const MobilityModelConfig mobilityConfig = cfg_.mobility;
+    RecombinationModelConfig recombinationConfig =
+        recombinationModelConfig(cfg_.recombination, cfg_.taun, cfg_.taup);
+    recombinationConfig.augerCn = cfg_.augerCn;
+    recombinationConfig.augerCp = cfg_.augerCp;
+    const DDScalingSpec scaling = buildScalingSpec();
+    CoupledDDAssembler assembler(
+        mesh_,
+        matdb_,
+        doping_,
+        Vt,
+        mobilityConfig,
+        recombinationConfig,
+        cfg_.bandgapNarrowing,
+        cfg_.impactIonization,
+        fixedCharges_,
+        sheetCharges_,
+        scaling,
+        cfg_.carrierDiagonalFloor);
+    const CoupledDDBoundaryConditions bcs = buildBoundaryConditions(assembler);
+    const Real potentialScale =
+        assembler.usesScaledState() ? assembler.potentialScale() : 1.0;
+    const VectorXd x = assembler.pack({
+        state.psi / potentialScale,
+        state.phin / potentialScale,
+        state.phip / potentialScale});
+    const VectorXd raw = assembler.residual(x, bcs);
+    const SparseMatrixd J = (cfg_.jacobian == "finite_difference")
+        ? assembler.finiteDifferenceJacobian(x, bcs, cfg_.finiteDifferenceStep)
+        : assembler.assembleJacobian(x, bcs);
+
+    LinearSolver linearSolver;
+    VectorXd step = linearSolver.solve(J, -raw);
+    const Real rawStepNorm = step.norm();
+
+    const int N = static_cast<int>(mesh_.numNodes());
+    applyConfiguredStepCapsAndPoissonRecorrection(
+        step, J, raw, cfg_, N, potentialScale, doping_);
+
+    const VectorXd trialX = x + step;
+    const VectorXd trialRaw = assembler.residual(trialX, bcs);
+
+    NewtonStepEvaluation evaluation;
+    evaluation.residual.raw = raw;
+    evaluation.residual.blockNorms = blockResidualInfo(raw, mesh_.numNodes());
+    evaluation.residual.intrinsicDensity = assembler.intrinsicDensity();
+    evaluation.residual.scaledState = assembler.usesScaledState();
+    evaluation.residual.potentialScale = potentialScale;
+    evaluation.trialResidual.raw = trialRaw;
+    evaluation.trialResidual.blockNorms = blockResidualInfo(trialRaw, mesh_.numNodes());
+    evaluation.trialResidual.intrinsicDensity = assembler.intrinsicDensity();
+    evaluation.trialResidual.scaledState = assembler.usesScaledState();
+    evaluation.trialResidual.potentialScale = potentialScale;
+    evaluation.trialSolution = makeSolution(assembler, trialX, 1);
+    evaluation.deltaPsi = step.segment(0, N) * potentialScale;
+    evaluation.deltaPhin = step.segment(N, N) * potentialScale;
+    evaluation.deltaPhip = step.segment(2 * N, N) * potentialScale;
+    evaluation.rawStepNorm = rawStepNorm;
+    evaluation.stepNorm = step.norm();
+    return evaluation;
+}
+
+NewtonDirectionalDerivativeEvaluation NewtonSolver::evaluateDirectionalDerivative(
+    const DDSolution& state,
+    const DDSolution& physicalPerturbation) const
+{
+    const int N = static_cast<int>(mesh_.numNodes());
+    if (state.psi.size() != N || state.phin.size() != N || state.phip.size() != N ||
+        physicalPerturbation.psi.size() != N ||
+        physicalPerturbation.phin.size() != N ||
+        physicalPerturbation.phip.size() != N) {
+        throw std::invalid_argument(
+            "NewtonSolver::evaluateDirectionalDerivative: state and perturbation sizes "
+            "must match the mesh node count.");
+    }
+
+    const double Vt = thermalVoltage(cfg_.temperature_K);
+    const MobilityModelConfig mobilityConfig = cfg_.mobility;
+    RecombinationModelConfig recombinationConfig =
+        recombinationModelConfig(cfg_.recombination, cfg_.taun, cfg_.taup);
+    recombinationConfig.augerCn = cfg_.augerCn;
+    recombinationConfig.augerCp = cfg_.augerCp;
+    const DDScalingSpec scaling = buildScalingSpec();
+    CoupledDDAssembler assembler(
+        mesh_,
+        matdb_,
+        doping_,
+        Vt,
+        mobilityConfig,
+        recombinationConfig,
+        cfg_.bandgapNarrowing,
+        cfg_.impactIonization,
+        fixedCharges_,
+        sheetCharges_,
+        scaling,
+        cfg_.carrierDiagonalFloor);
+    const CoupledDDBoundaryConditions bcs = buildBoundaryConditions(assembler);
+    const Real potentialScale =
+        assembler.usesScaledState() ? assembler.potentialScale() : 1.0;
+    const VectorXd x = assembler.pack({
+        state.psi / potentialScale,
+        state.phin / potentialScale,
+        state.phip / potentialScale});
+    const VectorXd dx = assembler.pack({
+        physicalPerturbation.psi / potentialScale,
+        physicalPerturbation.phin / potentialScale,
+        physicalPerturbation.phip / potentialScale});
+    if (dx.norm() == 0.0)
+        throw std::invalid_argument(
+            "NewtonSolver::evaluateDirectionalDerivative: perturbation must be non-zero.");
+
+    const VectorXd raw = assembler.residual(x, bcs);
+    const SparseMatrixd J = assembler.assembleJacobian(x, bcs);
+    const VectorXd analytic = J * dx;
+    const VectorXd forward = assembler.residual(x + dx, bcs);
+    const VectorXd backward = assembler.residual(x - dx, bcs);
+    const VectorXd finiteDifference = 0.5 * (forward - backward);
+    const VectorXd error = analytic - finiteDifference;
+
+    NewtonDirectionalDerivativeEvaluation evaluation;
+    evaluation.residual.raw = raw;
+    evaluation.residual.blockNorms = blockResidualInfo(raw, mesh_.numNodes());
+    evaluation.residual.intrinsicDensity = assembler.intrinsicDensity();
+    evaluation.residual.scaledState = assembler.usesScaledState();
+    evaluation.residual.potentialScale = potentialScale;
+    evaluation.perturbationPsi = physicalPerturbation.psi;
+    evaluation.perturbationPhin = physicalPerturbation.phin;
+    evaluation.perturbationPhip = physicalPerturbation.phip;
+    evaluation.analyticJv = analytic;
+    evaluation.finiteDifferenceJv = finiteDifference;
+    evaluation.forwardResidual = forward;
+    evaluation.backwardResidual = backward;
+    evaluation.perturbationNorm = dx.norm();
+    evaluation.analyticNorm = analytic.norm();
+    evaluation.finiteDifferenceNorm = finiteDifference.norm();
+    evaluation.absoluteError = error.norm();
+    evaluation.relativeError = evaluation.absoluteError /
+        std::max<Real>(1.0, evaluation.finiteDifferenceNorm);
+    return evaluation;
+}
+
+NewtonBlockStepEvaluation NewtonSolver::evaluateBlockStep(
+    const DDSolution& state,
+    const std::string& mode) const
+{
+    const double Vt = thermalVoltage(cfg_.temperature_K);
+    const MobilityModelConfig mobilityConfig = cfg_.mobility;
+    RecombinationModelConfig recombinationConfig =
+        recombinationModelConfig(cfg_.recombination, cfg_.taun, cfg_.taup);
+    recombinationConfig.augerCn = cfg_.augerCn;
+    recombinationConfig.augerCp = cfg_.augerCp;
+    const DDScalingSpec scaling = buildScalingSpec();
+    CoupledDDAssembler assembler(
+        mesh_,
+        matdb_,
+        doping_,
+        Vt,
+        mobilityConfig,
+        recombinationConfig,
+        cfg_.bandgapNarrowing,
+        cfg_.impactIonization,
+        fixedCharges_,
+        sheetCharges_,
+        scaling,
+        cfg_.carrierDiagonalFloor);
+    const CoupledDDBoundaryConditions bcs = buildBoundaryConditions(assembler);
+    const Real potentialScale =
+        assembler.usesScaledState() ? assembler.potentialScale() : 1.0;
+    const VectorXd x = assembler.pack({
+        state.psi / potentialScale,
+        state.phin / potentialScale,
+        state.phip / potentialScale});
+    const VectorXd raw = assembler.residual(x, bcs);
+    const SparseMatrixd J = (cfg_.jacobian == "finite_difference")
+        ? assembler.finiteDifferenceJacobian(x, bcs, cfg_.finiteDifferenceStep)
+        : assembler.assembleJacobian(x, bcs);
+
+    const int N = static_cast<int>(mesh_.numNodes());
+    VectorXd step = VectorXd::Zero(3 * N);
+    LinearSolver linearSolver;
+    if (mode == "poisson_only") {
+        const SparseMatrixd block = sparseBlock(J, 0, 0, N, N);
+        step.segment(0, N) = linearSolver.solve(block, -raw.segment(0, N));
+    } else if (mode == "carrier_only") {
+        const SparseMatrixd block = sparseBlock(J, N, N, 2 * N, 2 * N);
+        step.segment(N, 2 * N) = linearSolver.solve(block, -raw.segment(N, 2 * N));
+    } else {
+        throw std::invalid_argument(
+            "NewtonSolver::evaluateBlockStep: mode must be 'poisson_only' "
+            "or 'carrier_only'.");
+    }
+
+    const Real rawStepNorm = step.norm();
+    applyConfiguredStepCaps(step, cfg_, N, potentialScale, doping_);
+    const VectorXd trialX = x + step;
+    const VectorXd trialRaw = assembler.residual(trialX, bcs);
+
+    NewtonBlockStepEvaluation evaluation;
+    evaluation.mode = mode;
+    evaluation.residual.raw = raw;
+    evaluation.residual.blockNorms = blockResidualInfo(raw, mesh_.numNodes());
+    evaluation.residual.intrinsicDensity = assembler.intrinsicDensity();
+    evaluation.residual.scaledState = assembler.usesScaledState();
+    evaluation.residual.potentialScale = potentialScale;
+    evaluation.trialResidual.raw = trialRaw;
+    evaluation.trialResidual.blockNorms = blockResidualInfo(trialRaw, mesh_.numNodes());
+    evaluation.trialResidual.intrinsicDensity = assembler.intrinsicDensity();
+    evaluation.trialResidual.scaledState = assembler.usesScaledState();
+    evaluation.trialResidual.potentialScale = potentialScale;
+    evaluation.trialSolution = makeSolution(assembler, trialX, 1);
+    evaluation.deltaPsi = step.segment(0, N) * potentialScale;
+    evaluation.deltaPhin = step.segment(N, N) * potentialScale;
+    evaluation.deltaPhip = step.segment(2 * N, N) * potentialScale;
+    evaluation.rawStepNorm = rawStepNorm;
+    evaluation.stepNorm = step.norm();
+    return evaluation;
+}
+
+NewtonRegularizedCarrierStepEvaluation NewtonSolver::evaluateRegularizedCarrierStep(
+    const DDSolution& state,
+    Real regularizationScale) const
+{
+    if (!std::isfinite(regularizationScale) || regularizationScale < 0.0) {
+        throw std::invalid_argument(
+            "NewtonSolver::evaluateRegularizedCarrierStep: "
+            "regularization scale must be finite and non-negative.");
+    }
+
+    const double Vt = thermalVoltage(cfg_.temperature_K);
+    const MobilityModelConfig mobilityConfig = cfg_.mobility;
+    RecombinationModelConfig recombinationConfig =
+        recombinationModelConfig(cfg_.recombination, cfg_.taun, cfg_.taup);
+    recombinationConfig.augerCn = cfg_.augerCn;
+    recombinationConfig.augerCp = cfg_.augerCp;
+    const DDScalingSpec scaling = buildScalingSpec();
+    CoupledDDAssembler assembler(
+        mesh_,
+        matdb_,
+        doping_,
+        Vt,
+        mobilityConfig,
+        recombinationConfig,
+        cfg_.bandgapNarrowing,
+        cfg_.impactIonization,
+        fixedCharges_,
+        sheetCharges_,
+        scaling,
+        cfg_.carrierDiagonalFloor);
+    const CoupledDDBoundaryConditions bcs = buildBoundaryConditions(assembler);
+    const Real potentialScale =
+        assembler.usesScaledState() ? assembler.potentialScale() : 1.0;
+    const VectorXd x = assembler.pack({
+        state.psi / potentialScale,
+        state.phin / potentialScale,
+        state.phip / potentialScale});
+    const VectorXd raw = assembler.residual(x, bcs);
+    const SparseMatrixd J = (cfg_.jacobian == "finite_difference")
+        ? assembler.finiteDifferenceJacobian(x, bcs, cfg_.finiteDifferenceStep)
+        : assembler.assembleJacobian(x, bcs);
+
+    const int N = static_cast<int>(mesh_.numNodes());
+    const SparseMatrixd carrierBlock = sparseBlock(J, N, N, 2 * N, 2 * N);
+    std::vector<Real> rowAbsSums(static_cast<std::size_t>(2 * N), 0.0);
+    for (int col = 0; col < carrierBlock.outerSize(); ++col) {
+        for (SparseMatrixd::InnerIterator it(carrierBlock, col); it; ++it) {
+            rowAbsSums[static_cast<std::size_t>(it.row())] += std::abs(it.value());
+        }
+    }
+
+    SparseMatrixd regularizedBlock = carrierBlock;
+    Real regularizationDiagonalNormSq = 0.0;
+    for (int row = 0; row < 2 * N; ++row) {
+        const Real diagonal = carrierBlock.coeff(row, row);
+        const Real sign = diagonal < 0.0 ? -1.0 : 1.0;
+        const Real addition =
+            sign * regularizationScale * rowAbsSums[static_cast<std::size_t>(row)];
+        regularizedBlock.coeffRef(row, row) += addition;
+        regularizationDiagonalNormSq += addition * addition;
+    }
+    regularizedBlock.makeCompressed();
+
+    VectorXd step = VectorXd::Zero(3 * N);
+    LinearSolver linearSolver;
+    step.segment(N, 2 * N) =
+        linearSolver.solve(regularizedBlock, -raw.segment(N, 2 * N));
+
+    const Real rawStepNorm = step.norm();
+    applyConfiguredStepCaps(step, cfg_, N, potentialScale, doping_);
+    const VectorXd trialX = x + step;
+    const VectorXd trialRaw = assembler.residual(trialX, bcs);
+
+    NewtonRegularizedCarrierStepEvaluation evaluation;
+    evaluation.regularizationScale = regularizationScale;
+    evaluation.residual.raw = raw;
+    evaluation.residual.blockNorms = blockResidualInfo(raw, mesh_.numNodes());
+    evaluation.residual.intrinsicDensity = assembler.intrinsicDensity();
+    evaluation.residual.scaledState = assembler.usesScaledState();
+    evaluation.residual.potentialScale = potentialScale;
+    evaluation.trialResidual.raw = trialRaw;
+    evaluation.trialResidual.blockNorms = blockResidualInfo(trialRaw, mesh_.numNodes());
+    evaluation.trialResidual.intrinsicDensity = assembler.intrinsicDensity();
+    evaluation.trialResidual.scaledState = assembler.usesScaledState();
+    evaluation.trialResidual.potentialScale = potentialScale;
+    evaluation.trialSolution = makeSolution(assembler, trialX, 1);
+    evaluation.deltaPsi = step.segment(0, N) * potentialScale;
+    evaluation.deltaPhin = step.segment(N, N) * potentialScale;
+    evaluation.deltaPhip = step.segment(2 * N, N) * potentialScale;
+    evaluation.rawStepNorm = rawStepNorm;
+    evaluation.stepNorm = step.norm();
+    evaluation.regularizationDiagonalNorm = std::sqrt(regularizationDiagonalNormSq);
+    return evaluation;
+}
+
+NewtonCarrierRowDiagnosticsEvaluation NewtonSolver::evaluateCarrierRowDiagnostics(
+    const DDSolution& state) const
+{
+    const double Vt = thermalVoltage(cfg_.temperature_K);
+    const MobilityModelConfig mobilityConfig = cfg_.mobility;
+    RecombinationModelConfig recombinationConfig =
+        recombinationModelConfig(cfg_.recombination, cfg_.taun, cfg_.taup);
+    recombinationConfig.augerCn = cfg_.augerCn;
+    recombinationConfig.augerCp = cfg_.augerCp;
+    const DDScalingSpec scaling = buildScalingSpec();
+    CoupledDDAssembler assembler(
+        mesh_,
+        matdb_,
+        doping_,
+        Vt,
+        mobilityConfig,
+        recombinationConfig,
+        cfg_.bandgapNarrowing,
+        cfg_.impactIonization,
+        fixedCharges_,
+        sheetCharges_,
+        scaling,
+        cfg_.carrierDiagonalFloor);
+    const CoupledDDBoundaryConditions bcs = buildBoundaryConditions(assembler);
+    const Real potentialScale =
+        assembler.usesScaledState() ? assembler.potentialScale() : 1.0;
+    const VectorXd x = assembler.pack({
+        state.psi / potentialScale,
+        state.phin / potentialScale,
+        state.phip / potentialScale});
+    const VectorXd raw = assembler.residual(x, bcs);
+    const SparseMatrixd J = (cfg_.jacobian == "finite_difference")
+        ? assembler.finiteDifferenceJacobian(x, bcs, cfg_.finiteDifferenceStep)
+        : assembler.assembleJacobian(x, bcs);
+
+    const int N = static_cast<int>(mesh_.numNodes());
+    const SparseMatrixd carrierBlock = sparseBlock(J, N, N, 2 * N, 2 * N);
+    LinearSolver linearSolver;
+    VectorXd rawStep = VectorXd::Zero(3 * N);
+    rawStep.segment(N, 2 * N) =
+        linearSolver.solve(carrierBlock, -raw.segment(N, 2 * N));
+    VectorXd cappedStep = rawStep;
+    applyConfiguredStepCaps(cappedStep, cfg_, N, potentialScale, doping_);
+
+    std::vector<Real> electronRowAbs(static_cast<std::size_t>(N), 0.0);
+    std::vector<Real> holeRowAbs(static_cast<std::size_t>(N), 0.0);
+    std::vector<Real> electronRowL2Sq(static_cast<std::size_t>(N), 0.0);
+    std::vector<Real> holeRowL2Sq(static_cast<std::size_t>(N), 0.0);
+    for (int col = 0; col < J.outerSize(); ++col) {
+        for (SparseMatrixd::InnerIterator it(J, col); it; ++it) {
+            const int row = static_cast<int>(it.row());
+            const Real value = it.value();
+            if (row >= N && row < 2 * N) {
+                const std::size_t node = static_cast<std::size_t>(row - N);
+                electronRowAbs[node] += std::abs(value);
+                electronRowL2Sq[node] += value * value;
+            } else if (row >= 2 * N && row < 3 * N) {
+                const std::size_t node = static_cast<std::size_t>(row - 2 * N);
+                holeRowAbs[node] += std::abs(value);
+                holeRowL2Sq[node] += value * value;
+            }
+        }
+    }
+
+    NewtonCarrierRowDiagnosticsEvaluation evaluation;
+    evaluation.residual.raw = raw;
+    evaluation.residual.blockNorms = blockResidualInfo(raw, mesh_.numNodes());
+    evaluation.residual.intrinsicDensity = assembler.intrinsicDensity();
+    evaluation.residual.scaledState = assembler.usesScaledState();
+    evaluation.residual.potentialScale = potentialScale;
+    evaluation.potentialScale = potentialScale;
+    evaluation.rawCarrierStepNorm = rawStep.norm();
+    evaluation.cappedCarrierStepNorm = cappedStep.norm();
+    evaluation.rows.reserve(static_cast<std::size_t>(N));
+    for (int i = 0; i < N; ++i) {
+        const int eRow = N + i;
+        const int hRow = 2 * N + i;
+        const Real eDiag = J.coeff(eRow, eRow);
+        const Real hDiag = J.coeff(hRow, hRow);
+        NewtonCarrierRowDiagnostic row;
+        row.nodeId = static_cast<Index>(i);
+        row.electronResidual = raw(eRow);
+        row.holeResidual = raw(hRow);
+        row.electronDiagonal = eDiag;
+        row.holeDiagonal = hDiag;
+        row.electronRowAbsSum = electronRowAbs[static_cast<std::size_t>(i)];
+        row.holeRowAbsSum = holeRowAbs[static_cast<std::size_t>(i)];
+        row.electronOffdiagAbsSum = row.electronRowAbsSum - std::abs(eDiag);
+        row.holeOffdiagAbsSum = row.holeRowAbsSum - std::abs(hDiag);
+        row.electronRowL2Norm =
+            std::sqrt(electronRowL2Sq[static_cast<std::size_t>(i)]);
+        row.holeRowL2Norm =
+            std::sqrt(holeRowL2Sq[static_cast<std::size_t>(i)]);
+        row.rawDeltaPhin_V = rawStep(N + i) * potentialScale;
+        row.rawDeltaPhip_V = rawStep(2 * N + i) * potentialScale;
+        row.cappedDeltaPhin_V = cappedStep(N + i) * potentialScale;
+        row.cappedDeltaPhip_V = cappedStep(2 * N + i) * potentialScale;
+        evaluation.rows.push_back(row);
+    }
+    return evaluation;
+}
+
+NewtonCarrierTermDiagnosticsEvaluation NewtonSolver::evaluateCarrierTermDiagnostics(
+    const DDSolution& state) const
+{
+    const double Vt = thermalVoltage(cfg_.temperature_K);
+    const MobilityModelConfig mobilityConfig = cfg_.mobility;
+    RecombinationModelConfig recombinationConfig =
+        recombinationModelConfig(cfg_.recombination, cfg_.taun, cfg_.taup);
+    recombinationConfig.augerCn = cfg_.augerCn;
+    recombinationConfig.augerCp = cfg_.augerCp;
+    const DDScalingSpec scaling = buildScalingSpec();
+    CoupledDDAssembler assembler(
+        mesh_,
+        matdb_,
+        doping_,
+        Vt,
+        mobilityConfig,
+        recombinationConfig,
+        cfg_.bandgapNarrowing,
+        cfg_.impactIonization,
+        fixedCharges_,
+        sheetCharges_,
+        scaling,
+        cfg_.carrierDiagonalFloor);
+    const CoupledDDBoundaryConditions bcs = buildBoundaryConditions(assembler);
+    const Real potentialScale =
+        assembler.usesScaledState() ? assembler.potentialScale() : 1.0;
+    const VectorXd x = assembler.pack({
+        state.psi / potentialScale,
+        state.phin / potentialScale,
+        state.phip / potentialScale});
+    const VectorXd raw = assembler.residual(x, bcs);
+
+    NewtonCarrierTermDiagnosticsEvaluation evaluation;
+    evaluation.residual.raw = raw;
+    evaluation.residual.blockNorms = blockResidualInfo(raw, mesh_.numNodes());
+    evaluation.residual.intrinsicDensity = assembler.intrinsicDensity();
+    evaluation.residual.scaledState = assembler.usesScaledState();
+    evaluation.residual.potentialScale = potentialScale;
+    evaluation.rows = assembler.carrierContinuityTermDiagnostics(x, bcs);
+    return evaluation;
+}
+
+std::vector<NewtonJacobianBlockAuditRow> NewtonSolver::evaluateJacobianBlockAudit(
+    const DDSolution& state,
+    Real finiteDifferenceStep,
+    std::vector<std::string> blocks) const
+{
+    const int N = static_cast<int>(mesh_.numNodes());
+    if (state.psi.size() != N || state.phin.size() != N || state.phip.size() != N) {
+        throw std::invalid_argument(
+            "NewtonSolver::evaluateJacobianBlockAudit: state size must match the mesh node count.");
+    }
+    if (finiteDifferenceStep <= 0.0 || !std::isfinite(finiteDifferenceStep)) {
+        throw std::invalid_argument(
+            "NewtonSolver::evaluateJacobianBlockAudit: finite difference step must be positive.");
+    }
+
+    const double Vt = thermalVoltage(cfg_.temperature_K);
+    const MobilityModelConfig mobilityConfig = cfg_.mobility;
+    const DDScalingSpec scaling = buildScalingSpec();
+
+    const auto makeRecombinationConfig =
+        [&](const std::vector<std::string>& models) {
+            RecombinationModelConfig config =
+                recombinationModelConfig(models, cfg_.taun, cfg_.taup);
+            config.augerCn = cfg_.augerCn;
+            config.augerCp = cfg_.augerCp;
+            return config;
+        };
+    const RecombinationModelConfig noRecombinationConfig =
+        makeRecombinationConfig({"none"});
+    const RecombinationModelConfig recombinationConfig =
+        makeRecombinationConfig(cfg_.recombination);
+    const ImpactIonizationModelConfig noImpactConfig{};
+
+    const auto makeAssembler =
+        [&](const RecombinationModelConfig& recombination,
+            const ImpactIonizationModelConfig& impact) {
+            return CoupledDDAssembler(
+                mesh_,
+                matdb_,
+                doping_,
+                Vt,
+                mobilityConfig,
+                recombination,
+                cfg_.bandgapNarrowing,
+                impact,
+                fixedCharges_,
+                sheetCharges_,
+                scaling,
+        cfg_.carrierDiagonalFloor);
+        };
+
+    CoupledDDAssembler baseAssembler =
+        makeAssembler(noRecombinationConfig, noImpactConfig);
+    const CoupledDDBoundaryConditions bcs =
+        buildBoundaryConditions(baseAssembler);
+    const Real potentialScale =
+        baseAssembler.usesScaledState() ? baseAssembler.potentialScale() : 1.0;
+    const VectorXd x = baseAssembler.pack({
+        state.psi / potentialScale,
+        state.phin / potentialScale,
+        state.phip / potentialScale});
+
+    const auto matrixPair =
+        [&](CoupledDDAssembler& assembler) {
+            return std::pair<SparseMatrixd, SparseMatrixd>{
+                assembler.assembleJacobian(x, bcs),
+                assembler.finiteDifferenceJacobian(x, bcs, finiteDifferenceStep),
+            };
+        };
+
+    const std::vector<std::string> defaultBlocks = {
+        "poisson",
+        "transport",
+        "srh_auger",
+        "sg_avalanche",
+        "dirichlet_or_gauge",
+    };
+    if (blocks.empty())
+        blocks = defaultBlocks;
+
+    const auto wants = [&](const std::string& block) {
+        return std::find(blocks.begin(), blocks.end(), block) != blocks.end();
+    };
+    const bool needsBase =
+        wants("poisson") || wants("transport") || wants("srh_auger") ||
+        wants("sg_avalanche") || wants("dirichlet_or_gauge");
+    const bool needsRecombination = wants("srh_auger");
+    const bool needsImpact = wants("sg_avalanche");
+
+    std::optional<std::pair<SparseMatrixd, SparseMatrixd>> base;
+    std::optional<std::pair<SparseMatrixd, SparseMatrixd>> withRecombination;
+    std::optional<std::pair<SparseMatrixd, SparseMatrixd>> withImpact;
+    if (needsBase)
+        base = matrixPair(baseAssembler);
+    if (needsRecombination) {
+        CoupledDDAssembler recombinationAssembler =
+            makeAssembler(recombinationConfig, noImpactConfig);
+        withRecombination = matrixPair(recombinationAssembler);
+    }
+    if (needsImpact) {
+        CoupledDDAssembler impactAssembler =
+            makeAssembler(noRecombinationConfig, cfg_.impactIonization);
+        withImpact = matrixPair(impactAssembler);
+    }
+
+    std::vector<NewtonJacobianBlockAuditRow> rows;
+    rows.reserve(blocks.size());
+    for (const std::string& block : blocks) {
+        if (block == "poisson") {
+            rows.push_back(jacobianAuditRow(
+                block, base->first, base->second, jacobianAuditRows(block, N)));
+        } else if (block == "transport") {
+            rows.push_back(jacobianAuditRow(
+                block, base->first, base->second, jacobianAuditRows(block, N)));
+        } else if (block == "srh_auger") {
+            rows.push_back(jacobianAuditRow(
+                block,
+                withRecombination->first - base->first,
+                withRecombination->second - base->second,
+                jacobianAuditRows(block, N)));
+        } else if (block == "sg_avalanche") {
+            rows.push_back(jacobianAuditRow(
+                block,
+                withImpact->first - base->first,
+                withImpact->second - base->second,
+                jacobianAuditRows(block, N)));
+        } else if (block == "dirichlet_or_gauge") {
+            rows.push_back(jacobianAuditRow(
+                block, base->first, base->second, jacobianAuditRows(block, N, bcs)));
+        } else {
+            throw std::invalid_argument(
+                "NewtonSolver::evaluateJacobianBlockAudit: unknown block '" + block + "'.");
+        }
+    }
+    return rows;
+}
+
+std::vector<CoupledDDEdgeFluxDiagnostic> NewtonSolver::evaluateSgEdgeFluxDiagnostics(
+    const DDSolution& state) const
+{
+    const double Vt = thermalVoltage(cfg_.temperature_K);
+    const MobilityModelConfig mobilityConfig = cfg_.mobility;
+    RecombinationModelConfig recombinationConfig =
+        recombinationModelConfig(cfg_.recombination, cfg_.taun, cfg_.taup);
+    recombinationConfig.augerCn = cfg_.augerCn;
+    recombinationConfig.augerCp = cfg_.augerCp;
+    const DDScalingSpec scaling = buildScalingSpec();
+    CoupledDDAssembler assembler(
+        mesh_,
+        matdb_,
+        doping_,
+        Vt,
+        mobilityConfig,
+        recombinationConfig,
+        cfg_.bandgapNarrowing,
+        cfg_.impactIonization,
+        fixedCharges_,
+        sheetCharges_,
+        scaling,
+        cfg_.carrierDiagonalFloor);
+    const CoupledDDBoundaryConditions bcs = buildBoundaryConditions(assembler);
+    const Real potentialScale =
+        assembler.usesScaledState() ? assembler.potentialScale() : 1.0;
+    const VectorXd x = assembler.pack({
+        state.psi / potentialScale,
+        state.phin / potentialScale,
+        state.phip / potentialScale});
+    return assembler.sgEdgeFluxDiagnostics(x, bcs);
+}
+
 NewtonResult NewtonSolver::solve() const
 {
     const double Vt = thermalVoltage(cfg_.temperature_K);
@@ -534,9 +2401,46 @@ NewtonResult NewtonSolver::solve() const
         cfg_.impactIonization,
         fixedCharges_,
         sheetCharges_,
-        scaling);
+        scaling,
+        cfg_.carrierDiagonalFloor);
     const CoupledDDBoundaryConditions bcs = buildBoundaryConditions(assembler);
     return solve(buildInitialGuess(assembler, bcs));
+}
+
+NewtonPoissonBlockInitialization NewtonSolver::buildPoissonBlockInitialization() const
+{
+    const double Vt = thermalVoltage(cfg_.temperature_K);
+    const MobilityModelConfig mobilityConfig = cfg_.mobility;
+    RecombinationModelConfig recombinationConfig =
+        recombinationModelConfig(cfg_.recombination, cfg_.taun, cfg_.taup);
+    recombinationConfig.augerCn = cfg_.augerCn;
+    recombinationConfig.augerCp = cfg_.augerCp;
+    const DDScalingSpec scaling = buildScalingSpec();
+    CoupledDDAssembler assembler(
+        mesh_,
+        matdb_,
+        doping_,
+        Vt,
+        mobilityConfig,
+        recombinationConfig,
+        cfg_.bandgapNarrowing,
+        cfg_.impactIonization,
+        fixedCharges_,
+        sheetCharges_,
+        scaling,
+        cfg_.carrierDiagonalFloor);
+    const CoupledDDBoundaryConditions bcs = buildBoundaryConditions(assembler);
+
+    NewtonPoissonBlockInitialization out;
+    out.coldInitial = buildInitialGuess(assembler, bcs);
+    const NewtonBlockStepEvaluation step =
+        evaluateBlockStep(out.coldInitial, "poisson_only");
+    out.poissonBlockInitial = step.trialSolution;
+    out.coldBlockResiduals = step.residual.blockNorms;
+    out.poissonBlockResiduals = step.trialResidual.blockNorms;
+    out.rawStepNorm = step.rawStepNorm;
+    out.stepNorm = step.stepNorm;
+    return out;
 }
 
 NewtonResult NewtonSolver::solve(const DDSolution& initial) const
@@ -559,7 +2463,8 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
         cfg_.impactIonization,
         fixedCharges_,
         sheetCharges_,
-        scaling);
+        scaling,
+        cfg_.carrierDiagonalFloor);
     const CoupledDDBoundaryConditions bcs = buildBoundaryConditions(assembler);
 
     // By default Newton uses a conservative cold start for quasi-Fermi
@@ -568,6 +2473,7 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
     // Scharfetter-Gummel flux.  Set warm_start=true to preserve the supplied
     // quasi-Fermi potentials, which is useful for continuation runs where the
     // previous bias point is already a high-quality initial guess.
+    VectorXd psiInit = initial.psi;
     VectorXd phinInit = initial.phin;
     VectorXd phipInit = initial.phip;
     const int N = static_cast<int>(mesh_.numNodes());
@@ -583,8 +2489,14 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
 
     const Real potentialScale =
         assembler.usesScaledState() ? assembler.potentialScale() : 1.0;
+    for (const auto& [nid, value] : bcs.psi)
+        psiInit(static_cast<int>(nid)) = value * potentialScale;
+    for (const auto& [nid, value] : bcs.phin)
+        phinInit(static_cast<int>(nid)) = value * potentialScale;
+    for (const auto& [nid, value] : bcs.phip)
+        phipInit(static_cast<int>(nid)) = value * potentialScale;
     VectorXd x = assembler.pack({
-        initial.psi / potentialScale,
+        psiInit / potentialScale,
         phinInit / potentialScale,
         phipInit / potentialScale});
     VectorXd r = assembler.residual(x, bcs);
@@ -601,12 +2513,161 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
             residualScales,
             residualWeights);
     };
+
     const Real initialNorm = residualNormFn(r);
 
     NewtonResult result;
     result.solution = initial;
     result.initialResidualNorm = initialNorm;
     result.finalResidualNorm = initialNorm;
+    result.finalBlockNorms = blockResidualInfo(r, mesh_.numNodes());
+
+    auto carrierRowEval = [&](const VectorXd& state) {
+        if (cfg_.carrierRowConvergence.mode == "off")
+            return NewtonCarrierRowConvergenceEvaluation{};
+        return evaluateCarrierRowConvergence(
+            assembler.carrierContinuityTermDiagnostics(state, bcs),
+            cfg_.carrierRowConvergence);
+    };
+    auto carrierRowsAcceptConvergence = [](const NewtonCarrierRowConvergenceEvaluation& evaluation) {
+        return !evaluation.enforced || evaluation.satisfied;
+    };
+    auto writeCarrierRowDiagnosticCsv = [&](const NewtonCarrierRowConvergenceEvaluation& evaluation,
+                                            int iteration,
+                                            const std::string& event) {
+        if (!evaluation.enabled || cfg_.carrierRowConvergence.diagnosticCsvFile.empty())
+            return;
+        const std::filesystem::path path(cfg_.carrierRowConvergence.diagnosticCsvFile);
+        if (!path.parent_path().empty())
+            std::filesystem::create_directories(path.parent_path());
+        const bool writeHeader = !std::filesystem::exists(path);
+        std::ofstream out(path, std::ios::app);
+        if (writeHeader) {
+            out << "event,iteration,node_id,carrier,residual,scale,ratio,flux,srh,impact\n";
+        }
+        out << std::setprecision(17);
+        for (const auto& row : evaluation.violations) {
+            out << event << ',' << iteration << ',' << row.nodeId << ',' << row.carrier << ','
+                << row.residual << ',' << row.scale << ',' << row.ratio << ','
+                << row.flux << ',' << row.recombination << ',' << row.impact << '\n';
+        }
+    };
+    auto shouldWriteCarrierRowTrace = [&](int iteration) {
+        if (cfg_.carrierRowConvergence.traceCsvFile.empty() ||
+            cfg_.carrierRowConvergence.traceNodes.empty())
+            return false;
+        if (iteration <= cfg_.carrierRowConvergence.traceFirstIterations)
+            return true;
+        const int every = std::max(1, cfg_.carrierRowConvergence.traceEveryIterations);
+        return iteration % every == 0;
+    };
+    auto writeCarrierRowTraceCsv = [&](const VectorXd& state,
+                                       const NewtonCarrierRowConvergenceEvaluation& evaluation,
+                                       int iteration,
+                                       Real residualNorm,
+                                       const std::string& event) {
+        if (!evaluation.enabled || !shouldWriteCarrierRowTrace(iteration))
+            return;
+        const std::filesystem::path path(cfg_.carrierRowConvergence.traceCsvFile);
+        if (!path.parent_path().empty())
+            std::filesystem::create_directories(path.parent_path());
+        const bool writeHeader = !std::filesystem::exists(path);
+        std::ofstream out(path, std::ios::app);
+        if (writeHeader) {
+            out << "event,iteration,residual_norm,node_id,psi_V,phin_V,phip_V,n_m3,p_m3,"
+                << "electron_residual,electron_scale,electron_ratio,electron_flux,electron_srh,electron_impact,"
+                << "hole_residual,hole_scale,hole_ratio,hole_flux,hole_srh,hole_impact\n";
+        }
+        const auto terms = assembler.carrierContinuityTermDiagnostics(state, bcs);
+        const VectorXd n = assembler.electronDensity(state);
+        const VectorXd p = assembler.holeDensity(state);
+        const CoupledDDState unpacked = assembler.unpack(state);
+        auto scaleFor = [&](Real flux, Real recombination, Real impact) {
+            return std::max({std::abs(flux), std::abs(recombination), std::abs(impact),
+                             std::max<Real>(cfg_.carrierRowConvergence.scaleFloor, 0.0)});
+        };
+        out << std::setprecision(17);
+        for (Index node : cfg_.carrierRowConvergence.traceNodes) {
+            if (node < 0 || node >= mesh_.numNodes())
+                continue;
+            const auto& term = terms[static_cast<std::size_t>(node)];
+            const Real eScale = scaleFor(term.electronFluxAbsSum, term.electronRecombination, term.electronImpact);
+            const Real hScale = scaleFor(term.holeFluxAbsSum, term.holeRecombination, term.holeImpact);
+            const Real eRatio = eScale > 0.0 ? std::abs(term.electronResidual) / eScale : 0.0;
+            const Real hRatio = hScale > 0.0 ? std::abs(term.holeResidual) / hScale : 0.0;
+            out << event << ',' << iteration << ',' << residualNorm << ',' << node << ','
+                << unpacked.psi(static_cast<int>(node)) * potentialScale << ','
+                << unpacked.phin(static_cast<int>(node)) * potentialScale << ','
+                << unpacked.phip(static_cast<int>(node)) * potentialScale << ','
+                << n(static_cast<int>(node)) << ',' << p(static_cast<int>(node)) << ','
+                << term.electronResidual << ',' << eScale << ',' << eRatio << ','
+                << term.electronFlux << ',' << term.electronRecombination << ',' << term.electronImpact << ','
+                << term.holeResidual << ',' << hScale << ',' << hRatio << ','
+                << term.holeFlux << ',' << term.holeRecombination << ',' << term.holeImpact << '\n';
+        }
+    };
+    auto finishConverged = [&](const std::string& reason,
+                               const VectorXd& state,
+                               const VectorXd& residual,
+                               int iterations,
+                               Real norm,
+                               const NewtonCarrierRowConvergenceEvaluation& rowEval) {
+        result.converged = true;
+        result.iters = iterations;
+        result.finalResidualNorm = norm;
+        result.convergenceReason = reason;
+        result.finalBlockNorms = blockResidualInfo(residual, mesh_.numNodes());
+        result.finalCarrierRowConvergence = rowEval;
+        result.solution = makeSolution(assembler, state, iterations);
+        writeCarrierRowDiagnosticCsv(rowEval, iterations, reason);
+        writeCarrierRowTraceCsv(state, rowEval, iterations, norm, reason);
+    };
+
+    auto retryAfterCarrierRowRecovery = [&](const VectorXd& state,
+                                            int iterations,
+                                            const NewtonCarrierRowConvergenceEvaluation& rowEval)
+        -> std::optional<NewtonResult> {
+        if (cfg_.carrierRowRecovery.mode == "off" || cfg_.carrierRowRecovery.maxAttempts <= 0 ||
+            cfg_.carrierRowRecovery.maxCycles <= 0 || !rowEval.enabled || rowEval.satisfied ||
+            rowEval.violations.empty()) {
+            return std::nullopt;
+        }
+        DDSolution base = makeSolution(assembler, state, iterations);
+        NewtonCarrierRowRecoveryResult recovery = recoverCarrierRowsWithGummelDensity(
+            mesh_, matdb_, doping_, contactBiases_, cfg_, base, rowEval.violations,
+            cfg_.carrierRowRecovery);
+        if (!recovery.attempted ||
+            (recovery.electronRowsUpdated == 0 && recovery.holeRowsUpdated == 0)) {
+            return std::nullopt;
+        }
+        NewtonConfig retryCfg = cfg_;
+        retryCfg.carrierRowRecovery.maxCycles = cfg_.carrierRowRecovery.maxCycles - 1;
+        retryCfg.warmStart = true;
+        NewtonSolver retrySolver(
+            mesh_, matdb_, doping_, contactBiases_, retryCfg, fixedCharges_, sheetCharges_);
+        NewtonResult retried = retrySolver.solve(recovery.solution);
+        if (retried.carrierRowRecovery.attempted) {
+            recovery.electronRowsUpdated += retried.carrierRowRecovery.electronRowsUpdated;
+            recovery.holeRowsUpdated += retried.carrierRowRecovery.holeRowsUpdated;
+            recovery.densityPasses += retried.carrierRowRecovery.densityPasses;
+            recovery.cyclesAttempted += retried.carrierRowRecovery.cyclesAttempted;
+            recovery.densityConverged = recovery.densityConverged &&
+                retried.carrierRowRecovery.densityConverged;
+            recovery.maxDensityRelativeChange = std::max(
+                recovery.maxDensityRelativeChange,
+                retried.carrierRowRecovery.maxDensityRelativeChange);
+            recovery.maxCarrierDensityRatio = std::max(
+                recovery.maxCarrierDensityRatio,
+                retried.carrierRowRecovery.maxCarrierDensityRatio);
+            recovery.maxPsiDelta_V = std::max(
+                recovery.maxPsiDelta_V,
+                retried.carrierRowRecovery.maxPsiDelta_V);
+            recovery.solution = retried.carrierRowRecovery.solution;
+        }
+        retried.carrierRowRecovery = recovery;
+        return retried;
+    };
+
 
     if (cfg_.verbose) {
         const ResidualBlockNormValue blocks = ResidualNorm::computeBlocks(r, mesh_.numNodes());
@@ -616,9 +2677,10 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
                   << blocks.phip << ")\n";
     }
 
-    if (initialNorm <= cfg_.abstol) {
-        result.converged = true;
-        result.solution = makeSolution(assembler, x, 0);
+    NewtonCarrierRowConvergenceEvaluation initialRowEval = carrierRowEval(x);
+    writeCarrierRowTraceCsv(x, initialRowEval, 0, initialNorm, "initial");
+    if (initialNorm <= cfg_.abstol && carrierRowsAcceptConvergence(initialRowEval)) {
+        finishConverged("initial_abstol", x, r, 0, initialNorm, initialRowEval);
         return result;
     }
 
@@ -629,14 +2691,29 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
     lscfg.recordHistory = cfg_.diagnostics;
     BacktrackingLineSearch lineSearch(lscfg);
 
+    // Stall-recovery threshold: when the damped Newton step cannot reduce the
+    // residual but the residual already sits at or below this normalized floor,
+    // the state is effectively solved (the line search is fighting numerical
+    // noise) and convergence is reported instead of failing.
+    const Real stallResidualFloor = cfg_.stallResidualFloor;
+
+
+    auto capConfiguredStep = [&](VectorXd& candidateStep,
+                                 const SparseMatrixd& jacobian,
+                                 const VectorXd& residual) {
+        applyConfiguredStepCapsAndPoissonRecorrection(
+            candidateStep, jacobian, residual, cfg_, N, potentialScale, doping_);
+    };
+
     VectorXd acceptedX = x;
     VectorXd acceptedR = r;
     int acceptedIters = 0;
 
     for (int iter = 1; iter <= cfg_.maxIter; ++iter) {
-        const SparseMatrixd J = (cfg_.jacobian == "finite_difference")
+        SparseMatrixd J = (cfg_.jacobian == "finite_difference")
             ? assembler.finiteDifferenceJacobian(x, bcs, cfg_.finiteDifferenceStep)
             : assembler.assembleJacobian(x, bcs);
+        addCarrierRowRegularization(J, N, cfg_.carrierRegularizationScale);
         VectorXd step;
         try {
             step = linearSolver.solve(J, -r);
@@ -644,19 +2721,29 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
             result.finalResidualNorm = residualNormFn(acceptedR);
             result.iters = acceptedIters;
             result.solution = makeSolution(assembler, acceptedX, acceptedIters);
+            result.failureDiagnostics = buildFailureDiagnostics(
+                mesh_,
+                doping_,
+                assembler,
+                acceptedX,
+                acceptedR,
+                "linear_solve_failed",
+                iter,
+                result.finalResidualNorm,
+                0.0,
+                0.0,
+                0,
+                {});
             if (cfg_.verbose) {
                 std::cerr << "Newton failed at iter " << iter
                           << ": residual=" << residualNormFn(r)
                           << " damping=0 step=0 (linear solve failed)\n";
+                printFailureDiagnostics(result.failureDiagnostics);
             }
             return result;
         }
-        if (cfg_.maxUpdate > 0.0) {
-            const Real maxAbsStep = step.cwiseAbs().maxCoeff();
-            if (maxAbsStep > cfg_.maxUpdate)
-                step *= cfg_.maxUpdate / maxAbsStep;
-        }
-        const Real stepNorm = step.norm();
+        capConfiguredStep(step, J, r);
+        Real stepNorm = step.norm();
 
         auto ls = lineSearch.search(
             x, step, r,
@@ -667,15 +2754,76 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
             residualNormFn);
 
         if (!ls.accepted) {
-            result.finalResidualNorm = residualNormFn(acceptedR);
+            const Real stalledNorm = residualNormFn(acceptedR);
+            // Effectively-solved state: the residual already sits at the
+            // numerical floor, so the rejected step is only fighting noise.
+            // Declaring convergence here avoids spurious failures when the
+            // Newton iterate has already reached the achievable precision.
+            const NewtonCarrierRowConvergenceEvaluation stalledRowEval = carrierRowEval(acceptedX);
+            const NewtonBlockResidualInfo stalledBlocks = blockResidualInfo(acceptedR, mesh_.numNodes());
+            if (stalledNorm <= stallResidualFloor &&
+                carrierRowsAcceptConvergence(stalledRowEval)) {
+                finishConverged("stall_residual_floor", acceptedX, acceptedR,
+                                acceptedIters, stalledNorm, stalledRowEval);
+                return result;
+            }
+            const DDSolution stalledSolution = makeSolution(assembler, acceptedX, acceptedIters);
+            const Real stalledContactMajorityQfDrop = maxContactMajorityQuasiFermiDrop(stalledSolution);
+            Real bestRejectedContactMajorityQfDrop = std::numeric_limits<Real>::infinity();
+            if (ls.bestRejectedCandidate) {
+                const DDSolution bestRejectedSolution = makeSolution(assembler, ls.bestRejectedX, acceptedIters);
+                bestRejectedContactMajorityQfDrop = maxContactMajorityQuasiFermiDrop(bestRejectedSolution);
+            }
+
+            if (isPoissonLineSearchStall(ls, stalledBlocks, stalledNorm, stalledContactMajorityQfDrop, cfg_) &&
+                carrierRowsAcceptConvergence(stalledRowEval)) {
+                finishConverged("poisson_line_search_stall_floor", acceptedX, acceptedR,
+                                acceptedIters, stalledNorm, stalledRowEval);
+                return result;
+            }
+            if (stalledNorm <= stallResidualFloor && stalledRowEval.enforced &&
+                !stalledRowEval.satisfied) {
+                writeCarrierRowDiagnosticCsv(
+                    stalledRowEval, acceptedIters,
+                    "carrier_row_convergence_line_search_rejected");
+                writeCarrierRowTraceCsv(
+                    acceptedX, stalledRowEval, acceptedIters, stalledNorm,
+                    "carrier_row_convergence_line_search_rejected");
+                if (auto recovered =
+                        retryAfterCarrierRowRecovery(acceptedX, acceptedIters, stalledRowEval))
+                    return *recovered;
+            }
+            result.finalResidualNorm = stalledNorm;
             result.iters = acceptedIters;
+            result.finalBlockNorms = stalledBlocks;
+            result.finalCarrierRowConvergence = stalledRowEval;
             result.solution = makeSolution(assembler, acceptedX, acceptedIters);
+            result.failureDiagnostics = buildFailureDiagnostics(
+                mesh_,
+                doping_,
+                assembler,
+                acceptedX,
+                acceptedR,
+                (stalledNorm <= stallResidualFloor && stalledRowEval.enforced && !stalledRowEval.satisfied)
+                    ? std::string("carrier_row_convergence_line_search_rejected")
+                    : (ls.failureReason.empty() ? std::string("line_search_rejected") : ls.failureReason),
+                iter,
+                result.finalResidualNorm,
+                stepNorm,
+                ls.damping,
+                ls.attempts,
+                ls.failureReason,
+                stalledContactMajorityQfDrop,
+                bestRejectedContactMajorityQfDrop,
+                std::move(ls.history));
             if (cfg_.verbose) {
                 std::cerr << "Newton failed at iter " << iter
                           << ": residual=" << ls.residualNorm
                           << " damping=" << ls.damping
                           << " step=" << stepNorm
-                          << " (line search rejected step)\n";
+                          << " (line search rejected step; reason="
+                          << result.failureDiagnostics.failureReason << ")\n";
+                printFailureDiagnostics(result.failureDiagnostics);
             }
             return result;
         }
@@ -699,12 +2847,14 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
         info.rawStepNorm = stepNorm;
         info.lineSearchAttempts = ls.attempts;
         info.lineSearchAccepted = ls.accepted;
+        info.blockResiduals = blockResidualInfo(r, mesh_.numNodes());
+        info.carrierRowConvergence = carrierRowEval(x);
+        writeCarrierRowTraceCsv(x, info.carrierRowConvergence, iter, residualNorm, "iteration");
         if (cfg_.diagnostics)
             info.lineSearchHistory = std::move(ls.history);
         result.history.push_back(std::move(info));
         if (cfg_.verbose) {
-            const ResidualBlockNormValue blocks =
-                ResidualNorm::computeBlocks(r, mesh_.numNodes());
+            const NewtonBlockResidualInfo& blocks = result.history.back().blockResiduals;
             std::cout << "Newton iter " << iter
                       << " residual=" << residualNorm
                       << " step=" << appliedStepNorm
@@ -714,19 +2864,61 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
         }
 
         const Real rel = result.history.back().relativeResidualNorm;
-        if (residualNorm <= cfg_.abstol || rel <= cfg_.reltol) {
-            result.converged = true;
-            result.iters = iter;
-            result.finalResidualNorm = residualNorm;
-            result.solution = makeSolution(assembler, x, iter);
+        const bool absoluteConverged = residualNorm <= cfg_.abstol;
+        const bool relativeConverged = rel <= cfg_.reltol;
+        const NewtonCarrierRowConvergenceEvaluation& rowEval =
+            result.history.back().carrierRowConvergence;
+        if ((absoluteConverged || relativeConverged) &&
+            carrierRowsAcceptConvergence(rowEval)) {
+            finishConverged(
+                absoluteConverged ? "abstol" : "reltol",
+                x,
+                r,
+                iter,
+                residualNorm,
+                rowEval);
             return result;
         }
     }
 
-    result.converged = false;
     result.iters = acceptedIters;
     result.finalResidualNorm = residualNormFn(acceptedR);
     result.solution = makeSolution(assembler, acceptedX, acceptedIters);
+    const NewtonCarrierRowConvergenceEvaluation finalRowEval = carrierRowEval(acceptedX);
+    result.finalBlockNorms = blockResidualInfo(acceptedR, mesh_.numNodes());
+    result.finalCarrierRowConvergence = finalRowEval;
+    if (result.finalResidualNorm <= stallResidualFloor &&
+        carrierRowsAcceptConvergence(finalRowEval)) {
+        finishConverged("max_iter_stall_residual_floor", acceptedX, acceptedR,
+                        acceptedIters, result.finalResidualNorm, finalRowEval);
+        return result;
+    }
+
+    result.converged = false;
+    const std::string finalFailureReason =
+        (finalRowEval.enforced && !finalRowEval.satisfied)
+            ? std::string("carrier_row_convergence")
+            : std::string("max_iterations");
+    writeCarrierRowDiagnosticCsv(finalRowEval, acceptedIters, finalFailureReason);
+    writeCarrierRowTraceCsv(acceptedX, finalRowEval, acceptedIters,
+                            result.finalResidualNorm, finalFailureReason);
+    if (finalRowEval.enforced && !finalRowEval.satisfied) {
+        if (auto recovered = retryAfterCarrierRowRecovery(acceptedX, acceptedIters, finalRowEval))
+            return *recovered;
+    }
+    result.failureDiagnostics = buildFailureDiagnostics(
+        mesh_,
+        doping_,
+        assembler,
+        acceptedX,
+        acceptedR,
+        finalFailureReason,
+        cfg_.maxIter,
+        result.finalResidualNorm,
+        result.history.empty() ? 0.0 : result.history.back().stepNorm,
+        result.history.empty() ? 0.0 : result.history.back().dampingFactor,
+        result.history.empty() ? 0 : result.history.back().lineSearchAttempts,
+        {});
     if (cfg_.verbose) {
         std::cerr << "Newton failed after " << cfg_.maxIter
                   << " iterations: residual=" << result.finalResidualNorm
@@ -735,6 +2927,7 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
                   << " step="
                   << (result.history.empty() ? 0.0 : result.history.back().stepNorm)
                   << '\n';
+        printFailureDiagnostics(result.failureDiagnostics);
     }
     return result;
 }

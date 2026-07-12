@@ -95,23 +95,74 @@ TEST_CASE("UnitScalingSystem: positive reference scales on PN-like deck", "[scal
     REQUIRE(sc.R0() > 0.0);
 }
 
-TEST_CASE("UnitScalingSystem: auto C0 uses SI-equivalent concentration from unit_scaling input", "[scaling]")
+TEST_CASE("UnitScalingConfig unit_scaling keeps TCAD values internal", "[scaling]")
 {
     const UnitScalingConfig unitScaling{UnitScalingMode::UnitScaling};
 
-    UnitScalingSystem::AutoInputs inputs;
-    inputs.maxAbsNetDoping_m3 = unitScaling.concentrationToSI(1.0e17);
-    inputs.niFloor_m3 = unitScaling.concentrationToSI(1.0e10);
-    inputs.meshMaxLength_m = unitScaling.lengthToSI(1.0);
-    inputs.maxMobility_m2_V_s = unitScaling.mobilityToSI(1000.0);
+    REQUIRE(unitScaling.lengthToInternal(0.01) == Catch::Approx(0.01));
+    REQUIRE(unitScaling.concentrationToInternal(1.0e17) == Catch::Approx(1.0e17));
+    REQUIRE(unitScaling.sheetDensityToInternal(2.5e11) == Catch::Approx(2.5e11));
+    REQUIRE(unitScaling.mobilityToInternal(1000.0) == Catch::Approx(1000.0));
+    REQUIRE(unitScaling.electricFieldToInternal(3.0e5) == Catch::Approx(3.0e5));
+    REQUIRE(unitScaling.inverseLengthToInternal(1.2e6) == Catch::Approx(1.2e6));
+    REQUIRE(unitScaling.surfaceFieldCoefficientToInternal(0.7) == Catch::Approx(0.7));
 
-    const UnitScalingSystem sc = UnitScalingSystem::fromInputs(
+    REQUIRE(unitScaling.unitSystem().internalLengthToMeters(0.01) ==
+            Catch::Approx(1.0e-8));
+    REQUIRE(unitScaling.unitSystem().internalConcentrationToM3(1.0e17) ==
+            Catch::Approx(1.0e23));
+    REQUIRE(unitScaling.unitSystem().internalElectricFieldToVPerM(3.0e5) ==
+            Catch::Approx(3.0e7));
+}
+
+TEST_CASE("PhysicalUnitSystem exposes TCAD composite factors", "[scaling]")
+{
+    const UnitScalingConfig unitScaling{UnitScalingMode::UnitScaling};
+    const PhysicalUnitSystem& units = unitScaling.unitSystem();
+
+    REQUIRE(units.chargeVolumeFactor() == Catch::Approx(1.0e-12));
+    REQUIRE(units.chargeSheetFactor() == Catch::Approx(1.0e-8));
+    REQUIRE(units.fieldFromCoordinateDeltaFactor() == Catch::Approx(1.0e4));
+    REQUIRE(units.currentPerInternalDepthFactor() == Catch::Approx(1.0e-6));
+}
+TEST_CASE("UnitScalingSystem: unit_scaling references stay in TCAD internal units", "[scaling]")
+{
+    const UnitScalingConfig unitScaling{UnitScalingMode::UnitScaling};
+
+    UnitScalingSystem::AutoInputs tcadInputs;
+    tcadInputs.maxAbsNetDoping_m3 = 1.0e17;
+    tcadInputs.niFloor_m3 = 1.0e10;
+    tcadInputs.meshMaxLength_m = 1.0;
+    tcadInputs.maxMobility_m2_V_s = 1000.0;
+
+    const UnitScalingSystem tcad = UnitScalingSystem::fromInputs(
         300.0,
         constants::eps0 * 11.7,
-        inputs,
-        UnitScalingReferenceConfig{});
+        tcadInputs,
+        UnitScalingReferenceConfig{},
+        unitScaling.unitSystem());
 
-    REQUIRE(sc.C0() == Catch::Approx(1.0e23).epsilon(1e-12));
+    REQUIRE(tcad.C0() == Catch::Approx(1.0e17).epsilon(1e-12));
+    REQUIRE(tcad.L0() == Catch::Approx(1.0).epsilon(1e-12));
+    REQUIRE(tcad.mu0() == Catch::Approx(1000.0).epsilon(1e-12));
+
+    UnitScalingSystem::AutoInputs legacyInputs;
+    legacyInputs.maxAbsNetDoping_m3 = 1.0e23;
+    legacyInputs.niFloor_m3 = 1.0e16;
+    legacyInputs.meshMaxLength_m = 1.0e-6;
+    legacyInputs.maxMobility_m2_V_s = 0.1;
+
+    const UnitScalingSystem legacy = UnitScalingSystem::fromInputs(
+        300.0,
+        constants::eps0 * 11.7,
+        legacyInputs,
+        UnitScalingReferenceConfig{},
+        UnitScalingConfig{}.unitSystem());
+
+    REQUIRE(tcad.lambda2() == Catch::Approx(legacy.lambda2()).epsilon(1e-12));
+    REQUIRE(tcad.E0() == Catch::Approx(legacy.E0() / 100.0).epsilon(1e-12));
+    REQUIRE(tcad.J0() == Catch::Approx(legacy.J0() / 1.0e4).epsilon(1e-12));
+    REQUIRE(tcad.R0() == Catch::Approx(legacy.R0() / 1.0e6).epsilon(1e-12));
 }
 
 TEST_CASE("UnitScalingSystem: scale/unscale round-trip for core quantities", "[scaling]")
@@ -171,7 +222,7 @@ TEST_CASE("UnitScalingSystem reference config: supports auto and explicit values
     };
     const UnitScalingReferenceConfig explicitRefs =
         parseUnitScalingReferenceConfig(explicitCfg);
-    REQUIRE(explicitRefs.characteristicLength_m == Catch::Approx(2.5e-6));
-    REQUIRE(explicitRefs.referenceConcentration_m3 == Catch::Approx(5.0e22));
-    REQUIRE(explicitRefs.referenceMobility_m2_V_s == Catch::Approx(9.0e-2));
+    REQUIRE(explicitRefs.characteristicLength_m == Catch::Approx(2.5));
+    REQUIRE(explicitRefs.referenceConcentration_m3 == Catch::Approx(5.0e16));
+    REQUIRE(explicitRefs.referenceMobility_m2_V_s == Catch::Approx(900.0));
 }

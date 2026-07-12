@@ -74,6 +74,17 @@ TEST_CASE("Total recombination is SRH plus Auger", "[recombination]")
             Catch::Approx(total.srhRate(n, p, ni) + total.augerRate(n, p, ni)));
 }
 
+TEST_CASE("Default recombination parameters match Sentaurus 2018 silicon at 300 K",
+          "[recombination][sentaurus]")
+{
+    const RecombinationModelConfig cfg = recombinationModelConfig({"srh", "auger"});
+
+    REQUIRE(cfg.taun == Catch::Approx(1.0e-5));
+    REQUIRE(cfg.taup == Catch::Approx(3.0e-6));
+    REQUIRE(cfg.augerCn == Catch::Approx(2.90e-43).epsilon(1.0e-12));
+    REQUIRE(cfg.augerCp == Catch::Approx(1.028e-43).epsilon(1.0e-12));
+}
+
 TEST_CASE("Default bandgap narrowing interface returns zero", "[bgn]")
 {
     NoBandgapNarrowing bgn;
@@ -116,8 +127,24 @@ TEST_CASE("Bandgap narrowing factory validates model names", "[bgn]")
             == Catch::Approx(0.0));
     REQUIRE(makeBandgapNarrowingModel(bandgapNarrowingConfig("slotboom"))->deltaEg(1.0e25, 0.0, 0.0)
             > 0.0);
+    REQUIRE(makeBandgapNarrowingModel(bandgapNarrowingConfig("old_slotboom"))->deltaEg(1.0e24, 0.0, 0.0)
+            == Catch::Approx(0.0424016824523).epsilon(1.0e-10));
     REQUIRE_THROWS_AS(makeBandgapNarrowingModel(bandgapNarrowingConfig("unknown")),
                       std::invalid_argument);
+}
+
+TEST_CASE("OldSlotboom matches Sentaurus split ni and positive BGN semantics", "[bgn][sentaurus]")
+{
+    const Real materialNiFromBandgap = 1.4638914958767616e16;
+    const Real dopingAtNref = 1.0e23;
+    const Real Vt = 0.025851999786435;
+
+    const auto bgn = makeBandgapNarrowingModel(bandgapNarrowingConfig("old_slotboom"));
+    const Real deltaEg = bgn->deltaEg(dopingAtNref, 0.0, 0.0);
+    const Real niEff = effectiveIntrinsicDensity(materialNiFromBandgap, Vt, deltaEg);
+
+    REQUIRE(deltaEg == Catch::Approx(0.006363961030678928).epsilon(1.0e-12));
+    REQUIRE(niEff / 1.0e6 == Catch::Approx(1.6556319846864e10).epsilon(1.0e-10));
 }
 
 TEST_CASE("CarrierStatistics intrinsic density uses temperature_K material path", "[temperature]")

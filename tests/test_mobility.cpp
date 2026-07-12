@@ -65,6 +65,62 @@ TEST_CASE("Caughey-Thomas mobility decreases as doping increases", "[mobility]")
     REQUIRE(lowDopingHole <= si.mup);
 }
 
+TEST_CASE("Masetti mobility matches Sentaurus silicon DopingDependence formula",
+          "[mobility][masetti]")
+{
+    MaterialDatabase matdb;
+    const Material& si = matdb.getMaterial("Si");
+    MobilityModelConfig config = mobilityModelConfig("masetti");
+    DopingDependentMobility mobility(config);
+
+    const Real netDoping = 1.0e23; // 1e17 cm^-3
+
+    REQUIRE(mobility.electronMobility(si, netDoping, 0.0, 0.0) ==
+            Catch::Approx(0.07270544030120773).epsilon(1.0e-12));
+    REQUIRE(mobility.holeMobility(si, netDoping, 0.0, 0.0) ==
+            Catch::Approx(0.03190980929489245).epsilon(1.0e-12));
+}
+
+TEST_CASE("JSON mobility object parses Masetti parameters with unit scaling",
+          "[mobility][masetti][json][scaling]")
+{
+    const nlohmann::json json = {
+        {"model", "masetti"},
+        {"electron_mu_const_m2_V_s", 1417.0},
+        {"electron_mumin1_m2_V_s", 52.2},
+        {"electron_mumin2_m2_V_s", 52.2},
+        {"electron_mu1_m2_V_s", 43.4},
+        {"electron_pc_m3", 0.0},
+        {"electron_cr_m3", 9.68e16},
+        {"electron_cs_m3", 3.43e20},
+        {"electron_masetti_alpha", 0.68},
+        {"electron_masetti_beta", 2.0},
+        {"hole_mu_const_m2_V_s", 470.5},
+        {"hole_mumin1_m2_V_s", 44.9},
+        {"hole_mumin2_m2_V_s", 0.0},
+        {"hole_mu1_m2_V_s", 29.0},
+        {"hole_pc_m3", 9.23e16},
+        {"hole_cr_m3", 2.23e17},
+        {"hole_cs_m3", 6.10e20},
+        {"hole_masetti_alpha", 0.719},
+        {"hole_masetti_beta", 2.0},
+    };
+
+    const MobilityModelConfig cfg = mobilityModelConfigFromJson(
+        json, UnitScalingConfig{UnitScalingMode::UnitScaling});
+
+    REQUIRE(cfg.model == "masetti");
+    REQUIRE(cfg.highFieldDrivingForce == "electric_field");
+    DopingDependentMobility mobility(cfg);
+    MaterialDatabase matdb(UnitScalingConfig{UnitScalingMode::UnitScaling});
+    const Material& si = matdb.getMaterial("Si");
+
+    REQUIRE(mobility.electronMobility(si, 1.0e17, 0.0, 0.0) ==
+            Catch::Approx(727.0544030120773).epsilon(1.0e-12));
+    REQUIRE(mobility.holeMobility(si, 1.0e17, 0.0, 0.0) ==
+            Catch::Approx(319.0980929489245).epsilon(1.0e-12));
+}
+
 
 TEST_CASE("JSON solver config selects mobility and recombination models", "[mobility][json]")
 {
@@ -91,7 +147,27 @@ TEST_CASE("JSON solver config selects mobility and recombination models", "[mobi
     REQUIRE(cfg.bandgapNarrowing.coefficient == Catch::Approx(0.010));
 }
 
-TEST_CASE("JSON solver config unit_scaling normalizes mobility and field inputs",
+TEST_CASE("JSON solver config unit_scaling default mobility and impact parameters are TCAD internal",
+          "[mobility][json][scaling]")
+{
+    const nlohmann::json json = {
+        {"mobility", "caughey_thomas"},
+        {"impact_ionization", "selberherr"}
+    };
+
+    const GummelConfig cfg = gummelConfigFromJson(
+        json, UnitScalingConfig{UnitScalingMode::UnitScaling});
+
+    REQUIRE(cfg.mobility.electronCT.muMin == Catch::Approx(52.2));
+    REQUIRE(cfg.mobility.electronCT.nRef == Catch::Approx(9.68e16));
+    REQUIRE(cfg.mobility.holeCT.muMin == Catch::Approx(44.9));
+    REQUIRE(cfg.mobility.holeCT.nRef == Catch::Approx(2.23e17));
+    REQUIRE(cfg.impactIonization.electronA == Catch::Approx(7.03e5));
+    REQUIRE(cfg.impactIonization.electronB == Catch::Approx(1.231e6));
+    REQUIRE(cfg.impactIonization.holeA == Catch::Approx(1.582e6));
+    REQUIRE(cfg.impactIonization.holeB == Catch::Approx(2.036e6));
+}
+TEST_CASE("JSON solver config unit_scaling keeps mobility and field inputs internal",
           "[mobility][json][scaling]")
 {
     const nlohmann::json json = {
@@ -123,18 +199,44 @@ TEST_CASE("JSON solver config unit_scaling normalizes mobility and field inputs"
     const GummelConfig cfg = gummelConfigFromJson(
         json, UnitScalingConfig{UnitScalingMode::UnitScaling});
 
-    REQUIRE(cfg.mobility.electronCT.muMin == Catch::Approx(0.00522));
-    REQUIRE(cfg.mobility.electronCT.nRef == Catch::Approx(9.68e22));
-    REQUIRE(cfg.mobility.holeCT.muMin == Catch::Approx(0.00449));
-    REQUIRE(cfg.mobility.holeCT.nRef == Catch::Approx(2.23e23));
-    REQUIRE(cfg.mobility.surface.referenceField == Catch::Approx(1.5e6));
-    REQUIRE(cfg.mobility.surface.thetaElectron == Catch::Approx(1.0e-8));
-    REQUIRE(cfg.mobility.surface.thetaHole == Catch::Approx(2.0e-8));
-    REQUIRE(cfg.bandgapNarrowing.referenceDoping == Catch::Approx(1.0e23));
-    REQUIRE(cfg.impactIonization.electronA == Catch::Approx(7.03e7));
-    REQUIRE(cfg.impactIonization.electronB == Catch::Approx(1.231e8));
-    REQUIRE(cfg.impactIonization.holeA == Catch::Approx(1.582e8));
-    REQUIRE(cfg.impactIonization.holeB == Catch::Approx(2.036e8));
+    REQUIRE(cfg.mobility.electronCT.muMin == Catch::Approx(52.2));
+    REQUIRE(cfg.mobility.electronCT.nRef == Catch::Approx(9.68e16));
+    REQUIRE(cfg.mobility.holeCT.muMin == Catch::Approx(44.9));
+    REQUIRE(cfg.mobility.holeCT.nRef == Catch::Approx(2.23e17));
+    REQUIRE(cfg.mobility.surface.referenceField == Catch::Approx(1.5e4));
+    REQUIRE(cfg.mobility.surface.thetaElectron == Catch::Approx(1.0e-6));
+    REQUIRE(cfg.mobility.surface.thetaHole == Catch::Approx(2.0e-6));
+    REQUIRE(cfg.bandgapNarrowing.referenceDoping == Catch::Approx(1.0e17));
+    REQUIRE(cfg.impactIonization.electronA == Catch::Approx(7.03e5));
+    REQUIRE(cfg.impactIonization.electronB == Catch::Approx(1.231e6));
+    REQUIRE(cfg.impactIonization.holeA == Catch::Approx(1.582e6));
+    REQUIRE(cfg.impactIonization.holeB == Catch::Approx(2.036e6));
+}
+
+TEST_CASE("JSON mobility object parses high-field quasi-Fermi driving force",
+          "[mobility][json][field]")
+{
+    const MobilityModelConfig cfg = mobilityModelConfigFromJson(nlohmann::json{
+        {"model", "masetti_field"},
+        {"high_field_driving_force", "quasi_fermi_gradient"},
+    });
+
+    REQUIRE(cfg.model == "masetti_field");
+    REQUIRE(cfg.highFieldDrivingForce == "quasi_fermi_gradient");
+    REQUIRE(cfg.jacobianFieldDerivatives);
+
+    const MobilityModelConfig frozenJacobianCfg = mobilityModelConfigFromJson(nlohmann::json{
+        {"model", "masetti_field"},
+        {"high_field_driving_force", "quasi_fermi_gradient"},
+        {"jacobian_field_derivatives", false},
+    });
+    REQUIRE(frozenJacobianCfg.model == "masetti_field");
+    REQUIRE_FALSE(frozenJacobianCfg.jacobianFieldDerivatives);
+
+    REQUIRE_THROWS_AS(mobilityModelConfigFromJson(nlohmann::json{
+        {"model", "masetti_field"},
+        {"high_field_driving_force", "electrostatic"},
+    }), std::invalid_argument);
 }
 
 
@@ -193,6 +295,41 @@ TEST_CASE("Caughey-Thomas field mobility rolls off toward velocity saturation", 
 
     REQUIRE(highField < lowField);
     REQUIRE(highField * 1.0e8 <= config.electronField.saturationVelocity * 1.01);
+}
+
+TEST_CASE("High-field mobility defaults match Sentaurus 2018 Silicon parameters",
+          "[mobility][field][sentaurus]")
+{
+    const MobilityModelConfig config = mobilityModelConfig("masetti_field");
+
+    REQUIRE(config.electronField.saturationVelocity == Catch::Approx(1.07e5));
+    REQUIRE(config.holeField.saturationVelocity == Catch::Approx(8.37e4));
+    REQUIRE(config.electronField.beta == Catch::Approx(1.109));
+    REQUIRE(config.holeField.beta == Catch::Approx(1.213));
+}
+
+TEST_CASE("High-field mobility limiter decomposes limited mobility from low-field mobility",
+          "[mobility][field][diagnostics]")
+{
+    MaterialDatabase matdb;
+    const Material& si = matdb.getMaterial("Si");
+    MobilityModelConfig config = mobilityModelConfig("masetti_field");
+    DopingDependentMobility mobility(config);
+
+    const Real netDoping = 1.0e23;
+    const Real lowElectron = mobility.electronMobility(si, netDoping, 0.0, 0.0, 0.0);
+    const Real highElectron = mobility.electronMobility(si, netDoping, 0.0, 0.0, 1.0e8);
+    const Real lowHole = mobility.holeMobility(si, netDoping, 0.0, 0.0, 0.0);
+    const Real highHole = mobility.holeMobility(si, netDoping, 0.0, 0.0, 1.0e8);
+
+    REQUIRE(lowElectron > 0.0);
+    REQUIRE(lowHole > 0.0);
+    REQUIRE(highElectron < lowElectron);
+    REQUIRE(highHole < lowHole);
+    REQUIRE(highElectron / lowElectron > 0.0);
+    REQUIRE(highElectron / lowElectron < 1.0);
+    REQUIRE(highHole / lowHole > 0.0);
+    REQUIRE(highHole / lowHole < 1.0);
 }
 
 TEST_CASE("Material temperature path updates intrinsic density and mobility", "[mobility][temperature]")

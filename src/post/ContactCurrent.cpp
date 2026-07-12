@@ -51,9 +51,59 @@ ContactCurrentResult ContactCurrent::compute(const DDSolution& solution,
     return computeDetailed(solution, contactName).totals;
 }
 
+ContactCurrentResult ContactCurrent::compute(
+    const DDSolution& solution,
+    const std::string& contactName,
+    const ContactCurrentEdgeOverrides& overrides) const
+{
+    return computeDetailed(solution, contactName, overrides).totals;
+}
+
 ContactCurrentDetailedResult ContactCurrent::computeDetailed(
     const DDSolution& solution,
     const std::string& contactName) const
+{
+    static const ContactCurrentEdgeOverrides noOverrides;
+    return computeDetailed(solution, contactName, noOverrides);
+}
+
+ContactCurrentResult ContactCurrent::computeFromResidual(
+    const CoupledDDAssembler& assembler,
+    const VectorXd& x,
+    const std::string& contactName) const
+{
+    const Contact* contact = nullptr;
+    for (const Contact& candidate : mesh_.contacts()) {
+        if (candidate.name == contactName) {
+            contact = &candidate;
+            break;
+        }
+    }
+    if (contact == nullptr)
+        throw std::invalid_argument("ContactCurrent: unknown contact '" + contactName + "'.");
+
+    const int N = static_cast<int>(assembler.numNodes());
+    const int phinOffset = N;
+    const int phipOffset = 2 * N;
+    const VectorXd r = assembler.residual(x, CoupledDDBoundaryConditions{});
+    const Real continuityScale = assembler.continuityResidualScale();
+    const Real currentLineFactor = scaling_.enabled
+        ? scaling_.currentDensityLineIntegralFactor
+        : 1.0;
+
+    ContactCurrentResult result;
+    for (Index node : contact->node_ids) {
+        const int row = static_cast<int>(node);
+        result.electronCurrent -= constants::q * r(phinOffset + row) * continuityScale * currentLineFactor;
+        result.holeCurrent -= constants::q * r(phipOffset + row) * continuityScale * currentLineFactor;
+    }
+    result.totalCurrent = result.electronCurrent - result.holeCurrent;
+    return result;
+}
+ContactCurrentDetailedResult ContactCurrent::computeDetailed(
+    const DDSolution& solution,
+    const std::string& contactName,
+    const ContactCurrentEdgeOverrides& overrides) const
 {
     const Contact* contact = nullptr;
     for (const Contact& candidate : mesh_.contacts()) {
@@ -83,8 +133,7 @@ ContactCurrentDetailedResult ContactCurrent::computeDetailed(
         const int i = static_cast<int>(edge.n0);
         const int j = static_cast<int>(edge.n1);
 
-        // The solver returns physical DDSolution fields, so current post-processing
-        // always operates in SI units regardless of the optional scaling config.
+        // The solver returns physical DDSolution fields in the active internal unit system.
         const Real psi_i = solution.psi(i);
         const Real psi_j = solution.psi(j);
         const Real n_i = solution.n(i);
@@ -94,83 +143,97 @@ ContactCurrentDetailedResult ContactCurrent::computeDetailed(
         const Real dpsi = psi_j - psi_i;
         const Real edgeLength = edge.length;
 
-        const Real electricField = std::abs(dpsi / edgeLength);
-
-        const Real mun = detail::edgeMobility(
-            edgeCells_, mesh_, doping_, *mobility_, cellMaterials, e, CarrierType::Electron,
-            electricField,
-            &mobilityConfig_,
-            &solution.psi);
-        const Real mup = detail::edgeMobility(
-            edgeCells_, mesh_, doping_, *mobility_, cellMaterials, e, CarrierType::Hole,
-            electricField,
-            &mobilityConfig_,
-            &solution.psi);
-
-        // SG fluxes in physical units.  Mirror CoupledDDAssembler residual:
-        // use the cancellation-free quasi-Fermi balanced form when both edge
-        // endpoints share the same effective intrinsic density, and fall back
-        // to the density-based form only when BGN makes ni node-dependent.
-        // The density-based form B(-u)*n0 - B(+u)*n1 suffers catastrophic
-        // cancellation when |dpsi|/Vt is large (e.g. >>1 at high forward bias)
-        // because B(-u) grows exponentially while B(+u) -> 0; tiny imbalance
-        // in (n0, n1) is then amplified by orders of magnitude, breaking
-        // discrete current conservation between contacts.
-        const Index idxI = edge.n0;
-        const Index idxJ = edge.n1;
-        const Real ni_i = ni_[idxI];
-        const Real ni_j = ni_[idxJ];
+        const Real fieldFactor = scaling_.enabled ? scaling_.fieldFromCoordinateDeltaFactor : 1.0;
+        const Real currentLineFactor = scaling_.enabled
+            ? scaling_.currentDensityLineIntegralFactor
+            : 1.0;
+        const Real electricField = std::abs(dpsi / edgeLength) * fieldFactor;
         const Real phin_i = solution.phin(i);
         const Real phin_j = solution.phin(j);
         const Real phip_i = solution.phip(i);
         const Real phip_j = solution.phip(j);
+        Real phip_i_forHole = phip_i;
+        Real phip_j_forHole = phip_j;
+        bool holeQfDropOverrideApplied = false;
+        const auto holeDropIt = overrides.holeQuasiFermiDropByEdge.find(e);
+        if (holeDropIt != overrides.holeQuasiFermiDropByEdge.end()
+            && std::isfinite(holeDropIt->second)) {
+            phip_j_forHole = phip_i_forHole + holeDropIt->second;
+            holeQfDropOverrideApplied = true;
+        }
+        const Real electronMobilityField =
+            mobilityConfig_.highFieldDrivingForce == "quasi_fermi_gradient"
+            ? std::abs((phin_j - phin_i) / edgeLength) * fieldFactor
+            : electricField;
+        const Real holeMobilityField =
+            mobilityConfig_.highFieldDrivingForce == "quasi_fermi_gradient"
+            ? std::abs((phip_j - phip_i) / edgeLength) * fieldFactor
+            : electricField;
 
+        const Real mun = detail::edgeMobility(
+            edgeCells_, mesh_, doping_, *mobility_, cellMaterials, e, CarrierType::Electron,
+            electronMobilityField,
+            &mobilityConfig_,
+            &solution.psi);
+        const Real mup = detail::edgeMobility(
+            edgeCells_, mesh_, doping_, *mobility_, cellMaterials, e, CarrierType::Hole,
+            holeMobilityField,
+            &mobilityConfig_,
+            &solution.psi);
+
+        // SG fluxes in physical units.  Mirror CoupledDDAssembler residual:
+        // use the cancellation-free quasi-Fermi balanced form, including the
+        // variable-ni generalization needed for BGN/effective-ni edges.  The
+        // density-based form B(-u)*n0 - B(+u)*n1 does not cancel flat
+        // quasi-Fermi levels when ni varies across the edge.
+        const Index idxI = edge.n0;
+        const Index idxJ = edge.n1;
+        const Real ni_i = ni_[idxI];
+        const Real ni_j = ni_[idxJ];
+        Real electronContinuityFlux01 = 0.0;
         Real electronFlux01 = 0.0;
         if (mun > 0.0) {
-            const Real coef = mun * thermalVoltage_ / edgeLength;
-            const Real nFlux = (ni_i == ni_j)
-                ? sgElectronContinuityFluxFromQuasiFermi(
-                      ni_i, psi_j, phin_i, phin_j, dpsi, thermalVoltage_, coef)
-                : sgElectronContinuityFlux(
-                      n_i, n_j, dpsi, thermalVoltage_, coef);
+            const Real coef = mun * thermalVoltage_ * fieldFactor / edgeLength;
+            electronContinuityFlux01 = sgElectronContinuityFluxFromQuasiFermiVariableNi(
+                ni_i, ni_j, psi_i, psi_j, phin_i, phin_j, thermalVoltage_, coef);
             // sgElectronFlux = -sgElectronContinuityFlux by definition.
-            electronFlux01 = -nFlux;
+            electronFlux01 = -electronContinuityFlux01;
         }
+        Real holeContinuityFlux01 = 0.0;
         Real holeFlux01 = 0.0;
         if (mup > 0.0) {
-            const Real coef = mup * thermalVoltage_ / edgeLength;
-            const Real pFlux = (ni_i == ni_j)
-                ? sgHoleContinuityFluxFromQuasiFermi(
-                      ni_i, psi_i, phip_i, phip_j, dpsi, thermalVoltage_, coef)
-                : sgHoleContinuityFlux(
-                      p_i, p_j, dpsi, thermalVoltage_, coef);
-            holeFlux01 = -pFlux;
+            const Real coef = mup * thermalVoltage_ * fieldFactor / edgeLength;
+            holeContinuityFlux01 = sgHoleContinuityFluxFromQuasiFermiVariableNi(
+                ni_i, ni_j, psi_i, psi_j,
+                phip_i_forHole, phip_j_forHole,
+                thermalVoltage_, coef);
+            holeFlux01 = -holeContinuityFlux01;
         }
 
         // Algebraic SG split: J = J_drift + J_diffusion.
         const SGEdgeWeights weights = sgEdgeWeights(dpsi, thermalVoltage_);
         const Real bAvg = 0.5 * (weights.b_plus + weights.b_minus);
         const Real electronDriftFlux01 = (mun > 0.0)
-            ? mun * (dpsi / edgeLength) * (0.5 * (n_i + n_j))
+            ? mun * (dpsi / edgeLength) * fieldFactor * (0.5 * (n_i + n_j))
             : 0.0;
         const Real electronDiffusionFlux01 = (mun > 0.0)
-            ? mun * (thermalVoltage_ / edgeLength) * bAvg * (n_i - n_j)
+            ? mun * (thermalVoltage_ / edgeLength) * fieldFactor * bAvg * (n_i - n_j)
             : 0.0;
         const Real holeDriftFlux01 = (mup > 0.0)
-            ? mup * (dpsi / edgeLength) * (0.5 * (p_i + p_j))
+            ? mup * (dpsi / edgeLength) * fieldFactor * (0.5 * (p_i + p_j))
             : 0.0;
         const Real holeDiffusionFlux01 = (mup > 0.0)
-            ? mup * (thermalVoltage_ / edgeLength) * bAvg * (p_j - p_i)
+            ? mup * (thermalVoltage_ / edgeLength) * fieldFactor * bAvg * (p_j - p_i)
             : 0.0;
 
         const Real outwardSign = n0OnContact ? 1.0 : -1.0;
-        // Current density [A/m^2] * edge.couple [m] = [A/m]
-        const Real electronCurrent = constants::q * outwardSign * electronFlux01 * edge.couple;
-        const Real electronDriftCurrent = constants::q * outwardSign * electronDriftFlux01 * edge.couple;
-        const Real electronDiffusionCurrent = constants::q * outwardSign * electronDiffusionFlux01 * edge.couple;
-        const Real holeCurrent = constants::q * outwardSign * holeFlux01 * edge.couple;
-        const Real holeDriftCurrent = constants::q * outwardSign * holeDriftFlux01 * edge.couple;
-        const Real holeDiffusionCurrent = constants::q * outwardSign * holeDiffusionFlux01 * edge.couple;
+        // Current density in the active internal unit system times edge length gives current per internal device depth.
+        const Real electronCurrent = constants::q * outwardSign * electronFlux01 * edge.couple * currentLineFactor;
+        const Real electronDriftCurrent = constants::q * outwardSign * electronDriftFlux01 * edge.couple * currentLineFactor;
+        const Real electronDiffusionCurrent = constants::q * outwardSign * electronDiffusionFlux01 * edge.couple * currentLineFactor;
+        const Real holeCurrent = constants::q * outwardSign * holeFlux01 * edge.couple * currentLineFactor;
+        const Real holeDriftCurrent = constants::q * outwardSign * holeDriftFlux01 * edge.couple * currentLineFactor;
+        const Real holeDiffusionCurrent = constants::q * outwardSign * holeDiffusionFlux01 * edge.couple * currentLineFactor;
 
         detailed.totals.electronCurrent += electronCurrent;
         detailed.totals.electronDriftCurrent += electronDriftCurrent;
@@ -183,14 +246,31 @@ ContactCurrentDetailedResult ContactCurrent::computeDetailed(
         edgeDiag.edgeId = e;
         edgeDiag.node0 = edge.n0;
         edgeDiag.node1 = edge.n1;
-        edgeDiag.edgeLength_m = edge.length;
-        edgeDiag.edgeCouple_m = edge.couple;
+        edgeDiag.edgeLength_m = scaling_.unitSystem.internalLengthToMeters(edge.length);
+        edgeDiag.edgeCouple_m = scaling_.unitSystem.internalLengthToMeters(edge.couple);
         edgeDiag.outwardSign = outwardSign;
         edgeDiag.bernoulliU = dpsi / thermalVoltage_;
         edgeDiag.bernoulliBplus = weights.b_plus;
         edgeDiag.bernoulliBminus = weights.b_minus;
-        edgeDiag.electronUsedQuasiFermi = (ni_i == ni_j);
-        edgeDiag.holeUsedQuasiFermi = (ni_i == ni_j);
+        edgeDiag.electronUsedQuasiFermi = true;
+        edgeDiag.holeUsedQuasiFermi = true;
+        edgeDiag.psi0 = psi_i;
+        edgeDiag.psi1 = psi_j;
+        edgeDiag.phin0 = phin_i;
+        edgeDiag.phin1 = phin_j;
+        edgeDiag.phip0 = phip_i_forHole;
+        edgeDiag.phip1 = phip_j_forHole;
+        edgeDiag.holeQfDropOverrideApplied = holeQfDropOverrideApplied;
+        edgeDiag.n0 = n_i;
+        edgeDiag.n1 = n_j;
+        edgeDiag.p0 = p_i;
+        edgeDiag.p1 = p_j;
+        edgeDiag.ni0 = ni_i;
+        edgeDiag.ni1 = ni_j;
+        edgeDiag.mun = mun;
+        edgeDiag.mup = mup;
+        edgeDiag.electronContinuityFlux = electronContinuityFlux01;
+        edgeDiag.holeContinuityFlux = holeContinuityFlux01;
         edgeDiag.electronCurrent = electronCurrent;
         edgeDiag.electronDriftCurrent = electronDriftCurrent;
         edgeDiag.electronDiffusionCurrent = electronDiffusionCurrent;

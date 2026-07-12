@@ -1,5 +1,6 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 
 #include "vela/solver/LinearSolver.h"
 
@@ -138,4 +139,21 @@ TEST_CASE("LinearSolver accepts uncompressed input and reuses its compressed pat
     const VectorXd x2 = solver.solve(A2, b2);
     REQUIRE(solver.patternAnalysisCount() == 1);
     REQUIRE((A2 * x2 - b2).norm() == Catch::Approx(0.0).margin(1e-12));
+}
+TEST_CASE("LinearSolver factorisation failures report sparse matrix diagnostics",
+          "[linear_solver][diagnostics]")
+{
+    const SparseMatrixd singular = makeSparseMatrix(3, 3, {
+        {0, 0, 2.0},
+        {2, 2, -4.0},
+    });
+    const VectorXd rhs = VectorXd::Ones(3);
+
+    LinearSolver solver;
+    REQUIRE_THROWS_WITH(
+        solver.solve(singular, rhs),
+        Catch::Matchers::ContainsSubstring("zero_rows=1") &&
+            Catch::Matchers::ContainsSubstring("zero_cols=1") &&
+            Catch::Matchers::ContainsSubstring("nonfinite_entries=0") &&
+            Catch::Matchers::ContainsSubstring("diag_min_abs=0"));
 }

@@ -185,7 +185,7 @@ static TemporaryMeshFile writeMeshReaderTestFile(const std::string& stem,
     return TemporaryMeshFile(uniqueMeshReaderTestPath(stem), content);
 }
 
-TEST_CASE("mesh reader unit_scaling converts micrometer coordinates to meters",
+TEST_CASE("mesh reader unit_scaling keeps micrometer coordinates internal",
           "[mesh][reader][scaling]")
 {
     const auto legacyPath = writeMeshReaderTestFile("legacy_si", R"json(
@@ -230,16 +230,12 @@ TEST_CASE("mesh reader unit_scaling converts micrometer coordinates to meters",
 
     REQUIRE(scaled.numNodes() == legacy.numNodes());
     REQUIRE(scaled.numEdges() == legacy.numEdges());
-    for (Index i = 0; i < legacy.numNodes(); ++i) {
-        REQUIRE(scaled.getNode(i).x == Catch::Approx(legacy.getNode(i).x));
-        REQUIRE(scaled.getNode(i).y == Catch::Approx(legacy.getNode(i).y));
-    }
-    for (Index i = 0; i < legacy.numEdges(); ++i) {
-        REQUIRE(scaled.getEdge(i).length == Catch::Approx(legacy.getEdge(i).length));
-    }
+    REQUIRE(scaled.getNode(1).x == Catch::Approx(1.0));
+    REQUIRE(scaled.getNode(2).y == Catch::Approx(1.0));
+    REQUIRE(scaled.getEdge(0).length == Catch::Approx(1.0));
 }
 
-TEST_CASE("MaterialDatabase unit_scaling converts material concentrations and mobilities",
+TEST_CASE("MaterialDatabase unit_scaling keeps TCAD material values internal",
           "[material][scaling]")
 {
     const auto path = writeMeshReaderTestFile("materials_unit_scaling", R"json(
@@ -265,13 +261,13 @@ TEST_CASE("MaterialDatabase unit_scaling converts material concentrations and mo
     db.loadJson(path.path.string(), UnitScalingConfig{UnitScalingMode::UnitScaling});
     const Material& mat = db.getMaterial("TestSi");
 
-    REQUIRE(mat.ni == Catch::Approx(1.0e16));
-    REQUIRE(mat.mun == Catch::Approx(0.135));
-    REQUIRE(mat.mup == Catch::Approx(0.048));
+    REQUIRE(mat.ni == Catch::Approx(1.0e10));
+    REQUIRE(mat.mun == Catch::Approx(1350.0));
+    REQUIRE(mat.mup == Catch::Approx(480.0));
     REQUIRE(mat.Nc_m3.has_value());
-    REQUIRE(*mat.Nc_m3 == Catch::Approx(2.8e25));
+    REQUIRE(*mat.Nc_m3 == Catch::Approx(2.8e19));
     REQUIRE(mat.Nv_m3.has_value());
-    REQUIRE(*mat.Nv_m3 == Catch::Approx(1.04e25));
+    REQUIRE(*mat.Nv_m3 == Catch::Approx(1.04e19));
 }
 
 static void requireReadThrowsContaining(const std::filesystem::path& path,

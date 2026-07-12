@@ -2,6 +2,7 @@
 
 #include "vela/core/PhysicalConstants.h"
 #include "vela/core/Types.h"
+#include "vela/equation/CoupledDDAssembler.h"
 #include "vela/mesh/DeviceMesh.h"
 #include "vela/material/MaterialDatabase.h"
 #include "vela/physics/BandgapNarrowing.h"
@@ -10,6 +11,7 @@
 #include "vela/solver/GummelSolver.h"
 #include "vela/equation/DDAssembler.h" // for DDScalingSpec
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace vela {
@@ -24,6 +26,10 @@ struct ContactCurrentResult {
     Real totalCurrent = 0.0;
 };
 
+struct ContactCurrentEdgeOverrides {
+    std::unordered_map<Index, Real> holeQuasiFermiDropByEdge;
+};
+
 struct ContactCurrentEdgeDiagnostic {
     Index edgeId = -1;
     Index node0 = -1;
@@ -36,6 +42,23 @@ struct ContactCurrentEdgeDiagnostic {
     Real bernoulliBminus = 0.0;
     bool electronUsedQuasiFermi = false;
     bool holeUsedQuasiFermi = false;
+    Real psi0 = 0.0;
+    Real psi1 = 0.0;
+    Real phin0 = 0.0;
+    Real phin1 = 0.0;
+    Real phip0 = 0.0;
+    Real phip1 = 0.0;
+    bool holeQfDropOverrideApplied = false;
+    Real n0 = 0.0;
+    Real n1 = 0.0;
+    Real p0 = 0.0;
+    Real p1 = 0.0;
+    Real ni0 = 0.0;
+    Real ni1 = 0.0;
+    Real mun = 0.0;
+    Real mup = 0.0;
+    Real electronContinuityFlux = 0.0;
+    Real holeContinuityFlux = 0.0;
     Real electronCurrent = 0.0;
     Real electronDriftCurrent = 0.0;
     Real electronDiffusionCurrent = 0.0;
@@ -62,9 +85,18 @@ public:
 
     ContactCurrentResult compute(const DDSolution& solution,
                                  const std::string& contactName) const;
+    ContactCurrentResult compute(const DDSolution& solution,
+                                 const std::string& contactName,
+                                 const ContactCurrentEdgeOverrides& overrides) const;
 
     ContactCurrentDetailedResult computeDetailed(const DDSolution& solution,
                                                  const std::string& contactName) const;
+    ContactCurrentDetailedResult computeDetailed(const DDSolution& solution,
+                                                 const std::string& contactName,
+                                                 const ContactCurrentEdgeOverrides& overrides) const;
+    ContactCurrentResult computeFromResidual(const CoupledDDAssembler& assembler,
+                                             const VectorXd& x,
+                                             const std::string& contactName) const;
 
     static ContactCurrentResult compute(const DeviceMesh& mesh,
                                         const MaterialDatabase& matdb,

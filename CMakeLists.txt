@@ -57,6 +57,8 @@ add_library(vela_core STATIC
     src/io/MeshReader.cpp
     src/io/VTKWriter.cpp
     src/io/CSVWriter.cpp
+    src/io/CsvUtils.cpp
+    src/io/DDSolutionCsv.cpp
     src/physics/DopingModel.cpp
     src/physics/CarrierStatistics.cpp
     src/physics/SRHRecombination.cpp
@@ -165,6 +167,18 @@ endif()
 add_executable(vela_example_runner src/tools/vela_example_runner.cpp)
 target_link_libraries(vela_example_runner PRIVATE vela_core)
 
+add_executable(pn2d_jacobian_block_audit src/tools/pn2d_jacobian_block_audit.cpp)
+target_link_libraries(pn2d_jacobian_block_audit PRIVATE vela_core)
+
+add_executable(alpha_from_sentaurus_f src/tools/alpha_from_sentaurus_f.cpp)
+target_link_libraries(alpha_from_sentaurus_f PRIVATE vela_core)
+
+add_executable(sentaurus_vanoverstraeten_fit src/tools/sentaurus_vanoverstraeten_fit.cpp)
+target_link_libraries(sentaurus_vanoverstraeten_fit PRIVATE vela_core)
+
+add_executable(vanoverstraeten_parameter_sweep src/tools/vanoverstraeten_parameter_sweep.cpp)
+target_link_libraries(vanoverstraeten_parameter_sweep PRIVATE vela_core)
+
 if(VELA_HDF5_TARGET)
     add_executable(sentaurus_import src/tools/sentaurus_import.cpp)
     target_link_libraries(sentaurus_import PRIVATE vela_sentaurus)
@@ -227,6 +241,9 @@ target_link_libraries(test_linear_solver PRIVATE vela_core Catch2::Catch2WithMai
 add_executable(test_box_geometry tests/test_box_geometry.cpp)
 target_link_libraries(test_box_geometry PRIVATE vela_core Catch2::Catch2WithMain)
 
+add_executable(test_csv_utils tests/test_csv_utils.cpp)
+target_link_libraries(test_csv_utils PRIVATE vela_core Catch2::Catch2WithMain)
+
 add_executable(test_bernoulli tests/test_bernoulli.cpp)
 target_link_libraries(test_bernoulli PRIVATE vela_core Catch2::Catch2WithMain)
 
@@ -249,6 +266,12 @@ target_compile_definitions(test_ldmos_dd PRIVATE VELA_SOURCE_DIR="${CMAKE_CURREN
 add_executable(test_newton_solver tests/test_newton_solver.cpp)
 target_link_libraries(test_newton_solver PRIVATE vela_core Catch2::Catch2WithMain)
 
+add_executable(test_external_state tests/test_external_state.cpp)
+target_link_libraries(test_external_state PRIVATE vela_core Catch2::Catch2WithMain)
+target_compile_definitions(test_external_state PRIVATE
+    VELA_EXAMPLE_RUNNER_EXE="$<TARGET_FILE:vela_example_runner>")
+add_dependencies(test_external_state vela_example_runner)
+
 add_executable(test_mos_solver_crosscheck tests/test_mos_solver_crosscheck.cpp)
 target_link_libraries(test_mos_solver_crosscheck PRIVATE vela_core Catch2::Catch2WithMain)
 target_compile_definitions(test_mos_solver_crosscheck PRIVATE VELA_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
@@ -263,6 +286,9 @@ target_link_libraries(test_mobility PRIVATE vela_core Catch2::Catch2WithMain)
 add_executable(test_impact_ionization tests/test_impact_ionization.cpp)
 target_link_libraries(test_impact_ionization PRIVATE vela_core Catch2::Catch2WithMain)
 
+add_executable(test_cell_reconstructed_avalanche tests/test_cell_reconstructed_avalanche.cpp)
+target_link_libraries(test_cell_reconstructed_avalanche PRIVATE vela_core Catch2::Catch2WithMain)
+
 add_executable(test_recombination tests/test_recombination.cpp)
 target_link_libraries(test_recombination PRIVATE vela_core Catch2::Catch2WithMain)
 
@@ -271,6 +297,9 @@ target_link_libraries(test_line_search_backtrack_failure PRIVATE vela_core Catch
 
 add_executable(test_dc_sweep tests/test_dc_sweep.cpp)
 target_link_libraries(test_dc_sweep PRIVATE vela_core Catch2::Catch2WithMain)
+
+add_executable(test_pseudo_arclength tests/test_pseudo_arclength.cpp)
+target_link_libraries(test_pseudo_arclength PRIVATE vela_core Catch2::Catch2WithMain)
 
 add_executable(test_solution_validation tests/test_solution_validation.cpp)
 add_executable(test_stored_charge tests/test_stored_charge.cpp)
@@ -316,6 +345,7 @@ vela_catch_discover_tests(test_poisson)
 add_test(NAME poisson COMMAND test_poisson [poisson])
 vela_catch_discover_tests(test_linear_solver)
 vela_catch_discover_tests(test_box_geometry)
+vela_catch_discover_tests(test_csv_utils)
 vela_catch_discover_tests(test_bernoulli)
 vela_catch_discover_tests(test_sg_flux)
 vela_catch_discover_tests(test_dd_gummel)
@@ -326,16 +356,21 @@ add_test(NAME device_stability COMMAND test_device_stability [device_stability])
 vela_catch_discover_tests(test_ldmos_dd)
 add_test(NAME ldmos COMMAND test_ldmos_dd [ldmos])
 vela_catch_discover_tests(test_newton_solver)
+vela_catch_discover_tests(test_external_state)
 vela_catch_discover_tests(test_mos_solver_crosscheck)
 add_test(NAME mos_solver_crosscheck COMMAND test_mos_solver_crosscheck [mos_solver_crosscheck])
 vela_catch_discover_tests(test_mos_mixed_material)
 add_test(NAME mos_mixed COMMAND test_mos_mixed_material [mos_mixed])
 vela_catch_discover_tests(test_mobility)
 vela_catch_discover_tests(test_impact_ionization)
+vela_catch_discover_tests(test_cell_reconstructed_avalanche)
 vela_catch_discover_tests(test_recombination)
 vela_catch_discover_tests(test_line_search_backtrack_failure)
 vela_catch_discover_tests(test_dc_sweep)
 add_test(NAME dc_sweep COMMAND test_dc_sweep [dc_sweep])
+vela_catch_discover_tests(test_pseudo_arclength)
+add_test(NAME pseudo_arclength COMMAND test_pseudo_arclength [arclength])
+vela_set_windows_msys2_test_path(pseudo_arclength)
 vela_catch_discover_tests(test_solution_validation)
 vela_catch_discover_tests(test_stored_charge)
 vela_catch_discover_tests(test_electric_field_diagnostics)
@@ -389,6 +424,55 @@ add_test(NAME sentaurus_import_tools
     COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/regression/test_sentaurus_import_tools.py)
 vela_set_windows_msys2_test_path(sentaurus_import_tools)
+
+add_test(NAME sentaurus_vanoverstraeten_fit_regression
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/regression/test_sentaurus_vanoverstraeten_fit.py)
+if(WIN32)
+    vela_windows_msys2_test_env(_vela_vo_fit_env)
+    set_tests_properties(sentaurus_vanoverstraeten_fit_regression PROPERTIES
+        ENVIRONMENT "VELA_BUILD_DIR=${CMAKE_CURRENT_BINARY_DIR};${_vela_vo_fit_env}")
+else()
+    set_tests_properties(sentaurus_vanoverstraeten_fit_regression PROPERTIES
+        ENVIRONMENT "VELA_BUILD_DIR=${CMAKE_CURRENT_BINARY_DIR}")
+endif()
+
+add_test(NAME vanoverstraeten_parameter_sweep_regression
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/regression/test_vanoverstraeten_parameter_sweep.py)
+if(WIN32)
+    vela_windows_msys2_test_env(_vela_vo_sweep_env)
+    set_tests_properties(vanoverstraeten_parameter_sweep_regression PROPERTIES
+        ENVIRONMENT "VELA_BUILD_DIR=${CMAKE_CURRENT_BINARY_DIR};${_vela_vo_sweep_env}")
+else()
+    set_tests_properties(vanoverstraeten_parameter_sweep_regression PROPERTIES
+        ENVIRONMENT "VELA_BUILD_DIR=${CMAKE_CURRENT_BINARY_DIR}")
+endif()
+
+add_test(NAME vanoverstraeten_bv_parameter_matrix_regression
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/regression/test_vanoverstraeten_bv_parameter_matrix.py)
+vela_set_windows_msys2_test_path(vanoverstraeten_bv_parameter_matrix_regression)
+
+add_test(NAME vanoverstraeten_A_scale_iic_sweep_regression
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/regression/test_vanoverstraeten_A_scale_iic_sweep.py)
+vela_set_windows_msys2_test_path(vanoverstraeten_A_scale_iic_sweep_regression)
+
+add_test(NAME vanoverstraeten_A_scale_full_bv_matrix_regression
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/regression/test_vanoverstraeten_A_scale_full_bv_matrix.py)
+vela_set_windows_msys2_test_path(vanoverstraeten_A_scale_full_bv_matrix_regression)
+
+add_test(NAME diagnose_pn2d_0v_contact_state
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/regression/test_diagnose_pn2d_0v_contact_state.py)
+vela_set_windows_msys2_test_path(diagnose_pn2d_0v_contact_state)
+
+add_test(NAME diagnose_pn2d_0v_current_balance_newton_failure
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/regression/test_diagnose_pn2d_0v_current_balance.py)
+vela_set_windows_msys2_test_path(diagnose_pn2d_0v_current_balance_newton_failure)
 
 if(VELA_HDF5_TARGET)
     add_test(NAME sentaurus_sample_integration

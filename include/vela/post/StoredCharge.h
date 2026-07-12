@@ -1,6 +1,7 @@
 #pragma once
 
 #include "vela/core/PhysicalConstants.h"
+#include "vela/core/UnitScaling.h"
 #include "vela/core/Types.h"
 #include "vela/mesh/DeviceMesh.h"
 #include "vela/solver/GummelSolver.h"
@@ -22,13 +23,15 @@ struct StoredChargeResult {
 
 class StoredCharge {
 public:
-    explicit StoredCharge(const DeviceMesh& mesh);
+    explicit StoredCharge(const DeviceMesh& mesh,
+                          PhysicalUnitSystem unitSystem = PhysicalUnitSystem::legacySI());
 
     StoredChargeResult compute(const DDSolution& solution,
                                const StoredChargeConfig& config) const;
 
 private:
     const DeviceMesh& mesh_;
+    PhysicalUnitSystem unitSystem_;
 };
 
 } // namespace vela

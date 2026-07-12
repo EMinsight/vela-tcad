@@ -35,6 +35,16 @@ Real limitedExp(Real value)
     return std::exp(std::clamp(value, -500.0, 500.0));
 }
 
+bool transportMobilityDependsOnPotentials(const MobilityModelConfig& config)
+{
+    if (!config.jacobianFieldDerivatives)
+        return false;
+    return config.model == "caughey_thomas_field" ||
+           config.model == "masetti_field" ||
+           config.model == "caughey_thomas_field_surface" ||
+           isSurfaceMobilityModel(config);
+}
+
 } // namespace
 
 CoupledDDAssembler::CoupledDDAssembler(const DeviceMesh& mesh,
@@ -78,16 +88,20 @@ CoupledDDAssembler::CoupledDDAssembler(
     const ImpactIonizationModelConfig& impactIonizationConfig,
     std::vector<RegionFixedChargeSpec> fixedCharges,
     std::vector<InterfaceSheetChargeSpec> sheetCharges,
-    DDScalingSpec scaling)
+    DDScalingSpec scaling,
+    CarrierDiagonalFloorRegularizationConfig carrierDiagonalFloor)
     : mesh_(mesh)
     , matdb_(matdb)
     , doping_(doping)
     , Vt_(Vt)
     , mobilityConfig_(mobilityConfig)
     , mobility_(makeMobilityModel(mobilityConfig))
+    , recombinationConfig_(recombinationConfig)
     , recombination_(recombinationConfig)
+    , impactIonizationConfig_(impactIonizationConfig)
     , impactIonization_(makeImpactIonizationModel(impactIonizationConfig))
     , impactIonizationEnabled_(impactIonizationConfig.model != "none")
+    , bgnEnabled_(bandgapNarrowingConfig.model != "none")
     , ni_(detail::buildValidatedEffectiveNodeNi(
           "CoupledDDAssembler",
           mesh,
@@ -100,11 +114,19 @@ CoupledDDAssembler::CoupledDDAssembler(
           matdb,
           Vt * constants::q / constants::kb))
     , edgeCells_(detail::buildEdgeCellMap(mesh))
+    , nodeCells_(detail::buildNodeCellMap(mesh))
     , vol_(detail::computeNodeVolumes(mesh))
     , couple_(detail::computeEdgeCouplings(mesh))
     , fixedInterfaceChargeRhs_(detail::computeFixedAndInterfaceChargeRhs(
-          mesh, edgeCells_, fixedCharges, sheetCharges, "CoupledDDAssembler"))
+          mesh,
+          edgeCells_,
+          fixedCharges,
+          sheetCharges,
+          "CoupledDDAssembler",
+          scaling.enabled ? scaling.chargeVolumeFactor : 1.0,
+          scaling.enabled ? scaling.chargeSheetFactor : 1.0))
     , scaling_(scaling)
+    , carrierDiagonalFloor_(carrierDiagonalFloor)
 {
     if (scaling_.enabled) {
         const auto isPositiveFinite = [](Real value) {
@@ -118,6 +140,18 @@ CoupledDDAssembler::CoupledDDAssembler(
             !isPositiveFinite(scaling_.permittivityReference_F_per_m)) {
             throw std::invalid_argument(
                 "CoupledDDAssembler: scaling references must be positive and finite when scaling is enabled.");
+        }
+    }
+    if (carrierDiagonalFloor_.enabled) {
+        if (carrierDiagonalFloor_.scale < 0.0 ||
+            !std::isfinite(carrierDiagonalFloor_.scale)) {
+            throw std::invalid_argument(
+                "CoupledDDAssembler: carrier diagonal floor scale must be non-negative and finite.");
+        }
+        if (carrierDiagonalFloor_.minorityDensityRatio < 0.0 ||
+            !std::isfinite(carrierDiagonalFloor_.minorityDensityRatio)) {
+            throw std::invalid_argument(
+                "CoupledDDAssembler: carrier diagonal floor minority density ratio must be non-negative and finite.");
         }
     }
 }
@@ -153,6 +187,7 @@ VectorXd CoupledDDAssembler::electronDensity(const VectorXd& x) const
     const int N = static_cast<int>(mesh_.numNodes());
     VectorXd n(N);
     const Real potentialScale = scaling_.enabled ? scaling_.V0 : 1.0;
+    const Real fieldFactor = scaling_.enabled ? scaling_.fieldFromCoordinateDeltaFactor : 1.0;
     for (int i = 0; i < N; ++i)
         n(i) = vela::electronDensity(ni_[static_cast<Index>(i)],
                                      x(psiOffset() + i) * potentialScale,
@@ -166,6 +201,7 @@ VectorXd CoupledDDAssembler::holeDensity(const VectorXd& x) const
     const int N = static_cast<int>(mesh_.numNodes());
     VectorXd p(N);
     const Real potentialScale = scaling_.enabled ? scaling_.V0 : 1.0;
+    const Real fieldFactor = scaling_.enabled ? scaling_.fieldFromCoordinateDeltaFactor : 1.0;
     for (int i = 0; i < N; ++i)
         p(i) = vela::holeDensity(ni_[static_cast<Index>(i)],
                                  x(psiOffset() + i) * potentialScale,
@@ -197,9 +233,46 @@ VectorXd CoupledDDAssembler::residual(const VectorXd& x,
     const VectorXd n = electronDensity(x);
     const VectorXd p = holeDensity(x);
     const Real potentialScale = scaling_.enabled ? scaling_.V0 : 1.0;
+    const Real fieldFactor = scaling_.enabled ? scaling_.fieldFromCoordinateDeltaFactor : 1.0;
     const VectorXd psi = x.segment(psiOffset(), N) * potentialScale;
+
     const std::vector<Real> nodeElectricFields = impactIonizationEnabled_
-        ? detail::computeNodeElectricFields(psi, mesh_)
+        ? detail::computeNodeElectricFields(psi, mesh_, fieldFactor)
+        : std::vector<Real>{};
+    const bool qfImpact =
+        detail::usesQuasiFermiAvalancheDrivingForce(impactIonizationConfig_);
+    const VectorXd phinPhysical = x.segment(phinOffset(), N) * potentialScale;
+    const VectorXd phipPhysical = x.segment(phipOffset(), N) * potentialScale;
+    const std::vector<Real> nodeElectronDrivingFields = (impactIonizationEnabled_ && qfImpact)
+        ? detail::computeElectronAvalancheNodeQuasiFermiDrivingFields(
+            impactIonizationConfig_, mesh_, nodeCells_, psi, phinPhysical, n, ni_, Vt_, fieldFactor)
+        : nodeElectricFields;
+    const std::vector<Real> nodeHoleDrivingFields = (impactIonizationEnabled_ && qfImpact)
+        ? detail::computeHoleAvalancheNodeQuasiFermiDrivingFields(
+            impactIonizationConfig_, mesh_, nodeCells_, psi, phipPhysical, p, ni_, Vt_, fieldFactor)
+        : nodeElectricFields;
+    const bool qfMobility = mobilityConfig_.highFieldDrivingForce == "quasi_fermi_gradient";
+    const Real chargeVolumeFactor = scaling_.enabled ? scaling_.chargeVolumeFactor : 1.0;
+    const bool sgCurrentAvalanche = impactIonizationEnabled_ &&
+        detail::usesEdgeCurrentAvalancheSource(impactIonizationConfig_);
+    const std::vector<Real> sgAvalancheSourceIntegrals = sgCurrentAvalanche
+        ? detail::currentDensityAvalancheSourceIntegrals(
+            impactIonizationConfig_,
+            *impactIonization_,
+            mobilityConfig_,
+            *mobility_,
+            edgeCells_,
+            mesh_,
+            doping_,
+            cellMaterials_,
+            psi,
+            phinPhysical,
+            phipPhysical,
+            n,
+            p,
+            ni_,
+            Vt_,
+            fieldFactor)
         : std::vector<Real>{};
 
     VectorXd r = VectorXd::Zero(3 * N);
@@ -224,7 +297,11 @@ VectorXd CoupledDDAssembler::residual(const VectorXd& x,
         const Real phip_i = x(phipOffset() + i) * potentialScale;
         const Real phip_j = x(phipOffset() + j) * potentialScale;
         const Real dpsi = psi_j - psi_i;
-        const Real electricField = std::abs(dpsi / h);
+        const Real electricField = std::abs(dpsi / h) * fieldFactor;
+        const Real electronMobilityField =
+            qfMobility ? std::abs((phin_j - phin_i) / h) * fieldFactor : electricField;
+        const Real holeMobilityField =
+            qfMobility ? std::abs((phip_j - phip_i) / h) * fieldFactor : electricField;
 
         const Real eps = detail::edgeEpsilon(edgeCells, mesh_, matdb_, e);
         const Real G = eps * couple[e] / h;
@@ -234,68 +311,59 @@ VectorXd CoupledDDAssembler::residual(const VectorXd& x,
 
         const Real mun = detail::edgeMobility(
             edgeCells, mesh_, doping_, *mobility_, cellMaterials_, e, CarrierType::Electron,
-            electricField,
+            electronMobilityField,
             &mobilityConfig_,
             &psi);
         if (mun > 0.0) {
             hasElectronContribution[static_cast<std::size_t>(i)] = true;
             hasElectronContribution[static_cast<std::size_t>(j)] = true;
 
-            const Real coef = mun * Vt_ * couple[e] / h;
+            const Real coef = mun * Vt_ * fieldFactor * couple[e] / h;
             const Index idxI = static_cast<Index>(i);
             const Index idxJ = static_cast<Index>(j);
-            // The balanced quasi-Fermi form cancels equilibrium edges only when
-            // both endpoints share the same intrinsic density.  With BGN, ni can
-            // vary per node, so fall back to the density-based SG flux then.
-            const Real nFlux = (ni_[idxI] == ni_[idxJ])
-                ? sgElectronContinuityFluxFromQuasiFermi(
-                      ni_[idxI],
-                      psi_j,
-                      phin_i,
-                      phin_j,
-                      dpsi,
-                      Vt_,
-                      coef)
-                : sgElectronContinuityFlux(
-                      n(i),
-                      n(j),
-                      dpsi,
-                      Vt_,
-                      coef);
+            // With bandgap narrowing the per-node intrinsic density varies, so
+            // the ni-gradient drift term must be retained (VariableNi form).
+            // Without BGN, reproduce the baseline discretization: the balanced
+            // quasi-Fermi form on equal-ni edges (overflow-safe, it never
+            // materializes the clamped carrier densities) and the density-based
+            // SG flux on material-interface edges where ni differs.
+            Real nFlux;
+            if (bgnEnabled_) {
+                nFlux = sgElectronContinuityFluxFromQuasiFermiVariableNi(
+                    ni_[idxI], ni_[idxJ], psi_i, psi_j, phin_i, phin_j, Vt_, coef);
+            } else if (ni_[idxI] == ni_[idxJ]) {
+                nFlux = sgElectronContinuityFluxFromQuasiFermiStable(
+                    ni_[idxI], psi_i, psi_j, phin_i, phin_j, Vt_, coef);
+            } else {
+                nFlux = sgElectronContinuityFlux(n(i), n(j), dpsi, Vt_, coef);
+            }
             r(phinOffset() + i) += nFlux;
             r(phinOffset() + j) -= nFlux;
         }
 
         const Real mup = detail::edgeMobility(
             edgeCells, mesh_, doping_, *mobility_, cellMaterials_, e, CarrierType::Hole,
-            electricField,
+            holeMobilityField,
             &mobilityConfig_,
             &psi);
         if (mup > 0.0) {
             hasHoleContribution[static_cast<std::size_t>(i)] = true;
             hasHoleContribution[static_cast<std::size_t>(j)] = true;
 
-            const Real coef = mup * Vt_ * couple[e] / h;
+            const Real coef = mup * Vt_ * fieldFactor * couple[e] / h;
             const Index idxI = static_cast<Index>(i);
             const Index idxJ = static_cast<Index>(j);
-            // The balanced quasi-Fermi form cancels equilibrium edges only when
-            // both endpoints share the same intrinsic density.  With BGN, ni can
-            // vary per node, so fall back to the density-based SG flux then.
-            const Real pFlux = (ni_[idxI] == ni_[idxJ])
-                ? sgHoleContinuityFluxFromQuasiFermi(
-                      ni_[idxI],
-                      psi_i,
-                      phip_i,
-                      phip_j,
-                      dpsi,
-                      Vt_,
-                      coef)
-                : sgHoleContinuityFlux(
-                      p(i),
-                      p(j),
-                      dpsi,
-                      Vt_,
-                      coef);
+            // See the electron flux above for the BGN gating rationale.
+            Real pFlux;
+            if (bgnEnabled_) {
+                pFlux = sgHoleContinuityFluxFromQuasiFermiVariableNi(
+                    ni_[idxI], ni_[idxJ], psi_i, psi_j, phip_i, phip_j, Vt_, coef);
+            } else if (ni_[idxI] == ni_[idxJ]) {
+                pFlux = sgHoleContinuityFluxFromQuasiFermiStable(
+                    ni_[idxI], psi_i, psi_j, phip_i, phip_j, Vt_, coef);
+            } else {
+                pFlux = sgHoleContinuityFlux(p(i), p(j), dpsi, Vt_, coef);
+            }
             r(phipOffset() + i) += pFlux;
             r(phipOffset() + j) -= pFlux;
         }
@@ -304,7 +372,7 @@ VectorXd CoupledDDAssembler::residual(const VectorXd& x,
     for (Index i = 0; i < Nidx; ++i) {
         const int ii = static_cast<int>(i);
         r(psiOffset() + ii) -= constants::q *
-            (p(ii) - n(ii) + doping_.netDoping(i)) * vol[i];
+            (p(ii) - n(ii) + doping_.netDoping(i)) * vol[i] * chargeVolumeFactor;
 
         const Real ni = ni_[i];
         if (ni <= 0.0)
@@ -331,8 +399,30 @@ VectorXd CoupledDDAssembler::residual(const VectorXd& x,
             }
         }
 
-        if (impactIonizationEnabled_) {
-            const Real G = impactIonization_->generationRate(nodeElectricFields[i], n(ii), p(ii));
+        if (impactIonizationEnabled_ && sgCurrentAvalanche) {
+            const Real source = sgAvalancheSourceIntegrals[i];
+            if (source != 0.0) {
+                r(phinOffset() + ii) -= source;
+                r(phipOffset() + ii) -= source;
+                hasElectronContribution[static_cast<std::size_t>(ii)] = true;
+                hasHoleContribution[static_cast<std::size_t>(ii)] = true;
+            }
+        } else if (impactIonizationEnabled_) {
+            const Real G = detail::impactIonizationGenerationRate(
+                impactIonizationConfig_,
+                *impactIonization_,
+                mobilityConfig_,
+                *mobility_,
+                nodeCells_,
+                mesh_,
+                doping_,
+                cellMaterials_,
+                i,
+                nodeElectricFields[i],
+                nodeElectronDrivingFields[i],
+                nodeHoleDrivingFields[i],
+                n(ii),
+                p(ii));
             if (G != 0.0) {
                 r(phinOffset() + ii) -= G * vol[i];
                 r(phipOffset() + ii) -= G * vol[i];
@@ -393,6 +483,374 @@ VectorXd CoupledDDAssembler::residual(const VectorXd& x,
     return r;
 }
 
+std::vector<CoupledDDCarrierTermDiagnostic>
+CoupledDDAssembler::carrierContinuityTermDiagnostics(
+    const VectorXd& x,
+    const CoupledDDBoundaryConditions& bcs) const
+{
+    const Index Nidx = mesh_.numNodes();
+    const int N = static_cast<int>(Nidx);
+    if (x.size() != 3 * N)
+        throw std::invalid_argument(
+            "CoupledDDAssembler::carrierContinuityTermDiagnostics: vector size mismatch.");
+
+    std::vector<CoupledDDCarrierTermDiagnostic> terms(Nidx);
+    for (Index i = 0; i < Nidx; ++i)
+        terms[i].nodeId = i;
+
+    const VectorXd n = electronDensity(x);
+    const VectorXd p = holeDensity(x);
+    const Real potentialScale = scaling_.enabled ? scaling_.V0 : 1.0;
+    const Real fieldFactor = scaling_.enabled ? scaling_.fieldFromCoordinateDeltaFactor : 1.0;
+    const VectorXd psi = x.segment(psiOffset(), N) * potentialScale;
+
+    const std::vector<Real> nodeElectricFields = impactIonizationEnabled_
+        ? detail::computeNodeElectricFields(psi, mesh_, fieldFactor)
+        : std::vector<Real>{};
+    const bool qfImpact =
+        detail::usesQuasiFermiAvalancheDrivingForce(impactIonizationConfig_);
+    const VectorXd phinPhysical = x.segment(phinOffset(), N) * potentialScale;
+    const VectorXd phipPhysical = x.segment(phipOffset(), N) * potentialScale;
+    const std::vector<Real> nodeElectronDrivingFields = (impactIonizationEnabled_ && qfImpact)
+        ? detail::computeElectronAvalancheNodeQuasiFermiDrivingFields(
+            impactIonizationConfig_, mesh_, nodeCells_, psi, phinPhysical, n, ni_, Vt_, fieldFactor)
+        : nodeElectricFields;
+    const std::vector<Real> nodeHoleDrivingFields = (impactIonizationEnabled_ && qfImpact)
+        ? detail::computeHoleAvalancheNodeQuasiFermiDrivingFields(
+            impactIonizationConfig_, mesh_, nodeCells_, psi, phipPhysical, p, ni_, Vt_, fieldFactor)
+        : nodeElectricFields;
+    const bool qfMobility = mobilityConfig_.highFieldDrivingForce == "quasi_fermi_gradient";
+    const bool sgCurrentAvalanche = impactIonizationEnabled_ &&
+        detail::usesEdgeCurrentAvalancheSource(impactIonizationConfig_);
+    const detail::SgAvalancheSourceComponentIntegrals sgAvalancheSourceComponents =
+        sgCurrentAvalanche
+        ? detail::currentDensityAvalancheSourceComponentIntegrals(
+            impactIonizationConfig_,
+            *impactIonization_,
+            mobilityConfig_,
+            *mobility_,
+            edgeCells_,
+            mesh_,
+            doping_,
+            cellMaterials_,
+            psi,
+            phinPhysical,
+            phipPhysical,
+            n,
+            p,
+            ni_,
+            Vt_,
+            fieldFactor)
+        : detail::SgAvalancheSourceComponentIntegrals{};
+
+    std::vector<bool> hasElectronContribution(static_cast<std::size_t>(N), false);
+    std::vector<bool> hasHoleContribution(static_cast<std::size_t>(N), false);
+
+    for (Index e = 0; e < mesh_.numEdges(); ++e) {
+        const Edge& edge = mesh_.getEdge(e);
+        const Real h = edge.length;
+        if (h < 1.0e-30)
+            continue;
+
+        const int i = static_cast<int>(edge.n0);
+        const int j = static_cast<int>(edge.n1);
+        const Real psi_i = x(psiOffset() + i) * potentialScale;
+        const Real psi_j = x(psiOffset() + j) * potentialScale;
+        const Real phin_i = x(phinOffset() + i) * potentialScale;
+        const Real phin_j = x(phinOffset() + j) * potentialScale;
+        const Real phip_i = x(phipOffset() + i) * potentialScale;
+        const Real phip_j = x(phipOffset() + j) * potentialScale;
+        const Real dpsi = psi_j - psi_i;
+        const Real electricField = std::abs(dpsi / h) * fieldFactor;
+        const Real electronMobilityField =
+            qfMobility ? std::abs((phin_j - phin_i) / h) * fieldFactor : electricField;
+        const Real holeMobilityField =
+            qfMobility ? std::abs((phip_j - phip_i) / h) * fieldFactor : electricField;
+
+        const Real mun = detail::edgeMobility(
+            edgeCells_, mesh_, doping_, *mobility_, cellMaterials_, e, CarrierType::Electron,
+            electronMobilityField,
+            &mobilityConfig_,
+            &psi);
+        if (mun > 0.0) {
+            hasElectronContribution[static_cast<std::size_t>(i)] = true;
+            hasElectronContribution[static_cast<std::size_t>(j)] = true;
+            const Real coef = mun * Vt_ * fieldFactor * couple_[e] / h;
+            const Real nFlux = sgElectronContinuityFluxFromQuasiFermiVariableNi(
+                ni_[static_cast<Index>(i)],
+                ni_[static_cast<Index>(j)],
+                psi_i,
+                psi_j,
+                phin_i,
+                phin_j,
+                Vt_,
+                coef,
+                bgnEnabled_);
+            terms[static_cast<Index>(i)].electronFlux += nFlux;
+            terms[static_cast<Index>(j)].electronFlux -= nFlux;
+            terms[static_cast<Index>(i)].electronFluxAbsSum += std::abs(nFlux);
+            terms[static_cast<Index>(j)].electronFluxAbsSum += std::abs(nFlux);
+        }
+
+        const Real mup = detail::edgeMobility(
+            edgeCells_, mesh_, doping_, *mobility_, cellMaterials_, e, CarrierType::Hole,
+            holeMobilityField,
+            &mobilityConfig_,
+            &psi);
+        if (mup > 0.0) {
+            hasHoleContribution[static_cast<std::size_t>(i)] = true;
+            hasHoleContribution[static_cast<std::size_t>(j)] = true;
+            const Real coef = mup * Vt_ * fieldFactor * couple_[e] / h;
+            const Real pFlux = sgHoleContinuityFluxFromQuasiFermiVariableNi(
+                ni_[static_cast<Index>(i)],
+                ni_[static_cast<Index>(j)],
+                psi_i,
+                psi_j,
+                phip_i,
+                phip_j,
+                Vt_,
+                coef,
+                bgnEnabled_);
+            terms[static_cast<Index>(i)].holeFlux += pFlux;
+            terms[static_cast<Index>(j)].holeFlux -= pFlux;
+            terms[static_cast<Index>(i)].holeFluxAbsSum += std::abs(pFlux);
+            terms[static_cast<Index>(j)].holeFluxAbsSum += std::abs(pFlux);
+        }
+    }
+
+    for (Index i = 0; i < Nidx; ++i) {
+        const int ii = static_cast<int>(i);
+        const Real ni = ni_[i];
+        if (ni <= 0.0)
+            continue;
+
+        if (recombination_.srhEnabled() || recombination_.augerEnabled()) {
+            const Real dPhi =
+                (x(phipOffset() + ii) - x(phinOffset() + ii)) * potentialScale;
+            const Real excessProduct = (ni > 0.0)
+                ? ni * ni * std::expm1(dPhi / Vt_)
+                : n(ii) * p(ii);
+            const Real R = recombination_.totalRateFromExcessProduct(
+                excessProduct, n(ii), p(ii), ni);
+            if (R != 0.0) {
+                const Real contribution = R * vol_[i];
+                terms[i].electronRecombination += contribution;
+                terms[i].holeRecombination += contribution;
+                hasElectronContribution[static_cast<std::size_t>(ii)] = true;
+                hasHoleContribution[static_cast<std::size_t>(ii)] = true;
+            }
+        }
+
+        if (impactIonizationEnabled_ && sgCurrentAvalanche) {
+            const Real source = sgAvalancheSourceComponents.combined[i];
+            const Real contribution = -source;
+            if (contribution != 0.0) {
+                terms[i].electronImpact += contribution;
+                terms[i].holeImpact += contribution;
+                terms[i].impactElectronSource += sgAvalancheSourceComponents.electron[i];
+                terms[i].impactHoleSource += sgAvalancheSourceComponents.hole[i];
+                terms[i].impactCombinedSource += source;
+                hasElectronContribution[static_cast<std::size_t>(ii)] = true;
+                hasHoleContribution[static_cast<std::size_t>(ii)] = true;
+            }
+        } else if (impactIonizationEnabled_) {
+            const Real G = detail::impactIonizationGenerationRate(
+                impactIonizationConfig_,
+                *impactIonization_,
+                mobilityConfig_,
+                *mobility_,
+                nodeCells_,
+                mesh_,
+                doping_,
+                cellMaterials_,
+                i,
+                nodeElectricFields[i],
+                nodeElectronDrivingFields[i],
+                nodeHoleDrivingFields[i],
+                n(ii),
+                p(ii));
+            if (G != 0.0) {
+                const Real contribution = -G * vol_[i];
+                terms[i].electronImpact += contribution;
+                terms[i].holeImpact += contribution;
+                terms[i].impactCombinedSource += G * vol_[i];
+                hasElectronContribution[static_cast<std::size_t>(ii)] = true;
+                hasHoleContribution[static_cast<std::size_t>(ii)] = true;
+            }
+        }
+    }
+
+    if (scaling_.enabled) {
+        const Real continuityScale = scaling_.C0 * scaling_.D0;
+        for (auto& term : terms) {
+            term.electronFlux /= continuityScale;
+            term.holeFlux /= continuityScale;
+            term.electronFluxAbsSum /= continuityScale;
+            term.holeFluxAbsSum /= continuityScale;
+            term.electronRecombination /= continuityScale;
+            term.holeRecombination /= continuityScale;
+            term.electronImpact /= continuityScale;
+            term.holeImpact /= continuityScale;
+            term.impactElectronSource /= continuityScale;
+            term.impactHoleSource /= continuityScale;
+            term.impactCombinedSource /= continuityScale;
+        }
+    }
+
+    for (Index i = 0; i < Nidx; ++i) {
+        const int ii = static_cast<int>(i);
+        if (!hasElectronContribution[static_cast<std::size_t>(ii)])
+            terms[i].electronGauge = x(phinOffset() + ii);
+        if (!hasHoleContribution[static_cast<std::size_t>(ii)])
+            terms[i].holeGauge = x(phipOffset() + ii);
+    }
+
+    for (auto& term : terms) {
+        term.electronResidual = term.electronFlux
+            + term.electronRecombination
+            + term.electronImpact
+            + term.electronGauge;
+        term.holeResidual = term.holeFlux
+            + term.holeRecombination
+            + term.holeImpact
+            + term.holeGauge;
+    }
+
+    auto applyElectronBoundary = [&](Index node, Real value) {
+        CoupledDDCarrierTermDiagnostic& term = terms[node];
+        term.electronFlux = 0.0;
+        term.electronFluxAbsSum = 0.0;
+        term.electronRecombination = 0.0;
+        term.electronImpact = 0.0;
+        term.impactElectronSource = 0.0;
+        term.impactHoleSource = 0.0;
+        term.impactCombinedSource = 0.0;
+        term.electronGauge = 0.0;
+        term.electronBoundary = x(phinOffset() + static_cast<int>(node)) - value;
+        term.electronResidual = term.electronBoundary;
+    };
+    auto applyHoleBoundary = [&](Index node, Real value) {
+        CoupledDDCarrierTermDiagnostic& term = terms[node];
+        term.holeFlux = 0.0;
+        term.holeFluxAbsSum = 0.0;
+        term.holeRecombination = 0.0;
+        term.holeImpact = 0.0;
+        term.impactElectronSource = 0.0;
+        term.impactHoleSource = 0.0;
+        term.impactCombinedSource = 0.0;
+        term.holeGauge = 0.0;
+        term.holeBoundary = x(phipOffset() + static_cast<int>(node)) - value;
+        term.holeResidual = term.holeBoundary;
+    };
+    for (const auto& [node, value] : bcs.phin)
+        applyElectronBoundary(node, value);
+    for (const auto& [node, value] : bcs.phip)
+        applyHoleBoundary(node, value);
+
+    return terms;
+}
+
+std::vector<CoupledDDEdgeFluxDiagnostic>
+CoupledDDAssembler::sgEdgeFluxDiagnostics(
+    const VectorXd& x,
+    const CoupledDDBoundaryConditions& bcs) const
+{
+    (void)bcs;
+    const Index Nidx = mesh_.numNodes();
+    const int N = static_cast<int>(Nidx);
+    if (x.size() != 3 * N)
+        throw std::invalid_argument(
+            "CoupledDDAssembler::sgEdgeFluxDiagnostics: vector size mismatch.");
+
+    const Real potentialScale = scaling_.enabled ? scaling_.V0 : 1.0;
+    const Real fieldFactor = scaling_.enabled ? scaling_.fieldFromCoordinateDeltaFactor : 1.0;
+    const VectorXd psi = x.segment(psiOffset(), N) * potentialScale;
+
+    const bool qfMobility = mobilityConfig_.highFieldDrivingForce == "quasi_fermi_gradient";
+    const Real continuityScale =
+        scaling_.enabled ? (scaling_.C0 * scaling_.D0) : 1.0;
+
+    std::vector<CoupledDDEdgeFluxDiagnostic> edges;
+    edges.reserve(static_cast<std::size_t>(mesh_.numEdges()));
+
+    for (Index e = 0; e < mesh_.numEdges(); ++e) {
+        const Edge& edge = mesh_.getEdge(e);
+        const Real h = edge.length;
+        if (h < 1.0e-30)
+            continue;
+
+        const int i = static_cast<int>(edge.n0);
+        const int j = static_cast<int>(edge.n1);
+        const Index idxI = static_cast<Index>(i);
+        const Index idxJ = static_cast<Index>(j);
+        const Real psi_i = x(psiOffset() + i) * potentialScale;
+        const Real psi_j = x(psiOffset() + j) * potentialScale;
+        const Real phin_i = x(phinOffset() + i) * potentialScale;
+        const Real phin_j = x(phinOffset() + j) * potentialScale;
+        const Real phip_i = x(phipOffset() + i) * potentialScale;
+        const Real phip_j = x(phipOffset() + j) * potentialScale;
+        const Real dpsi = psi_j - psi_i;
+        const Real electricField = std::abs(dpsi / h) * fieldFactor;
+        const Real electronMobilityField =
+            qfMobility ? std::abs((phin_j - phin_i) / h) * fieldFactor : electricField;
+        const Real holeMobilityField =
+            qfMobility ? std::abs((phip_j - phip_i) / h) * fieldFactor : electricField;
+
+        const Real mun = detail::edgeMobility(
+            edgeCells_, mesh_, doping_, *mobility_, cellMaterials_, e,
+            CarrierType::Electron, electronMobilityField, &mobilityConfig_, &psi);
+        const Real mup = detail::edgeMobility(
+            edgeCells_, mesh_, doping_, *mobility_, cellMaterials_, e,
+            CarrierType::Hole, holeMobilityField, &mobilityConfig_, &psi);
+
+        Real nFlux = 0.0;
+        if (mun > 0.0) {
+            const Real coef = mun * Vt_ * fieldFactor * couple_[e] / h;
+            nFlux = sgElectronContinuityFluxFromQuasiFermiVariableNi(
+                ni_[idxI], ni_[idxJ], psi_i, psi_j, phin_i, phin_j, Vt_, coef,
+                bgnEnabled_);
+        }
+        Real pFlux = 0.0;
+        if (mup > 0.0) {
+            const Real coef = mup * Vt_ * fieldFactor * couple_[e] / h;
+            pFlux = sgHoleContinuityFluxFromQuasiFermiVariableNi(
+                ni_[idxI], ni_[idxJ], psi_i, psi_j, phip_i, phip_j, Vt_, coef,
+                bgnEnabled_);
+        }
+
+        const Node& node0 = mesh_.getNode(edge.n0);
+        const Node& node1 = mesh_.getNode(edge.n1);
+        CoupledDDEdgeFluxDiagnostic record;
+        record.edgeId = e;
+        record.node0 = idxI;
+        record.node1 = idxJ;
+        record.x0 = node0.x;
+        record.y0 = node0.y;
+        record.x1 = node1.x;
+        record.y1 = node1.y;
+        record.length_m = h;
+        record.couple_m = couple_[e];
+        record.netDopingAvg_m3 =
+            0.5 * (doping_.netDoping(idxI) + doping_.netDoping(idxJ));
+        record.ni0_m3 = ni_[idxI];
+        record.ni1_m3 = ni_[idxJ];
+        record.psi0_V = psi_i;
+        record.psi1_V = psi_j;
+        record.phin0_V = phin_i;
+        record.phin1_V = phin_j;
+        record.phip0_V = phip_i;
+        record.phip1_V = phip_j;
+        record.electricField_V_m = electricField;
+        record.electronMobility_m2_V_s = mun;
+        record.holeMobility_m2_V_s = mup;
+        record.electronFlux = nFlux / continuityScale;
+        record.holeFlux = pFlux / continuityScale;
+        edges.push_back(record);
+    }
+
+    return edges;
+}
+
 SparseMatrixd CoupledDDAssembler::assembleJacobian(
     const VectorXd& x,
     const CoupledDDBoundaryConditions& bcs) const
@@ -405,10 +863,43 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
     const VectorXd n = electronDensity(x);
     const VectorXd p = holeDensity(x);
     const Real potentialScale = scaling_.enabled ? scaling_.V0 : 1.0;
+    const Real fieldFactor = scaling_.enabled ? scaling_.fieldFromCoordinateDeltaFactor : 1.0;
     const VectorXd psi = x.segment(psiOffset(), N) * potentialScale;
+    const VectorXd phinState = x.segment(phinOffset(), N) * potentialScale;
+    const VectorXd phipState = x.segment(phipOffset(), N) * potentialScale;
     const std::vector<Real> nodeElectricFields = impactIonizationEnabled_
-        ? detail::computeNodeElectricFields(psi, mesh_)
+        ? detail::computeNodeElectricFields(psi, mesh_, fieldFactor)
         : std::vector<Real>{};
+    const bool qfImpact =
+        detail::usesQuasiFermiAvalancheDrivingForce(impactIonizationConfig_);
+    const bool currentAlignedImpact =
+        !impactIonizationConfig_.debugRawVanOverstraeten &&
+        detail::usesCurrentAlignedAvalancheDrivingForce(impactIonizationConfig_);
+    const bool cellCurrentReconstructedCurrent =
+        detail::usesCellCurrentReconstructedAvalancheCurrent(impactIonizationConfig_);
+    const bool cellVectorCurrentReconstructedCurrent =
+        detail::usesCellVectorCurrentReconstructedAvalancheCurrent(impactIonizationConfig_);
+    const bool dualFaceVectorCurrentMagnitude =
+        impactIonizationConfig_.currentMagnitudeMode == "dual_face_vector_mag";
+    const std::vector<Real> nodeElectronDrivingFields = (impactIonizationEnabled_ && qfImpact)
+        ? detail::computeElectronAvalancheNodeQuasiFermiDrivingFields(
+            impactIonizationConfig_, mesh_, nodeCells_, psi, phinState, n, ni_, Vt_, fieldFactor)
+        : nodeElectricFields;
+    const std::vector<Real> nodeHoleDrivingFields = (impactIonizationEnabled_ && qfImpact)
+        ? detail::computeHoleAvalancheNodeQuasiFermiDrivingFields(
+            impactIonizationConfig_, mesh_, nodeCells_, psi, phipState, p, ni_, Vt_, fieldFactor)
+        : nodeElectricFields;
+    const bool qfMobility = mobilityConfig_.highFieldDrivingForce == "quasi_fermi_gradient";
+    const Real chargeVolumeFactor = scaling_.enabled ? scaling_.chargeVolumeFactor : 1.0;
+    const std::vector<bool> contactNodes = detail::contactNodeMask(mesh_);
+    const std::vector<std::vector<Index>> cellEdges = detail::buildCellEdgeMap(edgeCells_, mesh_);
+    const bool transportMobilityDerivative = transportMobilityDependsOnPotentials(mobilityConfig_);
+    const bool sgCurrentAvalanche = impactIonizationEnabled_ &&
+        detail::usesEdgeCurrentAvalancheSource(impactIonizationConfig_);
+    const bool triangleGssAvalanche = sgCurrentAvalanche &&
+        detail::usesTriangleGssAvalancheSource(impactIonizationConfig_);
+    const bool directionalEdgePartition =
+        detail::usesDirectionalEdgeAvalancheSourcePartition(impactIonizationConfig_);
 
     std::vector<bool> constrainedRows(static_cast<std::size_t>(3 * N), false);
     for (const auto& [node, value] : bcs.psi) {
@@ -426,6 +917,7 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
 
     std::vector<Eigen::Triplet<double>> triplets;
     triplets.reserve(static_cast<std::size_t>(N) * 27);
+    std::vector<Real> assembledDiagonal(static_cast<std::size_t>(3 * N), 0.0);
     auto scaleDerivative = [&](int row, int, Real value) {
         if (!scaling_.enabled)
             return value;
@@ -436,31 +928,416 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
     };
 
     auto add = [&](int row, int col, Real value) {
-        if (value != 0.0 && !constrainedRows[static_cast<std::size_t>(row)])
-            triplets.emplace_back(row, col, scaleDerivative(row, col, value));
+        if (value != 0.0 && !constrainedRows[static_cast<std::size_t>(row)]) {
+            const Real scaled = scaleDerivative(row, col, value);
+            triplets.emplace_back(row, col, scaled);
+            if (row == col)
+                assembledDiagonal[static_cast<std::size_t>(row)] += scaled;
+        }
     };
 
     auto addGauge = [&](int row, int col, Real value) {
-        if (value != 0.0 && !constrainedRows[static_cast<std::size_t>(row)])
+        if (value != 0.0 && !constrainedRows[static_cast<std::size_t>(row)]) {
             triplets.emplace_back(row, col, value);
+            if (row == col)
+                assembledDiagonal[static_cast<std::size_t>(row)] += value;
+        }
     };
 
     std::vector<bool> hasElectronContribution(static_cast<std::size_t>(N), false);
     std::vector<bool> hasHoleContribution(static_cast<std::size_t>(N), false);
-    std::vector<Real> expNegPhin(static_cast<std::size_t>(N));
-    std::vector<Real> expPhip(static_cast<std::size_t>(N));
-    std::vector<Real> expPsi(static_cast<std::size_t>(N));
-    std::vector<Real> expNegPsi(static_cast<std::size_t>(N));
-    for (int k = 0; k < N; ++k) {
-        expNegPhin[static_cast<std::size_t>(k)] =
-            limitedExp(-x(phinOffset() + k) * potentialScale / Vt_);
-        expPhip[static_cast<std::size_t>(k)] =
-            limitedExp(x(phipOffset() + k) * potentialScale / Vt_);
-        expPsi[static_cast<std::size_t>(k)] =
-            limitedExp(x(psiOffset() + k) * potentialScale / Vt_);
-        expNegPsi[static_cast<std::size_t>(k)] =
-            limitedExp(-x(psiOffset() + k) * potentialScale / Vt_);
-    }
+
+    struct EdgeAvalancheNodeSources {
+        Real node0 = 0.0;
+        Real node1 = 0.0;
+    };
+
+    // Scharfetter-Gummel edge-current avalanche source for one edge, evaluated
+    // directly from the endpoint potentials. This mirrors
+    // detail::sgEdgeCurrentAvalancheSourceRecords and returns the configured
+    // nodal source partition used by the continuity residuals.
+    auto edgeAvalancheNodeSources =
+        [&](Index e, int i, int j, Real h,
+            Real psi_i, Real psi_j,
+            auto&& phinAt,
+            auto&& phipAt) -> EdgeAvalancheNodeSources {
+        EdgeAvalancheNodeSources sources;
+        const Real couple_e = couple_[e];
+        if (h <= 1.0e-30 || couple_e <= 0.0)
+            return sources;
+        const Index idxI = static_cast<Index>(i);
+        const Index idxJ = static_cast<Index>(j);
+        const Real niI = ni_[idxI];
+        const Real niJ = ni_[idxJ];
+        const Real phin_i = phinAt(idxI);
+        const Real phin_j = phinAt(idxJ);
+        const Real phip_i = phipAt(idxI);
+        const Real phip_j = phipAt(idxJ);
+        const Real n_i = niI * limitedExp((psi_i - phin_i) / Vt_);
+        const Real n_j = niJ * limitedExp((psi_j - phin_j) / Vt_);
+        const Real p_i = niI * limitedExp((phip_i - psi_i) / Vt_);
+        const Real p_j = niJ * limitedExp((phip_j - psi_j) / Vt_);
+        auto psiAt = [&](Index node) {
+            const int nodeIndex = static_cast<int>(node);
+            return node == idxI ? psi_i : (node == idxJ ? psi_j : psi(nodeIndex));
+        };
+        auto electronQfAt = [&](Index node) {
+            const Real psiNode = psiAt(node);
+            const Real phinNode = phinAt(node);
+            const Real nNode = ni_[node] * limitedExp((psiNode - phinNode) / Vt_);
+            return detail::electronQfForAvalancheGradient(
+                psiNode, phinNode, nNode, ni_[node], Vt_, impactIonizationConfig_);
+        };
+        auto holeQfAt = [&](Index node) {
+            const Real psiNode = psiAt(node);
+            const Real phipNode = phipAt(node);
+            const Real pNode = ni_[node] * limitedExp((phipNode - psiNode) / Vt_);
+            return detail::holeQfForAvalancheGradient(
+                psiNode, phipNode, pNode, ni_[node], Vt_, impactIonizationConfig_);
+        };
+        const Real electronQf_i = electronQfAt(idxI);
+        const Real electronQf_j = electronQfAt(idxJ);
+        const Real holeQf_i = holeQfAt(idxI);
+        const Real holeQf_j = holeQfAt(idxJ);
+        const Real electricField = std::abs((psi_j - psi_i) / h) * fieldFactor;
+        const Real electronQfField = std::abs((electronQf_j - electronQf_i) / h) * fieldFactor;
+        const Real holeQfField = std::abs((holeQf_j - holeQf_i) / h) * fieldFactor;
+        auto coefficientField = [&](Real edgeQfField, auto&& qfAt) {
+            if (detail::usesCellGradientQuasiFermiAvalancheDrive(impactIonizationConfig_)) {
+                bool validGradient = false;
+                const Point2 gradient = detail::edgeAveragedCellScalarGradient(
+                    edgeCells_, mesh_, e, qfAt, validGradient);
+                return validGradient ? gradient.norm() : edgeQfField;
+            }
+            if (impactIonizationConfig_.debugRawVanOverstraeten)
+                return edgeQfField;
+            return detail::edgeHighFieldDrivingField(
+                qfImpact, edgeQfField, electricField, edgeCells_, mesh_, e, contactNodes);
+        };
+        const Real electronCoefficientField = coefficientField(electronQfField, electronQfAt);
+        const Real holeCoefficientField = coefficientField(holeQfField, holeQfAt);
+        const Real electronMobilityField = qfMobility ? electronQfField : electricField;
+        const Real holeMobilityField = qfMobility ? holeQfField : electricField;
+        const Real nAvg = 0.5 * (n_i + n_j);
+        const Real pAvg = 0.5 * (p_i + p_j);
+        const Real nMid = detail::cellReconstructedAvalancheMidpointDensity(
+            impactIonizationConfig_, n_i, n_j, psi_i, psi_j, Vt_);
+        const Real pMid = detail::cellReconstructedAvalancheMidpointDensity(
+            impactIonizationConfig_, p_i, p_j, psi_j, psi_i, Vt_);
+        const Real signedElectricField01 = -(psi_j - psi_i) / h * fieldFactor;
+        const Real edgeArea = detail::avalancheSourceEdgeArea(
+            impactIonizationConfig_, edgeCells_, mesh_, e);
+
+        auto signedElectronFluxForEdge = [&](Index queryEdge) -> Real {
+            const Edge& query = mesh_.getEdge(queryEdge);
+            const Real queryH = query.length;
+            if (queryH <= 1.0e-30 || couple_[queryEdge] <= 0.0)
+                return 0.0;
+            const Index a = query.n0;
+            const Index b = query.n1;
+            const Real psi_a = psiAt(a);
+            const Real psi_b = psiAt(b);
+            const Real phin_a = phinAt(a);
+            const Real phin_b = phinAt(b);
+            const Real electronQf_a = electronQfAt(a);
+            const Real electronQf_b = electronQfAt(b);
+            const Real electric = std::abs((psi_b - psi_a) / queryH);
+            const Real mobilityField = qfMobility
+                ? std::abs((electronQf_b - electronQf_a) / queryH)
+                : electric;
+            const Real munLocal = detail::edgeMobility(
+                edgeCells_, mesh_, doping_, *mobility_, cellMaterials_, queryEdge,
+                CarrierType::Electron, mobilityField, &mobilityConfig_, &psi);
+            if (munLocal <= 0.0)
+                return 0.0;
+            return sgElectronContinuityFluxFromQuasiFermiVariableNi(
+                ni_[a], ni_[b], psi_a, psi_b, phin_a, phin_b, Vt_,
+                munLocal * Vt_ / queryH, bgnEnabled_);
+        };
+        auto signedHoleFluxForEdge = [&](Index queryEdge) -> Real {
+            const Edge& query = mesh_.getEdge(queryEdge);
+            const Real queryH = query.length;
+            if (queryH <= 1.0e-30 || couple_[queryEdge] <= 0.0)
+                return 0.0;
+            const Index a = query.n0;
+            const Index b = query.n1;
+            const Real psi_a = psiAt(a);
+            const Real psi_b = psiAt(b);
+            const Real phip_a = phipAt(a);
+            const Real phip_b = phipAt(b);
+            const Real holeQf_a = holeQfAt(a);
+            const Real holeQf_b = holeQfAt(b);
+            const Real electric = std::abs((psi_b - psi_a) / queryH);
+            const Real mobilityField = qfMobility
+                ? std::abs((holeQf_b - holeQf_a) / queryH)
+                : electric;
+            const Real mupLocal = detail::edgeMobility(
+                edgeCells_, mesh_, doping_, *mobility_, cellMaterials_, queryEdge,
+                CarrierType::Hole, mobilityField, &mobilityConfig_, &psi);
+            if (mupLocal <= 0.0)
+                return 0.0;
+            return sgHoleContinuityFluxFromQuasiFermiVariableNi(
+                ni_[a], ni_[b], psi_a, psi_b, phip_a, phip_b, Vt_,
+                mupLocal * Vt_ / queryH, bgnEnabled_);
+        };
+        auto cellCurrentReconstructedFlux = [&](auto&& signedFluxForEdge) -> Real {
+            if (e >= edgeCells_.size())
+                return 0.0;
+            Real edgeSum = 0.0;
+            int adjacentCellCount = 0;
+            for (Index cellId : edgeCells_[e]) {
+                if (cellId >= cellEdges.size())
+                    continue;
+                Real cellSum = 0.0;
+                int cellEdgeCount = 0;
+                for (Index otherEdge : cellEdges[cellId]) {
+                    cellSum += std::abs(signedFluxForEdge(otherEdge));
+                    ++cellEdgeCount;
+                }
+                if (cellEdgeCount <= 0)
+                    continue;
+                edgeSum += cellSum / static_cast<Real>(cellEdgeCount);
+                ++adjacentCellCount;
+            }
+            return adjacentCellCount > 0
+                ? edgeSum / static_cast<Real>(adjacentCellCount)
+                : 0.0;
+        };
+
+        auto cellVectorCurrentReconstructedFlux = [&](auto&& signedFluxForEdge) -> Real {
+            if (e >= edgeCells_.size())
+                return 0.0;
+            Real edgeSum = 0.0;
+            int adjacentCellCount = 0;
+            for (Index cellId : edgeCells_[e]) {
+                if (cellId >= cellEdges.size())
+                    continue;
+                Real a00 = 0.0;
+                Real a01 = 0.0;
+                Real a11 = 0.0;
+                Real b0 = 0.0;
+                Real b1 = 0.0;
+                Real absSum = 0.0;
+                int used = 0;
+                for (Index otherEdge : cellEdges[cellId]) {
+                    const Edge& other = mesh_.getEdge(otherEdge);
+                    if (other.length <= 1.0e-30)
+                        continue;
+                    const Node& n0 = mesh_.getNode(other.n0);
+                    const Node& n1 = mesh_.getNode(other.n1);
+                    const Real tx = (n1.x - n0.x) / other.length;
+                    const Real ty = (n1.y - n0.y) / other.length;
+                    const Real flux = signedFluxForEdge(otherEdge);
+                    a00 += tx * tx;
+                    a01 += tx * ty;
+                    a11 += ty * ty;
+                    b0 += tx * flux;
+                    b1 += ty * flux;
+                    absSum += std::abs(flux);
+                    ++used;
+                }
+                const Real det = a00 * a11 - a01 * a01;
+                const Real scale = std::max({std::abs(a00 * a11), std::abs(a01 * a01), Real{1.0}});
+                const Real cellMagnitude = (used >= 2 && std::abs(det) > 1.0e-24 * scale)
+                    ? std::sqrt(
+                        std::pow((b0 * a11 - b1 * a01) / det, 2) +
+                        std::pow((a00 * b1 - a01 * b0) / det, 2))
+                    : (used > 0 ? absSum / static_cast<Real>(used) : 0.0);
+                if (cellMagnitude <= 0.0)
+                    continue;
+                edgeSum += cellMagnitude;
+                ++adjacentCellCount;
+            }
+            return adjacentCellCount > 0
+                ? edgeSum / static_cast<Real>(adjacentCellCount)
+                : 0.0;
+        };
+
+        auto dualFaceVectorCurrentReconstructedFlux = [&](auto&& signedFluxForEdge) -> Real {
+            std::vector<Real> signedFlux(static_cast<std::size_t>(mesh_.numEdges()), 0.0);
+            for (Index otherEdge = 0; otherEdge < mesh_.numEdges(); ++otherEdge)
+                signedFlux[static_cast<std::size_t>(otherEdge)] = signedFluxForEdge(otherEdge);
+            return detail::medianDualFaceVectorReconstructedEdgeFluxMagnitude(
+                e, signedFlux, edgeCells_, cellEdges, mesh_);
+        };
+        const Real mun = detail::edgeMobility(
+            edgeCells_, mesh_, doping_, *mobility_, cellMaterials_, e,
+            CarrierType::Electron, electronMobilityField, &mobilityConfig_, &psi);
+        const Real mup = detail::edgeMobility(
+            edgeCells_, mesh_, doping_, *mobility_, cellMaterials_, e,
+            CarrierType::Hole, holeMobilityField, &mobilityConfig_, &psi);
+        const Real signedFluxN = mun > 0.0
+            ? sgElectronContinuityFluxFromQuasiFermiVariableNi(
+                niI, niJ, psi_i, psi_j, phin_i, phin_j, Vt_, mun * Vt_ / h, bgnEnabled_)
+            : 0.0;
+        const Real signedFluxP = mup > 0.0
+            ? sgHoleContinuityFluxFromQuasiFermiVariableNi(
+                niI, niJ, psi_i, psi_j, phip_i, phip_j, Vt_, mup * Vt_ / h, bgnEnabled_)
+            : 0.0;
+        const Real conservedTotalFluxMagnitude =
+            detail::conservedTotalCurrentFluxMagnitude(signedFluxN, signedFluxP);
+
+        Real electronSource = 0.0;
+        if (mun > 0.0) {
+            const Real electronImpactField = currentAlignedImpact
+                ? detail::parallelCurrentAvalancheDrivingField(signedElectricField01, signedFluxN)
+                : detail::electronAvalancheDrivingField(
+                    impactIonizationConfig_, electronCoefficientField, electricField, nAvg);
+            const Real rawFluxN = std::abs(signedFluxN);
+            const Real reconstructedFluxN = dualFaceVectorCurrentMagnitude
+                ? dualFaceVectorCurrentReconstructedFlux(signedElectronFluxForEdge)
+                : (cellVectorCurrentReconstructedCurrent
+                    ? cellVectorCurrentReconstructedFlux(signedElectronFluxForEdge)
+                    : (cellCurrentReconstructedCurrent
+                        ? cellCurrentReconstructedFlux(signedElectronFluxForEdge)
+                        : rawFluxN));
+            const Real fluxN = detail::selectAvalancheCurrentFluxProxy(
+                impactIonizationConfig_,
+                rawFluxN,
+                reconstructedFluxN,
+                mun,
+                nMid,
+                electronImpactField,
+                electricField,
+                conservedTotalFluxMagnitude);
+            const Real alphaN = impactIonization_->electronCoefficient(electronImpactField);
+            electronSource = alphaN * fluxN * edgeArea;
+        }
+
+        Real holeSource = 0.0;
+        if (mup > 0.0) {
+            const Real holeImpactField = currentAlignedImpact
+                ? detail::parallelCurrentAvalancheDrivingField(signedElectricField01, signedFluxP)
+                : detail::holeAvalancheDrivingField(
+                    impactIonizationConfig_, holeCoefficientField, electricField, pAvg);
+            const Real rawFluxP = std::abs(signedFluxP);
+            const Real reconstructedFluxP = dualFaceVectorCurrentMagnitude
+                ? dualFaceVectorCurrentReconstructedFlux(signedHoleFluxForEdge)
+                : (cellVectorCurrentReconstructedCurrent
+                    ? cellVectorCurrentReconstructedFlux(signedHoleFluxForEdge)
+                    : (cellCurrentReconstructedCurrent
+                        ? cellCurrentReconstructedFlux(signedHoleFluxForEdge)
+                        : rawFluxP));
+            const Real fluxP = detail::selectAvalancheCurrentFluxProxy(
+                impactIonizationConfig_,
+                rawFluxP,
+                reconstructedFluxP,
+                mup,
+                pMid,
+                holeImpactField,
+                electricField,
+                conservedTotalFluxMagnitude);
+            const Real alphaP = impactIonization_->holeCoefficient(holeImpactField);
+            holeSource = alphaP * fluxP * edgeArea;
+        }
+
+        detail::EdgeAvalancheDirectionalWeights weights;
+        if (directionalEdgePartition) {
+            weights = detail::edgeAvalancheDirectionalWeights(
+                edgeCells_,
+                mesh_,
+                e,
+                [&](Index node) {
+                    const int nodeIndex = static_cast<int>(node);
+                    const Real psiNode = node == idxI ? psi_i : (node == idxJ ? psi_j : psi(nodeIndex));
+                    const Real phinNode = phinAt(node);
+                    const Real nNode = ni_[node] * limitedExp((psiNode - phinNode) / Vt_);
+                    return detail::electronQfForAvalancheGradient(
+                        psiNode, phinNode, nNode, ni_[node], Vt_, impactIonizationConfig_);
+                },
+                [&](Index node) {
+                    const int nodeIndex = static_cast<int>(node);
+                    const Real psiNode = node == idxI ? psi_i : (node == idxJ ? psi_j : psi(nodeIndex));
+                    const Real phipNode = phipAt(node);
+                    const Real pNode = ni_[node] * limitedExp((phipNode - psiNode) / Vt_);
+                    return detail::holeQfForAvalancheGradient(
+                        psiNode, phipNode, pNode, ni_[node], Vt_, impactIonizationConfig_);
+                });
+        }
+        sources.node0 = weights.electronNode0 * electronSource + weights.holeNode0 * holeSource;
+        sources.node1 = weights.electronNode1 * electronSource + weights.holeNode1 * holeSource;
+        return sources;
+    };
+
+    auto edgeElectronTransportFlux =
+        [&](Index e, int i, int j, Real h,
+            Real psi_i, Real psi_j, Real phin_i, Real phin_j) -> Real {
+        const Real couple_e = couple_[e];
+        if (h <= 1.0e-30 || couple_e <= 0.0)
+            return 0.0;
+        const Index idxI = static_cast<Index>(i);
+        const Index idxJ = static_cast<Index>(j);
+        const Real dpsi = psi_j - psi_i;
+        const Real electricField = std::abs(dpsi / h) * fieldFactor;
+        const Real electronMobilityField = qfMobility
+            ? std::abs((phin_j - phin_i) / h) * fieldFactor
+            : electricField;
+        VectorXd psiForSurface;
+        const VectorXd* psiForMobility = &psi;
+        if (isSurfaceMobilityModel(mobilityConfig_)) {
+            psiForSurface = psi;
+            psiForSurface(i) = psi_i;
+            psiForSurface(j) = psi_j;
+            psiForMobility = &psiForSurface;
+        }
+        const Real mun = detail::edgeMobility(
+            edgeCells_, mesh_, doping_, *mobility_, cellMaterials_, e,
+            CarrierType::Electron, electronMobilityField, &mobilityConfig_, psiForMobility);
+        if (mun <= 0.0)
+            return 0.0;
+        const Real coef = mun * Vt_ * fieldFactor * couple_e / h;
+        if (bgnEnabled_) {
+            return sgElectronContinuityFluxFromQuasiFermiVariableNi(
+                ni_[idxI], ni_[idxJ], psi_i, psi_j, phin_i, phin_j, Vt_, coef);
+        }
+        if (ni_[idxI] == ni_[idxJ]) {
+            return sgElectronContinuityFluxFromQuasiFermiStable(
+                ni_[idxI], psi_i, psi_j, phin_i, phin_j, Vt_, coef);
+        }
+        const Real n_i = ni_[idxI] * limitedExp((psi_i - phin_i) / Vt_);
+        const Real n_j = ni_[idxJ] * limitedExp((psi_j - phin_j) / Vt_);
+        return sgElectronContinuityFlux(n_i, n_j, dpsi, Vt_, coef);
+    };
+
+    auto edgeHoleTransportFlux =
+        [&](Index e, int i, int j, Real h,
+            Real psi_i, Real psi_j, Real phip_i, Real phip_j) -> Real {
+        const Real couple_e = couple_[e];
+        if (h <= 1.0e-30 || couple_e <= 0.0)
+            return 0.0;
+        const Index idxI = static_cast<Index>(i);
+        const Index idxJ = static_cast<Index>(j);
+        const Real dpsi = psi_j - psi_i;
+        const Real electricField = std::abs(dpsi / h) * fieldFactor;
+        const Real holeMobilityField = qfMobility
+            ? std::abs((phip_j - phip_i) / h) * fieldFactor
+            : electricField;
+        VectorXd psiForSurface;
+        const VectorXd* psiForMobility = &psi;
+        if (isSurfaceMobilityModel(mobilityConfig_)) {
+            psiForSurface = psi;
+            psiForSurface(i) = psi_i;
+            psiForSurface(j) = psi_j;
+            psiForMobility = &psiForSurface;
+        }
+        const Real mup = detail::edgeMobility(
+            edgeCells_, mesh_, doping_, *mobility_, cellMaterials_, e,
+            CarrierType::Hole, holeMobilityField, &mobilityConfig_, psiForMobility);
+        if (mup <= 0.0)
+            return 0.0;
+        const Real coef = mup * Vt_ * fieldFactor * couple_e / h;
+        if (bgnEnabled_) {
+            return sgHoleContinuityFluxFromQuasiFermiVariableNi(
+                ni_[idxI], ni_[idxJ], psi_i, psi_j, phip_i, phip_j, Vt_, coef);
+        }
+        if (ni_[idxI] == ni_[idxJ]) {
+            return sgHoleContinuityFluxFromQuasiFermiStable(
+                ni_[idxI], psi_i, psi_j, phip_i, phip_j, Vt_, coef);
+        }
+        const Real p_i = ni_[idxI] * limitedExp((phip_i - psi_i) / Vt_);
+        const Real p_j = ni_[idxJ] * limitedExp((phip_j - psi_j) / Vt_);
+        return sgHoleContinuityFlux(p_i, p_j, dpsi, Vt_, coef);
+    };
 
     for (Index e = 0; e < mesh_.numEdges(); ++e) {
         const Edge& edge = mesh_.getEdge(e);
@@ -471,8 +1348,16 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
         const int j = static_cast<int>(edge.n1);
         const Real psi_i = x(psiOffset() + i) * potentialScale;
         const Real psi_j = x(psiOffset() + j) * potentialScale;
+        const Real phin_i = x(phinOffset() + i) * potentialScale;
+        const Real phin_j = x(phinOffset() + j) * potentialScale;
+        const Real phip_i = x(phipOffset() + i) * potentialScale;
+        const Real phip_j = x(phipOffset() + j) * potentialScale;
         const Real dpsi = psi_j - psi_i;
-        const Real electricField = std::abs(dpsi / h);
+        const Real electricField = std::abs(dpsi / h) * fieldFactor;
+        const Real electronMobilityField =
+            qfMobility ? std::abs((phin_j - phin_i) / h) * fieldFactor : electricField;
+        const Real holeMobilityField =
+            qfMobility ? std::abs((phip_j - phip_i) / h) * fieldFactor : electricField;
         const Real u = dpsi / Vt_;
         const Real Bu = bernoulli(u);
         const Real dBu = bernoulliDerivative(u);
@@ -488,94 +1373,331 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
 
         const Real mun = detail::edgeMobility(
             edgeCells_, mesh_, doping_, *mobility_, cellMaterials_, e, CarrierType::Electron,
-            electricField,
+            electronMobilityField,
             &mobilityConfig_,
             &psi);
         if (mun > 0.0) {
             hasElectronContribution[static_cast<std::size_t>(i)] = true;
             hasElectronContribution[static_cast<std::size_t>(j)] = true;
 
-            const Real coef = mun * Vt_ * couple_[e] / h;
-            Real dF_dpsi_i = 0.0;
-            Real dF_dpsi_j = 0.0;
-            Real dF_dphin_i = 0.0;
-            Real dF_dphin_j = 0.0;
-            const Index idxI = static_cast<Index>(i);
-            const Index idxJ = static_cast<Index>(j);
-            if (ni_[idxI] == ni_[idxJ]) {
-                const Real factor = coef * ni_[idxI]
-                                  * expPsi[static_cast<std::size_t>(j)];
-                const Real diff = expNegPhin[static_cast<std::size_t>(i)]
-                                - expNegPhin[static_cast<std::size_t>(j)];
-                dF_dpsi_i = factor * (-dBu / Vt_) * diff;
-                dF_dpsi_j = factor * ((dBu + Bu) / Vt_) * diff;
-                dF_dphin_i = factor * Bu
-                           * (-expNegPhin[static_cast<std::size_t>(i)] / Vt_);
-                dF_dphin_j = factor * Bu
-                           * ( expNegPhin[static_cast<std::size_t>(j)] / Vt_);
+            if (transportMobilityDerivative) {
+                const Real vals[4] = {psi_i, psi_j, phin_i, phin_j};
+                const int cols[4] = {
+                    psiOffset() + i, psiOffset() + j,
+                    phinOffset() + i, phinOffset() + j,
+                };
+                for (int k = 0; k < 4; ++k) {
+                    const Real step = 1.0e-6 * std::max(1.0, std::abs(vals[k]));
+                    Real vp[4] = {vals[0], vals[1], vals[2], vals[3]};
+                    Real vm[4] = {vals[0], vals[1], vals[2], vals[3]};
+                    vp[k] += step;
+                    vm[k] -= step;
+                    const Real fp = edgeElectronTransportFlux(
+                        e, i, j, h, vp[0], vp[1], vp[2], vp[3]);
+                    const Real fm = edgeElectronTransportFlux(
+                        e, i, j, h, vm[0], vm[1], vm[2], vm[3]);
+                    const Real dF = (fp - fm) / (2.0 * step);
+                    add(phinOffset() + i, cols[k], dF);
+                    add(phinOffset() + j, cols[k], -dF);
+                }
             } else {
-                dF_dpsi_i = coef / Vt_ *
-                    ((-dBminusDu + Bminus) * n(i) + dBu * n(j));
-                dF_dpsi_j = coef / Vt_ *
-                    (dBminusDu * n(i) - (dBu + Bu) * n(j));
-                dF_dphin_i = coef * Bminus * (-n(i) / Vt_);
-                dF_dphin_j = coef * Bu * (n(j) / Vt_);
-            }
+                const Real coef = mun * Vt_ * fieldFactor * couple_[e] / h;
+                Real dF_dpsi_i = 0.0;
+                Real dF_dpsi_j = 0.0;
+                Real dF_dphin_i = 0.0;
+                Real dF_dphin_j = 0.0;
+                const Index idxI = static_cast<Index>(i);
+                const Index idxJ = static_cast<Index>(j);
+                const Real eta = u + std::log(ni_[idxJ] / ni_[idxI]);
+                const Real Bplus = bernoulli(eta);
+                const Real Bminus = bernoulli(-eta);
+                const Real dBplus = bernoulliDerivative(eta);
+                const Real dBminusArg = bernoulliDerivative(-eta);
+                const Real niI = ni_[idxI];
+                const Real niJ = ni_[idxJ];
+                const Real nI = niI * limitedExp((psi_i - phin_i) / Vt_);
+                const Real nJ = niJ * limitedExp((psi_j - phin_j) / Vt_);
+                dF_dpsi_i = coef / Vt_ * ((dBminusArg + Bminus) * nI + dBplus * nJ);
+                dF_dpsi_j = coef / Vt_ * (-dBminusArg * nI - (dBplus + Bplus) * nJ);
+                dF_dphin_i = coef * Bminus * (-nI / Vt_);
+                dF_dphin_j = coef * Bplus * ( nJ / Vt_);
 
-            add(phinOffset() + i, psiOffset() + i, dF_dpsi_i);
-            add(phinOffset() + i, psiOffset() + j, dF_dpsi_j);
-            add(phinOffset() + i, phinOffset() + i, dF_dphin_i);
-            add(phinOffset() + i, phinOffset() + j, dF_dphin_j);
-            add(phinOffset() + j, psiOffset() + i, -dF_dpsi_i);
-            add(phinOffset() + j, psiOffset() + j, -dF_dpsi_j);
-            add(phinOffset() + j, phinOffset() + i, -dF_dphin_i);
-            add(phinOffset() + j, phinOffset() + j, -dF_dphin_j);
+                add(phinOffset() + i, psiOffset() + i, dF_dpsi_i);
+                add(phinOffset() + i, psiOffset() + j, dF_dpsi_j);
+                add(phinOffset() + i, phinOffset() + i, dF_dphin_i);
+                add(phinOffset() + i, phinOffset() + j, dF_dphin_j);
+                add(phinOffset() + j, psiOffset() + i, -dF_dpsi_i);
+                add(phinOffset() + j, psiOffset() + j, -dF_dpsi_j);
+                add(phinOffset() + j, phinOffset() + i, -dF_dphin_i);
+                add(phinOffset() + j, phinOffset() + j, -dF_dphin_j);
+            }
         }
 
         const Real mup = detail::edgeMobility(
             edgeCells_, mesh_, doping_, *mobility_, cellMaterials_, e, CarrierType::Hole,
-            electricField,
+            holeMobilityField,
             &mobilityConfig_,
             &psi);
         if (mup > 0.0) {
             hasHoleContribution[static_cast<std::size_t>(i)] = true;
             hasHoleContribution[static_cast<std::size_t>(j)] = true;
 
-            const Real coef = mup * Vt_ * couple_[e] / h;
-            Real dF_dpsi_i = 0.0;
-            Real dF_dpsi_j = 0.0;
-            Real dF_dphip_i = 0.0;
-            Real dF_dphip_j = 0.0;
-            const Index idxI = static_cast<Index>(i);
-            const Index idxJ = static_cast<Index>(j);
-            if (ni_[idxI] == ni_[idxJ]) {
-                const Real factor = coef * ni_[idxI]
-                                  * expNegPsi[static_cast<std::size_t>(i)];
-                const Real diff = expPhip[static_cast<std::size_t>(i)]
-                                - expPhip[static_cast<std::size_t>(j)];
-                dF_dpsi_i = factor * (-(dBu + Bu) / Vt_) * diff;
-                dF_dpsi_j = factor * (dBu / Vt_) * diff;
-                dF_dphip_i = factor * Bu
-                           * ( expPhip[static_cast<std::size_t>(i)] / Vt_);
-                dF_dphip_j = factor * Bu
-                           * (-expPhip[static_cast<std::size_t>(j)] / Vt_);
+            if (transportMobilityDerivative) {
+                const Real vals[4] = {psi_i, psi_j, phip_i, phip_j};
+                const int cols[4] = {
+                    psiOffset() + i, psiOffset() + j,
+                    phipOffset() + i, phipOffset() + j,
+                };
+                for (int k = 0; k < 4; ++k) {
+                    const Real step = 1.0e-6 * std::max(1.0, std::abs(vals[k]));
+                    Real vp[4] = {vals[0], vals[1], vals[2], vals[3]};
+                    Real vm[4] = {vals[0], vals[1], vals[2], vals[3]};
+                    vp[k] += step;
+                    vm[k] -= step;
+                    const Real fp = edgeHoleTransportFlux(
+                        e, i, j, h, vp[0], vp[1], vp[2], vp[3]);
+                    const Real fm = edgeHoleTransportFlux(
+                        e, i, j, h, vm[0], vm[1], vm[2], vm[3]);
+                    const Real dF = (fp - fm) / (2.0 * step);
+                    add(phipOffset() + i, cols[k], dF);
+                    add(phipOffset() + j, cols[k], -dF);
+                }
             } else {
-                dF_dpsi_i = coef / Vt_ *
-                    (-(dBu + Bu) * p(i) + dBminusDu * p(j));
-                dF_dpsi_j = coef / Vt_ *
-                    (dBu * p(i) + (-dBminusDu + Bminus) * p(j));
-                dF_dphip_i = coef * Bu * (p(i) / Vt_);
-                dF_dphip_j = coef * Bminus * (-p(j) / Vt_);
+                const Real coef = mup * Vt_ * fieldFactor * couple_[e] / h;
+                Real dF_dpsi_i = 0.0;
+                Real dF_dpsi_j = 0.0;
+                Real dF_dphip_i = 0.0;
+                Real dF_dphip_j = 0.0;
+                const Index idxI = static_cast<Index>(i);
+                const Index idxJ = static_cast<Index>(j);
+                const Real eta = u + std::log(ni_[idxI] / ni_[idxJ]);
+                const Real Bplus = bernoulli(eta);
+                const Real Bminus = bernoulli(-eta);
+                const Real dBplus = bernoulliDerivative(eta);
+                const Real dBminusArg = bernoulliDerivative(-eta);
+                const Real niI = ni_[idxI];
+                const Real niJ = ni_[idxJ];
+                const Real pI = niI * limitedExp((phip_i - psi_i) / Vt_);
+                const Real pJ = niJ * limitedExp((phip_j - psi_j) / Vt_);
+                dF_dpsi_i = coef / Vt_ * (-(dBplus + Bplus) * pI - dBminusArg * pJ);
+                dF_dpsi_j = coef / Vt_ * (dBplus * pI + (dBminusArg + Bminus) * pJ);
+                dF_dphip_i = coef * Bplus * ( pI / Vt_);
+                dF_dphip_j = coef * Bminus * (-pJ / Vt_);
+
+                add(phipOffset() + i, psiOffset() + i, dF_dpsi_i);
+                add(phipOffset() + i, psiOffset() + j, dF_dpsi_j);
+                add(phipOffset() + i, phipOffset() + i, dF_dphip_i);
+                add(phipOffset() + i, phipOffset() + j, dF_dphip_j);
+                add(phipOffset() + j, psiOffset() + i, -dF_dpsi_i);
+                add(phipOffset() + j, psiOffset() + j, -dF_dpsi_j);
+                add(phipOffset() + j, phipOffset() + i, -dF_dphip_i);
+                add(phipOffset() + j, phipOffset() + j, -dF_dphip_j);
+            }
+        }
+
+        if (sgCurrentAvalanche && !triangleGssAvalanche) {
+            // Finite-difference the directionally partitioned nodal avalanche
+            // source with respect to the six endpoint potentials. This captures
+            // the flux (carrier density), driving-field (alpha), field-dependent
+            // mobility, and qF-gradient partition derivatives together.
+            auto phinAt = [&](Index node) { return phinState(static_cast<int>(node)); };
+            auto phipAt = [&](Index node) { return phipState(static_cast<int>(node)); };
+            const EdgeAvalancheNodeSources base = edgeAvalancheNodeSources(
+                e, i, j, h, psi_i, psi_j, phinAt, phipAt);
+            std::vector<Index> qfStencilNodes = {static_cast<Index>(i), static_cast<Index>(j)};
+            if (e < edgeCells_.size()) {
+                for (const Index cellId : edgeCells_[e]) {
+                    const Cell& cell = mesh_.getCell(cellId);
+                    for (const Index node : cell.node_ids) {
+                        if (std::find(qfStencilNodes.begin(), qfStencilNodes.end(), node) ==
+                            qfStencilNodes.end()) {
+                            qfStencilNodes.push_back(node);
+                        }
+                    }
+                }
             }
 
-            add(phipOffset() + i, psiOffset() + i, dF_dpsi_i);
-            add(phipOffset() + i, psiOffset() + j, dF_dpsi_j);
-            add(phipOffset() + i, phipOffset() + i, dF_dphip_i);
-            add(phipOffset() + i, phipOffset() + j, dF_dphip_j);
-            add(phipOffset() + j, psiOffset() + i, -dF_dpsi_i);
-            add(phipOffset() + j, psiOffset() + j, -dF_dpsi_j);
-            add(phipOffset() + j, phipOffset() + i, -dF_dphip_i);
-            add(phipOffset() + j, phipOffset() + j, -dF_dphip_j);
+            std::vector<int> cols;
+            std::vector<Real> dS0;
+            std::vector<Real> dS1;
+            bool anyNonzero = false;
+            auto appendDerivative = [&](int col, const EdgeAvalancheNodeSources& sp,
+                                        const EdgeAvalancheNodeSources& sm, Real step) {
+                cols.push_back(col);
+                dS0.push_back((sp.node0 - sm.node0) / (2.0 * step));
+                dS1.push_back((sp.node1 - sm.node1) / (2.0 * step));
+                if (dS0.back() != 0.0 || dS1.back() != 0.0)
+                    anyNonzero = true;
+            };
+
+            const Real psiVals[2] = {psi_i, psi_j};
+            const int psiCols[2] = {psiOffset() + i, psiOffset() + j};
+            for (int k = 0; k < 2; ++k) {
+                const Real step = 1.0e-7 * std::max(1.0, std::abs(psiVals[k]));
+                Real psiP[2] = {psi_i, psi_j};
+                Real psiM[2] = {psi_i, psi_j};
+                psiP[k] += step;
+                psiM[k] -= step;
+                const EdgeAvalancheNodeSources sp = edgeAvalancheNodeSources(
+                    e, i, j, h, psiP[0], psiP[1], phinAt, phipAt);
+                const EdgeAvalancheNodeSources sm = edgeAvalancheNodeSources(
+                    e, i, j, h, psiM[0], psiM[1], phinAt, phipAt);
+                appendDerivative(psiCols[k], sp, sm, step);
+            }
+
+            for (const Index node : qfStencilNodes) {
+                const int nodeIndex = static_cast<int>(node);
+                const Real phinValue = phinState(nodeIndex);
+                const Real step = 1.0e-7 * std::max(1.0, std::abs(phinValue));
+                auto phinPlusAt = [&](Index queryNode) {
+                    return queryNode == node ? phinValue + step
+                                             : phinState(static_cast<int>(queryNode));
+                };
+                auto phinMinusAt = [&](Index queryNode) {
+                    return queryNode == node ? phinValue - step
+                                             : phinState(static_cast<int>(queryNode));
+                };
+                const EdgeAvalancheNodeSources sp = edgeAvalancheNodeSources(
+                    e, i, j, h, psi_i, psi_j, phinPlusAt, phipAt);
+                const EdgeAvalancheNodeSources sm = edgeAvalancheNodeSources(
+                    e, i, j, h, psi_i, psi_j, phinMinusAt, phipAt);
+                appendDerivative(phinOffset() + nodeIndex, sp, sm, step);
+            }
+
+            for (const Index node : qfStencilNodes) {
+                const int nodeIndex = static_cast<int>(node);
+                const Real phipValue = phipState(nodeIndex);
+                const Real step = 1.0e-7 * std::max(1.0, std::abs(phipValue));
+                auto phipPlusAt = [&](Index queryNode) {
+                    return queryNode == node ? phipValue + step
+                                             : phipState(static_cast<int>(queryNode));
+                };
+                auto phipMinusAt = [&](Index queryNode) {
+                    return queryNode == node ? phipValue - step
+                                             : phipState(static_cast<int>(queryNode));
+                };
+                const EdgeAvalancheNodeSources sp = edgeAvalancheNodeSources(
+                    e, i, j, h, psi_i, psi_j, phinAt, phipPlusAt);
+                const EdgeAvalancheNodeSources sm = edgeAvalancheNodeSources(
+                    e, i, j, h, psi_i, psi_j, phinAt, phipMinusAt);
+                appendDerivative(phipOffset() + nodeIndex, sp, sm, step);
+            }
+
+            if (base.node0 != 0.0 || base.node1 != 0.0 || anyNonzero) {
+                const int node0Rows[2] = {phinOffset() + i, phipOffset() + i};
+                const int node1Rows[2] = {phinOffset() + j, phipOffset() + j};
+                for (int row : node0Rows)
+                    for (std::size_t k = 0; k < cols.size(); ++k)
+                        add(row, cols[k], -dS0[k]);
+                for (int row : node1Rows)
+                    for (std::size_t k = 0; k < cols.size(); ++k)
+                        add(row, cols[k], -dS1[k]);
+                hasElectronContribution[static_cast<std::size_t>(i)] = true;
+                hasElectronContribution[static_cast<std::size_t>(j)] = true;
+                hasHoleContribution[static_cast<std::size_t>(i)] = true;
+                hasHoleContribution[static_cast<std::size_t>(j)] = true;
+            }
+        }
+    }
+
+    if (triangleGssAvalanche) {
+        if (isSurfaceMobilityModel(mobilityConfig_)) {
+            throw std::invalid_argument(
+                "triangle GSS avalanche source does not support surface mobility");
+        }
+        auto cellNodeSources = [&](Index cellId,
+                                   const VectorXd& psiValues,
+                                   const VectorXd& phinValues,
+                                   const VectorXd& phipValues,
+                                   const VectorXd& nValues,
+                                   const VectorXd& pValues) {
+            VectorXd sources = VectorXd::Zero(3);
+            const Cell& cell = mesh_.getCell(cellId);
+            const auto records = detail::triangleGssAvalancheSourceRecordsForCell(
+                impactIonizationConfig_, *impactIonization_, *mobility_,
+                cellEdges.at(static_cast<std::size_t>(cellId)),
+                mesh_, doping_, cellMaterials_, cellId, psiValues, phinValues,
+                phipValues, nValues, pValues, Vt_, fieldFactor);
+            for (const auto& record : records) {
+                for (int localNode = 0; localNode < 3; ++localNode) {
+                    const Index node =
+                        cell.node_ids[static_cast<std::size_t>(localNode)];
+                    if (node == record.node0)
+                        sources(localNode) += record.node0SourceIntegral;
+                    if (node == record.node1)
+                        sources(localNode) += record.node1SourceIntegral;
+                }
+            }
+            return sources;
+        };
+
+        for (Index cellId = 0; cellId < mesh_.numCells(); ++cellId) {
+            const Cell& cell = mesh_.getCell(cellId);
+            const VectorXd baseSources =
+                cellNodeSources(cellId, psi, phinState, phipState, n, p);
+
+            for (int variableBlock = 0; variableBlock < 3; ++variableBlock) {
+                for (int localColumn = 0; localColumn < 3; ++localColumn) {
+                    const Index node =
+                        cell.node_ids[static_cast<std::size_t>(localColumn)];
+                    const int nodeIndex = static_cast<int>(node);
+                    const Real value = variableBlock == 0 ? psi(nodeIndex)
+                        : (variableBlock == 1 ? phinState(nodeIndex)
+                                              : phipState(nodeIndex));
+                    const Real step =
+                        1.0e-7 * std::max(1.0, std::abs(value));
+                    VectorXd psiPlus = psi;
+                    VectorXd psiMinus = psi;
+                    VectorXd phinPlus = phinState;
+                    VectorXd phinMinus = phinState;
+                    VectorXd phipPlus = phipState;
+                    VectorXd phipMinus = phipState;
+                    if (variableBlock == 0) {
+                        psiPlus(nodeIndex) += step;
+                        psiMinus(nodeIndex) -= step;
+                    } else if (variableBlock == 1) {
+                        phinPlus(nodeIndex) += step;
+                        phinMinus(nodeIndex) -= step;
+                    } else {
+                        phipPlus(nodeIndex) += step;
+                        phipMinus(nodeIndex) -= step;
+                    }
+
+                    VectorXd nPlus = n;
+                    VectorXd nMinus = n;
+                    VectorXd pPlus = p;
+                    VectorXd pMinus = p;
+                    nPlus(nodeIndex) = ni_[node] * limitedExp(
+                        (psiPlus(nodeIndex) - phinPlus(nodeIndex)) / Vt_);
+                    nMinus(nodeIndex) = ni_[node] * limitedExp(
+                        (psiMinus(nodeIndex) - phinMinus(nodeIndex)) / Vt_);
+                    pPlus(nodeIndex) = ni_[node] * limitedExp(
+                        (phipPlus(nodeIndex) - psiPlus(nodeIndex)) / Vt_);
+                    pMinus(nodeIndex) = ni_[node] * limitedExp(
+                        (phipMinus(nodeIndex) - psiMinus(nodeIndex)) / Vt_);
+                    const VectorXd plusSources = cellNodeSources(
+                        cellId, psiPlus, phinPlus, phipPlus, nPlus, pPlus);
+                    const VectorXd minusSources = cellNodeSources(
+                        cellId, psiMinus, phinMinus, phipMinus, nMinus, pMinus);
+                    const VectorXd derivative =
+                        (plusSources - minusSources) / (2.0 * step);
+                    const int column = (variableBlock == 0 ? psiOffset()
+                        : (variableBlock == 1 ? phinOffset() : phipOffset())) +
+                        nodeIndex;
+                    for (int localRow = 0; localRow < 3; ++localRow) {
+                        const int rowNode = static_cast<int>(
+                            cell.node_ids[static_cast<std::size_t>(localRow)]);
+                        add(phinOffset() + rowNode, column, -derivative(localRow));
+                        add(phipOffset() + rowNode, column, -derivative(localRow));
+                    }
+                }
+            }
+            if (baseSources.squaredNorm() > 0.0) {
+                for (const Index node : cell.node_ids) {
+                    hasElectronContribution[static_cast<std::size_t>(node)] = true;
+                    hasHoleContribution[static_cast<std::size_t>(node)] = true;
+                }
+            }
         }
     }
 
@@ -587,11 +1709,11 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
         const Real dpi_dphip = p(ii) / Vt_;
 
         add(psiOffset() + ii, psiOffset() + ii,
-            -constants::q * (dpi_dpsi - dni_dpsi) * vol_[i]);
+            -constants::q * (dpi_dpsi - dni_dpsi) * vol_[i] * chargeVolumeFactor);
         add(psiOffset() + ii, phinOffset() + ii,
-            -constants::q * (-dni_dphin) * vol_[i]);
+            -constants::q * (-dni_dphin) * vol_[i] * chargeVolumeFactor);
         add(psiOffset() + ii, phipOffset() + ii,
-            -constants::q * dpi_dphip * vol_[i]);
+            -constants::q * dpi_dphip * vol_[i] * chargeVolumeFactor);
 
         const Real ni = ni_[i];
         if (ni <= 0.0)
@@ -630,19 +1752,69 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
             }
         }
 
-        if (impactIonizationEnabled_) {
-            const Real alphaN = impactIonization_->electronCoefficient(nodeElectricFields[i]);
-            const Real alphaP = impactIonization_->holeCoefficient(nodeElectricFields[i]);
-            const Real G = impactIonization_->generationRate(nodeElectricFields[i], n(ii), p(ii));
+        if (impactIonizationEnabled_ && sgCurrentAvalanche) {
+            // The SG edge-current avalanche probe has nonlocal edge derivatives.
+            // Omit source derivatives here rather than applying the legacy
+            // node-local approximation to the wrong discretization.
+        } else if (impactIonizationEnabled_) {
+            const Real electronImpactField = detail::electronAvalancheDrivingField(
+                impactIonizationConfig_, nodeElectronDrivingFields[i], nodeElectricFields[i], n(ii));
+            const Real holeImpactField = detail::holeAvalancheDrivingField(
+                impactIonizationConfig_, nodeHoleDrivingFields[i], nodeElectricFields[i], p(ii));
+            const Real alphaN = impactIonization_->electronCoefficient(electronImpactField);
+            const Real alphaP = impactIonization_->holeCoefficient(holeImpactField);
+            const Real G = detail::impactIonizationGenerationRate(
+                impactIonizationConfig_,
+                *impactIonization_,
+                mobilityConfig_,
+                *mobility_,
+                nodeCells_,
+                mesh_,
+                doping_,
+                cellMaterials_,
+                i,
+                nodeElectricFields[i],
+                nodeElectronDrivingFields[i],
+                nodeHoleDrivingFields[i],
+                n(ii),
+                p(ii));
             if (G != 0.0) {
                 // Local carrier-density derivatives are included in the analytic Jacobian.
-                // Electric-field derivatives are intentionally omitted because the nodal
-                // field uses a max-edge magnitude; finite-difference Jacobian remains
+                // Driving-field and mobility derivatives are intentionally omitted because
+                // both use edge/node max operations; finite-difference Jacobian remains
                 // available for exact derivatives of configured avalanche runs.
-                const Real velocity = G / (alphaN * n(ii) + alphaP * p(ii));
-                const Real dG_dpsi = velocity * (alphaN * dni_dpsi + alphaP * dpi_dpsi);
-                const Real dG_dphin = velocity * alphaN * dni_dphin;
-                const Real dG_dphip = velocity * alphaP * dpi_dphip;
+                Real electronFactor = 0.0;
+                Real holeFactor = 0.0;
+                if (impactIonizationConfig_.generation == "current_density") {
+                    const Real mun = detail::nodeMobility(
+                        nodeCells_,
+                        mesh_,
+                        doping_,
+                        *mobility_,
+                        cellMaterials_,
+                        i,
+                        CarrierType::Electron,
+                        electronImpactField);
+                    const Real mup = detail::nodeMobility(
+                        nodeCells_,
+                        mesh_,
+                        doping_,
+                        *mobility_,
+                        cellMaterials_,
+                        i,
+                        CarrierType::Hole,
+                        holeImpactField);
+                    electronFactor = alphaN * mun * std::abs(electronImpactField);
+                    holeFactor = alphaP * mup * std::abs(holeImpactField);
+                } else {
+                    const Real denominator = alphaN * n(ii) + alphaP * p(ii);
+                    const Real velocity = (denominator != 0.0) ? (G / denominator) : 0.0;
+                    electronFactor = velocity * alphaN;
+                    holeFactor = velocity * alphaP;
+                }
+                const Real dG_dpsi = electronFactor * dni_dpsi + holeFactor * dpi_dpsi;
+                const Real dG_dphin = electronFactor * dni_dphin;
+                const Real dG_dphip = holeFactor * dpi_dphip;
 
                 add(phinOffset() + ii, psiOffset() + ii, -dG_dpsi * vol_[i]);
                 add(phinOffset() + ii, phinOffset() + ii, -dG_dphin * vol_[i]);
@@ -663,6 +1835,41 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
             addGauge(phinOffset() + ii, phinOffset() + ii, 1.0);
         if (!hasHoleContribution[static_cast<std::size_t>(ii)])
             addGauge(phipOffset() + ii, phipOffset() + ii, 1.0);
+    }
+
+    if (carrierDiagonalFloor_.enabled &&
+        carrierDiagonalFloor_.scale > 0.0 &&
+        recombination_.srhEnabled()) {
+        const Real tauSum = recombinationConfig_.taun + recombinationConfig_.taup;
+        if (tauSum > 0.0 && std::isfinite(tauSum)) {
+            auto addCarrierFloor = [&](int row, Real carrierDensity, Real ni, Real volume, Real fallbackSign) {
+                if (constrainedRows[static_cast<std::size_t>(row)] || ni <= 0.0 || volume <= 0.0)
+                    return;
+                if (!(carrierDensity < carrierDiagonalFloor_.minorityDensityRatio * ni))
+                    return;
+                const Real rawFloor = carrierDiagonalFloor_.scale * volume * ni / (tauSum * Vt_);
+                const Real floor = scaleDerivative(row, row, rawFloor);
+                if (!(floor > 0.0) || !std::isfinite(floor))
+                    return;
+                const Real diagonal = assembledDiagonal[static_cast<std::size_t>(row)];
+                const Real absDiagonal = std::abs(diagonal);
+                if (!(absDiagonal < floor))
+                    return;
+                const Real sign = diagonal < 0.0 ? -1.0 : (diagonal > 0.0 ? 1.0 : fallbackSign);
+                const Real addition = sign * (floor - absDiagonal);
+                triplets.emplace_back(row, row, addition);
+                assembledDiagonal[static_cast<std::size_t>(row)] += addition;
+            };
+
+            for (Index i = 0; i < Nidx; ++i) {
+                const int ii = static_cast<int>(i);
+                const Real ni = ni_[i];
+                // In a depleted SRH generation row, dR/dqF is O(ni / ((taun + taup) Vt));
+                // multiplying by nodal volume gives an absolute Jacobian scale.
+                addCarrierFloor(phinOffset() + ii, n(ii), ni, vol_[i], -1.0);
+                addCarrierFloor(phipOffset() + ii, p(ii), ni, vol_[i], 1.0);
+            }
+        }
     }
 
     for (const auto& [node, value] : bcs.psi) {

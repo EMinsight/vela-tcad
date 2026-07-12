@@ -1,6 +1,7 @@
 #pragma once
 
 #include "vela/core/Types.h"
+#include "vela/core/UnitScaling.h"
 #include "vela/equation/ChargeSpec.h"
 #include "vela/mesh/DeviceMesh.h"
 #include "vela/material/MaterialDatabase.h"
@@ -23,6 +24,11 @@ struct DDScalingSpec {
     Real D0 = 1.0;
     Real L0 = 1.0;
     Real permittivityReference_F_per_m = 1.0;
+    PhysicalUnitSystem unitSystem = PhysicalUnitSystem::legacySI();
+    Real chargeVolumeFactor = 1.0;
+    Real chargeSheetFactor = 1.0;
+    Real fieldFromCoordinateDeltaFactor = 1.0;
+    Real currentDensityLineIntegralFactor = 1.0;
 };
 
 /**
@@ -128,6 +134,7 @@ private:
     MobilityModelConfig mobilityConfig_;
     std::unique_ptr<MobilityModel> mobility_;
     RecombinationModel recombination_;
+    ImpactIonizationModelConfig impactIonizationConfig_;
     std::unique_ptr<ImpactIonizationModel> impactIonization_;
     bool impactIonizationEnabled_ = false;
 
@@ -135,6 +142,7 @@ private:
 
     // Mesh-derived quantities cached at construction time.
     std::vector<std::vector<Index>> edgeCells_;
+    std::vector<std::vector<Index>> nodeCells_;
     std::vector<Real> vol_;
     std::vector<Real> couple_;
     VectorXd fixedInterfaceChargeRhs_; ///< Cached fixed/interface charge RHS contribution [C].
