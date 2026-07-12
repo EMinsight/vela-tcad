@@ -1397,6 +1397,16 @@ DCSweepConfig dcSweepConfigFromJson(const nlohmann::json& cfg,
         sweep.diagnostics.sgAvalancheEdges.csvFile =
             sgAvalancheCfg.value("csv_file", std::string{});
     }
+    if (diagnosticsCfg.contains("triangle_gss_sources")) {
+        const auto& triangleCfg = diagnosticsCfg.at("triangle_gss_sources");
+        if (!triangleCfg.is_object())
+            throw std::invalid_argument(
+                "DCSweep: sweep.diagnostics.triangle_gss_sources must be an object.");
+        sweep.diagnostics.triangleGssSources.enabled =
+            triangleCfg.value("enabled", sweep.diagnostics.triangleGssSources.enabled);
+        sweep.diagnostics.triangleGssSources.csvFile =
+            triangleCfg.value("csv_file", std::string{});
+    }
     if (diagnosticsCfg.contains("avalanche_internal_source_current_audit")) {
         const auto& auditCfg = diagnosticsCfg.at("avalanche_internal_source_current_audit");
         if (!auditCfg.is_object())
@@ -1596,6 +1606,17 @@ DCSweepConfig dcSweepConfigFromJson(const nlohmann::json& cfg,
         } else {
             sweep.diagnostics.sgAvalancheEdges.csvFile =
                 resolve(sweep.diagnostics.sgAvalancheEdges.csvFile);
+        }
+    }
+    if (sweep.diagnostics.triangleGssSources.enabled) {
+        if (sweep.diagnostics.triangleGssSources.csvFile.empty()) {
+            const std::filesystem::path csvPath(sweep.csvFile);
+            sweep.diagnostics.triangleGssSources.csvFile =
+                (csvPath.parent_path() /
+                 (csvPath.stem().string() + "_triangle_gss_sources.csv")).string();
+        } else {
+            sweep.diagnostics.triangleGssSources.csvFile =
+                resolve(sweep.diagnostics.triangleGssSources.csvFile);
         }
     }
     if (sweep.diagnostics.avalancheInternalSourceCurrentAudit.enabled) {
@@ -2199,12 +2220,24 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
             "'cell_reconstructed', 'psi_gradient_proxy', 'cell_current_reconstructed', "
             "'cell_vector_current_reconstructed', or 'conserved_total_current'.");
     }
+    if (sweep.diagnostics.triangleGssSources.enabled &&
+        !detail::usesTriangleGssAvalancheSource(sweepImpactIonizationConfig)) {
+        throw std::invalid_argument(
+            "DCSweep: sweep.diagnostics.triangle_gss_sources requires "
+            "impact_ionization.source_mapping_mode='triangle_gss_gradqf_truncated'.");
+    }
     if (sweep.diagnostics.avalancheInternalSourceCurrentAudit.enabled &&
         !detail::usesEdgeCurrentAvalancheSource(sweepImpactIonizationConfig)) {
         throw std::invalid_argument(
             "DCSweep: sweep.diagnostics.avalanche_internal_source_current_audit requires "
             "impact_ionization.generation='current_density' and an SG edge-current "
             "impact_ionization.current_approximation.");
+    }
+    if (sweep.diagnostics.avalancheInternalSourceCurrentAudit.enabled &&
+        detail::usesTriangleGssAvalancheSource(sweepImpactIonizationConfig)) {
+        throw std::invalid_argument(
+            "DCSweep: avalanche_internal_source_current_audit does not support "
+            "triangle_gss_gradqf_truncated; use triangle_gss_sources.");
     }
     // Build DDScalingSpec for contact current post-processing.
     DDScalingSpec ddScaling;
@@ -2567,6 +2600,46 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
             "electron_sg_production_abs_continuity_particle_flux_m2_s",
             "electron_sg_production_signed_conventional_current_density_A_per_m2",
             "electron_sg_production_signed_conventional_current_density_A_per_cm2"});
+    }
+
+    std::unique_ptr<CSVWriter> triangleGssSourcesCsv;
+    if (sweep.diagnostics.triangleGssSources.enabled) {
+        const std::filesystem::path diagPath(
+            sweep.diagnostics.triangleGssSources.csvFile);
+        if (!diagPath.parent_path().empty())
+            std::filesystem::create_directories(diagPath.parent_path());
+        triangleGssSourcesCsv = std::make_unique<CSVWriter>(diagPath.string());
+        triangleGssSourcesCsv->writeHeader({
+            "point_index",
+            "bias_V",
+            "cell_id",
+            "local_edge",
+            "edge_id",
+            "node0",
+            "node1",
+            "x0_um",
+            "y0_um",
+            "x1_um",
+            "y1_um",
+            "edge_length_m",
+            "truncated_partial_volume_m2",
+            "electron_cell_qf_field_V_per_m",
+            "hole_cell_qf_field_V_per_m",
+            "electron_edge_qf_field_V_per_m",
+            "hole_edge_qf_field_V_per_m",
+            "electron_midpoint_density_m3",
+            "hole_midpoint_density_m3",
+            "electron_mobility_m2_V_s",
+            "hole_mobility_m2_V_s",
+            "electron_alpha_m_inv",
+            "hole_alpha_m_inv",
+            "electron_flux_proxy",
+            "hole_flux_proxy",
+            "electron_source_integral",
+            "hole_source_integral",
+            "edge_source_integral",
+            "node0_source_integral",
+            "node1_source_integral"});
     }
 
     std::unique_ptr<CSVWriter> avalancheInternalSourceAuditCsv;
@@ -3949,6 +4022,69 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
             }
         }
 
+        if (converged && triangleGssSourcesCsv != nullptr) {
+            const std::size_t pointIndex = points.size();
+            const auto records = detail::triangleGssAvalancheSourceRecords(
+                sweepImpactIonizationConfig,
+                *sweepImpactIonization,
+                mobilityConfig,
+                *sweepMobility,
+                sweepEdgeCells,
+                mesh,
+                doping,
+                sweepCellMaterials,
+                sol.psi,
+                sol.phin,
+                sol.phip,
+                sol.n,
+                sol.p,
+                effectiveNi,
+                constants::kb * temperature_K / constants::q,
+                fieldFactor);
+            const PhysicalUnitSystem& units = sweep.scaling.unitSystem();
+            for (const auto& record : records) {
+                const Node& node0 = mesh.getNode(record.node0);
+                const Node& node1 = mesh.getNode(record.node1);
+                triangleGssSourcesCsv->writeRow({
+                    std::to_string(pointIndex),
+                    formatReal(point.bias),
+                    std::to_string(record.cellId),
+                    std::to_string(record.localEdge),
+                    std::to_string(record.edgeId),
+                    std::to_string(record.node0),
+                    std::to_string(record.node1),
+                    formatReal(units.internalLengthToMeters(node0.x) * 1.0e6),
+                    formatReal(units.internalLengthToMeters(node0.y) * 1.0e6),
+                    formatReal(units.internalLengthToMeters(node1.x) * 1.0e6),
+                    formatReal(units.internalLengthToMeters(node1.y) * 1.0e6),
+                    formatReal(units.internalLengthToMeters(record.edgeLength)),
+                    formatReal(record.truncatedPartialVolume * units.areaM2PerInternal()),
+                    formatReal(units.internalElectricFieldToVPerM(
+                        record.electronCellQfField)),
+                    formatReal(units.internalElectricFieldToVPerM(
+                        record.holeCellQfField)),
+                    formatReal(units.internalElectricFieldToVPerM(
+                        record.electronEdgeQfField)),
+                    formatReal(units.internalElectricFieldToVPerM(
+                        record.holeEdgeQfField)),
+                    formatReal(units.internalConcentrationToM3(
+                        record.electronMidpointDensity)),
+                    formatReal(units.internalConcentrationToM3(
+                        record.holeMidpointDensity)),
+                    formatReal(units.internalMobilityToM2PerVS(record.electronMobility)),
+                    formatReal(units.internalMobilityToM2PerVS(record.holeMobility)),
+                    formatReal(units.internalInverseLengthToMInv(record.electronAlpha)),
+                    formatReal(units.internalInverseLengthToMInv(record.holeAlpha)),
+                    formatReal(record.electronFluxProxy),
+                    formatReal(record.holeFluxProxy),
+                    formatReal(record.electronSourceIntegral),
+                    formatReal(record.holeSourceIntegral),
+                    formatReal(record.edgeSourceIntegral),
+                    formatReal(record.node0SourceIntegral),
+                    formatReal(record.node1SourceIntegral)});
+            }
+        }
+
         if (converged && avalancheInternalSourceAuditCsv != nullptr) {
             const std::vector<detail::SgEdgeCurrentAvalancheSourceRecord> records =
                 detail::sgEdgeCurrentAvalancheSourceRecords(
@@ -3969,7 +4105,7 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                     constants::kb * temperature_K / constants::q,
                     fieldFactor);
             const std::vector<Real> solverSourceIntegrals =
-                detail::sgEdgeCurrentAvalancheSourceIntegrals(
+                detail::currentDensityAvalancheSourceIntegrals(
                     sweepImpactIonizationConfig,
                     *sweepImpactIonization,
                     mobilityConfig,

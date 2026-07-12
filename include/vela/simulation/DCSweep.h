@@ -52,6 +52,11 @@ struct SgAvalancheEdgeDiagnosticsConfig {
     std::string csvFile;
 };
 
+struct TriangleGssSourceDiagnosticsConfig {
+    bool enabled = false;
+    std::string csvFile;
+};
+
 struct AvalancheInternalSourceCurrentAuditConfig {
     bool enabled = false;
     std::string csvFile;
@@ -91,6 +96,7 @@ struct SweepDiagnosticsConfig {
     TransportDiagnosticsConfig transport;
     ContinuityBalanceDiagnosticsConfig continuityBalance;
     SgAvalancheEdgeDiagnosticsConfig sgAvalancheEdges;
+    TriangleGssSourceDiagnosticsConfig triangleGssSources;
     AvalancheInternalSourceCurrentAuditConfig avalancheInternalSourceCurrentAudit;
     ReleaseBVConfigAuditConfig releaseBVConfigAudit;
     TerminalCurrentMethodCompareDiagnosticsConfig terminalCurrentMethodCompare;

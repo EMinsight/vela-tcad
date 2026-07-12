@@ -1157,6 +1157,56 @@ TEST_CASE("NewtonSolver: cell-reconstructed SG avalanche Jacobian matches midpoi
     REQUIRE(rows.front().relDiff < 5.0e-3);
 }
 
+TEST_CASE("NewtonSolver: triangle GSS avalanche Jacobian matches the nine-column cell residual",
+          "[newton][diagnostics][impact][triangle_gss]")
+{
+    DeviceMesh mesh = makePNMesh();
+    MaterialDatabase matdb;
+    DopingModel doping = makePNDoping(mesh);
+    std::unordered_map<std::string, Real> biases = {
+        {"anode", -1.0},
+        {"cathode", 0.0},
+    };
+
+    NewtonConfig cfg;
+    cfg.inputScaling.mode = UnitScalingMode::UnitScaling;
+    cfg.recombination = {"none"};
+    cfg.warmStart = true;
+    cfg.mobility.model = "constant";
+    cfg.mobility.highFieldDrivingForce = "quasi_fermi_gradient";
+    cfg.impactIonization.model = "selberherr";
+    cfg.impactIonization.drivingForce = "quasi_fermi_gradient";
+    cfg.impactIonization.generation = "current_density";
+    cfg.impactIonization.currentApproximation = "cell_reconstructed";
+    cfg.impactIonization.currentMagnitudeMode = "edge_scalar_abs";
+    cfg.impactIonization.cellReconstructedMidpointDensity = "gss_logistic";
+    cfg.impactIonization.quasiFermiGradientDiscretization = "cell_gradient";
+    cfg.impactIonization.sourceVolumePolicy = "genius_truncated";
+    cfg.impactIonization.sourceVolumeFactor = 0.0;
+    cfg.impactIonization.sourceGeometryScale = 1.0;
+    cfg.impactIonization.edgeSourcePartition = "symmetric";
+    cfg.impactIonization.sourceMappingMode = "triangle_gss_gradqf_truncated";
+    cfg.impactIonization.electronA = 1.0;
+    cfg.impactIonization.electronB = 1.0e-30;
+    cfg.impactIonization.holeA = 1.0;
+    cfg.impactIonization.holeB = 1.0e-30;
+
+    DDSolution state;
+    state.psi = (VectorXd(5) << 0.05, -0.30, -0.75, -0.10, -0.42).finished();
+    state.phin = (VectorXd(5) << 0.02, -0.65, -1.10, -0.08, -0.27).finished();
+    state.phip = (VectorXd(5) << -0.15, -0.35, -0.82, -0.60, -0.24).finished();
+
+    NewtonSolver solver(mesh, matdb, doping, biases, cfg);
+    const auto rows = solver.evaluateJacobianBlockAudit(
+        state, 1.0e-7, std::vector<std::string>{"sg_avalanche"});
+
+    REQUIRE(rows.size() == 1);
+    REQUIRE(rows.front().block == "sg_avalanche");
+    REQUIRE(rows.front().fdNorm > 0.0);
+    REQUIRE(rows.front().analyticNorm > 0.0);
+    REQUIRE(rows.front().relDiff < 5.0e-5);
+}
+
 TEST_CASE("NewtonSolver: arithmetic cell-reconstructed SG avalanche Jacobian matches residual",
           "[newton][diagnostics][impact]")
 {

@@ -1,5 +1,6 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 
 #include "vela/core/PhysicalConstants.h"
 #include "vela/equation/AssemblerUtils.h"
@@ -52,6 +53,136 @@ TEST_CASE("Bernoulli avalanche midpoint weights stay normalized at large potenti
         0.0,
         0.025852);
     REQUIRE(midpoint == Catch::Approx(1.0e3));
+}
+
+TEST_CASE("GSS logistic avalanche midpoint follows the published carrier orientation",
+          "[impact][triangle_gss]")
+{
+    const Real Vt = 0.025852;
+    const Real psi0 = -0.20;
+    const Real psi1 = 0.10;
+    const Real n0 = 1.0e12;
+    const Real n1 = 8.0e17;
+    const Real p0 = 3.0e17;
+    const Real p1 = 2.0e11;
+
+    const Real electronArg = (psi1 - psi0) / (2.0 * Vt);
+    const Real holeArg = (psi0 - psi1) / (2.0 * Vt);
+    const Real expectedElectron =
+        n0 * detail::avalancheMidpointAux2(electronArg) +
+        n1 * detail::avalancheMidpointAux2(-electronArg);
+    const Real expectedHole =
+        p0 * detail::avalancheMidpointAux2(holeArg) +
+        p1 * detail::avalancheMidpointAux2(-holeArg);
+
+    REQUIRE(detail::gssElectronAvalancheMidpointDensity(
+                n0, n1, psi0, psi1, Vt) ==
+            Catch::Approx(expectedElectron).epsilon(1.0e-14));
+    REQUIRE(detail::gssHoleAvalancheMidpointDensity(
+                p0, p1, psi0, psi1, Vt) ==
+            Catch::Approx(expectedHole).epsilon(1.0e-14));
+    REQUIRE(detail::gssElectronAvalancheMidpointDensity(
+                n0, n1, psi0, psi1, Vt) !=
+            Catch::Approx(detail::bernoulliWeightedMidpointDensity(
+                n0, n1, psi0, psi1, Vt)));
+}
+
+
+TEST_CASE("GSS logistic midpoint is rejected outside triangle source mapping",
+          "[impact][triangle_gss]")
+{
+    ImpactIonizationModelConfig config;
+    config.model = "selberherr";
+    config.drivingForce = "quasi_fermi_gradient";
+    config.generation = "current_density";
+    config.currentApproximation = "cell_reconstructed";
+    config.cellReconstructedMidpointDensity = "gss_logistic";
+    REQUIRE_THROWS_WITH(
+        detail::validateImpactIonizationDrivingForce(config, "test"),
+        Catch::Matchers::ContainsSubstring(
+            "requires source_mapping_mode='triangle_gss_gradqf_truncated'"));
+}
+
+TEST_CASE("Triangle GSS GradQf alpha depends on the third cell vertex",
+          "[impact][triangle_gss]")
+{
+    DeviceMesh mesh = makeSingleCellMesh();
+    const auto edgeCells = detail::buildEdgeCellMap(mesh);
+    MaterialDatabase matdb;
+    const auto doping = DopingModel::fromMeshAndRegions(
+        mesh, {RegionDopingSpec{"si", 1.0e21, 0.0}});
+    const auto cellMaterials = detail::buildCellMaterials(mesh, matdb, constants::T0);
+
+    ImpactIonizationModelConfig impactConfig;
+    impactConfig.model = "van_overstraeten";
+    impactConfig.drivingForce = "quasi_fermi_gradient";
+    impactConfig.generation = "current_density";
+    impactConfig.currentApproximation = "cell_reconstructed";
+    impactConfig.cellReconstructedMidpointDensity = "gss_logistic";
+    impactConfig.quasiFermiGradientDiscretization = "cell_gradient";
+    impactConfig.sourceMappingMode = "triangle_gss_gradqf_truncated";
+
+    REQUIRE_NOTHROW(detail::validateImpactIonizationDrivingForce(impactConfig, "test"));
+    REQUIRE(detail::usesTriangleGssAvalancheSource(impactConfig));
+
+    MobilityModelConfig mobilityConfig = mobilityModelConfig("constant");
+    const auto mobility = makeMobilityModel(mobilityConfig);
+    const auto impact = makeImpactIonizationModel(impactConfig);
+
+    VectorXd psi = VectorXd::Zero(mesh.numNodes());
+    VectorXd phin(mesh.numNodes());
+    VectorXd phip = VectorXd::Zero(mesh.numNodes());
+    VectorXd n = VectorXd::Constant(mesh.numNodes(), 1.0e20);
+    VectorXd p = VectorXd::Constant(mesh.numNodes(), 1.0e20);
+    std::vector<Real> ni(static_cast<std::size_t>(mesh.numNodes()), 1.0e16);
+    phin << 0.0, -0.20, 0.0;
+
+    const auto base = detail::triangleGssAvalancheSourceRecords(
+        impactConfig, *impact, mobilityConfig, *mobility, edgeCells, mesh,
+        doping, cellMaterials, psi, phin, phip, n, p, ni,
+        constants::kb * constants::T0 / constants::q);
+
+    phin(2) = -0.40;
+    const auto changed = detail::triangleGssAvalancheSourceRecords(
+        impactConfig, *impact, mobilityConfig, *mobility, edgeCells, mesh,
+        doping, cellMaterials, psi, phin, phip, n, p, ni,
+        constants::kb * constants::T0 / constants::q);
+
+    const auto edge01 = [](const auto& record) {
+        return record.cellId == 0 &&
+               ((record.node0 == 0 && record.node1 == 1) ||
+                (record.node0 == 1 && record.node1 == 0));
+    };
+    const auto baseEdge = std::find_if(base.begin(), base.end(), edge01);
+    const auto changedEdge = std::find_if(changed.begin(), changed.end(), edge01);
+    REQUIRE(baseEdge != base.end());
+    REQUIRE(changedEdge != changed.end());
+    REQUIRE(changedEdge->electronEdgeQfField ==
+            Catch::Approx(baseEdge->electronEdgeQfField));
+    REQUIRE(changedEdge->electronCellQfField > baseEdge->electronCellQfField);
+    REQUIRE(changedEdge->electronAlpha > baseEdge->electronAlpha);
+    REQUIRE(changedEdge->electronSourceIntegral > baseEdge->electronSourceIntegral);
+    REQUIRE(changedEdge->truncatedPartialVolume >= 0.0);
+    REQUIRE(changedEdge->node0SourceIntegral +
+            changedEdge->node1SourceIntegral ==
+            Catch::Approx(changedEdge->edgeSourceIntegral).epsilon(1.0e-14));
+
+    const auto components = detail::currentDensityAvalancheSourceComponentIntegrals(
+        impactConfig, *impact, mobilityConfig, *mobility, edgeCells, mesh,
+        doping, cellMaterials, psi, phin, phip, n, p, ni,
+        constants::kb * constants::T0 / constants::q);
+    std::vector<Real> expected(mesh.numNodes(), 0.0);
+    for (const auto& record : changed) {
+        expected[record.node0] += record.node0SourceIntegral;
+        expected[record.node1] += record.node1SourceIntegral;
+    }
+    REQUIRE(components.combined.size() == mesh.numNodes());
+    for (Index node = 0; node < mesh.numNodes(); ++node) {
+        REQUIRE(components.combined[node] ==
+                Catch::Approx(expected[node]).epsilon(1.0e-14));
+        REQUIRE(components.electron[node] + components.hole[node] ==
+                Catch::Approx(components.combined[node]).epsilon(1.0e-14));
+    }
 }
 
 TEST_CASE("Avalanche current proxy selection covers every configured mode",

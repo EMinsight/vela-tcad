@@ -1058,8 +1058,31 @@ void writeDDSolutionVTK(const std::string& filename,
     std::vector<Real> electronIonIntegral(N, 0.0);
     std::vector<Real> holeIonIntegral(N, 0.0);
     std::vector<Real> meanIonIntegral(N, 0.0);
+    const bool triangleGssAvalanche =
+        detail::usesTriangleGssAvalancheSource(impactIonizationConfig);
+    const std::vector<detail::TriangleGssAvalancheSourceRecord>
+        triangleGssAvalancheRecords = triangleGssAvalanche
+        ? detail::triangleGssAvalancheSourceRecords(
+            impactIonizationConfig,
+            *impact,
+            mobilityConfig,
+            *mobility,
+            edgeCells,
+            mesh,
+            doping,
+            cellMaterials,
+            sol.psi,
+            sol.phin,
+            sol.phip,
+            sol.n,
+            sol.p,
+            effectiveNi,
+            Vt,
+            fieldFactor)
+        : std::vector<detail::TriangleGssAvalancheSourceRecord>{};
     const std::vector<detail::SgEdgeCurrentAvalancheSourceRecord> sgAvalancheRecords =
         detail::usesEdgeCurrentAvalancheSource(impactIonizationConfig)
+            && !triangleGssAvalanche
         ? detail::sgEdgeCurrentAvalancheSourceRecords(
             impactIonizationConfig,
             *impact,
@@ -1078,11 +1101,26 @@ void writeDDSolutionVTK(const std::string& filename,
             Vt,
             fieldFactor)
         : std::vector<detail::SgEdgeCurrentAvalancheSourceRecord>{};
-    std::vector<Real> sgAvalancheSourceIntegrals(N, 0.0);
-    for (const auto& record : sgAvalancheRecords) {
-        sgAvalancheSourceIntegrals[record.node0] += record.node0SourceIntegral;
-        sgAvalancheSourceIntegrals[record.node1] += record.node1SourceIntegral;
-    }
+    const std::vector<Real> currentDensityAvalancheSourceIntegrals =
+        detail::usesEdgeCurrentAvalancheSource(impactIonizationConfig)
+        ? detail::currentDensityAvalancheSourceIntegrals(
+            impactIonizationConfig,
+            *impact,
+            mobilityConfig,
+            *mobility,
+            edgeCells,
+            mesh,
+            doping,
+            cellMaterials,
+            sol.psi,
+            sol.phin,
+            sol.phip,
+            sol.n,
+            sol.p,
+            effectiveNi,
+            Vt,
+            fieldFactor)
+        : std::vector<Real>{};
     for (Index i = 0; i < N; ++i) {
         const int row = static_cast<int>(i);
         const Real n = sol.n(row);
@@ -1092,7 +1130,7 @@ void writeDDSolutionVTK(const std::string& filename,
         srh[i] = recombination.srhRate(n, p, ni);
         if (detail::usesEdgeCurrentAvalancheSource(impactIonizationConfig)) {
             avalanche[i] = mesh.getNode(i).volume > 0.0
-                ? sgAvalancheSourceIntegrals[i] / mesh.getNode(i).volume
+                ? currentDensityAvalancheSourceIntegrals[i] / mesh.getNode(i).volume
                 : 0.0;
         } else {
             avalanche[i] = detail::impactIonizationGenerationRate(
@@ -1162,7 +1200,15 @@ void writeDDSolutionVTK(const std::string& filename,
         holeVelocity[i] = holeMobility[i] * std::abs(holeImpactField);
     }
 
-    if (!sgAvalancheRecords.empty()) {
+    if (!triangleGssAvalancheRecords.empty()) {
+        for (const auto& record : triangleGssAvalancheRecords) {
+            const Real halfLength = 0.5 * record.edgeLength;
+            electronIonIntegral[record.node0] += record.electronAlpha * halfLength;
+            electronIonIntegral[record.node1] += record.electronAlpha * halfLength;
+            holeIonIntegral[record.node0] += record.holeAlpha * halfLength;
+            holeIonIntegral[record.node1] += record.holeAlpha * halfLength;
+        }
+    } else if (!sgAvalancheRecords.empty()) {
         for (const auto& record : sgAvalancheRecords) {
             const Real halfLength = 0.5 * record.edgeLength;
             electronIonIntegral[record.node0] += record.electronAlpha * halfLength;

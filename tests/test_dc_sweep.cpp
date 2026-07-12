@@ -1289,6 +1289,122 @@ TEST_CASE("DCSweep: SG avalanche edge diagnostics write assembled source rows",
             Catch::Approx(result.points.front().maxElectricField * 100.0).epsilon(1.0e-12));
 }
 
+TEST_CASE("DCSweep: triangle GSS source diagnostics write conservative finite rows",
+          "[dc_sweep][diagnostics][triangle_gss_sources]")
+{
+    const auto dir = makeUniqueSweepDir();
+    const ScopedDirectoryCleanup cleanup{dir};
+    std::filesystem::create_directories(dir);
+    const auto meshPath = writePNMeshMicrometers(dir);
+    const auto csvPath = dir / "bv_triangle_source.csv";
+    const auto trianglePath = dir / "bv_triangle_source_triangle_gss_sources.csv";
+    const auto cfgPath = writeUnitScalingSweepConfig(dir, meshPath, csvPath, {
+        {"mode", "bv_reverse"},
+        {"start", 0.0},
+        {"stop", 0.0},
+        {"step", -0.05},
+        {"write_vtk", false},
+        {"diagnostics", {
+            {"triangle_gss_sources", {
+                {"enabled", true}
+            }}
+        }}
+    }, {
+        {"method", "gummel_newton"},
+        {"handoff", {
+            {"gummel_max_iter", 0},
+            {"newton_max_iter", 80},
+            {"require_gummel_convergence", false}
+        }},
+        {"impact_ionization", {
+            {"model", "selberherr"},
+            {"driving_force", "quasi_fermi_gradient"},
+            {"generation", "current_density"},
+            {"current_approximation", "cell_reconstructed"},
+            {"cell_reconstructed_midpoint_density", "gss_logistic"},
+            {"quasi_fermi_gradient_discretization", "cell_gradient"},
+            {"source_mapping_mode", "triangle_gss_gradqf_truncated"},
+            {"electron_A_m_inv", 1.0},
+            {"electron_B_V_m", 1.0e-30},
+            {"hole_A_m_inv", 1.0},
+            {"hole_B_V_m", 1.0e-30}
+        }}
+    });
+
+    DCSweep sweep;
+    const DCSweepResult result = sweep.runWithResult(cfgPath.string());
+    REQUIRE(result.points.size() == 1);
+    REQUIRE(result.points.front().converged);
+    REQUIRE(std::filesystem::exists(trianglePath));
+
+    const auto rows = readCsvRows(trianglePath);
+    REQUIRE(rows.size() > 1);
+    const auto& header = rows.front();
+    const std::vector<std::string> finiteColumns = {
+        "point_index", "bias_V", "cell_id", "local_edge", "edge_id", "node0", "node1",
+        "x0_um", "y0_um", "x1_um", "y1_um", "edge_length_m",
+        "truncated_partial_volume_m2", "electron_cell_qf_field_V_per_m",
+        "hole_cell_qf_field_V_per_m", "electron_edge_qf_field_V_per_m",
+        "hole_edge_qf_field_V_per_m", "electron_midpoint_density_m3",
+        "hole_midpoint_density_m3", "electron_mobility_m2_V_s",
+        "hole_mobility_m2_V_s", "electron_alpha_m_inv", "hole_alpha_m_inv",
+        "electron_flux_proxy", "hole_flux_proxy", "electron_source_integral",
+        "hole_source_integral", "edge_source_integral", "node0_source_integral",
+        "node1_source_integral"
+    };
+    std::vector<std::size_t> finiteColumnIndices;
+    for (const std::string& column : finiteColumns)
+        finiteColumnIndices.push_back(csvColumnIndex(header, column));
+    const std::size_t electronSourceCol = csvColumnIndex(header, "electron_source_integral");
+    const std::size_t holeSourceCol = csvColumnIndex(header, "hole_source_integral");
+    const std::size_t edgeSourceCol = csvColumnIndex(header, "edge_source_integral");
+    const std::size_t node0SourceCol = csvColumnIndex(header, "node0_source_integral");
+    const std::size_t node1SourceCol = csvColumnIndex(header, "node1_source_integral");
+
+    for (std::size_t i = 1; i < rows.size(); ++i) {
+        const auto& row = rows.at(i);
+        for (const std::size_t column : finiteColumnIndices)
+            REQUIRE(std::isfinite(csvReal(row, column)));
+        const Real edgeSource = csvReal(row, edgeSourceCol);
+        REQUIRE(edgeSource == Catch::Approx(csvReal(row, electronSourceCol) +
+                                             csvReal(row, holeSourceCol))
+                                  .margin(1.0e-30));
+        REQUIRE(edgeSource == Catch::Approx(csvReal(row, node0SourceCol) +
+                                             csvReal(row, node1SourceCol))
+                                  .margin(1.0e-30));
+    }
+
+    const auto auditCfgPath = dir / "triangle_with_legacy_audit.json";
+    {
+        std::ifstream input(cfgPath);
+        nlohmann::json auditConfig;
+        input >> auditConfig;
+        auditConfig["sweep"]["diagnostics"]
+                   ["avalanche_internal_source_current_audit"]["enabled"] = true;
+        std::ofstream(auditCfgPath) << auditConfig.dump(2);
+    }
+    REQUIRE_THROWS_WITH(
+        sweep.runWithResult(auditCfgPath.string()),
+        Catch::Matchers::ContainsSubstring(
+            "avalanche_internal_source_current_audit does not support "
+            "triangle_gss_gradqf_truncated"));
+
+
+    const auto invalidCfgPath = writeUnitScalingSweepConfig(dir, meshPath, dir / "invalid.csv", {
+        {"start", 0.0},
+        {"stop", 0.0},
+        {"step", 0.1},
+        {"write_vtk", false},
+        {"diagnostics", {
+            {"triangle_gss_sources", {
+                {"enabled", true}
+            }}
+        }}
+    });
+    REQUIRE_THROWS_WITH(
+        sweep.runWithResult(invalidCfgPath.string()),
+        Catch::Matchers::ContainsSubstring("triangle_gss_sources requires"));
+}
 TEST_CASE("DCSweep: avalanche internal source current audit writes closed used terms",
           "[dc_sweep][diagnostics][avalanche_internal_source_current_audit]")
 {

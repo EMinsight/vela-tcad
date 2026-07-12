@@ -1241,6 +1241,91 @@ TEST_CASE("VTK AvalancheGeneration uses SG edge nodal source over node volume",
     std::filesystem::remove(vtkPath, removeError);
 }
 
+TEST_CASE("VTK triangle GSS source projection uses triangle records",
+          "[impact][diagnostic][vtk][triangle_gss]")
+{
+    DeviceMesh mesh = makePNMesh();
+    MaterialDatabase matdb;
+    const std::vector<RegionDopingSpec> specs = {
+        {"n_region", 5.0e22, 0.0},
+        {"p_region", 0.0, 5.0e22},
+    };
+    DopingModel doping = DopingModel::fromMeshAndRegions(mesh, specs);
+
+    const Real Vt = 0.025852;
+    DDSolution sol;
+    sol.psi = VectorXd::LinSpaced(static_cast<int>(mesh.numNodes()), -0.02, 0.025);
+    sol.phin = VectorXd::LinSpaced(static_cast<int>(mesh.numNodes()), 0.01, -0.006);
+    sol.phip = VectorXd::LinSpaced(static_cast<int>(mesh.numNodes()), -0.007, 0.005);
+    sol.n.resize(static_cast<int>(mesh.numNodes()));
+    sol.p.resize(static_cast<int>(mesh.numNodes()));
+    const std::vector<Real> ni(static_cast<std::size_t>(mesh.numNodes()), 1.0e16);
+    for (int i = 0; i < static_cast<int>(mesh.numNodes()); ++i) {
+        sol.n(i) = ni[static_cast<std::size_t>(i)] * std::exp((sol.psi(i) - sol.phin(i)) / Vt);
+        sol.p(i) = ni[static_cast<std::size_t>(i)] * std::exp((sol.phip(i) - sol.psi(i)) / Vt);
+    }
+
+    ImpactIonizationModelConfig impactConfig;
+    impactConfig.model = "selberherr";
+    impactConfig.drivingForce = "quasi_fermi_gradient";
+    impactConfig.generation = "current_density";
+    impactConfig.currentApproximation = "cell_reconstructed";
+    impactConfig.cellReconstructedMidpointDensity = "gss_logistic";
+    impactConfig.quasiFermiGradientDiscretization = "cell_gradient";
+    impactConfig.sourceMappingMode = "triangle_gss_gradqf_truncated";
+    impactConfig.electronA = 1.0;
+    impactConfig.electronB = 1.0e-30;
+    impactConfig.holeA = 1.0;
+    impactConfig.holeB = 1.0e-30;
+
+    const MobilityModelConfig mobilityConfig = mobilityModelConfig("constant");
+    const RecombinationModelConfig recombinationConfig = recombinationModelConfig({"none"});
+    const auto mobility = makeMobilityModel(mobilityConfig);
+    const auto impact = makeImpactIonizationModel(impactConfig);
+    const auto edgeCells = detail::buildEdgeCellMap(mesh);
+    const auto cellMaterials = detail::buildCellMaterials(mesh, matdb, constants::T0);
+    const auto expectedNodal = detail::currentDensityAvalancheSourceIntegrals(
+        impactConfig, *impact, mobilityConfig, *mobility, edgeCells, mesh, doping,
+        cellMaterials, sol.psi, sol.phin, sol.phip, sol.n, sol.p, ni, Vt);
+    const auto records = detail::triangleGssAvalancheSourceRecords(
+        impactConfig, *impact, mobilityConfig, *mobility, edgeCells, mesh, doping,
+        cellMaterials, sol.psi, sol.phin, sol.phip, sol.n, sol.p, ni, Vt);
+    std::vector<Real> expectedElectronIon(mesh.numNodes(), 0.0);
+    std::vector<Real> expectedHoleIon(mesh.numNodes(), 0.0);
+    for (const auto& record : records) {
+        const Real halfLength = 0.5 * record.edgeLength;
+        expectedElectronIon[record.node0] += record.electronAlpha * halfLength;
+        expectedElectronIon[record.node1] += record.electronAlpha * halfLength;
+        expectedHoleIon[record.node0] += record.holeAlpha * halfLength;
+        expectedHoleIon[record.node1] += record.holeAlpha * halfLength;
+    }
+
+    const auto vtkPath = std::filesystem::temp_directory_path() /
+        "vela_triangle_gss_avalanche_generation.vtk";
+    writeDDSolutionVTK(
+        vtkPath.string(), mesh, matdb, doping, sol, mobilityConfig, recombinationConfig,
+        impactConfig, BandgapNarrowingConfig{}, constants::T0);
+    const auto avalanche = readVtkScalar(
+        vtkPath, "AvalancheGeneration", static_cast<std::size_t>(mesh.numNodes()));
+    const auto electronIon = readVtkScalar(
+        vtkPath, "ElectronIonIntegral", static_cast<std::size_t>(mesh.numNodes()));
+    const auto holeIon = readVtkScalar(
+        vtkPath, "HoleIonIntegral", static_cast<std::size_t>(mesh.numNodes()));
+    const auto meanIon = readVtkScalar(
+        vtkPath, "MeanIonIntegral", static_cast<std::size_t>(mesh.numNodes()));
+
+    for (Index node = 0; node < mesh.numNodes(); ++node) {
+        const std::size_t i = static_cast<std::size_t>(node);
+        REQUIRE(avalanche[i] * mesh.getNode(node).volume ==
+                Catch::Approx(expectedNodal[i]).margin(1.0e-18));
+        REQUIRE(electronIon[i] == Catch::Approx(expectedElectronIon[i]).margin(1.0e-18));
+        REQUIRE(holeIon[i] == Catch::Approx(expectedHoleIon[i]).margin(1.0e-18));
+        REQUIRE(meanIon[i] == Catch::Approx(0.5 * (expectedElectronIon[i] + expectedHoleIon[i]))
+                              .margin(1.0e-18));
+    }
+    std::error_code removeError;
+    std::filesystem::remove(vtkPath, removeError);
+}
 TEST_CASE("VTK exports direct avalanche velocity alpha ion integral and impact drive scalars",
           "[impact][diagnostic][vtk]")
 {

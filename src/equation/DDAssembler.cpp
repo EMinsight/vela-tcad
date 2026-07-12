@@ -321,7 +321,7 @@ void DDAssembler::assembleElectronContinuity(const VectorXd& psi,
     const bool sgCurrentAvalanche = impactIonizationEnabled_ &&
         detail::usesEdgeCurrentAvalancheSource(impactIonizationConfig_);
     const std::vector<Real> sgAvalancheSourceIntegrals = sgCurrentAvalanche
-        ? detail::sgEdgeCurrentAvalancheSourceIntegrals(
+        ? detail::currentDensityAvalancheSourceIntegrals(
             impactIonizationConfig_,
             *impactIonization_,
             mobilityConfig_,
@@ -495,7 +495,7 @@ void DDAssembler::assembleHoleContinuity(const VectorXd& psi,
     const bool sgCurrentAvalanche = impactIonizationEnabled_ &&
         detail::usesEdgeCurrentAvalancheSource(impactIonizationConfig_);
     const std::vector<Real> sgAvalancheSourceIntegrals = sgCurrentAvalanche
-        ? detail::sgEdgeCurrentAvalancheSourceIntegrals(
+        ? detail::currentDensityAvalancheSourceIntegrals(
             impactIonizationConfig_,
             *impactIonization_,
             mobilityConfig_,

@@ -994,11 +994,12 @@ inline void validateImpactIonizationDrivingForce(const ImpactIonizationModelConf
             "'edge_scalar_abs' or 'dual_face_vector_mag'.");
     }
     if (config.cellReconstructedMidpointDensity != "bernoulli" &&
-        config.cellReconstructedMidpointDensity != "arithmetic") {
+        config.cellReconstructedMidpointDensity != "arithmetic" &&
+        config.cellReconstructedMidpointDensity != "gss_logistic") {
         throw std::invalid_argument(
             std::string(context) +
             ": impact_ionization.cell_reconstructed_midpoint_density must be "
-            "'bernoulli' or 'arithmetic'.");
+            "'bernoulli', 'arithmetic', or 'gss_logistic'.");
     }
     if (config.drivingForceInterpolation != "none" &&
         config.drivingForceInterpolation != "quasi_fermi_to_electric_field") {
@@ -1072,11 +1073,40 @@ inline void validateImpactIonizationDrivingForce(const ImpactIonizationModelConf
     }
     if (config.sourceMappingMode != "node_F_node_alpha_node_G" &&
         config.sourceMappingMode != "edge_F_edge_alpha_edge_G_to_node" &&
-        config.sourceMappingMode != "cell_F_cell_alpha_cell_G_to_node") {
+        config.sourceMappingMode != "cell_F_cell_alpha_cell_G_to_node" &&
+        config.sourceMappingMode != "triangle_gss_gradqf_truncated") {
         throw std::invalid_argument(
             std::string(context) +
             ": impact_ionization.source_mapping_mode must be 'node_F_node_alpha_node_G', "
-            "'edge_F_edge_alpha_edge_G_to_node', or 'cell_F_cell_alpha_cell_G_to_node'.");
+            "'edge_F_edge_alpha_edge_G_to_node', 'cell_F_cell_alpha_cell_G_to_node', "
+            "or 'triangle_gss_gradqf_truncated'.");
+    }
+    if (config.sourceMappingMode == "triangle_gss_gradqf_truncated" &&
+        (config.generation != "current_density" ||
+         config.drivingForce != "quasi_fermi_gradient" ||
+         config.currentApproximation != "cell_reconstructed" ||
+         config.currentMagnitudeMode != "edge_scalar_abs" ||
+         config.cellReconstructedMidpointDensity != "gss_logistic" ||
+         config.quasiFermiGradientDiscretization != "cell_gradient" ||
+         config.sourceVolumePolicy != "genius_truncated" ||
+         config.sourceVolumeFactor != 0.0 ||
+         config.sourceGeometryScale != 1.0 ||
+         config.edgeSourcePartition != "symmetric" ||
+         config.drivingForceInterpolation != "none" ||
+         config.quasiFermiCarrierTruncation != 0.0 ||
+         config.minimumField != 0.0 ||
+         config.electronDrivingForceRefDensity != 0.0 ||
+         config.holeDrivingForceRefDensity != 0.0)) {
+        throw std::invalid_argument(
+            std::string(context) +
+            ": triangle_gss_gradqf_truncated requires the canonical GSS GradQf configuration.");
+    }
+    if (config.cellReconstructedMidpointDensity == "gss_logistic" &&
+        config.sourceMappingMode != "triangle_gss_gradqf_truncated") {
+        throw std::invalid_argument(
+            std::string(context) +
+            ": cell_reconstructed_midpoint_density='gss_logistic' requires "
+            "source_mapping_mode='triangle_gss_gradqf_truncated'.");
     }
     if (config.edgeSourcePartition != "symmetric" &&
         config.edgeSourcePartition != "qf_gradient") {
@@ -1120,6 +1150,13 @@ inline void validateImpactIonizationDrivingForce(const ImpactIonizationModelConf
             std::string(context) +
             ": impact_ionization.debug_raw_vanoverstraeten requires model='van_overstraeten'.");
     }
+}
+
+inline bool usesTriangleGssAvalancheSource(
+    const ImpactIonizationModelConfig& config)
+{
+    return config.generation == "current_density" &&
+           config.sourceMappingMode == "triangle_gss_gradqf_truncated";
 }
 
 inline bool usesDensityGradientAvalancheCurrent(
@@ -1252,6 +1289,34 @@ inline Real cellReconstructedAvalancheMidpointDensity(
     if (config.cellReconstructedMidpointDensity == "arithmetic")
         return 0.5 * (density_i + density_j);
     return bernoulliWeightedMidpointDensity(density_i, density_j, potential_i, potential_j, Vt);
+}
+
+inline Real gssElectronAvalancheMidpointDensity(
+    Real density_i,
+    Real density_j,
+    Real potential_i,
+    Real potential_j,
+    Real Vt)
+{
+    if (Vt <= 0.0)
+        return 0.5 * (density_i + density_j);
+    const Real arg = (potential_j - potential_i) / (2.0 * Vt);
+    return density_i * avalancheMidpointAux2(arg) +
+           density_j * avalancheMidpointAux2(-arg);
+}
+
+inline Real gssHoleAvalancheMidpointDensity(
+    Real density_i,
+    Real density_j,
+    Real potential_i,
+    Real potential_j,
+    Real Vt)
+{
+    if (Vt <= 0.0)
+        return 0.5 * (density_i + density_j);
+    const Real arg = (potential_i - potential_j) / (2.0 * Vt);
+    return density_i * avalancheMidpointAux2(arg) +
+           density_j * avalancheMidpointAux2(-arg);
 }
 
 inline bool usesEdgeCurrentAvalancheSource(
@@ -1792,6 +1857,212 @@ inline EdgeAvalancheDirectionalWeights edgeAvalancheDirectionalWeights(
     return weights;
 }
 
+struct TriangleGssAvalancheSourceRecord {
+    Index cellId = 0;
+    int localEdge = -1;
+    Index edgeId = 0;
+    Index node0 = 0;
+    Index node1 = 0;
+    Real edgeLength = 0.0;
+    Real truncatedPartialVolume = 0.0;
+    Real electronCellQfField = 0.0;
+    Real holeCellQfField = 0.0;
+    Real electronEdgeQfField = 0.0;
+    Real holeEdgeQfField = 0.0;
+    Real electronMidpointDensity = 0.0;
+    Real holeMidpointDensity = 0.0;
+    Real electronMobility = 0.0;
+    Real holeMobility = 0.0;
+    Real electronAlpha = 0.0;
+    Real holeAlpha = 0.0;
+    Real electronFluxProxy = 0.0;
+    Real holeFluxProxy = 0.0;
+    Real electronSourceIntegral = 0.0;
+    Real holeSourceIntegral = 0.0;
+    Real edgeSourceIntegral = 0.0;
+    Real node0SourceIntegral = 0.0;
+    Real node1SourceIntegral = 0.0;
+};
+
+inline Real triangleGssEndpointAveragedMobility(
+    const MobilityModel&          mobility,
+    const DeviceMesh&             mesh,
+    const DopingModel&            doping,
+    const std::vector<Material>&  cellMaterials,
+    const VectorXd&               n,
+    const VectorXd&               p,
+    Index                         cellId,
+    Index                         node0,
+    Index                         node1,
+    CarrierType                   carrier,
+    Real                          drivingField)
+{
+    const Material& material = cellMaterials.at(static_cast<std::size_t>(cellId));
+    const auto atNode = [&](Index node) {
+        return carrier == CarrierType::Electron
+            ? mobility.electronMobility(
+                material, doping.netDoping(node), n(static_cast<int>(node)),
+                p(static_cast<int>(node)), drivingField, 0.0)
+            : mobility.holeMobility(
+                material, doping.netDoping(node), n(static_cast<int>(node)),
+                p(static_cast<int>(node)), drivingField, 0.0);
+    };
+    return 0.5 * (atNode(node0) + atNode(node1));
+}
+
+inline std::vector<TriangleGssAvalancheSourceRecord>
+triangleGssAvalancheSourceRecordsForCell(
+    const ImpactIonizationModelConfig& config,
+    const ImpactIonizationModel&       impact,
+    const MobilityModel&               mobility,
+    const std::vector<Index>&          cellEdgeIds,
+    const DeviceMesh&                  mesh,
+    const DopingModel&                 doping,
+    const std::vector<Material>&       cellMaterials,
+    Index                              cellId,
+    const VectorXd&                    psi,
+    const VectorXd&                    phin,
+    const VectorXd&                    phip,
+    const VectorXd&                    n,
+    const VectorXd&                    p,
+    Real                               Vt,
+    Real                               fieldFactor = 1.0)
+{
+    const Cell& cell = mesh.getCell(cellId);
+    if (cell.type != CellType::Tri3 || cell.node_ids.size() != 3) {
+        throw std::invalid_argument(
+            "triangle GSS avalanche source requires Tri3 cells; unsupported cell " +
+            std::to_string(cellId));
+    }
+
+    bool electronGradientValid = false;
+    bool holeGradientValid = false;
+    Real electronDoubleArea = 0.0;
+    Real holeDoubleArea = 0.0;
+    const Point2 electronGradient =
+        cellScalarGradient(mesh, cell, [&](Index node) {
+            return phin(static_cast<int>(node));
+        }, electronGradientValid, electronDoubleArea);
+    const Point2 holeGradient =
+        cellScalarGradient(mesh, cell, [&](Index node) {
+            return phip(static_cast<int>(node));
+        }, holeGradientValid, holeDoubleArea);
+    if (!electronGradientValid || !holeGradientValid)
+        return {};
+
+    const Real electronCellField = electronGradient.norm() * fieldFactor;
+    const Real holeCellField = holeGradient.norm() * fieldFactor;
+    const Real electronAlpha = impact.electronCoefficient(electronCellField);
+    const Real holeAlpha = impact.holeCoefficient(holeCellField);
+    std::vector<TriangleGssAvalancheSourceRecord> records;
+    records.reserve(3);
+
+    for (int localEdge = 0; localEdge < 3; ++localEdge) {
+        const Index node0 = cell.node_ids[static_cast<std::size_t>(localEdge)];
+        const Index node1 =
+            cell.node_ids[static_cast<std::size_t>((localEdge + 1) % 3)];
+        Index edgeId = mesh.numEdges();
+        for (Index candidate : cellEdgeIds) {
+            const Edge& edge = mesh.getEdge(candidate);
+            if ((edge.n0 == node0 && edge.n1 == node1) ||
+                (edge.n0 == node1 && edge.n1 == node0)) {
+                edgeId = candidate;
+                break;
+            }
+        }
+        if (edgeId >= mesh.numEdges())
+            throw std::runtime_error("triangle GSS avalanche source could not map a cell edge");
+        const Edge& edge = mesh.getEdge(edgeId);
+        if (edge.length <= 1.0e-30)
+            continue;
+
+        TriangleGssAvalancheSourceRecord record;
+        record.cellId = cellId;
+        record.localEdge = localEdge;
+        record.edgeId = edgeId;
+        record.node0 = node0;
+        record.node1 = node1;
+        record.edgeLength = edge.length;
+        record.truncatedPartialVolume =
+            geniusTri3TruncatedPartialVolumeWithEdge(
+                mesh, cell, node0, node1) * config.sourceGeometryScale;
+        record.electronCellQfField = electronCellField;
+        record.holeCellQfField = holeCellField;
+        record.electronEdgeQfField =
+            std::abs(phin(static_cast<int>(node1)) - phin(static_cast<int>(node0))) /
+            edge.length * fieldFactor;
+        record.holeEdgeQfField =
+            std::abs(phip(static_cast<int>(node1)) - phip(static_cast<int>(node0))) /
+            edge.length * fieldFactor;
+        record.electronMidpointDensity = gssElectronAvalancheMidpointDensity(
+            n(static_cast<int>(node0)), n(static_cast<int>(node1)),
+            psi(static_cast<int>(node0)), psi(static_cast<int>(node1)), Vt);
+        record.holeMidpointDensity = gssHoleAvalancheMidpointDensity(
+            p(static_cast<int>(node0)), p(static_cast<int>(node1)),
+            psi(static_cast<int>(node0)), psi(static_cast<int>(node1)), Vt);
+        record.electronMobility = triangleGssEndpointAveragedMobility(
+            mobility, mesh, doping, cellMaterials, n, p, cellId, node0, node1,
+            CarrierType::Electron, record.electronEdgeQfField);
+        record.holeMobility = triangleGssEndpointAveragedMobility(
+            mobility, mesh, doping, cellMaterials, n, p, cellId, node0, node1,
+            CarrierType::Hole, record.holeEdgeQfField);
+        record.electronAlpha = electronAlpha;
+        record.holeAlpha = holeAlpha;
+        record.electronFluxProxy = record.electronMobility *
+            record.electronMidpointDensity * record.electronEdgeQfField;
+        record.holeFluxProxy = record.holeMobility *
+            record.holeMidpointDensity * record.holeEdgeQfField;
+        record.electronSourceIntegral = electronAlpha *
+            record.electronFluxProxy * record.truncatedPartialVolume;
+        record.holeSourceIntegral = holeAlpha *
+            record.holeFluxProxy * record.truncatedPartialVolume;
+        record.edgeSourceIntegral =
+            record.electronSourceIntegral + record.holeSourceIntegral;
+        record.node0SourceIntegral = 0.5 * record.edgeSourceIntegral;
+        record.node1SourceIntegral = 0.5 * record.edgeSourceIntegral;
+        records.push_back(record);
+    }
+    return records;
+}
+
+inline std::vector<TriangleGssAvalancheSourceRecord>
+triangleGssAvalancheSourceRecords(
+    const ImpactIonizationModelConfig& config,
+    const ImpactIonizationModel&       impact,
+    const MobilityModelConfig&         mobilityConfig,
+    const MobilityModel&               mobility,
+    const std::vector<std::vector<Index>>& edgeCells,
+    const DeviceMesh&                  mesh,
+    const DopingModel&                 doping,
+    const std::vector<Material>&       cellMaterials,
+    const VectorXd&                    psi,
+    const VectorXd&                    phin,
+    const VectorXd&                    phip,
+    const VectorXd&                    n,
+    const VectorXd&                    p,
+    const std::vector<Real>&,
+    Real                               Vt,
+    Real                               fieldFactor = 1.0)
+{
+    if (isSurfaceMobilityModel(mobilityConfig)) {
+        throw std::invalid_argument(
+            "triangle GSS avalanche source does not support surface mobility");
+    }
+    std::vector<TriangleGssAvalancheSourceRecord> records;
+    const auto cellEdges = buildCellEdgeMap(edgeCells, mesh);
+    records.reserve(static_cast<std::size_t>(mesh.numCells()) * 3);
+
+    for (Index cellId = 0; cellId < mesh.numCells(); ++cellId) {
+        auto cellRecords = triangleGssAvalancheSourceRecordsForCell(
+            config, impact, mobility,
+            cellEdges.at(static_cast<std::size_t>(cellId)),
+            mesh, doping, cellMaterials, cellId, psi, phin, phip, n, p, Vt,
+            fieldFactor);
+        records.insert(records.end(), cellRecords.begin(), cellRecords.end());
+    }
+    return records;
+}
+
 struct SgEdgeCurrentAvalancheSourceRecord {
     Index edgeId = 0;
     Index node0 = 0;
@@ -2297,6 +2568,74 @@ inline SgAvalancheSourceComponentIntegrals sgEdgeCurrentAvalancheSourceComponent
             record.edgeSourceIntegral);
     }
     return source;
+}
+
+inline SgAvalancheSourceComponentIntegrals
+currentDensityAvalancheSourceComponentIntegrals(
+    const ImpactIonizationModelConfig& config,
+    const ImpactIonizationModel&       impact,
+    const MobilityModelConfig&         mobilityConfig,
+    const MobilityModel&               mobility,
+    const std::vector<std::vector<Index>>& edgeCells,
+    const DeviceMesh&                  mesh,
+    const DopingModel&                 doping,
+    const std::vector<Material>&       cellMaterials,
+    const VectorXd&                    psi,
+    const VectorXd&                    phin,
+    const VectorXd&                    phip,
+    const VectorXd&                    n,
+    const VectorXd&                    p,
+    const std::vector<Real>&           ni,
+    Real                               Vt,
+    Real                               fieldFactor = 1.0)
+{
+    if (!usesTriangleGssAvalancheSource(config)) {
+        return sgEdgeCurrentAvalancheSourceComponentIntegrals(
+            config, impact, mobilityConfig, mobility, edgeCells, mesh, doping,
+            cellMaterials, psi, phin, phip, n, p, ni, Vt, fieldFactor);
+    }
+
+    SgAvalancheSourceComponentIntegrals source;
+    source.electron.assign(static_cast<std::size_t>(mesh.numNodes()), 0.0);
+    source.hole.assign(static_cast<std::size_t>(mesh.numNodes()), 0.0);
+    source.combined.assign(static_cast<std::size_t>(mesh.numNodes()), 0.0);
+    const auto records = triangleGssAvalancheSourceRecords(
+        config, impact, mobilityConfig, mobility, edgeCells, mesh, doping,
+        cellMaterials, psi, phin, phip, n, p, ni, Vt, fieldFactor);
+    for (const auto& record : records) {
+        const Real electronNodeSource = 0.5 * record.electronSourceIntegral;
+        const Real holeNodeSource = 0.5 * record.holeSourceIntegral;
+        source.electron[record.node0] += electronNodeSource;
+        source.electron[record.node1] += electronNodeSource;
+        source.hole[record.node0] += holeNodeSource;
+        source.hole[record.node1] += holeNodeSource;
+        source.combined[record.node0] += record.node0SourceIntegral;
+        source.combined[record.node1] += record.node1SourceIntegral;
+    }
+    return source;
+}
+
+inline std::vector<Real> currentDensityAvalancheSourceIntegrals(
+    const ImpactIonizationModelConfig& config,
+    const ImpactIonizationModel&       impact,
+    const MobilityModelConfig&         mobilityConfig,
+    const MobilityModel&               mobility,
+    const std::vector<std::vector<Index>>& edgeCells,
+    const DeviceMesh&                  mesh,
+    const DopingModel&                 doping,
+    const std::vector<Material>&       cellMaterials,
+    const VectorXd&                    psi,
+    const VectorXd&                    phin,
+    const VectorXd&                    phip,
+    const VectorXd&                    n,
+    const VectorXd&                    p,
+    const std::vector<Real>&           ni,
+    Real                               Vt,
+    Real                               fieldFactor = 1.0)
+{
+    return currentDensityAvalancheSourceComponentIntegrals(
+        config, impact, mobilityConfig, mobility, edgeCells, mesh, doping,
+        cellMaterials, psi, phin, phip, n, p, ni, Vt, fieldFactor).combined;
 }
 
 inline std::vector<Real> sgEdgeCurrentAvalancheSourceIntegrals(
