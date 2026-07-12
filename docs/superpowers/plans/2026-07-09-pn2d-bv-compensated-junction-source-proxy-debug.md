@@ -141,3 +141,87 @@ Audited output:
 - The dominant residual classification remains
   `sg_discretization_ni_or_current_semantics`; midpoint reconstruction is a
   small correction, not a complete explanation of the Sentaurus/Vela gap.
+
+## 2026-07-12 Triangle GSS GradQf Implementation
+
+The opt-in source_mapping_mode triangle_gss_gradqf_truncated is implemented
+with current_approximation cell_reconstructed, midpoint gss_logistic,
+cell-gradient quasi-Fermi discretization, Genius-truncated geometry, and
+symmetric endpoint partition.
+
+For every Tri3 cell the implementation reconstructs two-dimensional
+grad(phin) and grad(phip), evaluates alpha once per carrier and cell, evaluates
+each local-edge current as mu * carrier_mid_gss * |Delta(phiF)| / h, multiplies
+by the non-negative Genius-truncated partial area, and splits the result
+equally between edge endpoints.
+
+The midpoint orientation follows GSS 0.47:
+
+    n_mid = n_i aux2((psi_j-psi_i)/(2 Vt))
+          + n_j aux2((psi_i-psi_j)/(2 Vt))
+    p_mid = p_i aux2((psi_i-psi_j)/(2 Vt))
+          + p_j aux2((psi_j-psi_i)/(2 Vt))
+
+This is not a byte-for-byte reconstruction of old GSS circumcentric geometry.
+The alpha and current formulas follow GSS, while source geometry remains the
+existing non-negative Genius-truncated policy. Non-Tri3 cells and surface
+mobility are rejected rather than silently approximated.
+
+Residual assembly, carrier diagnostics, VTK AvalancheGeneration, and the new
+triangle_gss_sources CSV share the same per-cell evaluator. The coupled
+Jacobian differentiates that evaluator against the three psi, three phin, and
+three phip values of each cell. The dedicated audit improved from a pre-fix
+relative difference of 9.767e-5 to 2.265e-8, below the 5e-5 gate.
+
+### 2x3 Replay Matrix
+
+Manifest v3 defines six stable variants:
+
+- legacy_density_gradient
+- legacy_gss_midpoint
+- legacy_triangle_gss_gradqf
+- reported_density_gradient
+- reported_gss_midpoint
+- reported_triangle_gss_gradqf
+
+A complete matrix contains 108 detailed rows and 72 identified pairs. Triangle
+records are aggregated across adjacent cells by global edge and merged with
+the historical SG decomposition. A zero Genius-truncated edge area remains a
+valid zero-source record.
+
+Prepare-only evidence is under
+build-release/reference_tcad/pn2d_sentaurus2018_coarse7x3/reports/
+pn2d_bv_compensated_gss_matrix_v3_prepare_20260712:
+
+- six decks;
+- manifest schema/version v3/3;
+- 16 command records;
+- only expected doping and source-discretization fields differ.
+
+Full-run status evidence is under
+build-release/reference_tcad/pn2d_sentaurus2018_coarse7x3/reports/
+pn2d_bv_compensated_gss_matrix_v3_full_status_20260712:
+
+- density-gradient and historical GSS-midpoint variants complete 401 points;
+- both triangle variants produce 390 points;
+- last stable triangle bias is -19.4 V and failed trial bias is approximately
+  -19.43650073 V;
+- failure is line_search_non_decrease with positive finite carrier densities;
+- manifest records both failed variants, outputs_complete=false, and a nonzero
+  exit status;
+- no 108-row report is generated without a converged -20 V triangle state.
+
+At -19 V, legacy triangle total source is about 1.7233e21 versus 1.0944e15
+for historical GSS midpoint, a factor of about 1.57e6. Field and alpha maxima
+are comparable; the change is concentrated in GSS logistic midpoint
+density/current support. Do not replace the default model or add a quasi-Fermi
+clamp based on this result.
+
+References: local PDF Chapter 9 equations 9.131-9.137; GSS 0.47 archive
+SHA-256 f7359ea50ab19b8701dc241f990b8e462a2106b15eaf27613502bdf3472ba59d;
+local Genius revision 543da845; local Charon revision 7cc387.
+
+Next gate: same-state, same-edge audit of the GSS logistic midpoint against
+GSS 0.47 and Sentaurus carrier/current vectors, especially edge 50 near
+-19 V. Keep density_gradient as default and gss_midpoint as the lower-risk
+experimental baseline until the 1.57e6 factor is explained.

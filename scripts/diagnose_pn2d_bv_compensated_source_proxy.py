@@ -28,27 +28,59 @@ REPLAY_VARIANT_MATRIX = {
         "compensated_doping_policy": "dominant_signed_region",
         "current_variant": "density_gradient",
         "current_approximation": "density_gradient",
+        "diagnostic_csv_kind": "sg_avalanche_edges",
     },
     "legacy_gss_midpoint": {
         "doping_strategy": "legacy",
         "compensated_doping_policy": "dominant_signed_region",
         "current_variant": "gss_midpoint",
         "current_approximation": "cell_reconstructed",
+        "diagnostic_csv_kind": "sg_avalanche_edges",
+    },
+    "legacy_triangle_gss_gradqf": {
+        "doping_strategy": "legacy",
+        "compensated_doping_policy": "dominant_signed_region",
+        "current_variant": "triangle_gss_gradqf",
+        "current_approximation": "cell_reconstructed",
+        "diagnostic_csv_kind": "triangle_gss_sources",
     },
     "reported_density_gradient": {
         "doping_strategy": "reported",
         "compensated_doping_policy": "reported",
         "current_variant": "density_gradient",
         "current_approximation": "density_gradient",
+        "diagnostic_csv_kind": "sg_avalanche_edges",
     },
     "reported_gss_midpoint": {
         "doping_strategy": "reported",
         "compensated_doping_policy": "reported",
         "current_variant": "gss_midpoint",
         "current_approximation": "cell_reconstructed",
+        "diagnostic_csv_kind": "sg_avalanche_edges",
+    },
+    "reported_triangle_gss_gradqf": {
+        "doping_strategy": "reported",
+        "compensated_doping_policy": "reported",
+        "current_variant": "triangle_gss_gradqf",
+        "current_approximation": "cell_reconstructed",
+        "diagnostic_csv_kind": "triangle_gss_sources",
     },
 }
 REPLAY_VARIANTS = tuple(REPLAY_VARIANT_MATRIX)
+CURRENT_DISCRETIZATION_PAIR_FAMILIES = (
+    (
+        "gss_over_density",
+        "gss_midpoint",
+        "density_gradient",
+        "gss_midpoint_over_density_gradient",
+    ),
+    (
+        "triangle_over_gss",
+        "triangle_gss_gradqf",
+        "gss_midpoint",
+        "triangle_gss_gradqf_over_gss_midpoint",
+    ),
+)
 BOLTZMANN_OVER_CHARGE_V_K = 8.617333262145e-5
 ELECTRON_SG_FIELDS = (
     "electron_sg_ni0",
@@ -435,8 +467,8 @@ def require_finite_fields(
         raise ValueError(f"{context}: non-finite required fields: {nonfinite}")
 
 
-def validate_72_row_keys(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Validate the exact 3 bias x 3 cut x 2 side x 4 variant matrix."""
+def validate_108_row_keys(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Validate the exact 3 bias x 3 cut x 2 side x 6 variant matrix."""
     expected = {
         (variant, float(bias), float(y_um), side)
         for variant in REPLAY_VARIANTS
@@ -458,8 +490,8 @@ def validate_72_row_keys(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         keys.append(key)
     if len(keys) != len(set(keys)):
         raise ValueError("duplicate row key in compensated SG replay matrix")
-    if len(keys) != 72:
-        raise ValueError(f"expected 72 replay rows, got {len(keys)}")
+    if len(keys) != 108:
+        raise ValueError(f"expected 108 replay rows, got {len(keys)}")
     actual = set(keys)
     if actual != expected:
         missing = sorted(expected - actual)
@@ -469,7 +501,7 @@ def validate_72_row_keys(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def standard_variant_inputs(variants_root: Path) -> dict[str, dict[str, Any]]:
-    """Resolve standardized current-HEAD two-by-two replay inputs."""
+    """Resolve standardized current-HEAD two-by-three replay inputs."""
     result: dict[str, dict[str, Any]] = {}
     for name, metadata in REPLAY_VARIANT_MATRIX.items():
         variant_root = variants_root / name
@@ -482,6 +514,14 @@ def standard_variant_inputs(variants_root: Path) -> dict[str, dict[str, Any]]:
             "doping_csv": variant_root / "imported" / "vela" / "doping.csv",
             "deck_path": run_root / f"simulation_pn2d_bv_{current_variant}.json",
             "sg_csv": run_root / f"sg_avalanche_edges_{current_variant}.csv",
+            "triangle_gss_sources_csv": (
+                run_root / f"triangle_gss_sources_{current_variant}.csv"
+            ),
+            "source_csv": (
+                run_root / f"triangle_gss_sources_{current_variant}.csv"
+                if metadata["diagnostic_csv_kind"] == "triangle_gss_sources"
+                else run_root / f"sg_avalanche_edges_{current_variant}.csv"
+            ),
             "vtk_root": run_root / "vtk" / current_variant,
             "implementation": "current_head",
             **metadata,
@@ -1070,7 +1110,7 @@ def enrich_edge_with_sentaurus_replay(
 
 
 def validate_enriched_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    validate_72_row_keys(rows)
+    validate_108_row_keys(rows)
     for index, row in enumerate(rows):
         require_finite_fields(
             row,
@@ -1195,6 +1235,110 @@ def load_sg_edges(path: Path) -> dict[tuple[float, int], dict[str, str]]:
             )
         result[key] = row
     return result
+
+
+def load_triangle_gss_source_edges(
+    path: Path,
+) -> dict[tuple[float, int], dict[str, Any]]:
+    grouped: dict[tuple[float, int], list[dict[str, str]]] = {}
+    for row in read_csv(path):
+        key = (
+            round(finite_float(row.get("bias_V")), 10),
+            int(finite_float(row.get("edge_id"))),
+        )
+        grouped.setdefault(key, []).append(row)
+
+    result: dict[tuple[float, int], dict[str, Any]] = {}
+    for key, records in grouped.items():
+        output: dict[str, Any] = dict(records[0])
+        areas = [
+            finite_float(record.get("truncated_partial_volume_m2"))
+            for record in records
+        ]
+        area = sum(areas)
+        if not math.isfinite(area) or area < 0.0:
+            raise ValueError(
+                f"triangle GSS edge has negative aggregate area for "
+                f"bias={key[0]:g}, edge_id={key[1]}"
+            )
+        weights = areas if area > 0.0 else [1.0] * len(records)
+        weight_sum = sum(weights)
+
+        def weighted(field: str) -> float:
+            return sum(
+                finite_float(record.get(field)) * weight
+                for record, weight in zip(records, weights)
+            ) / weight_sum
+
+        electron_flux_volume = sum(
+            finite_float(record.get("electron_flux_proxy")) * weight
+            for record, weight in zip(records, weights)
+        )
+        hole_flux_volume = sum(
+            finite_float(record.get("hole_flux_proxy")) * weight
+            for record, weight in zip(records, weights)
+        )
+        electron_source = sum(
+            finite_float(record.get("electron_source_integral"))
+            for record in records
+        )
+        hole_source = sum(
+            finite_float(record.get("hole_source_integral"))
+            for record in records
+        )
+        electron_flux = electron_flux_volume / weight_sum
+        hole_flux = hole_flux_volume / weight_sum
+        electron_alpha = (
+            sum(
+                finite_float(record.get("electron_alpha_m_inv"))
+                * finite_float(record.get("electron_flux_proxy")) * weight
+                for record, weight in zip(records, weights)
+            ) / electron_flux_volume
+            if electron_flux_volume != 0.0
+            else weighted("electron_alpha_m_inv")
+        )
+        hole_alpha = (
+            sum(
+                finite_float(record.get("hole_alpha_m_inv"))
+                * finite_float(record.get("hole_flux_proxy")) * weight
+                for record, weight in zip(records, weights)
+            ) / hole_flux_volume
+            if hole_flux_volume != 0.0
+            else weighted("hole_alpha_m_inv")
+        )
+        node_sources: dict[int, float] = {}
+        for record in records:
+            for suffix in ("0", "1"):
+                node = int(finite_float(record.get(f"node{suffix}")))
+                node_sources[node] = node_sources.get(node, 0.0) + finite_float(
+                    record.get(f"node{suffix}_source_integral")
+                )
+        node0 = int(finite_float(output.get("node0")))
+        node1 = int(finite_float(output.get("node1")))
+        output.update({
+            "edge_area_proxy_m2": area,
+            "electron_flux_proxy": electron_flux,
+            "hole_flux_proxy": hole_flux,
+            "electron_raw_flux_proxy": electron_flux,
+            "hole_raw_flux_proxy": hole_flux,
+            "electron_reconstructed_flux_proxy": electron_flux,
+            "hole_reconstructed_flux_proxy": hole_flux,
+            "electron_alpha_m_inv": electron_alpha,
+            "hole_alpha_m_inv": hole_alpha,
+            "electron_mobility_m2_V_s": weighted("electron_mobility_m2_V_s"),
+            "hole_mobility_m2_V_s": weighted("hole_mobility_m2_V_s"),
+            "electron_density_mid_m3": weighted("electron_midpoint_density_m3"),
+            "hole_density_mid_m3": weighted("hole_midpoint_density_m3"),
+            "electron_source_integral": electron_source,
+            "hole_source_integral": hole_source,
+            "edge_source_integral": electron_source + hole_source,
+            "node0_source_integral": node_sources[node0],
+            "node1_source_integral": node_sources[node1],
+            "edge_class": "triangle_gss_aggregated",
+        })
+        result[key] = output
+    return result
+
 
 def unique_sg_edge_for_nodes(
     edges: Mapping[tuple[float, int], dict[str, str]],
@@ -1493,15 +1637,28 @@ def _append_standard_ratios(rows: list[dict[str, Any]]) -> None:
             {},
         )[row["current_variant"]] = row
     for pair in by_current_pair.values():
-        density = pair["density_gradient"]
-        gss = pair["gss_midpoint"]
-        for field in CURRENT_DISCRETIZATION_RATIO_FIELDS:
-            ratio = abs_ratio(float(gss[field]), float(density[field]))
-            if ratio is None or not math.isfinite(ratio):
-                raise ValueError(f"non-finite GSS/density ratio for {field}")
-            key = f"gss_midpoint_over_density_gradient_{field}"
-            density[key] = ratio
-            gss[key] = ratio
+        for (
+            pair_family,
+            numerator_name,
+            denominator_name,
+            ratio_prefix,
+        ) in CURRENT_DISCRETIZATION_PAIR_FAMILIES:
+            if numerator_name not in pair or denominator_name not in pair:
+                continue
+            numerator = pair[numerator_name]
+            denominator = pair[denominator_name]
+            for field in CURRENT_DISCRETIZATION_RATIO_FIELDS:
+                ratio = abs_ratio(
+                    float(numerator[field]),
+                    float(denominator[field]),
+                )
+                if ratio is None or not math.isfinite(ratio):
+                    raise ValueError(
+                        f"non-finite {pair_family} ratio for {field}"
+                    )
+                key = f"{ratio_prefix}_{field}"
+                for current_row in pair.values():
+                    current_row[key] = ratio
 
     by_doping_pair: dict[
         tuple[str, float, float, str], dict[str, dict[str, Any]]
@@ -1530,7 +1687,9 @@ def _append_standard_ratios(rows: list[dict[str, Any]]) -> None:
 def current_discretization_pair_rows(
     rows: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    pairs: dict[tuple[str, float, float, str], dict[str, Any]] = {}
+    groups: dict[
+        tuple[str, float, float, str], dict[str, dict[str, Any]]
+    ] = {}
     for row in rows:
         key = (
             str(row["doping_strategy"]),
@@ -1538,27 +1697,54 @@ def current_discretization_pair_rows(
             float(row["y_um"]),
             str(row["side"]),
         )
-        if str(row["current_variant"]) != "gss_midpoint":
-            continue
-        item = {
-            "doping_strategy": key[0],
-            "bias_V": key[1],
-            "y_um": key[2],
-            "side": key[3],
-        }
-        for field in CURRENT_DISCRETIZATION_RATIO_FIELDS:
-            ratio_key = f"gss_midpoint_over_density_gradient_{field}"
-            item[ratio_key] = float(row[ratio_key])
-        pairs[key] = item
-    return [pairs[key] for key in sorted(pairs)]
+        groups.setdefault(key, {})[str(row["current_variant"])] = row
+
+    records: list[dict[str, Any]] = []
+    for (
+        pair_family,
+        numerator_name,
+        denominator_name,
+        ratio_prefix,
+    ) in CURRENT_DISCRETIZATION_PAIR_FAMILIES:
+        for key in sorted(groups):
+            pair = groups[key]
+            if numerator_name not in pair or denominator_name not in pair:
+                continue
+            numerator = pair[numerator_name]
+            denominator = pair[denominator_name]
+            item = {
+                "pair_family": pair_family,
+                "doping_strategy": key[0],
+                "bias_V": key[1],
+                "y_um": key[2],
+                "side": key[3],
+                "numerator_variant": str(numerator["variant"]),
+                "denominator_variant": str(denominator["variant"]),
+                "numerator_current_variant": numerator_name,
+                "denominator_current_variant": denominator_name,
+            }
+            for field in CURRENT_DISCRETIZATION_RATIO_FIELDS:
+                ratio_key = f"{ratio_prefix}_{field}"
+                ratio = float(numerator[ratio_key])
+                item[ratio_key] = ratio
+                item[f"ratio_{field}"] = ratio
+            records.append(item)
+    return records
 
 
 def build_standard_detail_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
     specs = standard_variant_inputs(args.variants_root)
     variants: dict[str, dict[str, Any]] = {}
     for name, spec in specs.items():
+        sg_edges = load_sg_edges(spec["sg_csv"])
+        source_edges = (
+            load_triangle_gss_source_edges(spec["source_csv"])
+            if spec["diagnostic_csv_kind"] == "triangle_gss_sources"
+            else sg_edges
+        )
         variants[name] = {
-            "sg": load_sg_edges(spec["sg_csv"]),
+            "sg": sg_edges,
+            "source": source_edges,
             "vtk_root": spec["vtk_root"],
             "vtk_prefix": "dc_sweep",
             "doping": load_doping(spec["doping_csv"]),
@@ -1598,11 +1784,17 @@ def build_standard_detail_rows(args: argparse.Namespace) -> list[dict[str, Any]]
                 for side in ("left", "right"):
                     node0, node1 = row_side_nodes(state, side, y_um)
                     try:
-                        edge_id, edge_row = unique_sg_edge_for_nodes(
+                        edge_id, sg_edge_row = unique_sg_edge_for_nodes(
                             variant["sg"], bias, node0, node1
+                        )
+                        source_edge_id, source_edge_row = unique_sg_edge_for_nodes(
+                            variant["source"], bias, node0, node1
                         )
                     except ValueError as exc:
                         raise ValueError(f"{variant_name}: {exc}") from exc
+                    if source_edge_id != edge_id:
+                        raise ValueError(f"{variant_name}: source/SG edge ID mismatch")
+                    edge_row = {**sg_edge_row, **source_edge_row}
                     doping0 = variant["doping"][node0]
                     doping1 = variant["doping"][node1]
                     sent0, sent1 = sent_pairs[side]
@@ -1888,7 +2080,7 @@ def summarize_standard(rows: list[dict[str, Any]]) -> dict[str, Any]:
         if non_inconclusive else "inconclusive"
     )
     return {
-        "schema": "vela.pn2d_bv_compensated_sg_replay.summary.v2",
+        "schema": "vela.pn2d_bv_compensated_sg_replay.summary.v3",
         "row_count": len(rows),
         "variants": {
             name: {
@@ -1908,8 +2100,8 @@ def write_standard_report(path: Path, summary: dict[str, Any]) -> None:
     lines = [
         "# PN2D BV Compensated SG Same-Edge Replay",
         "",
-        "The matrix compares legacy/reported compensated-doping policies with "
-        "density-gradient SG current and the GSS Bernoulli-midpoint current proxy.",
+        "The matrix compares legacy/reported compensated-doping policies across "
+        "density-gradient, GSS midpoint, and triangle GSS GradQf sources.",
         "",
         f"- Rows: `{summary['row_count']}`",
         f"- Dominant coarse classification: `{summary['dominant_classification']}`",
@@ -1954,23 +2146,24 @@ def write_standard_report(path: Path, summary: dict[str, Any]) -> None:
     current_pairs = summary.get("current_discretization_pairs", [])
     if current_pairs:
         lines.extend([
-            "## GSS Midpoint Over Density Gradient",
+            "## Current Discretization Pairs",
             "",
-            "| doping | bias (V) | y (um) | side | total source | electron source | hole source | e-alpha | e-flux | e-mobility |",
-            "|---|---:|---:|---|---:|---:|---:|---:|---:|---:|",
+            "| family | numerator | denominator | doping | bias (V) | y (um) | side | total source | electron source | hole source | e-alpha | e-flux | e-mobility |",
+            "|---|---|---|---|---:|---:|---|---:|---:|---:|---:|---:|---:|",
         ])
         for pair in current_pairs:
             lines.append(
-                "| {doping_strategy} | {bias_V:g} | {y_um:g} | {side} | "
+                "| {pair_family} | {numerator_variant} | {denominator_variant} | "
+                "{doping_strategy} | {bias_V:g} | {y_um:g} | {side} | "
                 "{total:.6g} | {electron:.6g} | {hole:.6g} | {alpha:.6g} | "
                 "{flux:.6g} | {mobility:.6g} |".format(
                     **pair,
-                    total=pair["gss_midpoint_over_density_gradient_edge_source_integral"],
-                    electron=pair["gss_midpoint_over_density_gradient_electron_source_integral"],
-                    hole=pair["gss_midpoint_over_density_gradient_hole_source_integral"],
-                    alpha=pair["gss_midpoint_over_density_gradient_electron_alpha_m_inv"],
-                    flux=pair["gss_midpoint_over_density_gradient_electron_flux_proxy"],
-                    mobility=pair["gss_midpoint_over_density_gradient_electron_mobility_m2_V_s"],
+                    total=pair["ratio_edge_source_integral"],
+                    electron=pair["ratio_electron_source_integral"],
+                    hole=pair["ratio_hole_source_integral"],
+                    alpha=pair["ratio_electron_alpha_m_inv"],
+                    flux=pair["ratio_electron_flux_proxy"],
+                    mobility=pair["ratio_electron_mobility_m2_V_s"],
                 )
             )
         lines.append("")
@@ -2075,9 +2268,9 @@ def main(argv: list[str] | None = None) -> None:
         validate_enriched_rows(rows)
         _append_standard_ratios(rows)
         current_pairs = current_discretization_pair_rows(rows)
-        if len(current_pairs) != 36:
+        if len(current_pairs) != 72:
             raise ValueError(
-                f"expected 36 GSS/density paired rows, got {len(current_pairs)}"
+                f"expected 72 current-discretization paired rows, got {len(current_pairs)}"
             )
         run_statuses = [
             variant_run_status(spec)
@@ -2091,7 +2284,7 @@ def main(argv: list[str] | None = None) -> None:
         report_path = args.out_dir / "compensated_sg_replay_report.md"
         write_csv(csv_path, rows)
         json_path.write_text(json.dumps(clean_json({
-            "schema": "vela.pn2d_bv_compensated_sg_replay.v2",
+            "schema": "vela.pn2d_bv_compensated_sg_replay.v3",
             "row_count": len(rows),
             "summary": summary,
             "classifications": summary["classifications"],

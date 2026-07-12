@@ -110,7 +110,7 @@ class CompensatedSgReplayCoreTest(unittest.TestCase):
                     result["electron_continuity_flux_m2_s"], -expected * 1.0e4 / charge
                 )
 
-    def test_72_row_key_validator_requires_exact_unique_matrix(self) -> None:
+    def test_108_row_key_validator_requires_exact_unique_matrix(self) -> None:
         rows = [
             {"variant": variant, "bias_V": bias, "y_um": y_um, "side": side}
             for variant in diagnostic.REPLAY_VARIANTS
@@ -118,13 +118,13 @@ class CompensatedSgReplayCoreTest(unittest.TestCase):
             for y_um in diagnostic.Y_CUTS
             for side in ("left", "right")
         ]
-        self.assertEqual(len(diagnostic.validate_72_row_keys(rows)), 72)
+        self.assertEqual(len(diagnostic.validate_108_row_keys(rows)), 108)
         duplicate = [dict(row) for row in rows]
         duplicate[-1] = dict(duplicate[0])
         with self.assertRaisesRegex(ValueError, "duplicate"):
-            diagnostic.validate_72_row_keys(duplicate)
-        with self.assertRaisesRegex(ValueError, "expected 72"):
-            diagnostic.validate_72_row_keys(rows[:-1])
+            diagnostic.validate_108_row_keys(duplicate)
+        with self.assertRaisesRegex(ValueError, "expected 108"):
+            diagnostic.validate_108_row_keys(rows[:-1])
 
     def test_required_field_validator_rejects_missing_and_nonfinite_values(self) -> None:
         row = {"a": 1.0, "b": -2.0}
@@ -160,15 +160,17 @@ class CompensatedSgReplayCoreTest(unittest.TestCase):
                 self.assertIn("rule", result)
                 self.assertEqual(result["evidence"], evidence)
 
-    def test_standard_variant_root_resolves_explicit_two_by_two_inputs(self) -> None:
+    def test_standard_variant_root_resolves_explicit_two_by_three_inputs(self) -> None:
         with tempfile.TemporaryDirectory(prefix="vela_compensated_variant_root_") as td:
             root = Path(td)
             specs = diagnostic.standard_variant_inputs(root)
             self.assertEqual(list(specs), [
                 "legacy_density_gradient",
                 "legacy_gss_midpoint",
+                "legacy_triangle_gss_gradqf",
                 "reported_density_gradient",
                 "reported_gss_midpoint",
+                "reported_triangle_gss_gradqf",
             ])
             self.assertEqual(
                 specs["legacy_density_gradient"]["run_root"],
@@ -187,11 +189,17 @@ class CompensatedSgReplayCoreTest(unittest.TestCase):
             )
             self.assertEqual(
                 [spec["current_variant"] for spec in specs.values()],
-                ["density_gradient", "gss_midpoint", "density_gradient", "gss_midpoint"],
+                [
+                    "density_gradient", "gss_midpoint", "triangle_gss_gradqf",
+                    "density_gradient", "gss_midpoint", "triangle_gss_gradqf",
+                ],
             )
             self.assertEqual(
                 [spec["current_approximation"] for spec in specs.values()],
-                ["density_gradient", "cell_reconstructed", "density_gradient", "cell_reconstructed"],
+                [
+                    "density_gradient", "cell_reconstructed", "cell_reconstructed",
+                    "density_gradient", "cell_reconstructed", "cell_reconstructed",
+                ],
             )
 
     def test_gss_midpoint_ratios_pair_with_density_gradient_within_doping(self) -> None:
@@ -392,6 +400,36 @@ class CompensatedSgReplayCoreTest(unittest.TestCase):
             ):
                 diagnostic.load_sg_edges(path)
 
+    def test_triangle_source_loader_aggregates_adjacent_cell_records_by_edge(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="vela_triangle_source_edge_") as td:
+            path = Path(td) / "triangle.csv"
+            path.write_text(
+                "bias_V,edge_id,node0,node1,x0_um,y0_um,x1_um,y1_um,"
+                "truncated_partial_volume_m2,electron_flux_proxy,hole_flux_proxy,"
+                "electron_alpha_m_inv,hole_alpha_m_inv,electron_mobility_m2_V_s,"
+                "hole_mobility_m2_V_s,electron_midpoint_density_m3,"
+                "hole_midpoint_density_m3,electron_source_integral,"
+                "hole_source_integral,edge_source_integral,node0_source_integral,"
+                "node1_source_integral\n"
+                "-19,13,7,10,0,0,1,0,2,4,3,10,5,100,50,1000,500,80,30,110,55,55\n"
+                "-19,13,10,7,1,0,0,0,3,6,2,20,8,200,80,2000,800,360,48,408,204,204\n",
+                encoding="utf-8",
+            )
+            rows = diagnostic.load_triangle_gss_source_edges(path)
+            self.assertEqual(list(rows), [(-19.0, 13)])
+            row = rows[(-19.0, 13)]
+            self.assertAlmostEqual(float(row["edge_area_proxy_m2"]), 5.0)
+            self.assertAlmostEqual(float(row["electron_source_integral"]), 440.0)
+            self.assertAlmostEqual(float(row["hole_source_integral"]), 78.0)
+            self.assertAlmostEqual(float(row["edge_source_integral"]), 518.0)
+            self.assertAlmostEqual(float(row["node0_source_integral"]), 259.0)
+            self.assertAlmostEqual(float(row["node1_source_integral"]), 259.0)
+            self.assertAlmostEqual(float(row["electron_flux_proxy"]), 5.2)
+            self.assertAlmostEqual(float(row["electron_alpha_m_inv"]), 440.0 / 26.0)
+            self.assertAlmostEqual(float(row["electron_mobility_m2_V_s"]), 160.0)
+            self.assertAlmostEqual(float(row["electron_density_mid_m3"]), 1600.0)
+            self.assertEqual(row["electron_raw_flux_proxy"], row["electron_flux_proxy"])
+
     def test_sg_edge_mapping_uses_unique_endpoint_nodes_not_historical_id(self) -> None:
         edges = {
             (-12.0, 22): {"node0": "7", "node1": "10"},
@@ -566,6 +604,10 @@ class CompensatedSgReplayCoreTest(unittest.TestCase):
 
             with (
                 mock.patch.object(diagnostic, "load_sg_edges", return_value=sg_rows) as load_sg,
+                mock.patch.object(
+                    diagnostic, "load_triangle_gss_source_edges",
+                    return_value=sg_rows,
+                ) as load_triangle,
                 mock.patch.object(diagnostic, "load_doping", return_value=doping),
                 mock.patch.object(
                     diagnostic,
@@ -582,7 +624,7 @@ class CompensatedSgReplayCoreTest(unittest.TestCase):
             ):
                 rows = diagnostic.build_standard_detail_rows(args)
 
-            self.assertEqual(len(rows), 72)
+            self.assertEqual(len(rows), 108)
             self.assertEqual({row["variant"] for row in rows}, set(diagnostic.REPLAY_VARIANTS))
             self.assertTrue(all("root_cause_classification" in row for row in rows))
             self.assertTrue(all("classifier_gap_recovery" in row for row in rows))
@@ -591,6 +633,14 @@ class CompensatedSgReplayCoreTest(unittest.TestCase):
                 [
                     diagnostic.standard_variant_inputs(variants_root)[variant]["sg_csv"]
                     for variant in diagnostic.REPLAY_VARIANTS
+                ],
+            )
+            self.assertEqual(
+                [call.args[0] for call in load_triangle.call_args_list],
+                [
+                    diagnostic.standard_variant_inputs(variants_root)[variant]["source_csv"]
+                    for variant in diagnostic.REPLAY_VARIANTS
+                    if "triangle_gss_gradqf" in variant
                 ],
             )
 
@@ -633,11 +683,29 @@ class CompensatedSgReplayCoreTest(unittest.TestCase):
             self.assertTrue(json_path.exists())
             self.assertTrue(report_path.exists())
             payload = json.loads(json_path.read_text(encoding="utf-8"))
-            self.assertEqual(payload["schema"], "vela.pn2d_bv_compensated_sg_replay.v2")
-            self.assertEqual(payload["row_count"], 72)
-            self.assertEqual(len(payload["classifications"]), 12)
-            self.assertEqual(len(payload["current_discretization_pairs"]), 36)
-            self.assertEqual(len(payload["run_statuses"]), 4)
+            self.assertEqual(payload["schema"], "vela.pn2d_bv_compensated_sg_replay.v3")
+            self.assertEqual(
+                payload["summary"]["schema"],
+                "vela.pn2d_bv_compensated_sg_replay.summary.v3",
+            )
+            self.assertEqual(payload["row_count"], 108)
+            self.assertEqual(len(payload["classifications"]), 18)
+            self.assertEqual(len(payload["current_discretization_pairs"]), 72)
+            self.assertEqual(len(payload["run_statuses"]), 6)
+            self.assertEqual(
+                {item["pair_family"] for item in payload["current_discretization_pairs"]},
+                {"gss_over_density", "triangle_over_gss"},
+            )
+            self.assertEqual(
+                {
+                    (item["numerator_current_variant"], item["denominator_current_variant"])
+                    for item in payload["current_discretization_pairs"]
+                },
+                {
+                    ("gss_midpoint", "density_gradient"),
+                    ("triangle_gss_gradqf", "gss_midpoint"),
+                },
+            )
             self.assertTrue(all("evidence" in item for item in payload["classifications"]))
             self.assertIn("Structured Root-Cause Classifications", report_path.read_text(encoding="utf-8"))
 
@@ -658,7 +726,7 @@ class CompensatedSgReplayCoreTest(unittest.TestCase):
             for y_um in diagnostic.Y_CUTS
             for side in ("left", "right")
         ]
-        self.assertEqual(len(diagnostic.validate_enriched_rows(rows)), 72)
+        self.assertEqual(len(diagnostic.validate_enriched_rows(rows)), 108)
         del rows[0][diagnostic.REQUIRED_ENRICHED_FIELDS[0]]
         with self.assertRaisesRegex(ValueError, "missing"):
             diagnostic.validate_enriched_rows(rows)

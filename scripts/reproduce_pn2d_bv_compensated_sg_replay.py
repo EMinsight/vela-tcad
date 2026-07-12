@@ -65,7 +65,7 @@ REQUIRED_SCALAR_FIELD_SPECS = {
     "eAlphaAvalanche": "cm^-1",
 }
 ARTIFACT_MANIFEST_NAME = "artifact_manifest.json"
-MANIFEST_SCHEMA = "vela.pn2d_compensated_sg_replay.artifact_manifest.v2"
+MANIFEST_SCHEMA = "vela.pn2d_compensated_sg_replay.artifact_manifest.v3"
 IMPACT_IONIZATION_BASE = {
     "model": "van_overstraeten",
     "driving_force": "quasi_fermi_gradient",
@@ -233,7 +233,7 @@ def build_artifact_manifest(
     material_files: Iterable[Path] = (),
     edge_mapping: Any = None,
 ) -> dict[str, Any]:
-    """Build schema-v2 data with stable ordering and no self hash."""
+    """Build schema-v3 data with stable ordering and no self hash."""
     normalized_commands = [
         {
             "argv": [str(item) for item in command.get("argv", [])],
@@ -251,7 +251,7 @@ def build_artifact_manifest(
     )
     return {
         "schema": MANIFEST_SCHEMA,
-        "schema_version": 2,
+        "schema_version": 3,
         "git_head": str(git_head),
         "dirty": bool(dirty),
         "parameters": _sorted_mapping(parameters),
@@ -280,6 +280,7 @@ def variant_specs(out_dir: Path) -> dict[str, dict[str, Any]]:
     current_variants = (
         ("density_gradient", "density_gradient"),
         ("gss_midpoint", "cell_reconstructed"),
+        ("triangle_gss_gradqf", "cell_reconstructed"),
     )
     specs: dict[str, dict[str, Any]] = {}
     for doping_strategy, policy in doping_strategies:
@@ -289,6 +290,18 @@ def variant_specs(out_dir: Path) -> dict[str, dict[str, Any]]:
                 **IMPACT_IONIZATION_BASE,
                 "current_approximation": current_approximation,
             }
+            diagnostic_csv_kind = "sg_avalanche_edges"
+            diagnostic_csv_name = f"sg_avalanche_edges_{current_variant}.csv"
+            if current_variant == "triangle_gss_gradqf":
+                impact_ionization.update({
+                    "cell_reconstructed_midpoint_density": "gss_logistic",
+                    "quasi_fermi_gradient_discretization": "cell_gradient",
+                    "source_mapping_mode": "triangle_gss_gradqf_truncated",
+                })
+                diagnostic_csv_kind = "triangle_gss_sources"
+                diagnostic_csv_name = (
+                    f"triangle_gss_sources_{current_variant}.csv"
+                )
             specs[name] = {
                 "name": name,
                 "implementation": "current_head",
@@ -305,6 +318,8 @@ def variant_specs(out_dir: Path) -> dict[str, dict[str, Any]]:
                 "output_csv_name": f"pn2d_bv_{current_variant}.csv",
                 "vtk_subdir": f"vtk/{current_variant}",
                 "diagnostics_suffix": f"_{current_variant}",
+                "diagnostic_csv_kind": diagnostic_csv_kind,
+                "diagnostic_csv_name": diagnostic_csv_name,
             }
     return specs
 
@@ -383,6 +398,7 @@ def run_recorded_command(
     *,
     execute: bool = True,
     command_runner: Any = None,
+    check: bool = True,
 ) -> int | None:
     normalized = [str(item) for item in argv]
     record = {
@@ -398,7 +414,7 @@ def run_recorded_command(
     completed = runner(normalized, cwd=cwd, check=False)
     record["returncode"] = int(completed.returncode)
     commands.append(record)
-    if completed.returncode != 0:
+    if check and completed.returncode != 0:
         raise subprocess.CalledProcessError(completed.returncode, normalized)
     return int(completed.returncode)
 
@@ -546,7 +562,7 @@ def validate_doping_strategy_matrix(
             sha256_file(vela_dir / "doping.csv")
         )
     if len(set(mesh_hashes.values())) != 1:
-        raise ValueError("2x2 doping comparison requires identical meshes")
+        raise ValueError("2x3 doping comparison requires identical meshes")
     normalized = {
         strategy: sorted(set(hashes))
         for strategy, hashes in doping_hashes.items()
@@ -557,7 +573,7 @@ def validate_doping_strategy_matrix(
         len(normalized) != 2
         or len({hashes[0] for hashes in normalized.values()}) != 2
     ):
-        raise ValueError("2x2 doping strategy matrix collapsed to identical inputs")
+        raise ValueError("2x3 doping strategy matrix collapsed to identical inputs")
     return {
         "mesh_sha256": next(iter(mesh_hashes.values())),
         "doping_sha256_by_strategy": {
@@ -674,7 +690,10 @@ def reuse_manifest_matches(
         return False
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
-        if manifest.get("schema") != MANIFEST_SCHEMA:
+        if (
+            manifest.get("schema") != MANIFEST_SCHEMA
+            or manifest.get("schema_version") != 3
+        ):
             return False
         if manifest.get("git_head") != git_head or bool(manifest.get("dirty")):
             return False
@@ -730,7 +749,7 @@ def write_variant_deck(spec: Mapping[str, Any]) -> Path:
             f"reference import did not generate Vela BV config: {base_config}"
         )
     module = _load_previous_full20_module()
-    return module.write_previous_full20_config(
+    deck_path = module.write_previous_full20_config(
         base_config=base_config,
         out_dir=Path(spec["run_dir"]),
         output_csv_name=str(spec["output_csv_name"]),
@@ -740,6 +759,17 @@ def write_variant_deck(spec: Mapping[str, Any]) -> Path:
         diagnostics_suffix=str(spec["diagnostics_suffix"]),
         current_approximation=str(spec["current_approximation"]),
     )
+    deck = json.loads(deck_path.read_text(encoding="utf-8-sig"))
+    deck.setdefault("solver", {})["impact_ionization"] = dict(
+        spec["impact_ionization"]
+    )
+    diagnostics = deck.setdefault("sweep", {}).setdefault("diagnostics", {})
+    diagnostics[str(spec["diagnostic_csv_kind"])] = {
+        "enabled": True,
+        "csv_file": str(Path(spec["run_dir"]) / spec["diagnostic_csv_name"]),
+    }
+    write_json(deck_path, deck)
+    return deck_path
 
 
 def _vela_outputs_complete(deck_path: Path) -> bool:
@@ -751,10 +781,16 @@ def _vela_outputs_complete(deck_path: Path) -> bool:
     if not output_csv.is_absolute():
         output_csv = run_dir / output_csv
     diagnostics = deck.get("sweep", {}).get("diagnostics", {})
-    sg_raw = diagnostics.get("sg_avalanche_edges", {}).get("csv_file", "")
-    sg_csv = Path(str(sg_raw))
-    if not sg_csv.is_absolute():
-        sg_csv = run_dir / sg_csv
+    impact = deck.get("solver", {}).get("impact_ionization", {})
+    diagnostic_kind = (
+        "triangle_gss_sources"
+        if impact.get("source_mapping_mode") == "triangle_gss_gradqf_truncated"
+        else "sg_avalanche_edges"
+    )
+    source_raw = diagnostics.get(diagnostic_kind, {}).get("csv_file", "")
+    source_csv = Path(str(source_raw))
+    if not source_csv.is_absolute():
+        source_csv = run_dir / source_csv
     vtk_prefix = Path(str(deck.get("sweep", {}).get("vtk_prefix", "")))
     if not vtk_prefix.is_absolute():
         vtk_prefix = run_dir / vtk_prefix
@@ -763,7 +799,27 @@ def _vela_outputs_complete(deck_path: Path) -> bool:
         if vtk_prefix.name
         else []
     )
-    return output_csv.is_file() and sg_csv.is_file() and bool(vtk_matches)
+    if not output_csv.is_file() or not source_csv.is_file() or not vtk_matches:
+        return False
+    with output_csv.open("r", newline="", encoding="utf-8-sig") as handle:
+        rows = list(csv.DictReader(handle))
+    return any(
+        abs(float(row.get("bias_V", "nan")) + 20.0) <= 1.0e-9
+        and str(row.get("converged", "")).strip().lower()
+            in {"1", "true", "yes"}
+        for row in rows
+    )
+
+
+def vela_run_failed(
+    returncode: int | None,
+    deck_path: Path,
+    *,
+    prepare_only: bool,
+) -> bool:
+    if prepare_only:
+        return False
+    return returncode != 0 or not _vela_outputs_complete(deck_path)
 
 
 def standard_report_paths(report_dir: Path) -> tuple[Path, Path, Path]:
@@ -914,6 +970,7 @@ def run_reproduction(
 
     doping_matrix = validate_doping_strategy_matrix(specs)
     deck_paths: list[Path] = []
+    failed_variants: list[str] = []
     for spec in specs.values():
         deck = write_variant_deck(spec)
         deck_paths.append(deck)
@@ -933,17 +990,21 @@ def run_reproduction(
             commands,
             execute=not args.prepare_only,
             command_runner=command_runner,
+            check=False,
         )
+        if vela_run_failed(
+            commands[-1]["returncode"],
+            deck,
+            prepare_only=args.prepare_only,
+        ):
+            failed_variants.append(str(spec["name"]))
 
     standard_reports = standard_report_paths(report_dir)
     diagnostic_summary = standard_reports[1]
-    if (
-        not args.prepare_only
-        and not all(_vela_outputs_complete(deck) for deck in deck_paths)
-    ):
-        raise FileNotFoundError(
-            "SG replay diagnostic requires complete terminal, SG, and VTK outputs"
-        )
+    outputs_complete = args.prepare_only or (
+        not failed_variants
+        and all(_vela_outputs_complete(deck) for deck in deck_paths)
+    )
     if not (reuse_allowed and diagnostic_summary.is_file()):
         run_recorded_command(
             diagnostic_command(
@@ -952,10 +1013,10 @@ def run_reproduction(
             ),
             REPO,
             commands,
-            execute=not args.prepare_only,
+            execute=not args.prepare_only and outputs_complete,
             command_runner=command_runner,
         )
-    if not args.prepare_only:
+    if not args.prepare_only and outputs_complete:
         missing_reports = [path for path in standard_reports if not path.is_file()]
         if missing_reports:
             raise FileNotFoundError(
@@ -966,6 +1027,8 @@ def run_reproduction(
     parameters = {
         **reuse_signature,
         "doping_matrix": doping_matrix,
+        "failed_variants": failed_variants,
+        "outputs_complete": bool(outputs_complete),
         "importer": str(importer),
         "prepare_only": bool(args.prepare_only),
         "reuse_existing": bool(args.reuse_existing),
@@ -1080,8 +1143,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             Path(args.out_dir).resolve() / ARTIFACT_MANIFEST_NAME
         ),
         "schema": manifest["schema"],
+        "failed_variants": manifest.get("parameters", {}).get("failed_variants", []),
     }, indent=2))
-    return 0
+    return 1 if manifest.get("parameters", {}).get("failed_variants") else 0
 
 
 if __name__ == "__main__":

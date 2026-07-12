@@ -220,9 +220,9 @@ class CompensatedSgReplayOrchestratorTest(unittest.TestCase):
             self.assertEqual(first, second)
             self.assertEqual(
                 first["schema"],
-                "vela.pn2d_compensated_sg_replay.artifact_manifest.v2",
+                "vela.pn2d_compensated_sg_replay.artifact_manifest.v3",
             )
-            self.assertEqual(first["schema_version"], 2)
+            self.assertEqual(first["schema_version"], 3)
             self.assertEqual(
                 [item["path"] for item in first["artifacts"]],
                 ["a.txt", "b.txt"],
@@ -237,27 +237,33 @@ class CompensatedSgReplayOrchestratorTest(unittest.TestCase):
                 [item["path"] for item in first["artifacts"]],
             )
             self.assertIn("edge_mapping", first)
-    def test_v1_manifest_is_never_reused(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="vela_compensated_v1_cache_") as td:
+    def test_v1_and_v2_manifests_are_never_reused(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="vela_compensated_old_cache_") as td:
             root = Path(td)
             manifest_path = root / orchestrator.ARTIFACT_MANIFEST_NAME
-            manifest_path.write_text(json.dumps({
-                "schema": "vela.pn2d_compensated_sg_replay.artifact_manifest.v1",
-                "git_head": "deadbeef",
-                "dirty": False,
-            }), encoding="utf-8")
+            for version in (1, 2):
+                with self.subTest(version=version):
+                    manifest_path.write_text(json.dumps({
+                        "schema": (
+                            "vela.pn2d_compensated_sg_replay."
+                            f"artifact_manifest.v{version}"
+                        ),
+                        "schema_version": version,
+                        "git_head": "deadbeef",
+                        "dirty": False,
+                    }), encoding="utf-8")
 
-            self.assertFalse(orchestrator.reuse_manifest_matches(
-                manifest_path,
-                out_dir=root,
-                git_head="deadbeef",
-                dirty=False,
-                tdrs=[],
-                signature={},
-            ))
+                    self.assertFalse(orchestrator.reuse_manifest_matches(
+                        manifest_path,
+                        out_dir=root,
+                        git_head="deadbeef",
+                        dirty=False,
+                        tdrs=[],
+                        signature={},
+                    ))
 
 
-    def test_variant_specs_form_explicit_two_by_two_matrix(self) -> None:
+    def test_variant_specs_form_explicit_two_by_three_matrix(self) -> None:
         with tempfile.TemporaryDirectory(prefix="vela_compensated_variants_") as td:
             out = Path(td)
             specs = orchestrator.variant_specs(out)
@@ -267,8 +273,10 @@ class CompensatedSgReplayOrchestratorTest(unittest.TestCase):
                 [
                     "legacy_density_gradient",
                     "legacy_gss_midpoint",
+                    "legacy_triangle_gss_gradqf",
                     "reported_density_gradient",
                     "reported_gss_midpoint",
+                    "reported_triangle_gss_gradqf",
                 ],
             )
             self.assertEqual(
@@ -289,11 +297,29 @@ class CompensatedSgReplayOrchestratorTest(unittest.TestCase):
             )
             self.assertEqual(
                 [spec["current_variant"] for spec in specs.values()],
-                ["density_gradient", "gss_midpoint", "density_gradient", "gss_midpoint"],
+                [
+                    "density_gradient", "gss_midpoint", "triangle_gss_gradqf",
+                    "density_gradient", "gss_midpoint", "triangle_gss_gradqf",
+                ],
             )
             self.assertEqual(
                 [spec["current_approximation"] for spec in specs.values()],
-                ["density_gradient", "cell_reconstructed", "density_gradient", "cell_reconstructed"],
+                [
+                    "density_gradient", "cell_reconstructed", "cell_reconstructed",
+                    "density_gradient", "cell_reconstructed", "cell_reconstructed",
+                ],
+            )
+            triangle = specs["legacy_triangle_gss_gradqf"]["impact_ionization"]
+            self.assertEqual(triangle["current_approximation"], "cell_reconstructed")
+            self.assertEqual(triangle["cell_reconstructed_midpoint_density"], "gss_logistic")
+            self.assertEqual(triangle["quasi_fermi_gradient_discretization"], "cell_gradient")
+            self.assertEqual(
+                triangle["source_mapping_mode"],
+                "triangle_gss_gradqf_truncated",
+            )
+            self.assertEqual(
+                specs["legacy_triangle_gss_gradqf"]["diagnostic_csv_kind"],
+                "triangle_gss_sources",
             )
 
     def test_legacy_doping_replay_and_matrix_gate(self) -> None:
@@ -352,7 +378,11 @@ class CompensatedSgReplayOrchestratorTest(unittest.TestCase):
                 / "vela"
                 / "doping.csv"
             ).read_bytes()
-            for name in ("legacy_density_gradient", "legacy_gss_midpoint"):
+            for name in (
+                "legacy_density_gradient",
+                "legacy_gss_midpoint",
+                "legacy_triangle_gss_gradqf",
+            ):
                 (
                     specs[name]["imported_dir"] / "vela" / "doping.csv"
                 ).write_bytes(reported)
@@ -414,6 +444,47 @@ class CompensatedSgReplayOrchestratorTest(unittest.TestCase):
                 "cwd": str(root),
                 "returncode": 0,
             }])
+
+    def test_recorded_command_can_preserve_nonzero_status_without_aborting(self) -> None:
+        argv = ["runner", "--config", "failed.json"]
+        commands: list[dict[str, object]] = []
+        completed = subprocess.CompletedProcess(argv, 1)
+        with mock.patch.object(
+            orchestrator.subprocess,
+            "run",
+            return_value=completed,
+        ):
+            returncode = orchestrator.run_recorded_command(
+                argv,
+                Path("work"),
+                commands,
+                check=False,
+            )
+        self.assertEqual(returncode, 1)
+        self.assertEqual(commands[0]["returncode"], 1)
+        with self.assertRaises(subprocess.CalledProcessError):
+            with mock.patch.object(orchestrator.subprocess, "run", return_value=completed):
+                orchestrator.run_recorded_command(argv, Path("work"), [])
+
+    def test_vela_run_failure_includes_incomplete_and_stale_output_cases(self) -> None:
+        deck = Path("deck.json")
+        with mock.patch.object(
+            orchestrator, "_vela_outputs_complete", return_value=False
+        ):
+            self.assertTrue(orchestrator.vela_run_failed(
+                0, deck, prepare_only=False
+            ))
+        with mock.patch.object(
+            orchestrator, "_vela_outputs_complete", return_value=True
+        ):
+            self.assertTrue(orchestrator.vela_run_failed(
+                1, deck, prepare_only=False
+            ))
+            self.assertFalse(orchestrator.vela_run_failed(
+                0, deck, prepare_only=False
+            ))
+
+
     def test_prepare_only_writes_configs_and_manifest_without_running_commands(self) -> None:
         with tempfile.TemporaryDirectory(prefix="vela_compensated_prepare_") as td:
             root = Path(td)
@@ -504,32 +575,34 @@ class CompensatedSgReplayOrchestratorTest(unittest.TestCase):
                     command_runner=prepare_runner,
                 )
 
-            self.assertEqual(len(prepare_calls), 4)
+            self.assertEqual(len(prepare_calls), 6)
             self.assertEqual(
                 [(item["bias_V"], item["index"]) for item in manifest["tdrs"]],
                 [(-20.0, 400), (-19.0, 380), (-12.0, 240)],
             )
             self.assertTrue(all("sha256" in item for item in manifest["tdrs"]))
             self.assertTrue(all("size_bytes" in item for item in manifest["tdrs"]))
-            self.assertEqual(manifest["schema_version"], 2)
-            self.assertEqual(len(manifest["commands"]), 12)
+            self.assertEqual(manifest["schema_version"], 3)
+            self.assertEqual(len(manifest["commands"]), 16)
             self.assertEqual(manifest["parameters"]["implementation"], "current_head")
             self.assertEqual(
                 list(manifest["parameters"]["variants"]),
                 [
                     "legacy_density_gradient",
                     "legacy_gss_midpoint",
+                    "legacy_triangle_gss_gradqf",
                     "reported_density_gradient",
                     "reported_gss_midpoint",
+                    "reported_triangle_gss_gradqf",
                 ],
             )
             self.assertEqual(
                 sum(command["returncode"] == 0 for command in manifest["commands"]),
-                4,
+                6,
             )
             self.assertEqual(
                 sum(command["returncode"] is None for command in manifest["commands"]),
-                8,
+                10,
             )
             specs = orchestrator.variant_specs(out)
             for name, spec in specs.items():
@@ -546,7 +619,7 @@ class CompensatedSgReplayOrchestratorTest(unittest.TestCase):
                     deck["solver"]["impact_ionization"],
                     spec["impact_ionization"],
                 )
-            self.assertEqual(len(manifest["generated"]["decks"]), 4)
+            self.assertEqual(len(manifest["generated"]["decks"]), 6)
             manifest_path = out / "artifact_manifest.json"
             self.assertEqual(
                 json.loads(manifest_path.read_text(encoding="utf-8")),
@@ -660,14 +733,23 @@ class CompensatedSgReplayOrchestratorTest(unittest.TestCase):
                     deck = json.loads(deck_path.read_text(encoding="utf-8"))
                     run_dir = Path(cwd)
                     (run_dir / deck["output_csv"]).write_text(
-                        "bias_V,current_total_A_per_um\n0,0\n",
+                        "bias_V,converged,current_total_A_per_um\n-20,1,0\n",
                         encoding="utf-8",
                     )
-                    sg = Path(
-                        deck["sweep"]["diagnostics"]["sg_avalanche_edges"]["csv_file"]
+                    diagnostic_kind = (
+                        "triangle_gss_sources"
+                        if deck["solver"]["impact_ionization"].get(
+                            "source_mapping_mode"
+                        ) == "triangle_gss_gradqf_truncated"
+                        else "sg_avalanche_edges"
                     )
-                    sg.parent.mkdir(parents=True, exist_ok=True)
-                    sg.write_text("bias_V,edge_id\n-20,9\n", encoding="utf-8")
+                    source_csv = Path(
+                        deck["sweep"]["diagnostics"][diagnostic_kind]["csv_file"]
+                    )
+                    source_csv.parent.mkdir(parents=True, exist_ok=True)
+                    source_csv.write_text(
+                        "bias_V,edge_id\n-20,9\n", encoding="utf-8"
+                    )
                     vtk = run_dir / (
                         deck["sweep"]["vtk_prefix"] + "_0400_-20V.vtk"
                     )
@@ -702,16 +784,18 @@ class CompensatedSgReplayOrchestratorTest(unittest.TestCase):
                     command_runner=fake_runner,
                 )
 
-            self.assertEqual(len(calls), 12)
-            self.assertEqual(len(manifest["commands"]), 12)
+            self.assertEqual(len(calls), 16)
+            self.assertEqual(len(manifest["commands"]), 16)
             self.assertEqual(manifest["parameters"]["implementation"], "current_head")
             self.assertEqual(
                 list(manifest["parameters"]["variants"]),
                 [
                     "legacy_density_gradient",
                     "legacy_gss_midpoint",
+                    "legacy_triangle_gss_gradqf",
                     "reported_density_gradient",
                     "reported_gss_midpoint",
+                    "reported_triangle_gss_gradqf",
                 ],
             )
             self.assertTrue(all(
@@ -731,13 +815,23 @@ class CompensatedSgReplayOrchestratorTest(unittest.TestCase):
                 self.assertEqual(deck["sweep"]["step"], -0.05)
                 self.assertTrue(deck["sweep"]["write_vtk"])
                 self.assertTrue(
-                    deck["sweep"]["diagnostics"]["sg_avalanche_edges"]["enabled"]
+                    deck["sweep"]["diagnostics"][
+                        spec["diagnostic_csv_kind"]
+                    ]["enabled"]
                 )
-            self.assertEqual(len(manifest["generated"]["decks"]), 4)
-            self.assertEqual(len(manifest["generated"]["model_configs"]), 4)
-            self.assertEqual(len(manifest["inputs"]["mesh"]), 4)
-            self.assertEqual(len(manifest["inputs"]["doping"]), 4)
-            self.assertEqual(len(manifest["inputs"]["materials"]), 4)
+                self.assertEqual(
+                    Path(
+                        deck["sweep"]["diagnostics"][
+                            spec["diagnostic_csv_kind"]
+                        ]["csv_file"]
+                    ).name,
+                    spec["diagnostic_csv_name"],
+                )
+            self.assertEqual(len(manifest["generated"]["decks"]), 6)
+            self.assertEqual(len(manifest["generated"]["model_configs"]), 6)
+            self.assertEqual(len(manifest["inputs"]["mesh"]), 6)
+            self.assertEqual(len(manifest["inputs"]["doping"]), 6)
+            self.assertEqual(len(manifest["inputs"]["materials"]), 6)
             self.assertEqual(manifest["edge_mapping"], [{
                 "variant": "legacy_density_gradient",
                 "bias_V": "-12",
@@ -758,7 +852,7 @@ class CompensatedSgReplayOrchestratorTest(unittest.TestCase):
                     command_runner=reuse_runner,
                 )
             reuse_runner.assert_not_called()
-            self.assertEqual(len(reused["commands"]), 12)
+            self.assertEqual(len(reused["commands"]), 16)
             self.assertEqual(reused["invocation"]["commands"], [])
             self.assertTrue(reused["invocation"]["reuse_accepted"])
 
@@ -773,7 +867,7 @@ class CompensatedSgReplayOrchestratorTest(unittest.TestCase):
                     args,
                     command_runner=fake_runner,
                 )
-            self.assertEqual(len(calls), 12)
+            self.assertEqual(len(calls), 16)
             self.assertFalse(refreshed_tool["parameters"]["reuse_accepted"])
 
             (source / "pn2d_bv_multibias_0240_des.tdr").write_bytes(b"changed")
@@ -787,7 +881,7 @@ class CompensatedSgReplayOrchestratorTest(unittest.TestCase):
                     args,
                     command_runner=fake_runner,
                 )
-            self.assertEqual(len(calls), 12)
+            self.assertEqual(len(calls), 16)
             self.assertFalse(refreshed["parameters"]["reuse_accepted"])
     def test_main_parses_cli_and_delegates_to_reproduction(self) -> None:
         with mock.patch.object(
