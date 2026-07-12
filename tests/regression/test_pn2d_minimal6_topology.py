@@ -1,0 +1,172 @@
+#!/usr/bin/env python3
+"""Regression coverage for the PN2D minimal6 canonical topology fixtures."""
+
+from __future__ import annotations
+
+import importlib.util
+import re
+import subprocess
+import sys
+import tempfile
+import unittest
+from dataclasses import replace
+from pathlib import Path
+
+
+REPO = Path(__file__).resolve().parents[2]
+FIXTURE = REPO / "reference_tcad" / "pn2d_sentaurus2018_minimal6" / "source" / "minimal6_topologies.json"
+MODULE_SPEC = importlib.util.spec_from_file_location(
+    "pn2d_minimal6_topology",
+    REPO / "scripts" / "pn2d_minimal6_topology.py",
+)
+assert MODULE_SPEC is not None
+module = importlib.util.module_from_spec(MODULE_SPEC)
+assert MODULE_SPEC.loader is not None
+sys.modules[MODULE_SPEC.name] = module
+MODULE_SPEC.loader.exec_module(module)
+
+
+class PN2DMinimal6TopologyTest(unittest.TestCase):
+    def test_sketch_and_mirror_have_exact_contract(self) -> None:
+        sketch = module.load_topology(FIXTURE, "sketch")
+        mirror = module.load_topology(FIXTURE, "mirror")
+        self.assertEqual(sketch.triangles, [(1, 5, 2), (5, 6, 2), (2, 6, 4), (2, 4, 3)])
+        self.assertEqual(mirror.triangles, [(1, 5, 6), (1, 6, 2), (2, 6, 3), (6, 4, 3)])
+        for topology in (sketch, mirror):
+            summary = module.validate_topology(topology)
+            self.assertEqual((summary.nodes, summary.triangles, summary.edges), (6, 4, 9))
+            self.assertEqual(summary.contact_edges, {"Anode": (1, 5), "Cathode": (3, 4)})
+
+    def test_dfise_roundtrip_preserves_exact_contract(self) -> None:
+        for topology_id in ("sketch", "mirror"):
+            with self.subTest(topology_id=topology_id):
+                topology = module.load_topology(FIXTURE, topology_id)
+                with tempfile.TemporaryDirectory() as tmp:
+                    grd, dat = Path(tmp) / "mesh.grd", Path(tmp) / "mesh.dat"
+                    module.write_dfise_grid(topology, grd)
+                    module.write_dfise_doping(topology, dat)
+                    report = module.validate_dfise_roundtrip(topology, grd, dat)
+                self.assertTrue(report["passed"])
+                self.assertEqual(report["vertices"], topology.nodes)
+                self.assertEqual(report["edge_count"], 9)
+                self.assertEqual(report["location_counts"], {"e": 6, "i": 3})
+                self.assertEqual(report["triangles"], topology.triangles)
+                self.assertEqual(report["silicon_triangle_count"], 4)
+                self.assertEqual(
+                    report["contact_element_counts"],
+                    {"Anode": 1, "Cathode": 1},
+                )
+                self.assertEqual(report["contact_edges"], topology.contacts)
+                self.assertEqual(
+                    report["region_ownership"],
+                    {"R.Si": [0, 1, 2, 3], "Cathode": [4], "Anode": [5]},
+                )
+    def test_dfise_roundtrip_rejects_changed_contact_endpoint(self) -> None:
+        topology = module.load_topology(FIXTURE, "sketch")
+        with tempfile.TemporaryDirectory() as tmp:
+            grd, dat = Path(tmp) / "mesh.grd", Path(tmp) / "mesh.dat"
+            module.write_dfise_grid(topology, grd)
+            module.write_dfise_doping(topology, dat)
+            original = grd.read_text()
+            changed = original.replace(" 1 2 3\n 1 0 4", " 1 1 3\n 1 0 4")
+            self.assertNotEqual(changed, original)
+            grd.write_text(changed)
+            report = module.validate_dfise_roundtrip(topology, grd, dat)
+        self.assertFalse(report["passed"])
+        self.assertEqual(report["contact_edges"]["Cathode"], (2, 4))
+
+    def test_dfise_writers_follow_the_local_accepted_forms(self) -> None:
+        topology = module.load_topology(FIXTURE, "sketch")
+        with tempfile.TemporaryDirectory() as tmp:
+            grd, dat = Path(tmp) / "mesh.grd", Path(tmp) / "mesh.dat"
+            module.write_dfise_grid(topology, grd)
+            module.write_dfise_doping(topology, dat)
+            grid_text = grd.read_text()
+            doping_text = dat.read_text()
+
+        info, data = grid_text.split("Data {", maxsplit=1)
+        self.assertIn("version = 1.1", info)
+        for declaration in (
+            "nb_vertices = 6",
+            "nb_edges = 9",
+            "nb_faces = 0",
+            "nb_elements = 6",
+            "nb_regions = 3",
+            'regions = [ "R.Si" "Cathode" "Anode" ]',
+            "materials = [ Silicon Contact Contact ]",
+        ):
+            self.assertIn(declaration, info)
+            self.assertNotIn(declaration, data)
+        self.assertRegex(
+            data,
+            r"CoordSystem\s*\{\s*translate\s*=\s*\[\s*0(?:\.0+)?e[+-]00\s+0(?:\.0+)?e[+-]00\s+0(?:\.0+)?e[+-]00\s*\]"
+            r"\s*transform\s*=\s*\[\s*1(?:\.0+)?e[+-]00\s+0(?:\.0+)?e[+-]00\s+0(?:\.0+)?e[+-]00",
+        )
+
+        dat_info, dat_data = doping_text.split("Data {", maxsplit=1)
+        self.assertIn("type    = dataset", dat_info)
+        self.assertIn("nb_vertices = 6", dat_info)
+        self.assertIn("nb_edges    = 9", dat_info)
+        self.assertIn("nb_elements = 6", dat_info)
+        self.assertIn("nb_regions  = 3", dat_info)
+        self.assertIn(
+            'datasets    = [ "DopingConcentration" "PhosphorusActiveConcentration" "BoronActiveConcentration" ]',
+            dat_info,
+        )
+        for name in ("DopingConcentration", "PhosphorusActiveConcentration", "BoronActiveConcentration"):
+            block = re.search(rf'Dataset \("{name}"\) \{{(?P<body>.*?)Values \(6\)', dat_data, re.S)
+            self.assertIsNotNone(block)
+            assert block is not None
+            self.assertIn(f"function  = {name}", block.group("body"))
+            self.assertIn("location  = vertex", block.group("body"))
+            self.assertIn('validity  = [ "R.Si" ]', block.group("body"))
+
+    def test_validation_rejects_noncanonical_fixed_state(self) -> None:
+        topology = module.load_topology(FIXTURE, "sketch")
+        invalid_topologies = (
+            replace(topology, triangles=[(1, 2, 5), *topology.triangles[1:]]),
+            replace(topology, triangles=topology.triangles[:-1]),
+            replace(topology, nodes={**topology.nodes, 1: (0.1, 0.5)}),
+            replace(topology, contacts={**topology.contacts, "Anode": (1, 2)}),
+            replace(topology, donors_cm3={**topology.donors_cm3, 2: 0.0}),
+            replace(topology, acceptors_cm3={**topology.acceptors_cm3, 6: 0.0}),
+        )
+        for invalid in invalid_topologies:
+            with self.subTest(topology=invalid):
+                with self.assertRaises(ValueError):
+                    module.validate_topology(invalid)
+
+    def test_mirror_is_the_required_labelled_vertical_reflection(self) -> None:
+        sketch = module.load_topology(FIXTURE, "sketch")
+        mirror = module.load_topology(FIXTURE, "mirror")
+        reflection = {1: 5, 2: 6, 3: 4, 4: 3, 5: 1, 6: 2}
+        reflected_nodes = {
+            reflection[node_id]: (x, 0.5 - y)
+            for node_id, (x, y) in sketch.nodes.items()
+        }
+        reflected_triangles = {
+            module.canonical_triangle(
+                tuple(reversed(tuple(reflection[node_id] for node_id in triangle)))
+            )
+            for triangle in sketch.triangles
+        }
+        self.assertEqual(mirror.nodes, reflected_nodes)
+        self.assertEqual(
+            {module.canonical_triangle(triangle) for triangle in mirror.triangles},
+            reflected_triangles,
+        )
+
+    def test_cli_imports_are_robust_from_repo_root(self) -> None:
+        completed = subprocess.run(
+            [sys.executable, str(REPO / "scripts" / "pn2d_minimal6_topology.py"), "--help"],
+            cwd=REPO,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("topology", completed.stdout.lower())
+
+
+if __name__ == "__main__":
+    unittest.main()
