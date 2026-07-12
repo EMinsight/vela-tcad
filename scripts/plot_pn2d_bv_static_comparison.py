@@ -44,6 +44,13 @@ MODE_COLORS = {
     "triangle_gss_gradqf": "#D55E00",
 }
 
+CURRENT_SEMANTICS_CANDIDATES = {
+    "pdf": ("PDF grad qF", "#0072B2"),
+    "genius": ("Genius SG", "#D55E00"),
+    "vela_projection": ("Vela vector projection", "#009E73"),
+    "vela_magnitude": ("Vela vector magnitude", "#CC79A7"),
+}
+
 
 @dataclass
 class MeshState:
@@ -69,6 +76,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sentaurus-reference", type=Path, default=reference)
     parser.add_argument("--out-dir", type=Path)
     parser.add_argument("--visual-html", type=Path)
+    parser.add_argument("--current-semantics-audit", type=Path)
     return parser.parse_args()
 
 
@@ -475,6 +483,63 @@ def plot_sentaurus_vela_fields(root: Path, out_dir: Path) -> list[Path]:
     )
 
 
+def load_current_semantics_groups(
+    audit_json: Path,
+) -> tuple[list[str], dict[str, list[float | None]], dict[str, list[float]]]:
+    payload = json.loads(audit_json.read_text(encoding="utf-8"))
+    groups = [
+        group for group in payload["active_support"]["by_bias_and_carrier"]
+        if int(group["exact_row_count"]) > 0
+    ]
+    groups.sort(key=lambda group: (-float(group["bias_V"]), 0 if group["carrier"] == "electron" else 1))
+    labels = [
+        f"{float(group['bias_V']):g} V / {'e' if group['carrier'] == 'electron' else 'h'}"
+        for group in groups
+    ]
+    medians = {
+        name: [group["candidates"][name]["median_abs_log10_error"] for group in groups]
+        for name in CURRENT_SEMANTICS_CANDIDATES
+    }
+    coverage = {
+        name: [float(group["candidates"][name]["coverage"]) for group in groups]
+        for name in CURRENT_SEMANTICS_CANDIDATES
+    }
+    return labels, medians, coverage
+
+
+def plot_current_semantics(audit_json: Path, out_dir: Path) -> list[Path]:
+    labels, medians, coverage = load_current_semantics_groups(audit_json)
+    if not labels:
+        raise ValueError(f"no exact-bias current-semantics groups in {audit_json}")
+    x = np.arange(len(labels), dtype=float)
+    width = 0.19
+    offsets = (np.arange(len(CURRENT_SEMANTICS_CANDIDATES)) - 1.5) * width
+    fig, axes = plt.subplots(1, 2, figsize=(11.2, 4.1), constrained_layout=True)
+    for offset, (name, (display, color)) in zip(offsets, CURRENT_SEMANTICS_CANDIDATES.items()):
+        axes[0].bar(
+            x + offset,
+            [np.nan if value is None else float(value) for value in medians[name]],
+            width=width,
+            color=color,
+            label=display,
+        )
+        axes[1].bar(x + offset, coverage[name], width=width, color=color, label=display)
+    for ax in axes:
+        ax.set_xticks(x, labels, rotation=20, ha="right")
+        ax.grid(True, axis="y", color="#d0d0d0", linewidth=0.45, alpha=0.7)
+        ax.set_axisbelow(True)
+    axes[0].set_ylabel("Median |log10(candidate / Sentaurus)| (dex)")
+    axes[0].set_title("Magnitude error on active carrier-edge rows")
+    axes[1].set_ylabel("Finite-candidate coverage")
+    axes[1].set_ylim(0.0, 1.05)
+    axes[1].axhline(0.8, color="#333333", linestyle=":", linewidth=1.0, label="80% gate")
+    axes[1].set_title("Coverage of active carrier-edge rows")
+    handles, legend_labels = axes[1].get_legend_handles_labels()
+    fig.legend(handles, legend_labels, loc="outside lower center", ncol=5, frameon=False)
+    fig.suptitle("Same-state current-semantics audit")
+    return save_figure(fig, out_dir, "pn2d-bv-current-semantics-audit")
+
+
 def write_visual_html(path: Path, png_paths: list[Path]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     captions = {
@@ -482,6 +547,7 @@ def write_visual_html(path: Path, png_paths: list[Path]) -> None:
         "pn2d-bv-six-variant-fields-19v.png": "Six-variant physical fields at -19 V",
         "pn2d-bv-triangle-gss-critical-fields.png": "Triangle-GSS evolution from -19 V to -19.4 V",
         "pn2d-bv-sentaurus-vela-fields-19v.png": "Sentaurus-Vela field comparison at -19 V",
+        "pn2d-bv-current-semantics-audit.png": "Same-state current semantics accuracy and coverage",
     }
     blocks = []
     for index, png_path in enumerate(png_paths):
@@ -525,10 +591,16 @@ def main() -> int:
     generated.extend(plot_six_variant_fields(root, out_dir))
     generated.extend(plot_triangle_critical(root, out_dir))
     generated.extend(plot_sentaurus_vela_fields(root, out_dir))
+    semantics_audit = args.current_semantics_audit or (
+        root / "same_state_current_semantics_fieldscale_debug_20260712" /
+        "same_state_edge_current_semantics.json"
+    )
+    generated.extend(plot_current_semantics(semantics_audit.resolve(), out_dir))
 
     manifest = {
         "report_root": str(root),
         "sentaurus_reference": str(args.sentaurus_reference.resolve()),
+        "current_semantics_audit": str(semantics_audit.resolve()),
         "figures": [str(path) for path in generated],
         "iv_endpoints": endpoints,
         "notes": [
