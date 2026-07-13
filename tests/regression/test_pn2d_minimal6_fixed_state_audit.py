@@ -8,6 +8,8 @@ import shutil
 import tempfile
 import unittest
 
+from PIL import Image, ImageStat
+
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "scripts" / "audit_pn2d_minimal6_fixed_state.py"
 FIXTURE = REPO / "tests" / "fixtures" / "pn2d_minimal6_synthetic"
@@ -87,6 +89,13 @@ class ReviewContractTests(unittest.TestCase):
             writer = csv.DictWriter(output, fieldnames=rows[0])
             writer.writeheader(); writer.writerows(rows)
 
+    @staticmethod
+    def _producer():
+        producer = REPO / "build-release" / "pn2d_minimal6_operator_audit.exe"
+        if not producer.is_file():
+            raise AssertionError(f"Task4 producer is required for provenance tests: {producer}")
+        return producer
+
     def test_exact_variable_ni_sg_both_carriers(self):
         vt = 1.380649e-23 * 300.0 / 1.602176634e-19
         coef = 0.135 * vt / 1.25e-6
@@ -143,8 +152,7 @@ class ReviewContractTests(unittest.TestCase):
         self.assertEqual(provenance["producer"], "build-release/pn2d_minimal6_operator_audit.exe")
         self.assertEqual(provenance["task4_source_commit"], "37a95459dc5f360bb24b9afa00439301935e98de")
         self.assertEqual(len(provenance["replays"]), 6)
-        if (REPO / "build-release" / "pn2d_minimal6_operator_audit.exe").exists():
-            self.assertEqual(audit.verify_task4_replay(FIXTURE, REPO / "build-release" / "pn2d_minimal6_operator_audit.exe"), [])
+        self.assertEqual(audit.verify_task4_replay(FIXTURE, self._producer()), [])
         source = SCRIPT.read_text(encoding="utf-8")
         self.assertNotIn("make_synthetic_fixture", source)
         self.assertNotIn("--make-synthetic-fixture", source)
@@ -153,11 +161,28 @@ class ReviewContractTests(unittest.TestCase):
         report = audit.build_report(FIXTURE)
         with tempfile.TemporaryDirectory() as directory:
             out = Path(directory); audit.write_report(report,out)
-            figures = list((out / "figures").iterdir())
-            self.assertEqual(len(figures),14); self.assertTrue(all(x.stat().st_size for x in figures))
+            expected = {
+                "minimal6-topologies.png", "minimal6-topologies.pdf",
+                *(f"minimal6-edge-current-audit-{bias}.{suffix}" for bias in ("0v", "minus12v", "minus19v") for suffix in ("png", "pdf")),
+                *(f"minimal6-triangle-source-audit-{bias}.{suffix}" for bias in ("0v", "minus12v", "minus19v") for suffix in ("png", "pdf")),
+            }
+            figures = {x.name: x for x in (out / "figures").iterdir()}
+            self.assertEqual(set(figures), expected)
+            for name, path in figures.items():
+                self.assertGreater(path.stat().st_size, 0, name)
+                if path.suffix == ".pdf":
+                    self.assertTrue(path.read_bytes().startswith(b"%PDF-"), name)
+                else:
+                    self.assertTrue(path.read_bytes().startswith(b"\x89PNG\r\n\x1a\n"), name)
+                    with Image.open(path) as image:
+                        image.verify()
+                    with Image.open(path).convert("L") as image:
+                        self.assertGreater(ImageStat.Stat(image).stddev[0], 1.0, name)
             md=(out/"summary.md").read_text(encoding="utf-8")
             self.assertIn("Maximum state parity hybrid error:",md)
             self.assertIn("Maximum C++/Python formula hybrid error:",md)
+            self.assertIn("fixed-state operator audit, not a BV curve", md)
+            self.assertEqual(json.loads((out/"summary.json").read_text(encoding="utf-8"))["status"], "PASS")
     def test_complete_matrix_unique_keys_and_formula_gate(self):
         report = audit.build_report(FIXTURE)
         self.assertEqual((len(report.node_rows),len(report.edge_rows),len(report.triangle_rows)),(36,54,24))
@@ -218,6 +243,84 @@ class ReviewContractTests(unittest.TestCase):
         self.assertEqual(node["sentaurus_electric_field_x_V_per_m"],node["raw_ElectricField_x_V_per_cm"]*100)
         self.assertTrue(any(row["normalized_geometric_zero"] for row in report.triangle_rows))
 
+    def test_provenance_missing_duplicate_and_forged_records_fail_closed(self):
+        cases = []
+        root = self._copy(); manifest = self._manifest(root)
+        manifest["task4_provenance"]["replays"].pop(); self._write(root/"manifest.json", manifest)
+        cases.append((root, "six exact replay identities"))
+        root = self._copy(); manifest = self._manifest(root)
+        manifest["task4_provenance"]["replays"][1] = dict(manifest["task4_provenance"]["replays"][0]); self._write(root/"manifest.json", manifest)
+        cases.append((root, "six exact replay identities"))
+        root = self._copy(); manifest = self._manifest(root)
+        manifest["task4_provenance"]["replays"][0]["producer"] = "forged.exe"; self._write(root/"manifest.json", manifest)
+        cases.append((root, "replay producer identity"))
+        for root, expected in cases:
+            with self.subTest(expected=expected):
+                failures = audit.verify_task4_replay(root, self._producer())
+                self.assertTrue(any(expected in failure for failure in failures), failures)
+
+    def test_provenance_committed_and_fresh_output_hash_tamper_fail_closed(self):
+        root = self._copy(); manifest = self._manifest(root); replay = manifest["task4_provenance"]["replays"][0]
+        committed = root / replay["arguments"][replay["arguments"].index("--edge-out") + 1]
+        committed.write_bytes(committed.read_bytes() + b"\n")
+        failures = audit.verify_task4_replay(root, self._producer())
+        self.assertTrue(any("committed output hash mismatch" in failure for failure in failures), failures)
+
+        root = self._copy(); manifest = self._manifest(root); replay = manifest["task4_provenance"]["replays"][0]
+        key = replay["arguments"][replay["arguments"].index("--edge-out") + 1]
+        replay["output_sha256"][key] = "0" * 64; self._write(root/"manifest.json", manifest)
+        failures = audit.verify_task4_replay(root, self._producer())
+        self.assertTrue(any("fresh replay output hash mismatch" in failure for failure in failures), failures)
+
+    def test_cli_report_generation_is_blocked_before_artifacts_on_bad_provenance(self):
+        root = self._copy(); manifest = self._manifest(root)
+        manifest["task4_provenance"]["producer_sha256"] = "0" * 64; self._write(root/"manifest.json", manifest)
+        report = audit.build_report(root)
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory)/"must_not_exist"
+            with self.assertRaisesRegex(audit.ContractError, "producer hash mismatch"):
+                audit.write_report(report, out)
+            self.assertFalse(out.exists())
+
+    def test_vela_and_python_triangle_aggregates_are_separate_and_gated(self):
+        report = audit.build_report(FIXTURE)
+        for row in report.triangle_rows:
+            raw_e = sum(row[f"vela_local_edge{i}_electron_source_integral_per_m_s"] for i in range(3))
+            raw_h = sum(row[f"vela_local_edge{i}_hole_source_integral_per_m_s"] for i in range(3))
+            py_e = sum(row[f"python_local_edge{i}_electron_source_integral_per_m_s"] for i in range(3))
+            py_h = sum(row[f"python_local_edge{i}_hole_source_integral_per_m_s"] for i in range(3))
+            self.assertEqual(row["vela_electron_source_integral_per_m_s"], raw_e)
+            self.assertEqual(row["vela_hole_source_integral_per_m_s"], raw_h)
+            self.assertEqual(row["python_electron_source_integral_per_m_s"], py_e)
+            self.assertEqual(row["python_hole_source_integral_per_m_s"], py_h)
+            self.assertLess(row["vela_vs_python_total_source_hybrid_error"], audit.FORMULA_LIMIT)
+
+    def test_nonzero_partial_volume_cannot_normalize_tiny_source_residue(self):
+        with self.assertRaisesRegex(audit.ContractError, "formula error"):
+            audit.geometric_source_gate(1e-290, 2e-290, 1e-14, 1e-14, audit.FORMULA_LIMIT, "formula error")
+        self.assertEqual(audit.geometric_source_gate(1e-290, 2e-290, 0.0, 1e-30, audit.FORMULA_LIMIT, "formula error"), 0.0)
+
+    def test_corrupted_cpp_mobility_and_alpha_fail_independent_gates(self):
+        for column, expected in (("local_edge0_electron_mobility_m2_per_V_s", "mobility"), ("local_edge0_electron_alpha_per_m", "alpha")):
+            root = self._copy(); state = self._manifest(root)["states"][0]; path = self._export(root,state)/"vela_triangle_audit.csv"
+            with path.open(encoding="utf-8",newline="") as source: rows=list(csv.DictReader(source))
+            rows[0][column] = format(float(rows[0][column]) * 1.01 + 1e-30, ".17g")
+            with path.open("w",encoding="utf-8",newline="") as output: writer=csv.DictWriter(output,fieldnames=rows[0]); writer.writeheader(); writer.writerows(rows)
+            with self.subTest(column=column), self.assertRaisesRegex(audit.ContractError, expected):
+                audit.build_report(root)
+
+    def test_raw_task3_doping_and_inline_triangle_order_fail_closed(self):
+        root = self._copy(); state = self._manifest(root)["states"][0]; export = self._export(root,state)
+        self._mutate_csv(export/"fields"/"DonorConcentration_region0.csv", "component0", "9e16", 1)
+        with self.assertRaisesRegex(audit.ContractError, "raw Task3 donor"):
+            audit.build_report(root)
+
+        root = self._copy(); manifest = self._manifest(root)
+        triangle = manifest["states"][0]["topology_contract"]["triangle_connectivity"][0]
+        manifest["states"][0]["topology_contract"]["triangle_connectivity"][0] = [triangle[0], triangle[2], triangle[1]]
+        self._write(root/"manifest.json", manifest)
+        with self.assertRaisesRegex(audit.ContractError, "exact approved CCW topology"):
+            audit.build_report(root)
 
 if __name__ == "__main__":
     unittest.main()

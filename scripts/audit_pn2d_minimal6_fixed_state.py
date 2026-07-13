@@ -28,6 +28,18 @@ INTRINSIC_DENSITY_M3 = 1.0e16
 FORMULA_LIMIT = 5.0e-12
 STATE_LIMIT = 1.0e-12
 COORDINATE_LIMIT_UM = 1.0e-12
+GEOMETRIC_ZERO_AREA_M2 = 1.0e-27
+GEOMETRIC_ZERO_SOURCE_PER_M_S = 1.0e-285
+TASK4_PRODUCER = "build-release/pn2d_minimal6_operator_audit.exe"
+TASK4_SOURCE_COMMIT = "37a95459dc5f360bb24b9afa00439301935e98de"
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SILICON_ELECTRON_MOBILITY_M2_PER_V_S = 0.135
+SILICON_HOLE_MOBILITY_M2_PER_V_S = 0.048
+VAN_OVERSTRAETEN = {
+    "electron": {"a_low": 7.03e7, "a_high": 7.03e7, "b_low": 1.231e8, "b_high": 1.231e8},
+    "hole": {"a_low": 1.582e8, "a_high": 6.71e7, "b_low": 2.036e8, "b_high": 1.693e8},
+}
+VAN_OVERSTRAETEN_SWITCH_FIELD_V_PER_M = 4.0e7
 NODES = {1: (0.0, 0.5), 2: (1.0, 0.5), 3: (2.0, 0.5), 4: (2.0, 0.0), 5: (0.0, 0.0), 6: (1.0, 0.0)}
 TRIS = {
     "sketch": ((1, 5, 2), (5, 6, 2), (2, 6, 4), (2, 4, 3)),
@@ -110,6 +122,34 @@ def zero_normalized_gate(actual, expected, threshold, limit, label):
     if abs(actual) <= threshold and abs(expected) <= threshold:
         return 0.0
     return gate(actual, expected, limit, label)
+
+
+def geometric_source_gate(actual, expected, actual_partial, expected_partial, limit, label):
+    if (abs(actual_partial) <= GEOMETRIC_ZERO_AREA_M2
+            and abs(expected_partial) <= GEOMETRIC_ZERO_AREA_M2):
+        return zero_normalized_gate(
+            actual, expected, GEOMETRIC_ZERO_SOURCE_PER_M_S, limit, label)
+    return gate(actual, expected, limit, label)
+
+
+def van_overstraeten_alpha(field_V_per_m, carrier, temperature_K=TEMPERATURE_K,
+                            minimum_field_V_per_m=0.0):
+    field = abs(finite(field_V_per_m, "Van Overstraeten field"))
+    if field < minimum_field_V_per_m or field <= 0.0:
+        return 0.0
+    if carrier not in VAN_OVERSTRAETEN:
+        raise ContractError("Van Overstraeten carrier must be electron or hole")
+    kb_eV_per_K = KB_J_PER_K / Q_C
+    phonon_energy_eV = 0.063
+    reference_temperature_K = 300.0
+    gamma = (math.tanh(phonon_energy_eV / (2.0 * kb_eV_per_K * reference_temperature_K))
+             / math.tanh(phonon_energy_eV / (2.0 * kb_eV_per_K * temperature_K)))
+    params = VAN_OVERSTRAETEN[carrier]
+    suffix = "low" if field < VAN_OVERSTRAETEN_SWITCH_FIELD_V_PER_M else "high"
+    prefactor = params[f"a_{suffix}"]
+    critical = params[f"b_{suffix}"]
+    return gamma * prefactor * math.exp(max(-700.0, min(0.0, -critical * gamma / field)))
+
 
 def classify_orientation_pair(sketch, mirror):
     result = {"mirror_over_sketch": None, "signed_difference": mirror - sketch,
@@ -309,18 +349,20 @@ def validate_topology(export_dir, state, topology_id):
         raise ContractError("wrong topology contact ownership")
     expected=TRIS[topology_id]
     contract_triangles=tuple(tuple(int(x) for x in triangle) for triangle in contract.get("triangle_connectivity",[]))
-    if {tuple(sorted(x)) for x in contract_triangles}!={tuple(sorted(x)) for x in expected}:
-        raise ContractError("wrong topology contract connectivity")
+    if contract_triangles != expected:
+        raise ContractError("inline topology must match exact approved CCW topology tuples/order")
     source_to_canonical=canonical_node_map(export_dir)
-    elements=read_csv(export_dir/"elements.csv",("id","node0","node1","node2")); found=set()
-    for row in elements:
-        triangle=tuple(source_to_canonical[int(row[f"node{i}"])] for i in range(3))
-        points=[NODES[node] for node in triangle]
-        if area2(points)<=0:
-            raise ContractError("reversed triangle orientation")
-        found.add(tuple(sorted(triangle)))
-    if len(elements)!=4 or found!={tuple(sorted(x)) for x in expected}:
+    elements=read_csv(export_dir/"elements.csv",("id","node0","node1","node2"))
+    if len(elements) != 4 or {int(row["id"]) for row in elements} != set(range(4)):
         raise ContractError("wrong topology connectivity or counts")
+    ordered=[]
+    for row in sorted(elements, key=lambda value: int(value["id"])):
+        triangle=tuple(source_to_canonical[int(row[f"node{i}"])] for i in range(3))
+        if area2([NODES[node] for node in triangle])<=0:
+            raise ContractError("reversed triangle orientation")
+        ordered.append(triangle)
+    if tuple(ordered) != expected:
+        raise ContractError("elements must match exact approved CCW topology tuples/order")
     contact_rows=read_csv(export_dir/"contacts.csv",("id","name","node_ids")); actual={}
     for row in contact_rows:
         actual[row["name"]]=tuple(sorted(source_to_canonical[int(x)] for x in row["node_ids"].split(";") if x!=""))
@@ -404,6 +446,54 @@ def task4_paths(root,state,export_dir):
     return result
 
 
+def load_audit_model(export_dir):
+    config_path = export_dir / "audit.json"
+    mesh_path = export_dir / "mesh.json"
+    try:
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        mesh = json.loads(mesh_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ContractError("missing or invalid immutable Task4 audit config/mesh") from error
+    if finite(config.get("temperature_K"), "audit temperature") != TEMPERATURE_K:
+        raise ContractError("audit config must use exactly 300 K")
+    mobility = config.get("mobility")
+    if not isinstance(mobility, dict) or mobility.get("model") != "constant":
+        raise ContractError("audit mobility model must be constant")
+    impact = config.get("impact_ionization")
+    required_impact = {
+        "model": "van_overstraeten",
+        "driving_force": "quasi_fermi_gradient",
+        "generation": "current_density",
+        "current_approximation": "cell_reconstructed",
+        "current_magnitude_mode": "edge_scalar_abs",
+        "cell_reconstructed_midpoint_density": "gss_logistic",
+        "quasi_fermi_gradient_discretization": "cell_gradient",
+        "source_mapping_mode": "triangle_gss_gradqf_truncated",
+        "source_volume_policy": "genius_truncated",
+        "edge_source_partition": "symmetric",
+    }
+    if not isinstance(impact, dict) or any(impact.get(key) != value for key, value in required_impact.items()):
+        raise ContractError("audit impact config does not match immutable Task4 model")
+    for key, value in {
+        "source_volume_factor": 0.0,
+        "source_geometry_scale": 1.0,
+        "quasi_fermi_carrier_truncation": 0.0,
+        "minimum_field_V_m": 0.0,
+    }.items():
+        if finite(impact.get(key), f"audit impact {key}") != value:
+            raise ContractError("audit impact config does not match immutable Task4 model")
+    regions = mesh.get("regions")
+    if not isinstance(regions, list) or len(regions) != 1 or regions[0].get("material") != "Si":
+        raise ContractError("audit mesh must use the immutable default Silicon material")
+    return SimpleNamespace(
+        config_path=config_path,
+        mesh_path=mesh_path,
+        electron_mobility=SILICON_ELECTRON_MOBILITY_M2_PER_V_S,
+        hole_mobility=SILICON_HOLE_MOBILITY_M2_PER_V_S,
+        minimum_field=0.0,
+    )
+
+
 def validate_state_root(root):
     root=Path(root); manifest=json.loads((root/"manifest.json").read_text(encoding="utf-8"))
     if manifest.get("schema")!=TASK3_SCHEMA or not manifest.get("outputs_complete"):
@@ -426,7 +516,8 @@ def validate_state_root(root):
         field_path=resolve_input(root,state["field_manifest"]); field_manifest=json.loads(field_path.read_text(encoding="utf-8"))
         raw=read_raw_fields(export_dir,source_map,field_manifest,requested)
         state_csv=read_state(resolve_input(root,state["state_csv"])); paths=task4_paths(root,state,export_dir)
-        loaded.append(SimpleNamespace(topology_id=topology_id,bias=requested,state=state,export_dir=export_dir,source_map=source_map,doping=doping,raw=raw,state_csv=state_csv,task4=paths))
+        model=load_audit_model(export_dir)
+        loaded.append(SimpleNamespace(topology_id=topology_id,bias=requested,state=state,export_dir=export_dir,source_map=source_map,doping=doping,raw=raw,state_csv=state_csv,task4=paths,model=model))
     expected={(topology,bias) for topology in TOPOLOGIES for bias in BIASES}
     if set(matrix)!=expected:
         raise ContractError("states must contain exact biases 0, -12, -19 V for both topologies")
@@ -461,6 +552,11 @@ def build_report(state_root):
         topology=item.topology_id; bias=item.bias; triangles=TRIS[topology]; edge_ids=expected_edge_ids(triangles)
         sent={node:{**item.state_csv[node],**raw_si_node(item.raw[node])} for node in NODES}
         for node in NODES:
+            donor_cm3, acceptor_cm3 = item.doping[node]
+            gate(item.raw[node]["DonorConcentration"][0], donor_cm3, STATE_LIMIT,
+                 "raw Task3 donor/doping.csv parity error")
+            gate(item.raw[node]["AcceptorConcentration"][0], acceptor_cm3, STATE_LIMIT,
+                 "raw Task3 acceptor/doping.csv parity error")
             for name in ("psi_V","phin_V","phip_V","n_m3","p_m3"):
                 error=gate(sent[node][name],item.state_csv[node][name],STATE_LIMIT,"Task3 raw/state parity error"); state_errors.append(error)
         vela_nodes=read_csv(item.task4["node"],NODE_HEADER); vela_node_map={}
@@ -499,9 +595,13 @@ def build_report(state_root):
                 if int(raw_triangle[prefix+"node0"])+1!=a or int(raw_triangle[prefix+"node1"])+1!=b or int(raw_triangle[prefix+"edge_id"])!=edge_ids[key]:
                     raise ContractError("Vela triangle local edge identity/order mismatch")
                 mobility=(finite(raw_triangle[prefix+"electron_mobility_m2_per_V_s"],"electron mobility"),finite(raw_triangle[prefix+"hole_mobility_m2_per_V_s"],"hole mobility"))
+                gate(mobility[0], item.model.electron_mobility, FORMULA_LIMIT,
+                     "independent electron mobility error")
+                gate(mobility[1], item.model.hole_mobility, FORMULA_LIMIT,
+                     "independent hole mobility error")
                 if key in edge_mobility and any(hybrid_error(x,y)>=FORMULA_LIMIT for x,y in zip(edge_mobility[key],mobility)):
                     raise ContractError("inconsistent production edge mobility")
-                edge_mobility[key]=mobility
+                edge_mobility[key]=(item.model.electron_mobility, item.model.hole_mobility)
         vela_edges=read_csv(item.task4["edge"],EDGE_HEADER)
         if len(vela_edges)!=9: raise ContractError("edge row count mismatch")
         edge_map={}
@@ -531,6 +631,14 @@ def build_report(state_root):
             eta_e=(s1["psi_V"]-s0["psi_V"])/THERMAL_VOLTAGE_V; eta_h=eta_e
             electron_formula_error=hybrid_error(vela_e,electron_flux); hole_formula_error=hybrid_error(vela_h,hole_flux)
             current_diag_e=hybrid_error(sent_e_projection,Q_C*vela_e); current_diag_h=hybrid_error(sent_h_projection,Q_C*vela_h); external_errors.extend((current_diag_e,current_diag_h))
+            vela_edge_field_e=finite(raw_edge["electron_impact_field_V_per_m"],"impact field")
+            vela_edge_field_h=finite(raw_edge["hole_impact_field_V_per_m"],"impact field")
+            vela_edge_alpha_e=finite(raw_edge["electron_alpha_per_m"],"alpha")
+            vela_edge_alpha_h=finite(raw_edge["hole_alpha_per_m"],"alpha")
+            formula_errors.extend((
+                gate(vela_edge_alpha_e, van_overstraeten_alpha(vela_edge_field_e,"electron"), FORMULA_LIMIT, "independent electron alpha error"),
+                gate(vela_edge_alpha_h, van_overstraeten_alpha(vela_edge_field_h,"hole"), FORMULA_LIMIT, "independent hole alpha error"),
+            ))
             row={"topology_id":topology,"bias_V":bias,"edge_id":edge_ids[(a,b)],"node0":a,"node1":b,"canonical_sign":"+1 node0-to-node1","edge_class":edge_class,"dx_m":dx,"dy_m":dy,"length_m":length,
                  "node0_psi_V":s0["psi_V"],"node1_psi_V":s1["psi_V"],"node0_phin_V":s0["phin_V"],"node1_phin_V":s1["phin_V"],"node0_phip_V":s0["phip_V"],"node1_phip_V":s1["phip_V"],"node0_n_m3":s0["n_m3"],"node1_n_m3":s1["n_m3"],"node0_p_m3":s0["p_m3"],"node1_p_m3":s1["p_m3"],
                  "delta_phin_over_h_V_per_m":(s1["phin_V"]-s0["phin_V"])/length,"delta_phip_over_h_V_per_m":(s1["phip_V"]-s0["phip_V"])/length,
@@ -538,7 +646,7 @@ def build_report(state_root):
                  "electron_midpoint_density_m3":midpoint_e,"hole_midpoint_density_m3":midpoint_h,"python_electron_flux_per_m2_s":electron_flux,"python_hole_flux_per_m2_s":hole_flux,"pdf_electron_grad_qf_flux_per_m2_s":mun*midpoint_e*(s1["phin_V"]-s0["phin_V"])/length,"pdf_hole_grad_qf_flux_per_m2_s":-mup*midpoint_h*(s1["phip_V"]-s0["phip_V"])/length,
                  "vela_electron_flux_per_m2_s":vela_e,"vela_hole_flux_per_m2_s":vela_h,"vela_electron_current_A_per_m2":Q_C*vela_e,"vela_hole_current_A_per_m2":Q_C*vela_h,"electron_formula_abs_error":abs(vela_e-electron_flux),"hole_formula_abs_error":abs(vela_h-hole_flux),"electron_formula_hybrid_error":electron_formula_error,"hole_formula_hybrid_error":hole_formula_error,
                  "sentaurus_electron_projection_A_per_m2":sent_e_projection,"sentaurus_hole_projection_A_per_m2":sent_h_projection,"sentaurus_electron_magnitude_A_per_m2":math.hypot(*sent_e_vector),"sentaurus_hole_magnitude_A_per_m2":math.hypot(*sent_h_vector),"sentaurus_vs_vela_electron_current_diagnostic":current_diag_e,"sentaurus_vs_vela_hole_current_diagnostic":current_diag_h,
-                 "vela_electron_impact_field_V_per_m":finite(raw_edge["electron_impact_field_V_per_m"],"impact field"),"vela_hole_impact_field_V_per_m":finite(raw_edge["hole_impact_field_V_per_m"],"impact field"),"vela_electron_alpha_per_m":finite(raw_edge["electron_alpha_per_m"],"alpha"),"vela_hole_alpha_per_m":finite(raw_edge["hole_alpha_per_m"],"alpha"),"edge_area_m2":finite(raw_edge["edge_area_m2"],"edge area")}
+                 "vela_electron_impact_field_V_per_m":vela_edge_field_e,"vela_hole_impact_field_V_per_m":vela_edge_field_h,"vela_electron_alpha_per_m":vela_edge_alpha_e,"vela_hole_alpha_per_m":vela_edge_alpha_h,"edge_area_m2":finite(raw_edge["edge_area_m2"],"edge area")}
             row["vela_electron_edge_source_per_s"]=row["vela_electron_alpha_per_m"]*abs(vela_e)*row["edge_area_m2"]
             row["vela_hole_edge_source_per_s"]=row["vela_hole_alpha_per_m"]*abs(vela_h)*row["edge_area_m2"]
             edge_rows.append(row); state_edges[(a,b)]=row
@@ -558,7 +666,9 @@ def build_report(state_root):
                 electron_projections.append(edge["vela_electron_flux_per_m2_s"]); hole_projections.append(edge["vela_hole_flux_per_m2_s"])
             electron_vector=np.linalg.lstsq(np.array(matrices),np.array(electron_projections),rcond=None)[0]
             hole_vector=np.linalg.lstsq(np.array(matrices),np.array(hole_projections),rcond=None)[0]
-            electron_source=0.0; hole_source=0.0; sentaurus_source=0.0; electron_partition={node:0.0 for node in NODES}; hole_partition={node:0.0 for node in NODES}
+            vela_electron_source=0.0; vela_hole_source=0.0; python_electron_source=0.0; python_hole_source=0.0; sentaurus_source=0.0
+            vela_electron_partition={node:0.0 for node in NODES}; vela_hole_partition={node:0.0 for node in NODES}
+            python_electron_partition={node:0.0 for node in NODES}; python_hole_partition={node:0.0 for node in NODES}
             row={"topology_id":topology,"bias_V":bias,"cell_id":cell_id,"node0":triangle[0],"node1":triangle[1],"node2":triangle[2],"orientation":"CCW","signed_double_area_m2":signed_area2,"area_m2":signed_area2/2,
                  "shape_grad_N0_x_per_m":shape_gradients[0][0],"shape_grad_N0_y_per_m":shape_gradients[0][1],"shape_grad_N1_x_per_m":shape_gradients[1][0],"shape_grad_N1_y_per_m":shape_gradients[1][1],"shape_grad_N2_x_per_m":shape_gradients[2][0],"shape_grad_N2_y_per_m":shape_gradients[2][1],
                  "python_grad_psi_x_V_per_m":gradients["psi_V"][0],"python_grad_psi_y_V_per_m":gradients["psi_V"][1],"python_grad_phin_x_V_per_m":gradients["phin_V"][0],"python_grad_phin_y_V_per_m":gradients["phin_V"][1],"python_grad_phip_x_V_per_m":gradients["phip_V"][0],"python_grad_phip_y_V_per_m":gradients["phip_V"][1],
@@ -567,24 +677,40 @@ def build_report(state_root):
             for local in range(3):
                 prefix=f"local_edge{local}_"; a=triangle[local]; b=triangle[(local+1)%3]; s0=sent[a]; s1=sent[b]
                 partial=genius_truncated_partial_volume(points,local); electron_mid=gss_logistic_midpoint(s0["n_m3"],s1["n_m3"],s0["psi_V"],s1["psi_V"],THERMAL_VOLTAGE_V,"electron"); hole_mid=gss_logistic_midpoint(s0["p_m3"],s1["p_m3"],s0["psi_V"],s1["psi_V"],THERMAL_VOLTAGE_V,"hole")
-                electron_field=math.hypot(*gradients["phin_V"]); hole_field=math.hypot(*gradients["phip_V"]); mun=finite(raw_triangle[prefix+"electron_mobility_m2_per_V_s"],"mobility"); mup=finite(raw_triangle[prefix+"hole_mobility_m2_per_V_s"],"mobility")
-                edge_length=math.dist(tuple(np.array(NODES[a])*1e-6),tuple(np.array(NODES[b])*1e-6)); electron_edge_field=abs(s1["phin_V"]-s0["phin_V"])/edge_length; hole_edge_field=abs(s1["phip_V"]-s0["phip_V"])/edge_length; electron_proxy=mun*electron_mid*electron_edge_field; hole_proxy=mup*hole_mid*hole_edge_field; electron_alpha=finite(raw_triangle[prefix+"electron_alpha_per_m"],"alpha"); hole_alpha=finite(raw_triangle[prefix+"hole_alpha_per_m"],"alpha"); electron_local=electron_alpha*electron_proxy*partial; hole_local=hole_alpha*hole_proxy*partial
-                local_errors=[zero_normalized_gate(finite(raw_triangle[prefix+"truncated_partial_volume_m2"],"partial volume"),partial,1e-27,FORMULA_LIMIT,"formula error"),gate(finite(raw_triangle[prefix+"electron_cell_qf_field_V_per_m"],"cell field"),electron_field,FORMULA_LIMIT,"formula error"),gate(finite(raw_triangle[prefix+"hole_cell_qf_field_V_per_m"],"cell field"),hole_field,FORMULA_LIMIT,"formula error"),gate(finite(raw_triangle[prefix+"electron_midpoint_density_m3"],"midpoint"),electron_mid,FORMULA_LIMIT,"formula error"),gate(finite(raw_triangle[prefix+"hole_midpoint_density_m3"],"midpoint"),hole_mid,FORMULA_LIMIT,"formula error"),gate(finite(raw_triangle[prefix+"electron_flux_proxy_per_m2_s"],"flux proxy"),electron_proxy,FORMULA_LIMIT,"formula error"),gate(finite(raw_triangle[prefix+"hole_flux_proxy_per_m2_s"],"flux proxy"),hole_proxy,FORMULA_LIMIT,"formula error"),zero_normalized_gate(finite(raw_triangle[prefix+"electron_source_integral_per_m_s"],"source"),electron_local,1e-285,FORMULA_LIMIT,"formula error"),zero_normalized_gate(finite(raw_triangle[prefix+"hole_source_integral_per_m_s"],"source"),hole_local,1e-285,FORMULA_LIMIT,"formula error")]
-                errors.extend(local_errors); electron_source+=electron_local; hole_source+=hole_local; electron_partition[a]+=electron_local/2; electron_partition[b]+=electron_local/2; hole_partition[a]+=hole_local/2; hole_partition[b]+=hole_local/2
+                electron_field=math.hypot(*gradients["phin_V"]); hole_field=math.hypot(*gradients["phip_V"])
+                cpp_mun=finite(raw_triangle[prefix+"electron_mobility_m2_per_V_s"],"mobility"); cpp_mup=finite(raw_triangle[prefix+"hole_mobility_m2_per_V_s"],"mobility")
+                mun=item.model.electron_mobility; mup=item.model.hole_mobility
+                edge_length=math.dist(tuple(np.array(NODES[a])*1e-6),tuple(np.array(NODES[b])*1e-6)); electron_edge_field=abs(s1["phin_V"]-s0["phin_V"])/edge_length; hole_edge_field=abs(s1["phip_V"]-s0["phip_V"])/edge_length; electron_proxy=mun*electron_mid*electron_edge_field; hole_proxy=mup*hole_mid*hole_edge_field
+                electron_alpha=van_overstraeten_alpha(electron_field,"electron",minimum_field_V_per_m=item.model.minimum_field); hole_alpha=van_overstraeten_alpha(hole_field,"hole",minimum_field_V_per_m=item.model.minimum_field)
+                cpp_electron_alpha=finite(raw_triangle[prefix+"electron_alpha_per_m"],"alpha"); cpp_hole_alpha=finite(raw_triangle[prefix+"hole_alpha_per_m"],"alpha")
+                electron_local=electron_alpha*electron_proxy*partial; hole_local=hole_alpha*hole_proxy*partial
+                cpp_partial=finite(raw_triangle[prefix+"truncated_partial_volume_m2"],"partial volume")
+                cpp_electron_local=finite(raw_triangle[prefix+"electron_source_integral_per_m_s"],"source"); cpp_hole_local=finite(raw_triangle[prefix+"hole_source_integral_per_m_s"],"source")
+                local_errors=[zero_normalized_gate(cpp_partial,partial,GEOMETRIC_ZERO_AREA_M2,FORMULA_LIMIT,"formula error"),gate(finite(raw_triangle[prefix+"electron_cell_qf_field_V_per_m"],"cell field"),electron_field,FORMULA_LIMIT,"formula error"),gate(finite(raw_triangle[prefix+"hole_cell_qf_field_V_per_m"],"cell field"),hole_field,FORMULA_LIMIT,"formula error"),gate(finite(raw_triangle[prefix+"electron_midpoint_density_m3"],"midpoint"),electron_mid,FORMULA_LIMIT,"formula error"),gate(finite(raw_triangle[prefix+"hole_midpoint_density_m3"],"midpoint"),hole_mid,FORMULA_LIMIT,"formula error"),gate(cpp_mun,mun,FORMULA_LIMIT,"independent electron mobility error"),gate(cpp_mup,mup,FORMULA_LIMIT,"independent hole mobility error"),gate(cpp_electron_alpha,electron_alpha,FORMULA_LIMIT,"independent electron alpha error"),gate(cpp_hole_alpha,hole_alpha,FORMULA_LIMIT,"independent hole alpha error"),gate(finite(raw_triangle[prefix+"electron_flux_proxy_per_m2_s"],"flux proxy"),electron_proxy,FORMULA_LIMIT,"formula error"),gate(finite(raw_triangle[prefix+"hole_flux_proxy_per_m2_s"],"flux proxy"),hole_proxy,FORMULA_LIMIT,"formula error"),geometric_source_gate(cpp_electron_local,electron_local,cpp_partial,partial,FORMULA_LIMIT,"formula error"),geometric_source_gate(cpp_hole_local,hole_local,cpp_partial,partial,FORMULA_LIMIT,"formula error")]
+                errors.extend(local_errors)
+                vela_electron_source+=cpp_electron_local; vela_hole_source+=cpp_hole_local; python_electron_source+=electron_local; python_hole_source+=hole_local
+                vela_electron_partition[a]+=cpp_electron_local/2; vela_electron_partition[b]+=cpp_electron_local/2; vela_hole_partition[a]+=cpp_hole_local/2; vela_hole_partition[b]+=cpp_hole_local/2
+                python_electron_partition[a]+=electron_local/2; python_electron_partition[b]+=electron_local/2; python_hole_partition[a]+=hole_local/2; python_hole_partition[b]+=hole_local/2
                 sent_e=((s0["electron_current_x_A_per_m2"]+s1["electron_current_x_A_per_m2"])/2,(s0["electron_current_y_A_per_m2"]+s1["electron_current_y_A_per_m2"])/2); sent_h=((s0["hole_current_x_A_per_m2"]+s1["hole_current_x_A_per_m2"])/2,(s0["hole_current_y_A_per_m2"]+s1["hole_current_y_A_per_m2"])/2)
                 sent_alpha_e=(s0["electron_alpha_per_m"]+s1["electron_alpha_per_m"])/2; sent_alpha_h=(s0["hole_alpha_per_m"]+s1["hole_alpha_per_m"])/2
                 sentaurus_source+=(sent_alpha_e*math.hypot(*sent_e)/Q_C+sent_alpha_h*math.hypot(*sent_h)/Q_C)*partial
                 for suffix in LOCAL_SUFFIXES: row[f"vela_{prefix}{suffix}"]=finite(raw_triangle[prefix+suffix],prefix+suffix)
                 row[f"python_{prefix}truncated_partial_volume_m2"]=partial; row[f"python_{prefix}electron_source_integral_per_m_s"]=electron_local; row[f"python_{prefix}hole_source_integral_per_m_s"]=hole_local
-            row["normalized_geometric_zero"] = any(abs(finite(raw_triangle[f"local_edge{i}_truncated_partial_volume_m2"],"partial volume")) <= 1e-27 and abs(genius_truncated_partial_volume(points,i)) <= 1e-27 for i in range(3)); formula_errors.extend(errors); row["max_formula_hybrid_error"]=max(errors); row["vela_electron_source_integral_per_m_s"]=electron_source; row["vela_hole_source_integral_per_m_s"]=hole_source; row["vela_total_source_integral_per_m_s"]=electron_source+hole_source; row["sentaurus_total_source_integral_per_m_s"]=sentaurus_source
-            diagnostic=hybrid_error(sentaurus_source,electron_source+hole_source); row["sentaurus_vs_vela_total_source_diagnostic"]=diagnostic; external_errors.append(diagnostic)
-            for node in NODES: row[f"electron_node{node}_source_partition_per_m_s"]=electron_partition[node]; row[f"hole_node{node}_source_partition_per_m_s"]=hole_partition[node]
+            row["normalized_geometric_zero"] = any(abs(finite(raw_triangle[f"local_edge{i}_truncated_partial_volume_m2"],"partial volume")) <= GEOMETRIC_ZERO_AREA_M2 and abs(genius_truncated_partial_volume(points,i)) <= GEOMETRIC_ZERO_AREA_M2 for i in range(3))
+            aggregate_error=gate(vela_electron_source+vela_hole_source,python_electron_source+python_hole_source,FORMULA_LIMIT,"raw C++ versus independent Python aggregate source error")
+            errors.append(aggregate_error); formula_errors.extend(errors); row["max_formula_hybrid_error"]=max(errors)
+            row["vela_electron_source_integral_per_m_s"]=vela_electron_source; row["vela_hole_source_integral_per_m_s"]=vela_hole_source; row["vela_total_source_integral_per_m_s"]=vela_electron_source+vela_hole_source
+            row["python_electron_source_integral_per_m_s"]=python_electron_source; row["python_hole_source_integral_per_m_s"]=python_hole_source; row["python_total_source_integral_per_m_s"]=python_electron_source+python_hole_source
+            row["vela_vs_python_total_source_hybrid_error"]=aggregate_error; row["sentaurus_total_source_integral_per_m_s"]=sentaurus_source
+            diagnostic=hybrid_error(sentaurus_source,vela_electron_source+vela_hole_source); row["sentaurus_vs_vela_total_source_diagnostic"]=diagnostic; external_errors.append(diagnostic)
+            for node in NODES:
+                row[f"vela_electron_node{node}_source_partition_per_m_s"]=vela_electron_partition[node]; row[f"vela_hole_node{node}_source_partition_per_m_s"]=vela_hole_partition[node]
+                row[f"python_electron_node{node}_source_partition_per_m_s"]=python_electron_partition[node]; row[f"python_hole_node{node}_source_partition_per_m_s"]=python_hole_partition[node]
             triangle_rows.append(row)
     require_unique_keys(node_rows,("topology_id","bias_V","node_id")); require_unique_keys(edge_rows,("topology_id","bias_V","node0","node1")); require_unique_keys(triangle_rows,("topology_id","bias_V","cell_id"))
     if (len(node_rows),len(edge_rows),len(triangle_rows))!=(36,54,24): raise ContractError("output row-count mismatch")
     orientation=build_orientation_summary(node_rows,edge_rows,triangle_rows)
-    replay_pass=all(replay.get("exit_code")==0 for replay in manifest.get("task4_provenance",{}).get("replays",[])) and len(manifest.get("task4_provenance",{}).get("replays",[]))==6
-    summary={"schema":SCHEMA,"status":"PASS" if replay_pass else "FAIL","scope":"fixed-state operator audit, not a BV curve","row_counts":{"node_state":36,"edge_audit":54,"triangle_audit":24},"gates":{"passed":replay_pass,"state_parity_limit":STATE_LIMIT,"formula_limit":FORMULA_LIMIT,"sentaurus_vs_vela_current_source_threshold":None,"max_state_parity_hybrid_error":max(state_errors,default=0.0),"max_cpp_python_formula_hybrid_error":max(formula_errors,default=0.0),"max_external_diagnostic_hybrid_error":max(external_errors,default=0.0)},"orientation_sensitivity":orientation,"figure_count":14,"qa_notes":["Three biases are separate fixed-state diagnostic samples, not a BV curve.","External Sentaurus/Vela comparisons are diagnostic-only.","Zero pairs have no log ratio."]}
+    summary={"schema":SCHEMA,"status":"UNVERIFIED","scope":"fixed-state operator audit, not a BV curve","row_counts":{"node_state":36,"edge_audit":54,"triangle_audit":24},"gates":{"passed":False,"provenance_replay_validated":False,"state_parity_limit":STATE_LIMIT,"formula_limit":FORMULA_LIMIT,"sentaurus_vs_vela_current_source_threshold":None,"max_state_parity_hybrid_error":max(state_errors,default=0.0),"max_cpp_python_formula_hybrid_error":max(formula_errors,default=0.0),"max_external_diagnostic_hybrid_error":max(external_errors,default=0.0)},"orientation_sensitivity":orientation,"figure_count":14,"qa_notes":["Three biases are separate fixed-state diagnostic samples, not a BV curve.","External Sentaurus/Vela comparisons are diagnostic-only.","Zero pairs have no log ratio."]}
     return SimpleNamespace(node_rows=node_rows,edge_rows=edge_rows,triangle_rows=triangle_rows,summary=summary,manifest=manifest,fixture_root=root)
 
 
@@ -621,11 +747,10 @@ def write_csv(path,rows):
         writer=csv.DictWriter(handle,fieldnames=list(rows[0])); writer.writeheader(); writer.writerows(rows)
 
 
-def command_status_from_provenance(manifest):
+def command_status_from_provenance(manifest, replay_validated=False):
     replays=manifest.get("task4_provenance",{}).get("replays",[])
-    replay_status="PASS" if len(replays)==6 and all(replay.get("exit_code")==0 for replay in replays) else "FAIL"
-    return {"task4_replay":replay_status,"task4_replay_exit_codes":[replay.get("exit_code") for replay in replays],"report_generation":"PASS" if replay_status=="PASS" else "BLOCKED"}
-
+    replay_status="PASS" if replay_validated else "FAIL"
+    return {"task4_replay":replay_status,"task4_replay_exit_codes":[replay.get("exit_code") for replay in replays],"report_generation":"PASS" if replay_validated else "BLOCKED"}
 
 def plot_reports(report,out):
     import matplotlib
@@ -668,12 +793,18 @@ def plot_reports(report,out):
 
 
 def write_report(report,out):
+    failures=verify_task4_replay(report.fixture_root, REPO_ROOT/TASK4_PRODUCER)
+    if failures:
+        raise ContractError("Task4 provenance/replay validation failed: " + "; ".join(failures))
+    report.summary["status"]="PASS"
+    report.summary["gates"]["passed"]=True
+    report.summary["gates"]["provenance_replay_validated"]=True
     out=Path(out); out.mkdir(parents=True,exist_ok=True)
     write_csv(out/"node_state.csv",report.node_rows); write_csv(out/"edge_audit.csv",report.edge_rows); write_csv(out/"triangle_audit.csv",report.triangle_rows)
     (out/"summary.json").write_text(json.dumps(report.summary,indent=2)+"\n",encoding="utf-8")
     all_files=sorted(path for path in report.fixture_root.rglob("*") if path.is_file())
     hashes={path.relative_to(report.fixture_root).as_posix():hashlib.sha256(path.read_bytes()).hexdigest() for path in all_files}
-    status=command_status_from_provenance(report.manifest)
+    status=command_status_from_provenance(report.manifest, replay_validated=True)
     output_manifest={"schema":SCHEMA,"source_state_schema":TASK3_SCHEMA,"topology_definitions":report.manifest["states"],"bias_states_V":list(BIASES),"model_configuration":{"workflow":"immutable_fixed_state","temperature_K":TEMPERATURE_K,"thermal_voltage_V":THERMAL_VOLTAGE_V,"includeNiGradientDrift":True,"solver_runs":False},"task4_provenance":report.manifest.get("task4_provenance"),"tool_versions":{"python":platform.python_version(),"numpy":np.__version__},"command_status":status,"input_sha256":hashes,"row_counts":report.summary["row_counts"],"gate_status":"PASS" if status["task4_replay"]=="PASS" and status["report_generation"]=="PASS" else "FAIL"}
     (out/"manifest.json").write_text(json.dumps(output_manifest,indent=2)+"\n",encoding="utf-8")
     gates=report.summary["gates"]
@@ -701,27 +832,152 @@ The committed state root is synthetic and exercises the real interfaces; it does
     (out/"summary.md").write_text(markdown,encoding="utf-8"); plot_reports(report,out)
 
 
+def _manifest_path(value):
+    return str(value).replace("\\", "/")
+
+
+def _joined_manifest_path(base, name):
+    base=_manifest_path(base).rstrip("/")
+    return f"{base}/{name}"
+
+
+def _expected_replay_arguments(state):
+    export=state["export_dir"]
+    node_out=_manifest_path(state.get("vela_node_csv", _joined_manifest_path(export,"vela_node_state.csv")))
+    edge_out=_manifest_path(state.get("vela_edge_csv", _joined_manifest_path(export,"vela_edge_audit.csv")))
+    triangle_out=_manifest_path(state.get("vela_triangle_csv", _joined_manifest_path(export,"vela_triangle_audit.csv")))
+    return [
+        "--mesh", _joined_manifest_path(export,"mesh.json"),
+        "--doping", _joined_manifest_path(export,"doping.csv"),
+        "--state", _manifest_path(state["state_csv"]),
+        "--config", _joined_manifest_path(export,"audit.json"),
+        "--node-out", node_out,
+        "--edge-out", edge_out,
+        "--triangle-out", triangle_out,
+    ]
+
+
+def _sha256(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
 def verify_task4_replay(root,executable):
-    root=Path(root); executable=Path(executable); manifest=json.loads((root/"manifest.json").read_text(encoding="utf-8")); failures=[]
-    provenance=manifest.get("task4_provenance",{})
-    if provenance.get("producer")!="build-release/pn2d_minimal6_operator_audit.exe": return ["unexpected producer"]
-    if hashlib.sha256(executable.read_bytes()).hexdigest()!=provenance.get("producer_sha256"): failures.append("producer hash mismatch")
-    for replay in provenance.get("replays",[]):
-        for relative,expected in replay.get("input_sha256",{}).items():
-            path=root/relative
-            if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest()!=expected: failures.append(f"input hash mismatch: {relative}")
+    root=Path(root); executable=Path(executable); failures=[]
+    try:
+        manifest=json.loads((root/"manifest.json").read_text(encoding="utf-8"))
+    except (OSError,json.JSONDecodeError) as error:
+        return [f"invalid provenance manifest: {error}"]
+    provenance=manifest.get("task4_provenance")
+    if not isinstance(provenance,dict):
+        return ["missing Task4 provenance"]
+    if provenance.get("producer")!=TASK4_PRODUCER:
+        failures.append("unexpected producer identity")
+    if provenance.get("task4_source_commit")!=TASK4_SOURCE_COMMIT:
+        failures.append("unexpected Task4 source commit")
+    if not executable.is_file():
+        failures.append("producer executable is missing")
+    elif _sha256(executable)!=provenance.get("producer_sha256"):
+        failures.append("producer hash mismatch")
+
+    states=manifest.get("states")
+    replays=provenance.get("replays")
+    expected_matrix={(topology,bias) for topology in TOPOLOGIES for bias in BIASES}
+    if not isinstance(states,list) or len(states)!=6:
+        failures.append("state manifest does not contain six exact replay identities")
+        states=[]
+    state_map={}
+    for state in states:
+        try:
+            identity=(state.get("topology_id"),finite(state.get("actual_bias_V"),"provenance state bias"))
+        except ContractError:
+            failures.append("state manifest has invalid replay identity")
+            continue
+        if identity in state_map:
+            failures.append("state manifest has duplicate replay identity")
+        state_map[identity]=state
+    if set(state_map)!=expected_matrix:
+        failures.append("state manifest does not contain six exact replay identities")
+    if not isinstance(replays,list) or len(replays)!=6:
+        failures.append("provenance must contain six exact replay identities")
+        replays=[]
+    replay_map={}
+    for replay in replays:
+        if not isinstance(replay,dict):
+            failures.append("invalid replay record")
+            continue
+        try:
+            identity=(replay.get("topology_id"),finite(replay.get("bias_V"),"replay bias"))
+        except ContractError:
+            failures.append("invalid replay identity")
+            continue
+        if identity in replay_map:
+            failures.append("provenance must contain six exact replay identities")
+        replay_map[identity]=replay
+    if set(replay_map)!=expected_matrix:
+        failures.append("provenance must contain six exact replay identities")
+    if failures:
+        return sorted(set(failures))
+
+    options=("--mesh","--doping","--state","--config","--node-out","--edge-out","--triangle-out")
+    input_options=options[:4]; output_options=options[4:]
+    environment=os.environ.copy(); tool_dirs=[r"D:\msys64\ucrt64\bin",r"D:\msys64\usr\bin"]
+    environment["PATH"]=os.pathsep.join(tool_dirs+[environment.get("PATH","")])
+    for identity in sorted(expected_matrix):
+        state=state_map[identity]; replay=replay_map[identity]; expected_arguments=_expected_replay_arguments(state)
+        arguments=replay.get("arguments")
+        label=f"{identity[0]} {identity[1]:g}V"
+        if replay.get("producer")!=TASK4_PRODUCER:
+            failures.append(f"replay producer identity mismatch: {label}")
+        if arguments!=expected_arguments:
+            failures.append(f"replay arguments mismatch: {label}")
+            continue
+        expected_command=" ".join([TASK4_PRODUCER,*expected_arguments])
+        if replay.get("command")!=expected_command:
+            failures.append(f"replay command mismatch: {label}")
+        if replay.get("exit_code")!=0:
+            failures.append(f"recorded replay exit code is not zero: {label}")
+        values=dict(zip(arguments[0::2],arguments[1::2]))
+        if tuple(arguments[0::2])!=options or len(values)!=len(options):
+            failures.append(f"replay option identity/order mismatch: {label}")
+            continue
+        expected_inputs={values[option] for option in input_options}
+        expected_outputs={values[option] for option in output_options}
+        input_hashes=replay.get("input_sha256")
+        output_hashes=replay.get("output_sha256")
+        if not isinstance(input_hashes,dict) or set(input_hashes)!=expected_inputs:
+            failures.append(f"recorded input hashes are incomplete or extra: {label}")
+            continue
+        if not isinstance(output_hashes,dict) or set(output_hashes)!=expected_outputs:
+            failures.append(f"committed output hashes are incomplete or extra: {label}")
+            continue
+        for relative,expected_hash in input_hashes.items():
+            path=Path(relative); path=path if path.is_absolute() else root/path
+            if not path.is_file() or _sha256(path)!=expected_hash:
+                failures.append(f"input hash mismatch: {relative}")
+        for relative,expected_hash in output_hashes.items():
+            path=Path(relative); path=path if path.is_absolute() else root/path
+            if not path.is_file() or _sha256(path)!=expected_hash:
+                failures.append(f"committed output hash mismatch: {relative}")
         with tempfile.TemporaryDirectory() as directory:
-            directory=Path(directory); arguments=list(replay["arguments"]); output_names={"--node-out":"node.csv","--edge-out":"edge.csv","--triangle-out":"triangle.csv"}
-            for index in range(0,len(arguments),2):
-                option=arguments[index]
-                if option in output_names: arguments[index+1]=str(directory/output_names[option])
-                else: arguments[index+1]=str(root/arguments[index+1])
-            environment=os.environ.copy(); tool_dirs=[r"D:\msys64\ucrt64\bin",r"D:\msys64\usr\bin"]; environment["PATH"]=os.pathsep.join(tool_dirs+[environment.get("PATH","")])
-            completed=subprocess.run([str(executable),*arguments],cwd=root.parents[2],capture_output=True,text=True,env=environment)
-            if completed.returncode!=replay.get("exit_code"): failures.append(f"exit mismatch: {replay['topology_id']} {replay['bias_V']}"); continue
-            for option,name in output_names.items():
-                relative=replay["arguments"][replay["arguments"].index(option)+1]; expected=replay["output_sha256"][relative]
-                if hashlib.sha256((directory/name).read_bytes()).hexdigest()!=expected: failures.append(f"output hash mismatch: {relative}")
+            directory=Path(directory); replay_arguments=list(arguments); fresh={
+                "--node-out":directory/"node.csv",
+                "--edge-out":directory/"edge.csv",
+                "--triangle-out":directory/"triangle.csv",
+            }
+            for index in range(0,len(replay_arguments),2):
+                option=replay_arguments[index]; value=Path(replay_arguments[index+1])
+                if option in fresh:
+                    replay_arguments[index+1]=str(fresh[option])
+                else:
+                    replay_arguments[index+1]=str(value if value.is_absolute() else root/value)
+            completed=subprocess.run([str(executable),*replay_arguments],cwd=REPO_ROOT,capture_output=True,text=True,env=environment)
+            if completed.returncode!=0:
+                failures.append(f"fresh replay exit code is not zero: {label}")
+                continue
+            for option,path in fresh.items():
+                relative=values[option]
+                if not path.is_file() or _sha256(path)!=output_hashes[relative]:
+                    failures.append(f"fresh replay output hash mismatch: {relative}")
     return failures
 
 
