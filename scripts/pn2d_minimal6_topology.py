@@ -8,8 +8,10 @@ import json
 import re
 import sys
 from collections import Counter
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -29,8 +31,8 @@ _CONTACTS = {"Anode": (1, 5), "Cathode": (3, 4)}
 _ACCEPTORS = {1: 1.0e17, 2: 1.0e17, 3: 0.0, 4: 0.0, 5: 1.0e17, 6: 1.0e17}
 _DONORS = {1: 0.0, 2: 1.0e17, 3: 1.0e17, 4: 1.0e17, 5: 0.0, 6: 1.0e17}
 _TRIANGLES = {
-    "sketch": [(1, 5, 2), (5, 6, 2), (2, 6, 4), (2, 4, 3)],
-    "mirror": [(1, 5, 6), (1, 6, 2), (2, 6, 3), (6, 4, 3)],
+    "sketch": ((1, 5, 2), (5, 6, 2), (2, 6, 4), (2, 4, 3)),
+    "mirror": ((1, 5, 6), (1, 6, 2), (2, 6, 3), (6, 4, 3)),
 }
 _MIRROR_LABELS = {1: 5, 2: 6, 3: 4, 4: 3, 5: 1, 6: 2}
 _REGION_OWNERSHIP = {"R.Si": [0, 1, 2, 3], "Cathode": [4], "Anode": [5]}
@@ -41,11 +43,24 @@ _MATERIALS = ["Silicon", "Contact", "Contact"]
 @dataclass(frozen=True)
 class Topology:
     topology_id: str
-    nodes: dict[int, tuple[float, float]]
-    triangles: list[tuple[int, int, int]]
-    contacts: dict[str, tuple[int, int]]
-    acceptors_cm3: dict[int, float]
-    donors_cm3: dict[int, float]
+    nodes: Mapping[int, tuple[float, float]]
+    triangles: tuple[tuple[int, int, int], ...]
+    contacts: Mapping[str, tuple[int, int]]
+    acceptors_cm3: Mapping[int, float]
+    donors_cm3: Mapping[int, float]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "nodes", MappingProxyType(dict(self.nodes)))
+        object.__setattr__(
+            self,
+            "triangles",
+            tuple(tuple(triangle) for triangle in self.triangles),
+        )
+        object.__setattr__(self, "contacts", MappingProxyType(dict(self.contacts)))
+        object.__setattr__(
+            self, "acceptors_cm3", MappingProxyType(dict(self.acceptors_cm3))
+        )
+        object.__setattr__(self, "donors_cm3", MappingProxyType(dict(self.donors_cm3)))
 
 
 @dataclass(frozen=True)
@@ -56,7 +71,9 @@ class TopologySummary:
     contact_edges: dict[str, tuple[int, int]]
 
 
-def canonical_edges(triangles: list[tuple[int, int, int]]) -> list[tuple[int, int]]:
+def canonical_edges(
+    triangles: Iterable[tuple[int, int, int]],
+) -> list[tuple[int, int]]:
     return sorted(
         {
             tuple(sorted(edge))
@@ -178,7 +195,7 @@ def _edge_reference(
 
 
 def _edge_locations(
-    triangles: list[tuple[int, int, int]], edges: list[tuple[int, int]]
+    triangles: Iterable[tuple[int, int, int]], edges: Sequence[tuple[int, int]]
 ) -> list[str]:
     incidence = Counter(
         tuple(sorted(edge))
@@ -351,6 +368,143 @@ Data {{
     path.write_text(text, encoding="utf-8")
 
 
+_NUMBER_RE = re.compile(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?")
+
+
+def _metadata_assignment(body: str, name: str) -> str | None:
+    match = re.search(rf"\b{re.escape(name)}\s*=\s*([^\s\]\}}]+)", body)
+    return match.group(1) if match else None
+
+
+def _metadata_list(body: str, name: str) -> list[str]:
+    match = re.search(rf"\b{re.escape(name)}\s*=\s*\[(.*?)\]", body, re.S)
+    if not match:
+        return []
+    return [
+        quoted or bare
+        for quoted, bare in re.findall(
+            r'"([^"]+)"|([A-Za-z0-9_.:+-]+)', match.group(1)
+        )
+    ]
+
+
+def _metadata_numbers(body: str, name: str) -> tuple[float, ...]:
+    match = re.search(rf"\b{re.escape(name)}\s*=\s*\[(.*?)\]", body, re.S)
+    if not match:
+        return ()
+    return tuple(float(value) for value in _NUMBER_RE.findall(match.group(1)))
+
+
+def _strict_grid_metadata(text: str) -> bool:
+    info_match = re.search(r"\bInfo\s*\{(?P<body>.*?)\n\}", text, re.S)
+    coord_match = re.search(r"\bCoordSystem\s*\{(?P<body>.*?)\n\s*\}", text, re.S)
+    if not info_match or not coord_match:
+        return False
+    info = info_match.group("body")
+    expected_scalars = {
+        "version": "1.1",
+        "type": "grid",
+        "dimension": "2",
+        "nb_vertices": "6",
+        "nb_edges": "9",
+        "nb_faces": "0",
+        "nb_elements": "6",
+        "nb_regions": "3",
+    }
+    if any(
+        _metadata_assignment(info, name) != value
+        for name, value in expected_scalars.items()
+    ):
+        return False
+    if _metadata_list(info, "regions") != _REGION_ORDER:
+        return False
+    if _metadata_list(info, "materials") != _MATERIALS:
+        return False
+
+    coord = coord_match.group("body")
+    if _metadata_numbers(coord, "translate") != (0.0, 0.0, 0.0):
+        return False
+    if _metadata_numbers(coord, "transform") != (
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+    ):
+        return False
+
+    for block_name, expected_count in (
+        ("Vertices", 6),
+        ("Edges", 9),
+        ("Locations", 9),
+        ("Elements", 6),
+    ):
+        match = re.search(rf"\b{block_name}\s*\((\d+)\)", text)
+        if not match or int(match.group(1)) != expected_count:
+            return False
+    for region_name, element_ids in _REGION_OWNERSHIP.items():
+        match = re.search(
+            rf'Region\s*\("{re.escape(region_name)}"\)\s*\{{'
+            rf'.*?\bElements\s*\((\d+)\)',
+            text,
+            re.S,
+        )
+        if not match or int(match.group(1)) != len(element_ids):
+            return False
+    return True
+
+
+def _strict_dataset_metadata(text: str, expected_names: list[str]) -> bool:
+    info_match = re.search(r"\bInfo\s*\{(?P<body>.*?)\n\}", text, re.S)
+    if not info_match:
+        return False
+    info = info_match.group("body")
+    expected_scalars = {
+        "version": "1.0",
+        "type": "dataset",
+        "dimension": "2",
+        "nb_vertices": "6",
+        "nb_edges": "9",
+        "nb_faces": "0",
+        "nb_elements": "6",
+        "nb_regions": "3",
+    }
+    if any(
+        _metadata_assignment(info, name) != value
+        for name, value in expected_scalars.items()
+    ):
+        return False
+    if _metadata_list(info, "datasets") != expected_names:
+        return False
+    if _metadata_list(info, "functions") != expected_names:
+        return False
+
+    for name in expected_names:
+        match = re.search(
+            rf'Dataset\s*\("{re.escape(name)}"\)\s*\{{'
+            rf'(?P<header>.*?)\bValues\s*\((\d+)\)',
+            text,
+            re.S,
+        )
+        if not match or int(match.group(2)) != 6:
+            return False
+        header = match.group("header")
+        if _metadata_assignment(header, "function") != name:
+            return False
+        if _metadata_assignment(header, "type") != "scalar":
+            return False
+        if _metadata_assignment(header, "dimension") != "1":
+            return False
+        if _metadata_assignment(header, "location") != "vertex":
+            return False
+        if _metadata_list(header, "validity") != ["R.Si"]:
+            return False
+    return True
+
 def _decode_triangle(
     record: list[int], edges: list[list[int]]
 ) -> tuple[int, int, int]:
@@ -358,10 +512,15 @@ def _decode_triangle(
         raise ValueError("expected a triangular DF-ISE element")
     oriented = []
     for reference in record[1:]:
+        edge_index = reference if reference >= 0 else -reference - 1
+        if edge_index < 0 or edge_index >= len(edges):
+            raise ValueError(f"DF-ISE edge reference {reference} is out of range")
+        if len(edges[edge_index]) != 2:
+            raise ValueError(f"DF-ISE edge reference {reference} is not a segment")
         edge = (
-            edges[reference]
+            edges[edge_index]
             if reference >= 0
-            else list(reversed(edges[-reference - 1]))
+            else list(reversed(edges[edge_index]))
         )
         oriented.append(edge)
     if (
@@ -399,14 +558,17 @@ def validate_dfise_roundtrip(
     topology: Topology, grd: Path, dat: Path
 ) -> dict[str, object]:
     validate_topology(topology)
+    grid_text = grd.read_text(encoding="utf-8", errors="replace")
+    dataset_text = dat.read_text(encoding="utf-8", errors="replace")
     grid = parse_grd(grd)
     datasets = parse_dat(dat)
+    grid_metadata_matches = _strict_grid_metadata(grid_text)
     edges = grid["edges"]
     elements = grid["elements"]
     silicon_ids = grid["region_elements"].get("R.Si", [])
-    reconstructed = [
+    reconstructed = tuple(
         _decode_triangle(elements[element_id], edges) for element_id in silicon_ids
-    ]
+    )
     region_ownership = {
         name: grid["region_elements"].get(name, []) for name in _REGION_ORDER
     }
@@ -436,6 +598,9 @@ def validate_dfise_roundtrip(
     expected_edges = canonical_edges(topology.triangles)
     expected_locations = _edge_locations(topology.triangles, expected_edges)
     expected_datasets = _doping_datasets(topology)
+    dataset_metadata_matches = _strict_dataset_metadata(
+        dataset_text, list(expected_datasets)
+    )
     doping_matches = (
         set(datasets) == set(expected_datasets)
         and all(
@@ -446,7 +611,9 @@ def validate_dfise_roundtrip(
         )
     )
     passed = (
-        grid["vertex_count"] == 6
+        grid_metadata_matches
+        and dataset_metadata_matches
+        and grid["vertex_count"] == 6
         and vertices == topology.nodes
         and len(edges) == 9
         and parsed_edges == expected_edges
@@ -463,6 +630,8 @@ def validate_dfise_roundtrip(
     )
     return {
         "passed": passed,
+        "grid_metadata_matches": grid_metadata_matches,
+        "dataset_metadata_matches": dataset_metadata_matches,
         "vertices": vertices,
         "edge_count": len(edges),
         "edges": parsed_edges,

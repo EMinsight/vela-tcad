@@ -27,11 +27,25 @@ MODULE_SPEC.loader.exec_module(module)
 
 
 class PN2DMinimal6TopologyTest(unittest.TestCase):
+    def test_loaded_topology_nested_collections_are_immutable(self) -> None:
+        topology = module.load_topology(FIXTURE, "sketch")
+
+        with self.assertRaises(TypeError):
+            topology.nodes[1] = (0.1, 0.5)
+        with self.assertRaises(AttributeError):
+            topology.triangles.append((1, 2, 3))
+        with self.assertRaises(TypeError):
+            topology.contacts["Anode"] = (1, 2)
+        with self.assertRaises(TypeError):
+            topology.acceptors_cm3[1] = 0.0
+        with self.assertRaises(TypeError):
+            topology.donors_cm3[3] = 0.0
+
     def test_sketch_and_mirror_have_exact_contract(self) -> None:
         sketch = module.load_topology(FIXTURE, "sketch")
         mirror = module.load_topology(FIXTURE, "mirror")
-        self.assertEqual(sketch.triangles, [(1, 5, 2), (5, 6, 2), (2, 6, 4), (2, 4, 3)])
-        self.assertEqual(mirror.triangles, [(1, 5, 6), (1, 6, 2), (2, 6, 3), (6, 4, 3)])
+        self.assertEqual(sketch.triangles, ((1, 5, 2), (5, 6, 2), (2, 6, 4), (2, 4, 3)))
+        self.assertEqual(mirror.triangles, ((1, 5, 6), (1, 6, 2), (2, 6, 3), (6, 4, 3)))
         for topology in (sketch, mirror):
             summary = module.validate_topology(topology)
             self.assertEqual((summary.nodes, summary.triangles, summary.edges), (6, 4, 9))
@@ -61,6 +75,135 @@ class PN2DMinimal6TopologyTest(unittest.TestCase):
                     report["region_ownership"],
                     {"R.Si": [0, 1, 2, 3], "Cathode": [4], "Anode": [5]},
                 )
+
+    def test_dfise_roundtrip_rejects_incomplete_grid_metadata(self) -> None:
+        topology = module.load_topology(FIXTURE, "sketch")
+        corruptions = (
+            ("version = 1.1", "version = 9.9"),
+            ("type    = grid", "type    = dataset"),
+            ("dimension   = 2", "dimension   = 3"),
+            ("nb_vertices = 6", "nb_vertices = 7"),
+            ("nb_edges = 9", "nb_edges = 10"),
+            ("nb_faces = 0", "nb_faces = 1"),
+            ("nb_elements = 6", "nb_elements = 7"),
+            ("nb_regions = 3", "nb_regions = 2"),
+            (
+                "translate = [  0.000000000000000e+00 0.000000000000000e+00 0.000000000000000e+00 ]",
+                "translate = [  0.000000000000000e+00 0.000000000000000e+00 ]",
+            ),
+            (
+                "0.000000000000000e+00 0.000000000000000e+00 1.000000000000000e+00",
+                "0.000000000000000e+00 0.000000000000000e+00 2.000000000000000e+00",
+            ),
+        )
+        for old, new in corruptions:
+            with self.subTest(old=old):
+                with tempfile.TemporaryDirectory() as tmp:
+                    grd, dat = Path(tmp) / "mesh.grd", Path(tmp) / "mesh.dat"
+                    module.write_dfise_grid(topology, grd)
+                    module.write_dfise_doping(topology, dat)
+                    original = grd.read_text()
+                    changed = original.replace(old, new, 1)
+                    self.assertNotEqual(changed, original)
+                    grd.write_text(changed)
+                    report = module.validate_dfise_roundtrip(topology, grd, dat)
+                self.assertFalse(report["passed"])
+
+    def test_dfise_roundtrip_rejects_incomplete_dataset_metadata(self) -> None:
+        topology = module.load_topology(FIXTURE, "sketch")
+        corruptions = (
+            ("version = 1.0", "version = 9.9"),
+            ("type    = dataset", "type    = grid"),
+            ("dimension   = 2", "dimension   = 3"),
+            ("nb_vertices = 6", "nb_vertices = 7"),
+            ("nb_edges    = 9", "nb_edges    = 10"),
+            ("nb_faces    = 0", "nb_faces    = 1"),
+            ("nb_elements = 6", "nb_elements = 7"),
+            ("nb_regions  = 3", "nb_regions  = 2"),
+            ("function  = DopingConcentration", "function  = WrongFunction"),
+            ("dimension = 1", "dimension = 2"),
+            ("type      = scalar", "type      = vector"),
+            ("location  = vertex", "location  = edge"),
+            ('validity  = [ "R.Si" ]', 'validity  = [ "Cathode" ]'),
+        )
+        for old, new in corruptions:
+            with self.subTest(old=old):
+                with tempfile.TemporaryDirectory() as tmp:
+                    grd, dat = Path(tmp) / "mesh.grd", Path(tmp) / "mesh.dat"
+                    module.write_dfise_grid(topology, grd)
+                    module.write_dfise_doping(topology, dat)
+                    original = dat.read_text()
+                    changed = original.replace(old, new, 1)
+                    self.assertNotEqual(changed, original)
+                    dat.write_text(changed)
+                    report = module.validate_dfise_roundtrip(topology, grd, dat)
+                self.assertFalse(report["passed"])
+
+    def test_dfise_roundtrip_rejects_invalid_signed_edge_reference(self) -> None:
+        topology = module.load_topology(FIXTURE, "sketch")
+        with tempfile.TemporaryDirectory() as tmp:
+            grd, dat = Path(tmp) / "mesh.grd", Path(tmp) / "mesh.dat"
+            module.write_dfise_grid(topology, grd)
+            module.write_dfise_doping(topology, dat)
+            original = grd.read_text()
+            changed = original.replace(" 2 1 -5 -1", " 2 99 -5 -1", 1)
+            self.assertNotEqual(changed, original)
+            grd.write_text(changed)
+            with self.assertRaisesRegex(ValueError, "edge reference"):
+                module.validate_dfise_roundtrip(topology, grd, dat)
+
+    def test_dfise_roundtrip_rejects_disconnected_triangle_edge_loop(self) -> None:
+        topology = module.load_topology(FIXTURE, "sketch")
+        with tempfile.TemporaryDirectory() as tmp:
+            grd, dat = Path(tmp) / "mesh.grd", Path(tmp) / "mesh.dat"
+            module.write_dfise_grid(topology, grd)
+            module.write_dfise_doping(topology, dat)
+            original = grd.read_text()
+            changed = original.replace(" 2 1 -5 -1", " 2 1 -5 0", 1)
+            self.assertNotEqual(changed, original)
+            grd.write_text(changed)
+            with self.assertRaisesRegex(ValueError, "edge loop is disconnected"):
+                module.validate_dfise_roundtrip(topology, grd, dat)
+
+    def test_dfise_roundtrip_rejects_wrong_locations_and_region_ownership(self) -> None:
+        topology = module.load_topology(FIXTURE, "sketch")
+        corruptions = (
+            ("eeeiiieee", "ieeiiieee"),
+            (" 0 1 2 3", " 0 1 2 2"),
+        )
+        for old, new in corruptions:
+            with self.subTest(old=old):
+                with tempfile.TemporaryDirectory() as tmp:
+                    grd, dat = Path(tmp) / "mesh.grd", Path(tmp) / "mesh.dat"
+                    module.write_dfise_grid(topology, grd)
+                    module.write_dfise_doping(topology, dat)
+                    original = grd.read_text()
+                    changed = original.replace(old, new, 1)
+                    self.assertNotEqual(changed, original)
+                    grd.write_text(changed)
+                    report = module.validate_dfise_roundtrip(topology, grd, dat)
+                self.assertFalse(report["passed"])
+
+    def test_dfise_roundtrip_rejects_dataset_names_counts_and_values(self) -> None:
+        topology = module.load_topology(FIXTURE, "sketch")
+        corruptions = (
+            ('Dataset ("DopingConcentration")', 'Dataset ("RenamedDoping")'),
+            ("Values (6)", "Values (5)"),
+            (" -1.000000000000000e+17", " -9.000000000000000e+16"),
+        )
+        for old, new in corruptions:
+            with self.subTest(old=old):
+                with tempfile.TemporaryDirectory() as tmp:
+                    grd, dat = Path(tmp) / "mesh.grd", Path(tmp) / "mesh.dat"
+                    module.write_dfise_grid(topology, grd)
+                    module.write_dfise_doping(topology, dat)
+                    original = dat.read_text()
+                    changed = original.replace(old, new, 1)
+                    self.assertNotEqual(changed, original)
+                    dat.write_text(changed)
+                    report = module.validate_dfise_roundtrip(topology, grd, dat)
+                self.assertFalse(report["passed"])
+
     def test_dfise_roundtrip_rejects_changed_contact_endpoint(self) -> None:
         topology = module.load_topology(FIXTURE, "sketch")
         with tempfile.TemporaryDirectory() as tmp:
