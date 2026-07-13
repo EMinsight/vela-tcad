@@ -282,6 +282,20 @@ def prepare_exports(
             staged = ["pn2d_minimal6.grd", "pn2d_minimal6.dat", "models.par", deck_name]
             remote_dir = f"{remote_root.rstrip('/')}/{run_id}/{topology_id}/{tag}"
             plot_stem = f"pn2d_minimal6_state_{tag}"
+            final_tdr_name = f"{plot_stem}.tdr"
+            current_plt_name = f"{plot_stem}.plt"
+            log_name = f"{plot_stem}_des.log"
+            stdout_name = f"run_{plot_stem}.out"
+            returned_files = [
+                final_tdr_name,
+                current_plt_name,
+                log_name,
+                "pn2d_minimal6.tdr",
+                "pn2d_minimal6.grd",
+                "pn2d_minimal6.dat",
+                "run_tdx_dfise_to_tdr.out",
+                stdout_name,
+            ]
             states.append({
                 "topology_id": topology_id,
                 "requested_bias_V": bias,
@@ -296,11 +310,13 @@ def prepare_exports(
                 "remote_commands": [
                     f"cd {remote_dir} && tdx -d pn2d_minimal6.grd pn2d_minimal6.dat "
                     "pn2d_minimal6.tdr > run_tdx_dfise_to_tdr.out 2>&1",
-                    f"cd {remote_dir} && sdevice {deck_name} > run_{plot_stem}.out 2>&1",
+                    f"cd {remote_dir} && sdevice {deck_name} > {stdout_name} 2>&1",
                 ],
-                "final_tdr_name": f"{plot_stem}.tdr",
-                "current_plt_name": f"{plot_stem}.plt",
-                "log_name": f"{plot_stem}.log",
+                "final_tdr_name": final_tdr_name,
+                "current_plt_name": current_plt_name,
+                "log_name": log_name,
+                "stdout_name": stdout_name,
+                "returned_files": returned_files,
                 "status": "prepared",
             })
     manifest: dict[str, object] = {
@@ -340,18 +356,32 @@ def _live_executor(
     neutral = Path(str(state["export_dir"]))
     artifacts.mkdir(parents=True, exist_ok=True)
     remote_dir = str(state["remote_dir"])
-    run_checked([ssh_bin, ssh_target, f"mkdir -p {remote_dir}"])
-    for name in state["staged_files"]:
-        run_checked([scp_bin, str(bundle / str(name)), f"{ssh_target}:{remote_dir}/"])
-    for command in state["remote_commands"]:
-        run_checked([ssh_bin, ssh_target, str(command)])
-    returned = [
-        str(state["final_tdr_name"]), str(state["current_plt_name"]),
-        str(state["log_name"]), "pn2d_minimal6.tdr", "pn2d_minimal6.grd",
-        "pn2d_minimal6.dat", "run_tdx_dfise_to_tdr.out",
-    ]
+    returned = [str(name) for name in state["returned_files"]]
+
+    def return_argv(name: str) -> list[str]:
+        return [
+            scp_bin,
+            f"{ssh_target}:{remote_dir}/{name}",
+            str(artifacts) + os.sep,
+        ]
+
+    try:
+        run_checked([ssh_bin, ssh_target, f"mkdir -p {remote_dir}"])
+        for name in state["staged_files"]:
+            run_checked([scp_bin, str(bundle / str(name)), f"{ssh_target}:{remote_dir}/"])
+        for command in state["remote_commands"]:
+            run_checked([ssh_bin, ssh_target, str(command)])
+    except Exception:
+        recovery_errors: list[str] = []
+        for name in returned:
+            try:
+                run_checked(return_argv(name))
+            except Exception as recovery_error:
+                recovery_errors.append(f"{name}: {recovery_error}")
+        state["artifact_recovery_errors"] = recovery_errors
+        raise
     for name in returned:
-        run_checked([scp_bin, f"{ssh_target}:{remote_dir}/{name}", str(artifacts) + os.sep])
+        run_checked(return_argv(name))
     final_tdr = artifacts / str(state["final_tdr_name"])
     # The current C++ CLI performs the export-neutral operation when --export-dir is present.
     run_checked([

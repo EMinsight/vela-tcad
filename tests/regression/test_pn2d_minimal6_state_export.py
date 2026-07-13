@@ -216,7 +216,68 @@ class PN2DMinimal6StateExportTest(unittest.TestCase):
                 self.assertIn("ElectricField/Vector", deck)
                 self.assertIn("eCurrentDensity/Vector", deck)
                 self.assertIn("hCurrentDensity/Vector", deck)
+                plot_stem = f"pn2d_minimal6_state_{state['bias_tag']}"
+                self.assertIn(f'Output    = "{plot_stem}"', deck)
+                self.assertNotIn(f'Output    = "{plot_stem}.log"', deck)
+                self.assertNotIn(".log_des.log", deck)
+                self.assertEqual(state["log_name"], f"{plot_stem}_des.log")
 
+    def test_returned_files_include_exact_remote_stdout_without_globs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest = export.prepare_exports(
+                topology_ids=("sketch", "mirror"),
+                biases=(0.0, -12.0, -19.0),
+                run_id="minimal6_states_returned_files",
+                output_dir=Path(tmp),
+                ssh_target="sentaurus",
+            )
+            state = manifest["states"][0]
+        plot_stem = f"pn2d_minimal6_state_{state['bias_tag']}"
+        stdout_name = f"run_{plot_stem}.out"
+        returned = state.get("returned_files")
+        self.assertIsInstance(returned, list)
+        self.assertIn(stdout_name, returned)
+        self.assertEqual(state.get("stdout_name"), stdout_name)
+        self.assertEqual(state["log_name"], f"{plot_stem}_des.log")
+        self.assertFalse(any(set(name) & set("*?[]") for name in returned))
+
+    def test_sdevice_failure_recovers_exact_remote_stdout_with_argv_arrays(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manifest = export.prepare_exports(
+                topology_ids=("sketch", "mirror"),
+                biases=(0.0, -12.0, -19.0),
+                run_id="minimal6_states_stdout_recovery",
+                output_dir=root,
+                ssh_target="sentaurus",
+            )
+            state = manifest["states"][0]
+            importer = root / "sentaurus_import.exe"
+            importer.touch()
+            calls: list[list[str]] = []
+            original_run_checked = export.run_checked
+
+            def fail_sdevice(argv: list[str]) -> None:
+                calls.append(list(argv))
+                if argv[0] == "ssh-test" and "sdevice" in argv[-1]:
+                    raise RuntimeError("mock sdevice failure")
+
+            export.run_checked = fail_sdevice
+            try:
+                with self.assertRaisesRegex(RuntimeError, "mock sdevice failure"):
+                    export._live_executor(
+                        state,
+                        ssh_bin="ssh-test",
+                        scp_bin="scp-test",
+                        ssh_target="sentaurus",
+                        importer=importer,
+                    )
+            finally:
+                export.run_checked = original_run_checked
+        stdout_name = f"run_pn2d_minimal6_state_{state['bias_tag']}.out"
+        recovered = [argv for argv in calls if argv and argv[0] == "scp-test"]
+        self.assertTrue(all(isinstance(argv, list) for argv in calls))
+        self.assertTrue(any(argv[1].endswith(f"/{stdout_name}") for argv in recovered))
     def test_nonfinite_actual_biases_are_fail_closed(self) -> None:
         for actual in (math.nan, math.inf, -math.inf):
             with self.subTest(actual=actual), tempfile.TemporaryDirectory() as tmp:

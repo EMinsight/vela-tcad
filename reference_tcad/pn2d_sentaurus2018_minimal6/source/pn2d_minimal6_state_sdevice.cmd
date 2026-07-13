@@ -4,7 +4,7 @@ File {
   Parameter = "models.par"
   Plot      = "pn2d_minimal6_state___BIAS_TAG__.tdr"
   Current   = "pn2d_minimal6_state___BIAS_TAG__.plt"
-  Output    = "pn2d_minimal6_state___BIAS_TAG__.log"
+  Output    = "pn2d_minimal6_state___BIAS_TAG__"
 }
 
 Electrode {
