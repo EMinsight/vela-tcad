@@ -1,17 +1,29 @@
 # PN2D Minimal6 Operator Audit 交接文档（2026-07-13）
 
-## 1. 本次暂停原因与当前结论
+## 1. 当前结论（Task 5 完成更新）
 
-用户要求暂停当前开发，回家后在另一台电脑继续。本次暂停发生在：
+原暂停 checkpoint 已恢复并完成。当前状态为：
 
-- Task 5 最终独立复审已完成，结论为双 `FAIL`。
-- Task 5 复审修复已完成 RED 阶段并进入 GREEN 实现中段。
-- 修复代理已被明确停止。
-- Task 6 真实六状态 C++ 重放尚未开始。
-- 暂停时没有 Python、CMake、Ninja 或 minimal6 审计进程在运行。
+- Task 5 修复已在提交 `da561f2` 完成。
+- Task 5 聚焦 Python 测试 `33/33` 通过。
+- Tasks 1/2/3/5 Python 分组测试 `76/76` 通过。
+- Task 4 C++ 回归 `63 assertions / 3 cases` 通过。
+- synthetic production CLI 通过，输出精确为 `36/54/24`，图件为 `14`。
+- 最大 state parity hybrid error 为 `0`。
+- 最大 C++/Python formula hybrid error 为
+  `1.7898855730891228e-13`，低于 `5e-12` 门限。
+- Task 5 第二轮独立复审结论为：
 
-最重要的状态判断：当前工作区是一个可保留、但尚未验证的 Task 5 WIP
-checkpoint。不要把它当作已完成实现，也不要直接从 Task 6 开始。
+```text
+SPEC COMPLIANCE: PASS
+CODE/DATA QUALITY: PASS
+Remaining Critical: none
+Remaining Important: none
+```
+
+Task 5 已完成，Task 6 可以开始，但当前机器缺少 Task 6 所需的真实六状态
+state root 和 manifest。以下 Task 5 RED/FAIL 内容保留为历史审计证据，不再表示
+当前状态，也不应重复执行 Task 5。
 
 ## 2. 仓库与分支状态
 
@@ -27,9 +39,11 @@ D:\code-repo\vela-tcad
 codex-pn2d-minimal6-operator-audit
 ```
 
-暂停前已提交的最新提交：
+当前最新本地提交：
 
 ```text
+da561f2 Enforce PN2D minimal6 audit provenance
+ef16539 Checkpoint PN2D minimal6 Task 5 review fixes
 9546826 Fix PN2D minimal6 fixed-state audit provenance
 26d66b4 Add PN2D minimal6 fixed-state reports
 37a9545 Add Vela fixed-state operator audit
@@ -39,16 +53,8 @@ e33fba7 Fix PN2D minimal6 Sentaurus log recovery
 a7e9603 Add PN2D minimal6 Sentaurus topology gate
 ```
 
-暂停时相对远端同名分支为 `ahead 10`。本交接只创建本地 checkpoint，
-不会自动推送；换电脑前必须自行推送此分支或以其他方式传输 checkpoint。
-
-本次 checkpoint 包含以下 WIP 文件：
-
-```text
-scripts/audit_pn2d_minimal6_fixed_state.py
-tests/regression/test_pn2d_minimal6_fixed_state_audit.py
-docs/validation/pn2d_minimal6_handoff_2026-07-13.md
-```
+当前相对远端同名分支为 `ahead 1`；`da561f2` 尚未推送。受跟踪工作区在本次
+文档更新前是干净的。Task 5 不再有 WIP 代码。
 
 ## 3. Tasks 1-4 与真实状态基线
 
@@ -60,12 +66,15 @@ Tasks 1-4 已实现、提交并通过各自的实现后复审流程：
 - Task 4：生产 C++ 固定态 operator audit，可输出 node/edge/triangle CSV，
   不运行 Newton、Gummel 或 continuation。
 
-真实 Task 3 状态根位于：
+原始真实 Task 3 状态根路径为：
 
 ```text
 build-release/reference_tcad/pn2d_sentaurus2018_minimal6/
   state_exports/minimal6_states_live_20260713_v2
 ```
+
+该目录及其 `manifest.json` 当前不在本机工作区中。开始 Task 6 前必须从原始
+checkpoint 恢复这些产物，或重新执行受控的远程 Sentaurus 导出流程。
 
 暂停前已确认：
 
@@ -84,7 +93,7 @@ Task 4 独立复审报告：
 .superpowers/sdd/task-4-minimal6-report.md
 ```
 
-## 4. Task 5 在最终复审前的证据
+## 4. Task 5 在最终复审前的历史证据
 
 Task 5 初版提交为 `26d66b4`，第一轮修复提交为 `9546826`。修复后曾得到：
 
@@ -104,9 +113,9 @@ Max C++/Python formula hybrid error: 1.7898855730891228e-13
 37a9545..9546826
 ```
 
-## 5. Task 5 最终独立复审结论
+## 5. Task 5 第一轮独立复审历史结论
 
-最终复审明确给出：
+第一轮复审当时明确给出（历史记录）：
 
 ```text
 SPEC COMPLIANCE: FAIL
@@ -184,7 +193,7 @@ acceptor 场的单位换算及语义。
 - 精确 14 个图件文件名、PNG/PDF signature、可解码性、非空白像素和
   fixed-state/not-BV 文案。
 
-## 6. 当前 WIP 的 RED 与中断点
+## 6. Task 5 修复的历史 RED 与中断点
 
 修复代理按 TDD 先写测试。生产代码修改前的 RED 结果为：
 
@@ -205,10 +214,10 @@ RED 覆盖了预期缺口：
 - raw Task 3 donor corruption 通过。
 - 图件增强测试最初还暴露过 PIL import 漏写，WIP 中已补上 import。
 
-RED 后已开始修改生产代码，但暂停前没有运行 GREEN。因此当前 32 个测试的
-实际通过/失败状态未知。
+RED 后开始修改生产代码，暂停时尚未运行 GREEN。该历史状态已由第 1 节记录的
+`da561f2`、33/33 GREEN 和第二轮独立双 PASS 取代。
 
-## 7. 当前 WIP 已写入但尚未验证的内容
+## 7. Task 5 checkpoint 中曾未验证的内容
 
 当前 `scripts/audit_pn2d_minimal6_fixed_state.py` 大致新增/修改了：
 
@@ -227,14 +236,14 @@ RED 后已开始修改生产代码，但暂停前没有运行 GREEN。因此当�
 
 当前测试文件已增加 7 个左右的对抗性测试组，并加强 14 图件 QA。
 
-这些改动是 WIP，不能直接视为正确实现。
+这些内容在暂停时是 WIP；现已通过第 1 节列出的自动验证与独立复审。
 
-## 8. 恢复后首先检查的高风险点
+## 8. 已关闭的 Task 5 风险与仍开放的 Task 6 前置条件
 
-### 8.1 不要错误要求 `elements.csv` 的行顺序等于 canonical tuple 顺序
+### 8.1 已关闭：不要求 `elements.csv` 的行顺序等于 canonical tuple 顺序
 
-当前 WIP 的 `validate_topology()` 按 element `id` 排序后，直接要求 tuple list
-与 `TRIS[topology]` 完全同序。这很可能过严。
+`da561f2` 后的 `validate_topology()` 验证批准 CCW tuple 的完整、无重复集合，
+并由报告层显式 canonicalize；合法 element ID/行序置换已有回归测试。
 
 真实 sketch export 的 element 行顺序为：
 
@@ -252,9 +261,9 @@ RED 后已开始修改生产代码，但暂停前没有运行 GREEN。因此当�
 - canonical report key/order 由明确的 canonicalization 产生。
 - 不应仅因 Sentaurus/export 行顺序不同而拒绝真实数据。
 
-先修正这一点，再跑 Task 5 GREEN，否则真实 Task 6 state root 很可能被误拒绝。
+该风险已关闭。
 
-### 8.2 独立 alpha 必须逐项对照生产 C++
+### 8.2 已关闭：独立 alpha 已逐项对照生产 C++
 
 检查：
 
@@ -267,7 +276,7 @@ include/vela/equation/AssemblerUtils.h
 确认 A/B 参数的 SI 单位、switch field、temperature gamma、minimum field 和
 exponent 处理与 production 完全一致。不要只凭 fixture 当前可通过来确认公式。
 
-### 8.3 provenance 失败必须在任何 artifact 创建之前发生
+### 8.3 已关闭：provenance 失败发生在任何 artifact 创建之前
 
 `write_report()` 应先验证 provenance，失败时 `out-dir` 不应存在。CLI 的 PASS
 必须只在 `write_report()` 完成且 summary/gate 为 PASS 后打印。
@@ -285,6 +294,9 @@ exponent 处理与 production 完全一致。不要只凭 fixture 当前可通�
 否则新的严格 Task 5 CLI 应按设计拒绝真实 report。
 
 ## 9. 恢复执行顺序
+
+Steps A-E 已由 `da561f2` 完成，不要重复。当前只需先恢复真实六状态 state root，
+然后从 Step F 开始 Task 6。下面的 Steps A-E 保留为历史执行记录。
 
 ### Step A：获取 checkpoint 并确认没有丢改动
 
@@ -440,20 +452,23 @@ D:\msys64\ucrt64\bin\python.exe -m unittest `
 git diff --check
 ```
 
-## 11. 暂停状态总表
+## 11. 当前状态总表
 
 ```text
 Task 1: committed, reviewed
 Task 2: committed, live topology gate passed
 Task 3: committed, six exact live states exported
 Task 4: committed, reviewed
-Task 5 implementation at 9546826: tests passed but final review FAIL/FAIL
-Task 5 review-fix RED: captured (32 tests, 8 failures, 3 errors)
-Task 5 review-fix GREEN implementation: WIP, interrupted before verification
-Task 5 fresh re-review: pending
+Task 5 implementation: committed at da561f2
+Task 5 focused GREEN: 33/33
+Task 1/2/3/5 grouped regression: 76/76
+Task 4 C++ regression: 63 assertions, 3 cases
+Task 5 synthetic CLI: PASS, 36/54/24, figures=14
+Task 5 fresh re-review: SPEC PASS / QUALITY PASS
 Task 6 real six-state replay: not started
 Task 6 validation docs: not updated
+Task 6 blocker: real state root and manifest absent locally
+Git integration: local branch ahead 1, da561f2 not pushed
 ```
 
-恢复后的最高优先级不是运行真实六状态，而是把当前 Task 5 WIP 做到 GREEN，
-修正 element-order 过严风险，并取得 Task 5 的独立双 PASS。
+下一步是恢复真实六状态 state root；确认 manifest 完整后，按 Step F 执行 Task 6。
