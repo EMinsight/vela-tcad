@@ -80,8 +80,7 @@ def validate_final_bias(requested_bias_V: float, actual_bias_V: float) -> float:
     actual = float(actual_bias_V)
     if not math.isfinite(actual):
         raise ValueError(f"final Anode contact voltage is not finite: {actual_bias_V}")
-    rounding_slack = max(math.ulp(requested), math.ulp(actual), 1.0e-27)
-    if abs(actual - requested) > BIAS_TOLERANCE_V + rounding_slack:
+    if abs(actual - requested) > BIAS_TOLERANCE_V:
         raise ValueError(
             f"final Anode contact voltage {actual:.17g} V does not match requested "
             f"{requested:.17g} V within 1e-12 V"
@@ -375,7 +374,14 @@ def run_exports(
     for state in manifest["states"]:
         try:
             result = executor(state) or {}
-            actual_bias = float(result.get("actual_bias_V", state["requested_bias_V"]))
+            if "actual_bias_V" not in result:
+                raise ValueError("executor result is missing actual_bias_V")
+            try:
+                actual_bias = float(result["actual_bias_V"])
+            except (TypeError, ValueError) as error:
+                raise ValueError(
+                    f"executor result has invalid actual_bias_V: {result['actual_bias_V']!r}"
+                ) from error
             state["actual_bias_V"] = validate_final_bias(
                 float(state["requested_bias_V"]), actual_bias
             )

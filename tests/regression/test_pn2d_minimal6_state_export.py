@@ -1,6 +1,7 @@
 import csv
 import importlib.util
 import json
+import math
 import tempfile
 import unittest
 from pathlib import Path
@@ -120,8 +121,16 @@ class PN2DMinimal6StateExportTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, r"mirror.*-19.*1e-12 V"):
             export.validate_state_matrix(states)
 
-    def test_final_contact_voltage_at_one_picovolt_is_accepted(self) -> None:
-        self.assertEqual(export.validate_final_bias(-19.0, -19.0 + 1.0e-12), -19.0 + 1.0e-12)
+    def test_final_contact_voltage_uses_strict_one_picovolt_boundary(self) -> None:
+        self.assertEqual(export.validate_final_bias(0.0, 1.0e-12), 1.0e-12)
+        inside = math.nextafter(1.0e-12, 0.0)
+        self.assertEqual(export.validate_final_bias(0.0, inside), inside)
+        review_example = math.nextafter(-19.0 - 1.0e-12, -math.inf)
+        review_error = abs(review_example - (-19.0))
+        self.assertEqual(review_error, 1.0018652574217413e-12)
+        self.assertGreater(review_error, export.BIAS_TOLERANCE_V)
+        with self.assertRaisesRegex(ValueError, r"within 1e-12 V"):
+            export.validate_final_bias(-19.0, review_example)
 
     def test_vector_fields_require_two_components_and_cm_units(self) -> None:
         manifest = valid_field_manifest()
@@ -208,6 +217,55 @@ class PN2DMinimal6StateExportTest(unittest.TestCase):
                 self.assertIn("eCurrentDensity/Vector", deck)
                 self.assertIn("hCurrentDensity/Vector", deck)
 
+    def test_nonfinite_actual_biases_are_fail_closed(self) -> None:
+        for actual in (math.nan, math.inf, -math.inf):
+            with self.subTest(actual=actual), tempfile.TemporaryDirectory() as tmp:
+                manifest = export.prepare_exports(
+                    topology_ids=("sketch", "mirror"),
+                    biases=(0.0, -12.0, -19.0),
+                    run_id="minimal6_states_nonfinite_actual",
+                    output_dir=Path(tmp),
+                    ssh_target="sentaurus",
+                )
+
+                def executor(state: dict[str, object]) -> dict[str, object]:
+                    neutral = Path(str(state["export_dir"]))
+                    write_neutral_state(neutral)
+                    return {"actual_bias_V": actual, "export_dir": str(neutral)}
+
+                with self.assertRaisesRegex(ValueError, "not finite"):
+                    export.run_exports(manifest, executor=executor)
+                saved = json.loads(Path(manifest["manifest_path"]).read_text(encoding="utf-8"))
+                self.assertFalse(saved["outputs_complete"])
+                self.assertEqual(saved["states"][0]["status"], "failed")
+                self.assertTrue(all(
+                    state["status"] == "prepared" for state in saved["states"][1:]
+                ))
+    def test_missing_actual_bias_is_fail_closed_and_stops_later_states(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest = export.prepare_exports(
+                topology_ids=("sketch", "mirror"),
+                biases=(0.0, -12.0, -19.0),
+                run_id="minimal6_states_missing_actual_bias",
+                output_dir=Path(tmp),
+                ssh_target="sentaurus",
+            )
+            calls: list[tuple[str, float]] = []
+
+            def executor(state: dict[str, object]) -> dict[str, object]:
+                key = (str(state["topology_id"]), float(state["requested_bias_V"]))
+                calls.append(key)
+                neutral = Path(str(state["export_dir"]))
+                write_neutral_state(neutral)
+                return {"export_dir": str(neutral)}
+
+            with self.assertRaisesRegex(ValueError, "missing actual_bias_V"):
+                export.run_exports(manifest, executor=executor)
+            saved = json.loads(Path(manifest["manifest_path"]).read_text(encoding="utf-8"))
+        self.assertFalse(saved["outputs_complete"])
+        self.assertEqual(calls, [("sketch", 0.0)])
+        self.assertEqual(saved["states"][0]["status"], "failed")
+        self.assertTrue(all(state["status"] == "prepared" for state in saved["states"][1:]))
     def test_missing_neutral_outputs_are_fail_closed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             manifest = export.prepare_exports(
@@ -218,7 +276,10 @@ class PN2DMinimal6StateExportTest(unittest.TestCase):
                 ssh_target="sentaurus",
             )
             with self.assertRaisesRegex(ValueError, "missing neutral export directory"):
-                export.run_exports(manifest, executor=lambda state: None)
+                export.run_exports(
+                    manifest,
+                    executor=lambda state: {"actual_bias_V": state["requested_bias_V"]},
+                )
             saved = json.loads(Path(manifest["manifest_path"]).read_text(encoding="utf-8"))
         self.assertFalse(saved["outputs_complete"])
         self.assertEqual(saved["states"][0]["status"], "failed")
