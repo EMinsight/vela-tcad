@@ -361,8 +361,8 @@ def validate_topology(export_dir, state, topology_id):
         if area2([NODES[node] for node in triangle])<=0:
             raise ContractError("reversed triangle orientation")
         ordered.append(triangle)
-    if tuple(ordered) != expected:
-        raise ContractError("elements must match exact approved CCW topology tuples/order")
+    if len(set(ordered)) != len(expected) or set(ordered) != set(expected):
+        raise ContractError("elements must contain the exact approved CCW topology tuple set")
     contact_rows=read_csv(export_dir/"contacts.csv",("id","name","node_ids")); actual={}
     for row in contact_rows:
         actual[row["name"]]=tuple(sorted(source_to_canonical[int(x)] for x in row["node_ids"].split(";") if x!=""))

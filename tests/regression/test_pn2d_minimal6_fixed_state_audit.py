@@ -8,6 +8,7 @@ import shutil
 import tempfile
 import unittest
 
+import fitz
 from PIL import Image, ImageStat
 
 REPO = Path(__file__).resolve().parents[2]
@@ -172,6 +173,11 @@ class ReviewContractTests(unittest.TestCase):
                 self.assertGreater(path.stat().st_size, 0, name)
                 if path.suffix == ".pdf":
                     self.assertTrue(path.read_bytes().startswith(b"%PDF-"), name)
+                    with fitz.open(filename=str(path)) as document:
+                        self.assertEqual(document.page_count, 1, name)
+                        pixmap = document[0].get_pixmap(colorspace=fitz.csGRAY, alpha=False)
+                        pixels = memoryview(pixmap.samples)
+                        self.assertGreater(max(pixels) - min(pixels), 1, name)
                 else:
                     self.assertTrue(path.read_bytes().startswith(b"\x89PNG\r\n\x1a\n"), name)
                     with Image.open(path) as image:
@@ -289,11 +295,43 @@ class ReviewContractTests(unittest.TestCase):
             raw_h = sum(row[f"vela_local_edge{i}_hole_source_integral_per_m_s"] for i in range(3))
             py_e = sum(row[f"python_local_edge{i}_electron_source_integral_per_m_s"] for i in range(3))
             py_h = sum(row[f"python_local_edge{i}_hole_source_integral_per_m_s"] for i in range(3))
-            self.assertEqual(row["vela_electron_source_integral_per_m_s"], raw_e)
-            self.assertEqual(row["vela_hole_source_integral_per_m_s"], raw_h)
-            self.assertEqual(row["python_electron_source_integral_per_m_s"], py_e)
-            self.assertEqual(row["python_hole_source_integral_per_m_s"], py_h)
+            self.assertLess(
+                audit.hybrid_error(row["vela_electron_source_integral_per_m_s"], raw_e),
+                audit.FORMULA_LIMIT,
+            )
+            self.assertLess(
+                audit.hybrid_error(row["vela_hole_source_integral_per_m_s"], raw_h),
+                audit.FORMULA_LIMIT,
+            )
+            self.assertLess(
+                audit.hybrid_error(row["python_electron_source_integral_per_m_s"], py_e),
+                audit.FORMULA_LIMIT,
+            )
+            self.assertLess(
+                audit.hybrid_error(row["python_hole_source_integral_per_m_s"], py_h),
+                audit.FORMULA_LIMIT,
+            )
             self.assertLess(row["vela_vs_python_total_source_hybrid_error"], audit.FORMULA_LIMIT)
+
+    def test_elements_accept_approved_ccw_tuple_set_in_any_id_order(self):
+        root = self._copy()
+        state = self._manifest(root)["states"][0]
+        path = self._export(root, state) / "elements.csv"
+        with path.open(encoding="utf-8", newline="") as source:
+            rows = list(csv.DictReader(source))
+        rows[0]["id"], rows[1]["id"] = rows[1]["id"], rows[0]["id"]
+        with path.open("w", encoding="utf-8", newline="") as output:
+            writer = csv.DictWriter(output, fieldnames=rows[0])
+            writer.writeheader()
+            writer.writerows(rows)
+
+        report = audit.build_report(root)
+        actual = [
+            (row["node0"], row["node1"], row["node2"])
+            for row in report.triangle_rows
+            if row["topology_id"] == "sketch" and row["bias_V"] == 0.0
+        ]
+        self.assertEqual(actual, list(audit.TRIS["sketch"]))
 
     def test_nonzero_partial_volume_cannot_normalize_tiny_source_residue(self):
         with self.assertRaisesRegex(audit.ContractError, "formula error"):

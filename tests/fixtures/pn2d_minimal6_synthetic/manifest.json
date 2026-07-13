@@ -289,7 +289,7 @@
   ],
   "task4_provenance": {
     "producer": "build-release/pn2d_minimal6_operator_audit.exe",
-    "producer_sha256": "199f3d1fd9cf73e4b51c4f15e9007f9c6db425c8ad42f2f52f08586238b08f38",
+    "producer_sha256": "44176003962a846b4a4869bad6dc0dc2f88a3f96afb5f3d08366642d654f02c5",
     "task4_source_commit": "37a95459dc5f360bb24b9afa00439301935e98de",
     "replay_environment": "MSYS2 UCRT64 release build on Windows",
     "replays": [
