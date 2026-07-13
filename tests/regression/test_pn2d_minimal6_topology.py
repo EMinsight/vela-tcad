@@ -260,6 +260,77 @@ class PN2DMinimal6TopologyTest(unittest.TestCase):
                 self.assertFalse(report["passed"])
 
 
+    def test_dfise_roundtrip_rejects_all_unconsumed_dfise_syntax(self) -> None:
+        topology = module.load_topology(FIXTURE, "sketch")
+        with tempfile.TemporaryDirectory() as tmp:
+            grd, dat = Path(tmp) / "mesh.grd", Path(tmp) / "mesh.dat"
+            module.write_dfise_grid(topology, grd)
+            module.write_dfise_doping(topology, dat)
+            grid_text = grd.read_text()
+            dataset_text = dat.read_text()
+
+        vertices = re.search(
+            r"  Vertices \(6\) \{.*?\n  \}",
+            grid_text,
+            re.S,
+        )
+        self.assertIsNotNone(vertices)
+        assert vertices is not None
+        corruptions = (
+            (
+                "grd",
+                grid_text.replace(
+                    "translate = [  0.000000000000000e+00",
+                    "translate = [ junk  0.000000000000000e+00",
+                    1,
+                ),
+            ),
+            (
+                "grd",
+                grid_text.replace(
+                    "nb_regions = 3",
+                    "nb_regions = 3\n  unknown_token",
+                    1,
+                ),
+            ),
+            (
+                "grd",
+                grid_text.replace(
+                    "  Edges (9)",
+                    vertices.group(0) + "\n\n  Edges (9)",
+                    1,
+                ),
+            ),
+            (
+                "dat",
+                dataset_text.replace(
+                    "function  = DopingConcentration",
+                    "function  = DopingConcentration\n    unknown_token",
+                    1,
+                ),
+            ),
+            (
+                "dat",
+                dataset_text.replace(
+                    "\n}\n",
+                    "\n  unknown_token\n}\n",
+                    1,
+                ),
+            ),
+            (
+                "dat",
+                dataset_text.replace("dimension = 1", "dimension = 1]", 1),
+            ),
+        )
+        for target, changed in corruptions:
+            with self.subTest(target=target):
+                with tempfile.TemporaryDirectory() as tmp:
+                    grd, dat = Path(tmp) / "mesh.grd", Path(tmp) / "mesh.dat"
+                    module.write_dfise_grid(topology, grd)
+                    module.write_dfise_doping(topology, dat)
+                    (grd if target == "grd" else dat).write_text(changed)
+                    report = module.validate_dfise_roundtrip(topology, grd, dat)
+                self.assertFalse(report["passed"])
     def test_dfise_roundtrip_rejects_invalid_signed_edge_reference(self) -> None:
         topology = module.load_topology(FIXTURE, "sketch")
         with tempfile.TemporaryDirectory() as tmp:

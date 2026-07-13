@@ -238,7 +238,7 @@ def _edge_locations(
     return ["e" if incidence[edge] == 1 else "i" for edge in edges]
 
 
-def write_dfise_grid(topology: Topology, path: Path) -> None:
+def _render_dfise_grid(topology: Topology) -> str:
     validate_topology(topology)
     edges = canonical_edges(topology.triangles)
     edge_ids = {edge: index for index, edge in enumerate(edges)}
@@ -330,8 +330,12 @@ Data {{
 
 }}
 """
+    return text
+
+
+def write_dfise_grid(topology: Topology, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
+    path.write_text(_render_dfise_grid(topology), encoding="utf-8")
 
 
 def _doping_datasets(topology: Topology) -> dict[str, list[float]]:
@@ -349,7 +353,7 @@ def _doping_datasets(topology: Topology) -> dict[str, list[float]]:
     }
 
 
-def write_dfise_doping(topology: Topology, path: Path) -> None:
+def _render_dfise_doping(topology: Topology) -> str:
     validate_topology(topology)
     datasets = _doping_datasets(topology)
     blocks = []
@@ -391,246 +395,12 @@ Data {{
 
 }}
 """
+    return text
+
+
+def write_dfise_doping(topology: Topology, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
-
-
-_NUMBER_RE = re.compile(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?")
-
-
-def _metadata_assignment(body: str, name: str) -> str | None:
-    match = re.search(rf"\b{re.escape(name)}\s*=\s*([^\s\]\}}]+)", body)
-    return match.group(1) if match else None
-
-
-def _metadata_list(body: str, name: str) -> list[str]:
-    match = re.search(rf"\b{re.escape(name)}\s*=\s*\[(.*?)\]", body, re.S)
-    if not match:
-        return []
-    raw = match.group(1)
-    token_pattern = re.compile(r'\s*(?:"([^"]+)"|([A-Za-z0-9_.:+-]+))')
-    tokens: list[str] = []
-    position = 0
-    while position < len(raw):
-        if not raw[position:].strip():
-            break
-        token = token_pattern.match(raw, position)
-        if not token:
-            return []
-        tokens.append(token.group(1) or token.group(2))
-        position = token.end()
-    return tokens
-
-
-def _metadata_numbers(body: str, name: str) -> tuple[float, ...]:
-    match = re.search(rf"\b{re.escape(name)}\s*=\s*\[(.*?)\]", body, re.S)
-    if not match:
-        return ()
-    return tuple(float(value) for value in _NUMBER_RE.findall(match.group(1)))
-
-
-_INTEGER_RE = re.compile(r"[-+]?\d+")
-
-
-def _metadata_assignment_names(body: str) -> list[str]:
-    return re.findall(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*=", body)
-
-
-def _strict_numeric_tokens(body: str, *, integer: bool) -> list[str] | None:
-    tokens = body.split()
-    pattern = _INTEGER_RE if integer else _NUMBER_RE
-    if not tokens or any(not pattern.fullmatch(token) for token in tokens):
-        return None
-    return tokens
-
-
-def _strict_numeric_rows(
-    text: str,
-    block_name: str,
-    expected_count: int,
-    allowed_columns: set[int],
-    *,
-    integer: bool,
-) -> bool:
-    match = re.search(
-        rf"\b{re.escape(block_name)}\s*\((\d+)\)\s*"
-        rf"\{{(?P<body>.*?)\n\s*\}}",
-        text,
-        re.S,
-    )
-    if not match or int(match.group(1)) != expected_count:
-        return False
-    rows = [
-        line.split()
-        for line in match.group("body").splitlines()
-        if line.strip()
-    ]
-    pattern = _INTEGER_RE if integer else _NUMBER_RE
-    return (
-        len(rows) == expected_count
-        and all(len(row) in allowed_columns for row in rows)
-        and all(pattern.fullmatch(token) for row in rows for token in row)
-    )
-
-
-def _strict_grid_metadata(text: str) -> bool:
-    info_matches = list(re.finditer(r"\bInfo\s*\{(?P<body>.*?)\n\}", text, re.S))
-    coord_matches = list(
-        re.finditer(r"\bCoordSystem\s*\{(?P<body>.*?)\n\s*\}", text, re.S)
-    )
-    region_names = re.findall(r'Region\s*\("([^"]+)"\)\s*\{', text)
-    if (
-        len(info_matches) != 1
-        or len(coord_matches) != 1
-        or len(re.findall(r"\bData\s*\{", text)) != 1
-        or region_names != _REGION_ORDER
-        or not re.search(r"\}\s*\Z", text)
-    ):
-        return False
-    info_match = info_matches[0]
-    coord_match = coord_matches[0]
-    info = info_match.group("body")
-    expected_scalars = {
-        "version": "1.1",
-        "type": "grid",
-        "dimension": "2",
-        "nb_vertices": "6",
-        "nb_edges": "9",
-        "nb_faces": "0",
-        "nb_elements": "6",
-        "nb_regions": "3",
-    }
-    if any(
-        _metadata_assignment(info, name) != value
-        for name, value in expected_scalars.items()
-    ):
-        return False
-    if _metadata_assignment_names(info) != [
-        *expected_scalars,
-        "regions",
-        "materials",
-    ]:
-        return False
-    if _metadata_list(info, "regions") != _REGION_ORDER:
-        return False
-    if _metadata_list(info, "materials") != _MATERIALS:
-        return False
-
-    coord = coord_match.group("body")
-    if _metadata_assignment_names(coord) != ["translate", "transform"]:
-        return False
-    if _metadata_numbers(coord, "translate") != (0.0, 0.0, 0.0):
-        return False
-    if _metadata_numbers(coord, "transform") != (
-        1.0,
-        0.0,
-        0.0,
-        0.0,
-        1.0,
-        0.0,
-        0.0,
-        0.0,
-        1.0,
-    ):
-        return False
-
-    if not _strict_numeric_rows(text, "Vertices", 6, {2}, integer=False):
-        return False
-    if not _strict_numeric_rows(text, "Edges", 9, {2}, integer=True):
-        return False
-    if not _strict_numeric_rows(text, "Elements", 6, {3, 4}, integer=True):
-        return False
-    locations_match = re.search(r"\bLocations\s*\((\d+)\)", text)
-    if not locations_match or int(locations_match.group(1)) != 9:
-        return False
-    expected_materials = dict(zip(_REGION_ORDER, _MATERIALS, strict=True))
-    for region_name, element_ids in _REGION_OWNERSHIP.items():
-        match = re.search(
-            rf'Region\s*\("{re.escape(region_name)}"\)\s*\{{\s*'
-            rf'material\s*=\s*{re.escape(expected_materials[region_name])}\s+'
-            rf'Elements\s*\((\d+)\)\s*\{{(?P<values>.*?)\n\s*\}}',
-            text,
-            re.S,
-        )
-        if not match or int(match.group(1)) != len(element_ids):
-            return False
-        tokens = _strict_numeric_tokens(match.group("values"), integer=True)
-        if tokens is None or len(tokens) != len(element_ids):
-            return False
-    return True
-
-
-def _strict_dataset_metadata(text: str, expected_names: list[str]) -> bool:
-    info_matches = list(re.finditer(r"\bInfo\s*\{(?P<body>.*?)\n\}", text, re.S))
-    dataset_names = re.findall(r'Dataset\s*\("([^"]+)"\)\s*\{', text)
-    if (
-        len(info_matches) != 1
-        or len(re.findall(r"\bData\s*\{", text)) != 1
-        or dataset_names != expected_names
-        or not re.search(r"\}\s*\Z", text)
-    ):
-        return False
-    info = info_matches[0].group("body")
-    expected_scalars = {
-        "version": "1.0",
-        "type": "dataset",
-        "dimension": "2",
-        "nb_vertices": "6",
-        "nb_edges": "9",
-        "nb_faces": "0",
-        "nb_elements": "6",
-        "nb_regions": "3",
-    }
-    if any(
-        _metadata_assignment(info, name) != value
-        for name, value in expected_scalars.items()
-    ):
-        return False
-    if _metadata_assignment_names(info) != [
-        *expected_scalars,
-        "datasets",
-        "functions",
-    ]:
-        return False
-    if _metadata_list(info, "datasets") != expected_names:
-        return False
-    if _metadata_list(info, "functions") != expected_names:
-        return False
-
-    for name in expected_names:
-        match = re.search(
-            rf'Dataset\s*\("{re.escape(name)}"\)\s*\{{'
-            rf'(?P<header>.*?)\bValues\s*\((\d+)\)\s*'
-            rf'\{{(?P<values>.*?)\n\s*\}}',
-            text,
-            re.S,
-        )
-        if not match or int(match.group(2)) != 6:
-            return False
-        header = match.group("header")
-        if _metadata_assignment_names(header) != [
-            "function",
-            "type",
-            "dimension",
-            "location",
-            "validity",
-        ]:
-            return False
-        values = _strict_numeric_tokens(match.group("values"), integer=False)
-        if values is None or len(values) != 6:
-            return False
-        if _metadata_assignment(header, "function") != name:
-            return False
-        if _metadata_assignment(header, "type") != "scalar":
-            return False
-        if _metadata_assignment(header, "dimension") != "1":
-            return False
-        if _metadata_assignment(header, "location") != "vertex":
-            return False
-        if _metadata_list(header, "validity") != ["R.Si"]:
-            return False
-    return True
-
+    path.write_text(_render_dfise_doping(topology), encoding="utf-8")
 
 def _decode_triangle(
     record: list[int], edges: list[list[int]]
@@ -692,7 +462,7 @@ def validate_dfise_roundtrip(
     dataset_text = dat.read_text(encoding="utf-8", errors="replace")
     grid = parse_grd(grd)
     datasets = parse_dat(dat)
-    grid_metadata_matches = _strict_grid_metadata(grid_text)
+    grid_metadata_matches = grid_text == _render_dfise_grid(topology)
     edges = grid["edges"]
     elements = grid["elements"]
     silicon_ids = grid["region_elements"].get("R.Si", [])
@@ -728,9 +498,7 @@ def validate_dfise_roundtrip(
     expected_edges = canonical_edges(topology.triangles)
     expected_locations = _edge_locations(topology.triangles, expected_edges)
     expected_datasets = _doping_datasets(topology)
-    dataset_metadata_matches = _strict_dataset_metadata(
-        dataset_text, list(expected_datasets)
-    )
+    dataset_metadata_matches = dataset_text == _render_dfise_doping(topology)
     doping_matches = (
         set(datasets) == set(expected_datasets)
         and all(
