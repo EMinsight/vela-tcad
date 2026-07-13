@@ -92,16 +92,43 @@ def canonical_triangle(triangle: tuple[int, int, int]) -> tuple[int, int, int]:
     return min(triangle[index:] + triangle[:index] for index in range(3))
 
 
+_CANONICAL_NODE_KEYS = {str(node_id) for node_id in _NODES}
+
+
+def _reject_duplicate_json_keys(
+    pairs: list[tuple[str, object]],
+) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON key: {key}")
+        result[key] = value
+    return result
+
+
+def _require_canonical_node_keys(data: dict[str, object], name: str) -> None:
+    values = data.get(name)
+    if not isinstance(values, dict) or set(values) != _CANONICAL_NODE_KEYS:
+        raise ValueError(
+            f"{name} keys must be exactly {sorted(_CANONICAL_NODE_KEYS)}"
+        )
+
+
 def _as_int_keyed(values: dict[str, object]) -> dict[int, object]:
     return {int(key): value for key, value in values.items()}
 
 
 def load_topology(path: Path, topology_id: str) -> Topology:
-    data = json.loads(path.read_text(encoding="utf-8"))
+    data = json.loads(
+        path.read_text(encoding="utf-8"),
+        object_pairs_hook=_reject_duplicate_json_keys,
+    )
     if data.get("schema") != "vela.pn2d_minimal6_topologies.v1":
         raise ValueError("unexpected minimal6 topology schema")
     if data.get("length_unit") != "um" or data.get("doping_unit") != "cm^-3":
         raise ValueError("unexpected minimal6 topology units")
+    for name in ("nodes", "acceptors_cm3", "donors_cm3"):
+        _require_canonical_node_keys(data, name)
     try:
         triangles = data["topologies"][topology_id]
     except KeyError as error:
@@ -380,12 +407,19 @@ def _metadata_list(body: str, name: str) -> list[str]:
     match = re.search(rf"\b{re.escape(name)}\s*=\s*\[(.*?)\]", body, re.S)
     if not match:
         return []
-    return [
-        quoted or bare
-        for quoted, bare in re.findall(
-            r'"([^"]+)"|([A-Za-z0-9_.:+-]+)', match.group(1)
-        )
-    ]
+    raw = match.group(1)
+    token_pattern = re.compile(r'\s*(?:"([^"]+)"|([A-Za-z0-9_.:+-]+))')
+    tokens: list[str] = []
+    position = 0
+    while position < len(raw):
+        if not raw[position:].strip():
+            break
+        token = token_pattern.match(raw, position)
+        if not token:
+            return []
+        tokens.append(token.group(1) or token.group(2))
+        position = token.end()
+    return tokens
 
 
 def _metadata_numbers(body: str, name: str) -> tuple[float, ...]:
@@ -395,11 +429,66 @@ def _metadata_numbers(body: str, name: str) -> tuple[float, ...]:
     return tuple(float(value) for value in _NUMBER_RE.findall(match.group(1)))
 
 
-def _strict_grid_metadata(text: str) -> bool:
-    info_match = re.search(r"\bInfo\s*\{(?P<body>.*?)\n\}", text, re.S)
-    coord_match = re.search(r"\bCoordSystem\s*\{(?P<body>.*?)\n\s*\}", text, re.S)
-    if not info_match or not coord_match:
+_INTEGER_RE = re.compile(r"[-+]?\d+")
+
+
+def _metadata_assignment_names(body: str) -> list[str]:
+    return re.findall(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*=", body)
+
+
+def _strict_numeric_tokens(body: str, *, integer: bool) -> list[str] | None:
+    tokens = body.split()
+    pattern = _INTEGER_RE if integer else _NUMBER_RE
+    if not tokens or any(not pattern.fullmatch(token) for token in tokens):
+        return None
+    return tokens
+
+
+def _strict_numeric_rows(
+    text: str,
+    block_name: str,
+    expected_count: int,
+    allowed_columns: set[int],
+    *,
+    integer: bool,
+) -> bool:
+    match = re.search(
+        rf"\b{re.escape(block_name)}\s*\((\d+)\)\s*"
+        rf"\{{(?P<body>.*?)\n\s*\}}",
+        text,
+        re.S,
+    )
+    if not match or int(match.group(1)) != expected_count:
         return False
+    rows = [
+        line.split()
+        for line in match.group("body").splitlines()
+        if line.strip()
+    ]
+    pattern = _INTEGER_RE if integer else _NUMBER_RE
+    return (
+        len(rows) == expected_count
+        and all(len(row) in allowed_columns for row in rows)
+        and all(pattern.fullmatch(token) for row in rows for token in row)
+    )
+
+
+def _strict_grid_metadata(text: str) -> bool:
+    info_matches = list(re.finditer(r"\bInfo\s*\{(?P<body>.*?)\n\}", text, re.S))
+    coord_matches = list(
+        re.finditer(r"\bCoordSystem\s*\{(?P<body>.*?)\n\s*\}", text, re.S)
+    )
+    region_names = re.findall(r'Region\s*\("([^"]+)"\)\s*\{', text)
+    if (
+        len(info_matches) != 1
+        or len(coord_matches) != 1
+        or len(re.findall(r"\bData\s*\{", text)) != 1
+        or region_names != _REGION_ORDER
+        or not re.search(r"\}\s*\Z", text)
+    ):
+        return False
+    info_match = info_matches[0]
+    coord_match = coord_matches[0]
     info = info_match.group("body")
     expected_scalars = {
         "version": "1.1",
@@ -416,12 +505,20 @@ def _strict_grid_metadata(text: str) -> bool:
         for name, value in expected_scalars.items()
     ):
         return False
+    if _metadata_assignment_names(info) != [
+        *expected_scalars,
+        "regions",
+        "materials",
+    ]:
+        return False
     if _metadata_list(info, "regions") != _REGION_ORDER:
         return False
     if _metadata_list(info, "materials") != _MATERIALS:
         return False
 
     coord = coord_match.group("body")
+    if _metadata_assignment_names(coord) != ["translate", "transform"]:
+        return False
     if _metadata_numbers(coord, "translate") != (0.0, 0.0, 0.0):
         return False
     if _metadata_numbers(coord, "transform") != (
@@ -437,32 +534,43 @@ def _strict_grid_metadata(text: str) -> bool:
     ):
         return False
 
-    for block_name, expected_count in (
-        ("Vertices", 6),
-        ("Edges", 9),
-        ("Locations", 9),
-        ("Elements", 6),
-    ):
-        match = re.search(rf"\b{block_name}\s*\((\d+)\)", text)
-        if not match or int(match.group(1)) != expected_count:
-            return False
+    if not _strict_numeric_rows(text, "Vertices", 6, {2}, integer=False):
+        return False
+    if not _strict_numeric_rows(text, "Edges", 9, {2}, integer=True):
+        return False
+    if not _strict_numeric_rows(text, "Elements", 6, {3, 4}, integer=True):
+        return False
+    locations_match = re.search(r"\bLocations\s*\((\d+)\)", text)
+    if not locations_match or int(locations_match.group(1)) != 9:
+        return False
+    expected_materials = dict(zip(_REGION_ORDER, _MATERIALS, strict=True))
     for region_name, element_ids in _REGION_OWNERSHIP.items():
         match = re.search(
-            rf'Region\s*\("{re.escape(region_name)}"\)\s*\{{'
-            rf'.*?\bElements\s*\((\d+)\)',
+            rf'Region\s*\("{re.escape(region_name)}"\)\s*\{{\s*'
+            rf'material\s*=\s*{re.escape(expected_materials[region_name])}\s+'
+            rf'Elements\s*\((\d+)\)\s*\{{(?P<values>.*?)\n\s*\}}',
             text,
             re.S,
         )
         if not match or int(match.group(1)) != len(element_ids):
             return False
+        tokens = _strict_numeric_tokens(match.group("values"), integer=True)
+        if tokens is None or len(tokens) != len(element_ids):
+            return False
     return True
 
 
 def _strict_dataset_metadata(text: str, expected_names: list[str]) -> bool:
-    info_match = re.search(r"\bInfo\s*\{(?P<body>.*?)\n\}", text, re.S)
-    if not info_match:
+    info_matches = list(re.finditer(r"\bInfo\s*\{(?P<body>.*?)\n\}", text, re.S))
+    dataset_names = re.findall(r'Dataset\s*\("([^"]+)"\)\s*\{', text)
+    if (
+        len(info_matches) != 1
+        or len(re.findall(r"\bData\s*\{", text)) != 1
+        or dataset_names != expected_names
+        or not re.search(r"\}\s*\Z", text)
+    ):
         return False
-    info = info_match.group("body")
+    info = info_matches[0].group("body")
     expected_scalars = {
         "version": "1.0",
         "type": "dataset",
@@ -478,6 +586,12 @@ def _strict_dataset_metadata(text: str, expected_names: list[str]) -> bool:
         for name, value in expected_scalars.items()
     ):
         return False
+    if _metadata_assignment_names(info) != [
+        *expected_scalars,
+        "datasets",
+        "functions",
+    ]:
+        return False
     if _metadata_list(info, "datasets") != expected_names:
         return False
     if _metadata_list(info, "functions") != expected_names:
@@ -486,13 +600,25 @@ def _strict_dataset_metadata(text: str, expected_names: list[str]) -> bool:
     for name in expected_names:
         match = re.search(
             rf'Dataset\s*\("{re.escape(name)}"\)\s*\{{'
-            rf'(?P<header>.*?)\bValues\s*\((\d+)\)',
+            rf'(?P<header>.*?)\bValues\s*\((\d+)\)\s*'
+            rf'\{{(?P<values>.*?)\n\s*\}}',
             text,
             re.S,
         )
         if not match or int(match.group(2)) != 6:
             return False
         header = match.group("header")
+        if _metadata_assignment_names(header) != [
+            "function",
+            "type",
+            "dimension",
+            "location",
+            "validity",
+        ]:
+            return False
+        values = _strict_numeric_tokens(match.group("values"), integer=False)
+        if values is None or len(values) != 6:
+            return False
         if _metadata_assignment(header, "function") != name:
             return False
         if _metadata_assignment(header, "type") != "scalar":
@@ -504,6 +630,7 @@ def _strict_dataset_metadata(text: str, expected_names: list[str]) -> bool:
         if _metadata_list(header, "validity") != ["R.Si"]:
             return False
     return True
+
 
 def _decode_triangle(
     record: list[int], edges: list[list[int]]
@@ -548,7 +675,10 @@ def _parse_locations(path: Path) -> list[str]:
     )
     if not match:
         return []
-    locations = re.findall(r"[ei]", match.group("body"))
+    raw_locations = re.sub(r"\s+", "", match.group("body"))
+    if not re.fullmatch(r"[ei]+", raw_locations):
+        return []
+    locations = list(raw_locations)
     if len(locations) != int(match.group(1)):
         return []
     return locations
@@ -676,7 +806,18 @@ def main() -> int:
         report = validate_dfise_roundtrip(topology, args.grd, args.dat)
         print(json.dumps(report, indent=2, sort_keys=True))
         return 0 if report["passed"] else 1
-    print(json.dumps(validate_topology(topology).__dict__, sort_keys=True))
+    summary = validate_topology(topology)
+    print(
+        json.dumps(
+            {
+                "nodes": summary.nodes,
+                "triangles": summary.triangles,
+                "edges": summary.edges,
+                "contact_edges": dict(summary.contact_edges),
+            },
+            sort_keys=True,
+        )
+    )
     return 0
 
 
