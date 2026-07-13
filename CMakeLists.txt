@@ -68,6 +68,7 @@ add_library(vela_core STATIC
     src/physics/BandgapNarrowing.cpp
     src/equation/PoissonAssembler.cpp
     src/equation/DDAssembler.cpp
+    src/equation/FixedStateOperatorAudit.cpp
     src/discretization/Bernoulli.cpp
     src/discretization/ScharfetterGummel.cpp
     src/solver/LinearSolver.cpp
@@ -169,6 +170,9 @@ target_link_libraries(vela_example_runner PRIVATE vela_core)
 
 add_executable(pn2d_jacobian_block_audit src/tools/pn2d_jacobian_block_audit.cpp)
 target_link_libraries(pn2d_jacobian_block_audit PRIVATE vela_core)
+
+add_executable(pn2d_minimal6_operator_audit src/tools/pn2d_minimal6_operator_audit.cpp)
+target_link_libraries(pn2d_minimal6_operator_audit PRIVATE vela_core)
 
 add_executable(alpha_from_sentaurus_f src/tools/alpha_from_sentaurus_f.cpp)
 target_link_libraries(alpha_from_sentaurus_f PRIVATE vela_core)
@@ -289,6 +293,9 @@ target_link_libraries(test_impact_ionization PRIVATE vela_core Catch2::Catch2Wit
 add_executable(test_cell_reconstructed_avalanche tests/test_cell_reconstructed_avalanche.cpp)
 target_link_libraries(test_cell_reconstructed_avalanche PRIVATE vela_core Catch2::Catch2WithMain)
 
+add_executable(test_fixed_state_operator_audit tests/test_fixed_state_operator_audit.cpp)
+target_link_libraries(test_fixed_state_operator_audit PRIVATE vela_core Catch2::Catch2WithMain)
+
 add_executable(test_recombination tests/test_recombination.cpp)
 target_link_libraries(test_recombination PRIVATE vela_core Catch2::Catch2WithMain)
 
@@ -364,6 +371,7 @@ add_test(NAME mos_mixed COMMAND test_mos_mixed_material [mos_mixed])
 vela_catch_discover_tests(test_mobility)
 vela_catch_discover_tests(test_impact_ionization)
 vela_catch_discover_tests(test_cell_reconstructed_avalanche)
+vela_catch_discover_tests(test_fixed_state_operator_audit)
 vela_catch_discover_tests(test_recombination)
 vela_catch_discover_tests(test_line_search_backtrack_failure)
 vela_catch_discover_tests(test_dc_sweep)
