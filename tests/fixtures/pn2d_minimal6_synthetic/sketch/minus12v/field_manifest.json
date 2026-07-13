@@ -1,0 +1,90 @@
+{
+  "bias_V": -12.0,
+  "global_node_mapping": "exact_coordinate_1e-12_um",
+  "fields": {
+    "ElectrostaticPotential": {
+      "region": "Silicon",
+      "components": 1,
+      "unit": "V",
+      "mapping_status": "mapped"
+    },
+    "eQuasiFermiPotential": {
+      "region": "Silicon",
+      "components": 1,
+      "unit": "V",
+      "mapping_status": "mapped"
+    },
+    "hQuasiFermiPotential": {
+      "region": "Silicon",
+      "components": 1,
+      "unit": "V",
+      "mapping_status": "mapped"
+    },
+    "eDensity": {
+      "region": "Silicon",
+      "components": 1,
+      "unit": "m^-3",
+      "mapping_status": "mapped"
+    },
+    "hDensity": {
+      "region": "Silicon",
+      "components": 1,
+      "unit": "m^-3",
+      "mapping_status": "mapped"
+    },
+    "DonorConcentration": {
+      "region": "Silicon",
+      "components": 1,
+      "unit": "m^-3",
+      "mapping_status": "mapped"
+    },
+    "AcceptorConcentration": {
+      "region": "Silicon",
+      "components": 1,
+      "unit": "m^-3",
+      "mapping_status": "mapped"
+    },
+    "eMobility": {
+      "region": "Silicon",
+      "components": 1,
+      "unit": "m^2/(V*s)",
+      "mapping_status": "mapped"
+    },
+    "hMobility": {
+      "region": "Silicon",
+      "components": 1,
+      "unit": "m^2/(V*s)",
+      "mapping_status": "mapped"
+    },
+    "ElectricField": {
+      "region": "Silicon",
+      "components": 2,
+      "unit": "V/m",
+      "mapping_status": "mapped"
+    },
+    "eCurrentDensity": {
+      "region": "Silicon",
+      "components": 2,
+      "unit": "A/m^2",
+      "mapping_status": "mapped"
+    },
+    "hCurrentDensity": {
+      "region": "Silicon",
+      "components": 2,
+      "unit": "A/m^2",
+      "mapping_status": "mapped"
+    },
+    "eAlphaAvalanche": {
+      "region": "Silicon",
+      "components": 1,
+      "unit": "m^-1",
+      "mapping_status": "mapped"
+    },
+    "hAlphaAvalanche": {
+      "region": "Silicon",
+      "components": 1,
+      "unit": "m^-1",
+      "mapping_status": "mapped"
+    }
+  }
+}

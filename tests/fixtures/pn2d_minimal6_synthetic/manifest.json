@@ -1,0 +1,66 @@
+{
+  "fixture_schema": "vela.pn2d_minimal6_synthetic_fixture.v1",
+  "description": "Synthetic Sentaurus-like fields and static Task4-schema Vela CSV outputs",
+  "topologies": [
+    {
+      "topology_id": "sketch",
+      "topology_file": "sketch/topology.json",
+      "states": [
+        {
+          "bias_V": 0.0,
+          "field_manifest": "sketch/0v/field_manifest.json",
+          "sentaurus_state_csv": "sketch/0v/sentaurus_state.csv",
+          "vela_node_csv": "sketch/0v/vela_node_state.csv",
+          "vela_edge_csv": "sketch/0v/vela_edge_audit.csv",
+          "vela_triangle_csv": "sketch/0v/vela_triangle_audit.csv"
+        },
+        {
+          "bias_V": -12.0,
+          "field_manifest": "sketch/minus12v/field_manifest.json",
+          "sentaurus_state_csv": "sketch/minus12v/sentaurus_state.csv",
+          "vela_node_csv": "sketch/minus12v/vela_node_state.csv",
+          "vela_edge_csv": "sketch/minus12v/vela_edge_audit.csv",
+          "vela_triangle_csv": "sketch/minus12v/vela_triangle_audit.csv"
+        },
+        {
+          "bias_V": -19.0,
+          "field_manifest": "sketch/minus19v/field_manifest.json",
+          "sentaurus_state_csv": "sketch/minus19v/sentaurus_state.csv",
+          "vela_node_csv": "sketch/minus19v/vela_node_state.csv",
+          "vela_edge_csv": "sketch/minus19v/vela_edge_audit.csv",
+          "vela_triangle_csv": "sketch/minus19v/vela_triangle_audit.csv"
+        }
+      ]
+    },
+    {
+      "topology_id": "mirror",
+      "topology_file": "mirror/topology.json",
+      "states": [
+        {
+          "bias_V": 0.0,
+          "field_manifest": "mirror/0v/field_manifest.json",
+          "sentaurus_state_csv": "mirror/0v/sentaurus_state.csv",
+          "vela_node_csv": "mirror/0v/vela_node_state.csv",
+          "vela_edge_csv": "mirror/0v/vela_edge_audit.csv",
+          "vela_triangle_csv": "mirror/0v/vela_triangle_audit.csv"
+        },
+        {
+          "bias_V": -12.0,
+          "field_manifest": "mirror/minus12v/field_manifest.json",
+          "sentaurus_state_csv": "mirror/minus12v/sentaurus_state.csv",
+          "vela_node_csv": "mirror/minus12v/vela_node_state.csv",
+          "vela_edge_csv": "mirror/minus12v/vela_edge_audit.csv",
+          "vela_triangle_csv": "mirror/minus12v/vela_triangle_audit.csv"
+        },
+        {
+          "bias_V": -19.0,
+          "field_manifest": "mirror/minus19v/field_manifest.json",
+          "sentaurus_state_csv": "mirror/minus19v/sentaurus_state.csv",
+          "vela_node_csv": "mirror/minus19v/vela_node_state.csv",
+          "vela_edge_csv": "mirror/minus19v/vela_edge_audit.csv",
+          "vela_triangle_csv": "mirror/minus19v/vela_triangle_audit.csv"
+        }
+      ]
+    }
+  ]
+}
