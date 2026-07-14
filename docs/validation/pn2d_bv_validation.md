@@ -1246,3 +1246,82 @@ intentional stop condition, not an incomplete report: the current formula must
 first be reconciled using exact same-state vectors and complete hole endpoint
 diagnostics. The static figure group adds
 `pn2d-bv-current-semantics-audit.{png,pdf}` for this result.
+
+## PN2D Minimal6 Real Six-State Fixed-State Operator Audit (2026-07-14)
+
+Answer first: the real Sentaurus six-state joined audit passes all topology,
+state-parity, independent-formula, provenance, completeness, finiteness, and
+uniqueness gates. This result does **not** include a Vela nonlinear solve and is
+**not** a physical BV curve or breakdown-voltage validation.
+
+The exact input root is:
+
+```text
+build-release/reference_tcad/pn2d_sentaurus2018_minimal6/
+  state_exports/minimal6_states_live_20260713_v2
+```
+
+It contains exact converged states for sketch and mirror topologies at `0 V`,
+`-12 V`, and `-19 V`. The no-remesh grid route retained six canonical nodes,
+nine edges, four CCW silicon triangles, Anode edge `1-5`, Cathode edge `3-4`,
+and compensated nodes 2 and 6. Sketch triangles are `(1,5,2)`, `(5,6,2)`,
+`(2,6,4)`, `(2,4,3)`; mirror triangles are `(1,5,6)`, `(1,6,2)`,
+`(2,6,3)`, `(6,4,3)`.
+
+All six production C++ replays exited 0. The deterministic producer SHA-256 is
+`6b08653047289819063dee8bce8a87268ed54fa2588baa102dd06e90fb92e9f2`,
+and its geometry source commit is `dfe2611975742779e6d27e164d3b695a5d189e44`.
+That geometry change clamps roundoff-scale circumcenter-to-hypotenuse distances
+to the mathematical zero required by a right triangle; the independent Python
+reference applies the same scale-aware `64 * epsilon * edge_length` rule.
+
+The joined report is under:
+
+```text
+build-release/reference_tcad/pn2d_sentaurus2018_minimal6/
+  reports/minimal6_fixed_state_audit_20260714
+```
+
+| gate/result | value |
+|---|---:|
+| node / edge / triangle rows | `36 / 54 / 24` |
+| replay provenance | `PASS`, six fresh executable invocations |
+| maximum imported-state parity hybrid error | `0` (`<1e-12`) |
+| maximum C++/Python formula hybrid error | `1.7995489542954602e-12` (`<5e-12`) |
+| maximum diagnostic-only Sentaurus/Vela hybrid difference | `1.4353167246750966` |
+| static figures | `7 PNG + 7 PDF` |
+
+The external current/source comparisons deliberately have no pass threshold.
+Their per-state diagnostic values are:
+
+| topology | bias (V) | max electron-current hybrid difference | max hole-current hybrid difference | summed Vela source (`m^-1 s^-1`) | summed Sentaurus source (`m^-1 s^-1`) | summed-source hybrid difference |
+|---|---:|---:|---:|---:|---:|---:|
+| sketch | `0` | `1.1608943714` | `1.0` | `3.6511230277e-297` | `1.6724990366e-138` | `1.0` |
+| mirror | `0` | `1.1608943714` | `1.0` | `3.6511230277e-297` | `1.6724990366e-138` | `1.0` |
+| sketch | `-12` | `1.4353167247` | `1.0` | `4.4943959893e14` | `3.1472213422e2` | `0.9999999999993` |
+| mirror | `-12` | `1.4353167247` | `1.0` | `4.4943959893e14` | `3.1472213422e2` | `0.9999999999993` |
+| sketch | `-19` | `1.2888107893` | `1.0` | `3.0764749124e18` | `2.8565524591e5` | `0.9999999999999072` |
+| mirror | `-19` | `1.2888107893` | `1.0` | `3.0764749124e18` | `2.8565524591e5` | `0.9999999999999072` |
+
+For reproducibility, the following signed direction ratios are
+`mirror integrated sum / sketch integrated sum`. They are topology-sensitivity
+diagnostics, not physical-accuracy scores; the `0 V` hole sum is exactly zero
+for both topologies.
+
+| bias (V) | integrated electron edge-current ratio | integrated hole edge-current ratio | integrated Vela source ratio |
+|---|---:|---:|---:|
+| `0` | `-0.9999984947` | both zero | `1.0000000000000007` |
+| `-12` | `-0.3721165399` | `2.2661314778` | `1.0000000000000007` |
+| `-19` | `-0.3475524461` | `2.2466198051` | `1.0000000000000007` |
+
+Automated figure QA confirmed nonblank `2340x864`, `2520x1080`, and
+`2160x990` PNG outputs plus seven readable single-page PDFs. Manual inspection
+confirmed readable topology labels, contacts, compensated-node rings, legends,
+scientific units, zero baselines, and no clipping or overlap.
+
+Interpretation: Tasks 3-5 are now exercised on the real exact Sentaurus state
+matrix, and Vela's fixed-state C++ operators match the independent formulas at
+the specified tolerance. The order-one current discrepancies and many-orders
+source differences remain diagnostic evidence that Sentaurus and Vela operator
+semantics are not physically reconciled. They must not be presented as a Vela
+BV solution or used to infer breakdown voltage.

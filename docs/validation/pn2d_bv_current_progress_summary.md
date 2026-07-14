@@ -120,3 +120,24 @@ Binary-search the scalar factor interval `0.921875..0.9375`, starting with
 first failing Newton transition on the unstable side to determine whether the
 failure is a continuation-method limitation or a source-ownership modeling
 limit.
+
+## 2026-07-14 Minimal6 Real Six-State Audit Status
+
+Task 6 is complete on the recovered real state root
+`build-release/reference_tcad/pn2d_sentaurus2018_minimal6/state_exports/minimal6_states_live_20260713_v2`.
+All six deterministic production C++ replays exited 0, replay provenance was
+freshly verified, and the joined report passed with `36/54/24` rows and
+`7 PNG + 7 PDF` figures.
+
+The strict results are: imported-state parity error `0 < 1e-12` and maximum
+C++/Python formula error `1.7995489542954602e-12 < 5e-12`. The real report is
+`build-release/reference_tcad/pn2d_sentaurus2018_minimal6/reports/minimal6_fixed_state_audit_20260714`.
+
+This closes the minimal6 fixed-state operator-audit workflow only. No Vela
+Newton, Gummel, or continuation solve was run, and the three fixed biases are
+not a BV sweep. Sentaurus/Vela current and avalanche-source differences remain
+order-one diagnostics with no acceptance threshold; at `-12 V` and `-19 V`,
+the summed Vela sources are approximately `4.4944e14` and `3.0765e18 m^-1 s^-1`,
+versus Sentaurus `3.1472e2` and `2.8566e5 m^-1 s^-1`. The next physical task
+remains current/source-semantics reconciliation before any minimal6 breakdown
+claim or nonlinear Vela BV validation.

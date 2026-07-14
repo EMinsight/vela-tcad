@@ -289,8 +289,8 @@
   ],
   "task4_provenance": {
     "producer": "build-release/pn2d_minimal6_operator_audit.exe",
-    "producer_sha256": "44176003962a846b4a4869bad6dc0dc2f88a3f96afb5f3d08366642d654f02c5",
-    "task4_source_commit": "37a95459dc5f360bb24b9afa00439301935e98de",
+    "producer_sha256": "6b08653047289819063dee8bce8a87268ed54fa2588baa102dd06e90fb92e9f2",
+    "task4_source_commit": "dfe2611975742779e6d27e164d3b695a5d189e44",
     "replay_environment": "MSYS2 UCRT64 release build on Windows",
     "replays": [
       {
@@ -325,8 +325,8 @@
         },
         "output_sha256": {
           "states/sketch/p0V/export/vela_node_state.csv": "ae67e3f63573905c13974489813eb96d9401aebf03db0e09d568f8f23b6d3cbc",
-          "states/sketch/p0V/export/vela_edge_audit.csv": "187efe59aa0003d71ecaf42e06a18e4a165b3fe499458d7d547dceabf2093fee",
-          "states/sketch/p0V/export/vela_triangle_audit.csv": "6f0b738f3ecdb72dc2b5094fcb7e8d61964786032c27c7ac50db97275cf6fb31"
+          "states/sketch/p0V/export/vela_edge_audit.csv": "64640fb3454e3e9add976c41dc81674a6f4668af09b305623eec5c1c9efbd905",
+          "states/sketch/p0V/export/vela_triangle_audit.csv": "b4fc3e523ba12843f9601650b10e58387e1504d3744a8b3b1787166647b1d3ff"
         }
       },
       {
@@ -361,8 +361,8 @@
         },
         "output_sha256": {
           "states/sketch/m12V/export/vela_node_state.csv": "2db68f5b5297176eb1117c4b83232d6ef21ecf9c5d8d237549cd2f17ff15187a",
-          "states/sketch/m12V/export/vela_edge_audit.csv": "45433c233917f722c15454a0b7e93f6989fc7b3c8371e432cd84f00480d4edb6",
-          "states/sketch/m12V/export/vela_triangle_audit.csv": "f805386c5aa9f16dd65a069a5dd35e80ce5bf3e2142d0add4b65b2cf9869ef6e"
+          "states/sketch/m12V/export/vela_edge_audit.csv": "a20f877cbb5f576cbd8cd4aaab960241121bbc1fcd40ab2cefdeec34fa89ffae",
+          "states/sketch/m12V/export/vela_triangle_audit.csv": "293021b6a6924477fc44bbd3db65a6855d91c067f9690ccc13380940357990c5"
         }
       },
       {
@@ -397,8 +397,8 @@
         },
         "output_sha256": {
           "states/sketch/m19V/export/vela_node_state.csv": "6d65256e4be16651308e600dc82b26d260a56b2911faf0dd55d95c4c38226f8d",
-          "states/sketch/m19V/export/vela_edge_audit.csv": "0658cd9633675e9907c56c02aa2b66d585f7ffd6d93516a0aa6e16a8063244a2",
-          "states/sketch/m19V/export/vela_triangle_audit.csv": "f5db5f026cf251614fd05a3ec5460418ffe9c0cf66a9a7f863ec7eaa23f132e6"
+          "states/sketch/m19V/export/vela_edge_audit.csv": "a2af6b584513c134bb013b79d92c76a869de7be26fb6ee33dbb8404722181987",
+          "states/sketch/m19V/export/vela_triangle_audit.csv": "e724957dbf358642717d868f4465749259635b5875e884dc5d8ada213ac01ba3"
         }
       },
       {
@@ -433,8 +433,8 @@
         },
         "output_sha256": {
           "states/mirror/p0V/export/vela_node_state.csv": "282456c0664bbc133b58e42802d09a4485ac093343d6f3ecc0aa4885a8a35af9",
-          "states/mirror/p0V/export/vela_edge_audit.csv": "04dc353496ce452a650e57e1f01a75b569ea03bbffe313369edc8494574624f6",
-          "states/mirror/p0V/export/vela_triangle_audit.csv": "a9ffd81f4b7adea37475a2ee052fa0321ea8ad8a588dca13eef55f36e82dcd1b"
+          "states/mirror/p0V/export/vela_edge_audit.csv": "1e78b4ce8e1636bf86b87bbe5b837817d17c3d353bc84b9e4d297194fd5364e2",
+          "states/mirror/p0V/export/vela_triangle_audit.csv": "d30dc85ef8905fb4572781e0381e1f8cf332e8860ba70da5283e5a62b5256702"
         }
       },
       {
@@ -469,8 +469,8 @@
         },
         "output_sha256": {
           "states/mirror/m12V/export/vela_node_state.csv": "837128e737c664580d5b082932a62b93d613034a50737c50f011000e1fbba890",
-          "states/mirror/m12V/export/vela_edge_audit.csv": "ca4171390c460397641eceb56516828f74db8a8b98782c126fd341c5578c4e69",
-          "states/mirror/m12V/export/vela_triangle_audit.csv": "023c06f25076bfc24bb44eba68bc9bd73fd4b6afe916e6d540dfb7f587439a6e"
+          "states/mirror/m12V/export/vela_edge_audit.csv": "afd5d9c570a041bb3a562ed5adadc5614c4a09d75fd54ab99187b423c632a329",
+          "states/mirror/m12V/export/vela_triangle_audit.csv": "3334f25506990d4f33ca4557f48e33f877492cd2d0bcf755b3c2c8d4da1159db"
         }
       },
       {
@@ -505,8 +505,8 @@
         },
         "output_sha256": {
           "states/mirror/m19V/export/vela_node_state.csv": "cb943eaa2d2d2a781b4e0e8477863e87a8cfd1b982f984c21b8587d502366131",
-          "states/mirror/m19V/export/vela_edge_audit.csv": "ad012de95790315b0f38a14c37b5b7bcd87cdb1f578b8d7eec4d546f6325148b",
-          "states/mirror/m19V/export/vela_triangle_audit.csv": "7cfd0744e54ffde99dd5fa042195412f96a91e7ccd9821f0dbc30c124158a4b4"
+          "states/mirror/m19V/export/vela_edge_audit.csv": "780bfe880f3be57e840ccbcdba89e77beb4b497a30bcef5c92a109137079a171",
+          "states/mirror/m19V/export/vela_triangle_audit.csv": "5a03d81b21c2b2cc79c3979611a4be1bd1936b1e9c7f020e76c6642de6a6e72f"
         }
       }
     ]

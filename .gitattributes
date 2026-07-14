@@ -1,0 +1,2 @@
+# Provenance-bound C++ replay fixtures are compared by exact byte hash.
+tests/fixtures/pn2d_minimal6_synthetic/states/**/export/vela_*.csv binary

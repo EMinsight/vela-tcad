@@ -131,6 +131,24 @@ The field manifest must record region, component count, unit, mapping status,
 and global-node mapping. Missing, scalar-only, incomplete, ambiguously mapped,
 or incorrectly dimensioned fields fail the affected bias state.
 
+### Live Task 3 CSV Compatibility
+
+The live Sentaurus exporter uses strict enriched topology schemas:
+`elements.csv` is exactly `id,node0,node1,node2,region,material`, with
+`region=R.Si` and `material=Si`; `contacts.csv` is exactly
+`name,node_ids,region`, with `region=R.Si`. The committed synthetic fixture may
+use its original reduced exact schemas. No additional columns or alternate
+semantics are accepted.
+
+Decimal roundoff from the live donor/acceptor export is checked with the same
+`1e-12` hybrid state tolerance, so a serialization such as
+`1.0000000000000002e17 cm^-3` remains equivalent to the canonical value while
+material drift still fails closed. Near-zero triangle-gradient components use
+the documented formula limit with a `1e3 V/m` absolute scale. Right-triangle
+Genius support distances at or below `64 * machine_epsilon * maximum_edge_length`
+are the mathematical zero in both the production C++ geometry helper and the
+independent Python reference.
+
 ## Audit Layers
 
 ### Node State

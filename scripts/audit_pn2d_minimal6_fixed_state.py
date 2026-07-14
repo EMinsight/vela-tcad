@@ -27,11 +27,12 @@ THERMAL_VOLTAGE_V = KB_J_PER_K * TEMPERATURE_K / Q_C
 INTRINSIC_DENSITY_M3 = 1.0e16
 FORMULA_LIMIT = 5.0e-12
 STATE_LIMIT = 1.0e-12
+GRADIENT_HYBRID_ABS_FLOOR_V_PER_M = 1.0e3
 COORDINATE_LIMIT_UM = 1.0e-12
 GEOMETRIC_ZERO_AREA_M2 = 1.0e-27
 GEOMETRIC_ZERO_SOURCE_PER_M_S = 1.0e-285
 TASK4_PRODUCER = "build-release/pn2d_minimal6_operator_audit.exe"
-TASK4_SOURCE_COMMIT = "37a95459dc5f360bb24b9afa00439301935e98de"
+TASK4_SOURCE_COMMIT = "dfe2611975742779e6d27e164d3b695a5d189e44"
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SILICON_ELECTRON_MOBILITY_M2_PER_V_S = 0.135
 SILICON_HOLE_MOBILITY_M2_PER_V_S = 0.048
@@ -266,10 +267,15 @@ def genius_truncated_partial_volume(points, local_edge):
         (squared[0]*(points[1][1]-points[2][1]) + squared[1]*(points[2][1]-points[0][1]) + squared[2]*(points[0][1]-points[1][1]))/(2*determinant),
         (squared[0]*(points[2][0]-points[1][0]) + squared[1]*(points[0][0]-points[2][0]) + squared[2]*(points[1][0]-points[0][0]))/(2*determinant),
     ])
-    sides = ((0,1),(1,2),(2,0)); lengths=[]; dual=[]; obtuse=-1
+    sides = ((0,1),(1,2),(2,0))
+    lengths = [float(np.linalg.norm(points[i]-points[j])) for i,j in sides]
+    distance_tolerance = 64.0 * np.finfo(float).eps * max(lengths)
+    dual=[]; obtuse=-1
     for index,(i,j) in enumerate(sides):
-        opposite=(2+index)%3; lengths.append(float(np.linalg.norm(points[i]-points[j])))
+        opposite=(2+index)%3
         distance=float(np.linalg.norm((points[i]+points[j])/2-center))
+        if distance <= distance_tolerance:
+            distance = 0.0
         if float((points[i]-points[opposite]) @ (points[j]-points[opposite])) < 0:
             dual.append(-distance); obtuse=index
         else:
@@ -300,11 +306,14 @@ def read_csv(path, expected_header=None):
     path=Path(path)
     with path.open(encoding="utf-8",newline="") as handle:
         reader=csv.DictReader(handle); header=tuple(reader.fieldnames or ()); rows=list(reader)
-    if expected_header is not None and header != tuple(expected_header):
-        raise ContractError(f"wrong CSV schema in {path.name}")
+    if expected_header is not None:
+        expected=tuple(expected_header)
+        allowed={tuple(item) for item in expected} if expected and isinstance(expected[0],(tuple,list)) else {expected}
+        if header not in allowed:
+            raise ContractError(f"wrong CSV schema in {path.name}")
     for row in rows:
         for name,value in row.items():
-            if name not in ("name","node_ids"):
+            if name not in ("name","node_ids","region","material"):
                 finite(value,f"{path.name}:{name}")
     return rows
 
@@ -352,7 +361,14 @@ def validate_topology(export_dir, state, topology_id):
     if contract_triangles != expected:
         raise ContractError("inline topology must match exact approved CCW topology tuples/order")
     source_to_canonical=canonical_node_map(export_dir)
-    elements=read_csv(export_dir/"elements.csv",("id","node0","node1","node2"))
+    elements=read_csv(export_dir/"elements.csv",(
+        ("id","node0","node1","node2"),
+        ("id","node0","node1","node2","region","material"),
+    ))
+    if any("region" in row and row["region"]!="R.Si" for row in elements):
+        raise ContractError("wrong element region")
+    if any("material" in row and row["material"]!="Si" for row in elements):
+        raise ContractError("wrong element material")
     if len(elements) != 4 or {int(row["id"]) for row in elements} != set(range(4)):
         raise ContractError("wrong topology connectivity or counts")
     ordered=[]
@@ -363,7 +379,12 @@ def validate_topology(export_dir, state, topology_id):
         ordered.append(triangle)
     if len(set(ordered)) != len(expected) or set(ordered) != set(expected):
         raise ContractError("elements must contain the exact approved CCW topology tuple set")
-    contact_rows=read_csv(export_dir/"contacts.csv",("id","name","node_ids")); actual={}
+    contact_rows=read_csv(export_dir/"contacts.csv",(
+        ("id","name","node_ids"),
+        ("name","node_ids","region"),
+    )); actual={}
+    if any("region" in row and row["region"]!="R.Si" for row in contact_rows):
+        raise ContractError("wrong contact region")
     for row in contact_rows:
         actual[row["name"]]=tuple(sorted(source_to_canonical[int(x)] for x in row["node_ids"].split(";") if x!=""))
     if actual!={name:tuple(sorted(nodes)) for name,nodes in CONTACTS.items()}:
@@ -377,8 +398,10 @@ def validate_topology(export_dir, state, topology_id):
     if set(doping)!=set(NODES):
         raise ContractError("doping semantics are incomplete")
     for node in NODES:
-        if doping[node]!=(DONORS_CM3[node],ACCEPTORS_CM3[node]):
-            raise ContractError(f"wrong doping semantics at canonical node {node}")
+        gate(doping[node][0],DONORS_CM3[node],STATE_LIMIT,
+             f"wrong doping semantics at canonical node {node} donor")
+        gate(doping[node][1],ACCEPTORS_CM3[node],STATE_LIMIT,
+             f"wrong doping semantics at canonical node {node} acceptor")
     return source_to_canonical,doping
 
 
@@ -656,8 +679,8 @@ def build_report(state_root):
             shape_gradients=[triangle_gradient(points,[1.0 if i==basis else 0.0 for i in range(3)]) for basis in range(3)]
             errors=[gate(finite(raw_triangle["signed_double_area_m2"],"area"),signed_area2,FORMULA_LIMIT,"formula error")]
             for name,prefix in (("psi_V","grad_psi"),("phin_V","grad_phin"),("phip_V","grad_phip")):
-                errors.append(gate(finite(raw_triangle[f"{prefix}_x_V_per_m"],prefix),gradients[name][0],FORMULA_LIMIT,"formula error"))
-                errors.append(gate(finite(raw_triangle[f"{prefix}_y_V_per_m"],prefix),gradients[name][1],FORMULA_LIMIT,"formula error"))
+                errors.append(gate(finite(raw_triangle[f"{prefix}_x_V_per_m"],prefix),gradients[name][0],FORMULA_LIMIT,"formula error",GRADIENT_HYBRID_ABS_FLOOR_V_PER_M))
+                errors.append(gate(finite(raw_triangle[f"{prefix}_y_V_per_m"],prefix),gradients[name][1],FORMULA_LIMIT,"formula error",GRADIENT_HYBRID_ABS_FLOOR_V_PER_M))
             matrices=[]; electron_projections=[]; hole_projections=[]
             for local in range(3):
                 a=triangle[local]; b=triangle[(local+1)%3]; key=tuple(sorted((a,b))); edge=state_edges[key]
@@ -827,7 +850,7 @@ The input is an actual `vela.pn2d_minimal6_states.v1` root with flat sketch/mirr
 
 ## Limitations
 
-The committed state root is synthetic and exercises the real interfaces; it does not replace a live Sentaurus physics result. The three biases are discrete fixed-state samples, not a sweep or trend. Sentaurus-versus-Vela current/source comparisons are diagnostic-only.
+The audit replays imported fixed states and does not run a Vela nonlinear solve; it therefore cannot establish a self-consistent Vela BV curve. The three biases are discrete fixed-state samples, not a sweep or trend. Sentaurus-versus-Vela current/source comparisons are diagnostic-only.
 '''
     (out/"summary.md").write_text(markdown,encoding="utf-8"); plot_reports(report,out)
 

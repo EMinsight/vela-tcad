@@ -5,6 +5,7 @@ import importlib.util
 import json
 from pathlib import Path
 import shutil
+import struct
 import tempfile
 import unittest
 
@@ -49,8 +50,12 @@ class FormulaReferenceTests(unittest.TestCase):
     def test_genius_truncated_partial_volume_for_right_triangle(self):
         points = [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0)]
         self.assertAlmostEqual(audit.genius_truncated_partial_volume(points, 0), 0.25)
-        self.assertAlmostEqual(audit.genius_truncated_partial_volume(points, 1), 0.0)
+        self.assertEqual(audit.genius_truncated_partial_volume(points, 1), 0.0)
         self.assertAlmostEqual(audit.genius_truncated_partial_volume(points, 2), 0.25)
+
+        scaled_points = [(0.0, 0.0), (1.0e-6, 0.0), (1.0e-6, 0.5e-6)]
+        self.assertEqual(
+            audit.genius_truncated_partial_volume(scaled_points, 2), 0.0)
 
     def test_hybrid_error_and_both_zero_classification(self):
         self.assertEqual(audit.hybrid_error(0.0, 0.0), 0.0)
@@ -89,6 +94,27 @@ class ReviewContractTests(unittest.TestCase):
         with path.open("w", encoding="utf-8", newline="") as output:
             writer = csv.DictWriter(output, fieldnames=rows[0])
             writer.writeheader(); writer.writerows(rows)
+
+    @staticmethod
+    def _rewrite_live_topology_schema(export):
+        elements_path = export / "elements.csv"
+        with elements_path.open(encoding="utf-8", newline="") as source:
+            elements = list(csv.DictReader(source))
+        for row in elements:
+            row["region"] = "R.Si"
+            row["material"] = "Si"
+        with elements_path.open("w", encoding="utf-8", newline="") as output:
+            writer = csv.DictWriter(output, fieldnames=("id", "node0", "node1", "node2", "region", "material"))
+            writer.writeheader(); writer.writerows(elements)
+
+        contacts_path = export / "contacts.csv"
+        with contacts_path.open(encoding="utf-8", newline="") as source:
+            contacts = list(csv.DictReader(source))
+        contacts = [{"name": row["name"], "node_ids": row["node_ids"], "region": "R.Si"} for row in contacts]
+        with contacts_path.open("w", encoding="utf-8", newline="") as output:
+            writer = csv.DictWriter(output, fieldnames=("name", "node_ids", "region"))
+            writer.writeheader(); writer.writerows(contacts)
+
 
     @staticmethod
     def _producer():
@@ -151,12 +177,19 @@ class ReviewContractTests(unittest.TestCase):
     def test_cpp_provenance_replay_and_no_python_vela_producer(self):
         manifest = self._manifest(FIXTURE); provenance = manifest["task4_provenance"]
         self.assertEqual(provenance["producer"], "build-release/pn2d_minimal6_operator_audit.exe")
-        self.assertEqual(provenance["task4_source_commit"], "37a95459dc5f360bb24b9afa00439301935e98de")
+        self.assertEqual(provenance["task4_source_commit"], "dfe2611975742779e6d27e164d3b695a5d189e44")
         self.assertEqual(len(provenance["replays"]), 6)
         self.assertEqual(audit.verify_task4_replay(FIXTURE, self._producer()), [])
         source = SCRIPT.read_text(encoding="utf-8")
         self.assertNotIn("make_synthetic_fixture", source)
         self.assertNotIn("--make-synthetic-fixture", source)
+
+    def test_cpp_producer_has_reproducible_pe_timestamp(self):
+        data = self._producer().read_bytes()
+        pe_offset = struct.unpack_from("<I", data, 0x3C)[0]
+        self.assertEqual(data[pe_offset : pe_offset + 4], b"PE\0\0")
+        timestamp = struct.unpack_from("<I", data, pe_offset + 8)[0]
+        self.assertEqual(timestamp, 0)
 
     def test_fourteen_figures_and_numeric_summary(self):
         report = audit.build_report(FIXTURE)
@@ -188,6 +221,7 @@ class ReviewContractTests(unittest.TestCase):
             self.assertIn("Maximum state parity hybrid error:",md)
             self.assertIn("Maximum C++/Python formula hybrid error:",md)
             self.assertIn("fixed-state operator audit, not a BV curve", md)
+            self.assertNotIn("committed state root is synthetic", md)
             self.assertEqual(json.loads((out/"summary.json").read_text(encoding="utf-8"))["status"], "PASS")
     def test_complete_matrix_unique_keys_and_formula_gate(self):
         report = audit.build_report(FIXTURE)
@@ -225,9 +259,55 @@ class ReviewContractTests(unittest.TestCase):
         root=self._copy(); state=self._manifest(root)["states"][0]; path=self._export(root,state)/"elements.csv"; self._mutate_csv(path,"node2","5",0)
         with self.assertRaisesRegex(audit.ContractError,"topology|triangle orientation"): audit.build_report(root)
 
+    def test_live_task3_topology_csv_schema_is_strictly_supported(self):
+        root = self._copy(); state = self._manifest(root)["states"][0]; export = self._export(root, state)
+        self._rewrite_live_topology_schema(export)
+        audit.build_report(root)
+
+        root = self._copy(); state = self._manifest(root)["states"][0]; export = self._export(root, state)
+        self._rewrite_live_topology_schema(export); self._mutate_csv(export / "elements.csv", "region", "R.Other")
+        with self.assertRaisesRegex(audit.ContractError, "element region"):
+            audit.build_report(root)
+
+        root = self._copy(); state = self._manifest(root)["states"][0]; export = self._export(root, state)
+        self._rewrite_live_topology_schema(export); self._mutate_csv(export / "elements.csv", "material", "Ge")
+        with self.assertRaisesRegex(audit.ContractError, "element material"):
+            audit.build_report(root)
+
+        root = self._copy(); state = self._manifest(root)["states"][0]; export = self._export(root, state)
+        self._rewrite_live_topology_schema(export); self._mutate_csv(export / "contacts.csv", "region", "R.Other")
+        with self.assertRaisesRegex(audit.ContractError, "contact region"):
+            audit.build_report(root)
+
+    def test_live_task3_doping_roundoff_is_tolerated_but_drift_fails(self):
+        root = self._copy(); state = self._manifest(root)["states"][0]; export = self._export(root, state)
+        rounded = "1.0000000000000002e17"
+        self._mutate_csv(export / "doping.csv", "donors_cm3", rounded, 1)
+        self._mutate_csv(export / "doping.csv", "acceptors_cm3", rounded, 1)
+        self._mutate_csv(export / "fields" / "DonorConcentration_region0.csv", "component0", rounded, 1)
+        self._mutate_csv(export / "fields" / "AcceptorConcentration_region0.csv", "component0", rounded, 1)
+        audit.build_report(root)
+
+        root = self._copy(); state = self._manifest(root)["states"][0]; export = self._export(root, state)
+        drifted = "1.00000001e17"
+        self._mutate_csv(export / "doping.csv", "donors_cm3", drifted, 1)
+        self._mutate_csv(export / "fields" / "DonorConcentration_region0.csv", "component0", drifted, 1)
+        with self.assertRaisesRegex(audit.ContractError, "wrong doping semantics"):
+            audit.build_report(root)
+
     def test_nonfinite_state_fails_closed(self):
         root=self._copy(); state=self._manifest(root)["states"][0]; self._mutate_csv(root/state["state_csv"],"psi_V","nan",0)
         with self.assertRaisesRegex(audit.ContractError,"non-finite"): audit.build_report(root)
+
+    def test_near_zero_triangle_gradient_uses_absolute_formula_tolerance(self):
+        root = self._copy(); state = self._manifest(root)["states"][0]; path = self._export(root, state) / "vela_triangle_audit.csv"
+        self._mutate_csv(path, "grad_psi_x_V_per_m", "2e-9", 0)
+        audit.build_report(root)
+
+        root = self._copy(); state = self._manifest(root)["states"][0]; path = self._export(root, state) / "vela_triangle_audit.csv"
+        self._mutate_csv(path, "grad_psi_x_V_per_m", "6e-9", 0)
+        with self.assertRaisesRegex(audit.ContractError, "formula error"):
+            audit.build_report(root)
 
     def test_formula_error_above_threshold_fails_closed(self):
         root=self._copy(); state=self._manifest(root)["states"][0]; path=self._export(root,state)/"vela_edge_audit.csv"
