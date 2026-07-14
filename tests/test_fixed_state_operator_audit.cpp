@@ -161,6 +161,19 @@ TEST_CASE("fixed-state audit enumerates nine edges and four triangles",
     }
 }
 
+TEST_CASE("fixed-state audit zeroes right-triangle hypotenuse support",
+          "[minimal6][fixed-state][geometry]")
+{
+    const DeviceMesh mesh = makeMinimal6Mesh();
+    const auto result = evaluateFixedStateOperators(
+        mesh, makeDoping(), makeState(), makeConfig());
+
+    REQUIRE(result.triangles[3].nodes == std::array<Index, 3>{1, 3, 2});
+    REQUIRE(result.triangles[3].localEdges[0].node0 == 1);
+    REQUIRE(result.triangles[3].localEdges[0].node1 == 3);
+    REQUIRE(result.triangles[3].localEdges[0].truncatedPartialVolume == 0.0);
+}
+
 TEST_CASE("fixed-state audit rejects invalid contracts", "[minimal6][fixed-state]")
 {
     const DeviceMesh mesh = makeMinimal6Mesh();

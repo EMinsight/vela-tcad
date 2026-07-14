@@ -173,6 +173,9 @@ target_link_libraries(pn2d_jacobian_block_audit PRIVATE vela_core)
 
 add_executable(pn2d_minimal6_operator_audit src/tools/pn2d_minimal6_operator_audit.cpp)
 target_link_libraries(pn2d_minimal6_operator_audit PRIVATE vela_core)
+if(MINGW)
+    target_link_options(pn2d_minimal6_operator_audit PRIVATE "-Wl,--no-insert-timestamp")
+endif()
 
 add_executable(alpha_from_sentaurus_f src/tools/alpha_from_sentaurus_f.cpp)
 target_link_libraries(alpha_from_sentaurus_f PRIVATE vela_core)

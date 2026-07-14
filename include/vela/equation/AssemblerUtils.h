@@ -843,6 +843,10 @@ inline Real geniusTri3TruncatedPartialVolumeWithEdge(
         cell.node_ids[0], cell.node_ids[1], cell.node_ids[2]};
     const std::array<Point2, 3> p = {
         meshPoint(mesh, ids[0]), meshPoint(mesh, ids[1]), meshPoint(mesh, ids[2])};
+    const Real lengthScale = std::max({
+        (p[0] - p[1]).norm(), (p[1] - p[2]).norm(), (p[2] - p[0]).norm()});
+    const Real distanceTolerance =
+        64.0 * std::numeric_limits<Real>::epsilon() * lengthScale;
     const Real det = triangleSignedDoubleArea(p[0], p[1], p[2]);
     if (std::abs(det) <= 1.0e-300)
         return 0.0;
@@ -869,7 +873,9 @@ inline Real geniusTri3TruncatedPartialVolumeWithEdge(
         const Point2& p3 = p[(2 + local) % 3];
         const Point2 sideCenter = 0.5 * (p1 + p2);
         lengths[static_cast<std::size_t>(local)] = (p1 - p2).norm();
-        const Real distance = (sideCenter - circumcenter).norm();
+        const Real rawDistance = (sideCenter - circumcenter).norm();
+        const Real distance =
+            rawDistance <= distanceTolerance ? 0.0 : rawDistance;
         if ((p1 - p3).dot(p2 - p3) < 0.0) {
             dt[static_cast<std::size_t>(local)] = -distance;
             obtuseEdge = local;
