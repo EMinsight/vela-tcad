@@ -1325,3 +1325,26 @@ the specified tolerance. The order-one current discrepancies and many-orders
 source differences remain diagnostic evidence that Sentaurus and Vela operator
 semantics are not physically reconciled. They must not be presented as a Vela
 BV solution or used to infer breakdown voltage.
+
+
+## Minimal6 Node Quantity Comparison (2026-07-14)
+
+The node-level comparison uses the provenance-gated minimal6 joined audit,
+not the 1,943-node production BV mesh. It contains exactly six canonical nodes,
+four triangles per topology, sketch and mirror topologies, and fixed states at
+`0`, `-12`, and `-19 V`. The output matrix has 36 rows and performs neither
+spatial interpolation nor a nonlinear Vela sweep.
+
+The tables contain Sentaurus and imported Vela `psi`, `phin`, `phip`, `n`, and
+`p`, plus electric field, mobility, electron/hole avalanche coefficients,
+Vela impact driving fields, carrier fluxes, and node-partitioned avalanche
+sources. Extensive edge sources are divided equally between their endpoints
+and summed by node. Intensive edge quantities retain incident-edge means and
+maximum absolute magnitudes.
+
+The generated artifacts are under
+`build-release/reference_tcad/pn2d_sentaurus2018_minimal6/reports/minimal6_node_quantity_comparison_20260714/`.
+They comprise a 36-row joined table, three 12-row bias tables, three PNG
+comparison figures, and a manifest containing source hashes and image QA.
+These remain fixed-state diagnostic results and do not establish a physical BV
+curve or breakdown voltage.
