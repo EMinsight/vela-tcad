@@ -1,3 +1,137 @@
+# PN2D Minimal6 Operator Audit 交接文档 — 权威更新（2026-07-14）
+
+> 本节是当前有效状态。下方原 `2026-07-13` 正文存在乱码且包含过期 checkpoint，
+> 仅保留为历史审计记录；其中 “Task 6 未开始”“真实 state root 缺失”
+> 和 “ahead 1” 等描述不再代表当前状态。
+
+## 1. 当前结论
+
+PN2D minimal6 fixed-state operator audit 已完成真实六状态 replay 和验证闭环：
+
+- 网格严格为 6 个 canonical nodes、4 个 CCW triangles、9 条 unique edges。
+- 拓扑为 `sketch` 与 `mirror`。
+- 固定状态为 `0 V`、`-12 V`、`-19 V`，共 6 个 topology/bias states。
+- joined audit 行数为 `node=36 / edge=54 / triangle=24`。
+- 六次 production C++ replay 均退出 0，provenance 与 fresh replay gate 通过。
+- 最大 imported-state parity hybrid error 为 `0`。
+- 最大 C++/Python formula hybrid error 为 `1.7995489542954602e-12`，低于 `5e-12`。
+- fixed-state audit 生成 `7 PNG + 7 PDF`。
+- 六节点物理量对比生成 36 行总表、三个 12 行偏压表和 3 PNG。
+- 最新 minimal6 Python 验证为 `59/59 PASS`。
+
+这些结果只证明固定状态下的 topology、state parity、transport 和 avalanche
+operator 诊断链闭合。流程没有运行 Vela Newton、Gummel、continuation 或 nonlinear
+DC sweep，不构成物理 BV 曲线验证，也不能用于给出击穿电压。
+
+## 2. 仓库、分支与提交
+
+```text
+workspace: D:/code-repo/vela-tcad
+branch: codex-pn2d-minimal6-operator-audit
+functional HEAD before this handoff update:
+  ebbf248 Add minimal6 node quantity comparisons
+remote relation before this handoff commit:
+  ahead 6 of origin/codex-pn2d-minimal6-operator-audit
+```
+
+关键提交：
+
+```text
+ebbf248 Add minimal6 node quantity comparisons
+c6b9df5 Ignore local worktrees
+6a6f82e Document PN2D minimal6 operator audit
+dfe2611 Stabilize minimal6 right-triangle source geometry
+9ad3faa Update PN2D minimal6 task handoff
+da561f2 Enforce PN2D minimal6 audit provenance
+```
+
+本交接文档提交后，本地分支预计领先远端 7 个提交；尚未推送。
+
+## 3. 权威输入与产物
+
+真实六状态输入：
+
+```text
+build-release/reference_tcad/pn2d_sentaurus2018_minimal6/
+  state_exports/minimal6_states_live_20260713_v2/
+```
+
+真实 fixed-state joined audit：
+
+```text
+build-release/reference_tcad/pn2d_sentaurus2018_minimal6/
+  reports/minimal6_fixed_state_audit_20260714/
+
+node_state.csv       36 rows
+edge_audit.csv       54 rows
+triangle_audit.csv   24 rows
+figures/              7 PNG + 7 PDF
+```
+
+六节点物理量对比：
+
+```text
+build-release/reference_tcad/pn2d_sentaurus2018_minimal6/
+  reports/minimal6_node_quantity_comparison_20260714/
+
+minimal6_all_nodes.csv             36 rows
+minimal6_nodes_0V.csv              12 rows
+minimal6_nodes_minus12V.csv        12 rows
+minimal6_nodes_minus19V.csv        12 rows
+minimal6_state_by_node.png
+minimal6_ionization_by_node.png
+minimal6_source_flux_by_node.png
+minimal6_node_quantity_manifest.json
+```
+
+表格覆盖 Sentaurus 与 imported Vela 的 `psi/phin/phip/n/p`、电场、迁移率、
+`alpha_n/alpha_p`、Vela impact driving field、载流子 flux 和节点雪崩源。
+edge source 按端点各分配一半后求和；intensive edge quantities 保留 mean 与 max-abs。
+
+## 4. 当前代码入口
+
+```text
+scripts/audit_pn2d_minimal6_fixed_state.py
+scripts/plot_pn2d_minimal6_node_quantity_comparison.py
+scripts/pn2d_minimal6_topology.py
+tests/regression/test_pn2d_minimal6_fixed_state_audit.py
+tests/regression/test_pn2d_minimal6_node_quantity_comparison.py
+tests/regression/test_pn2d_minimal6_topology.py
+```
+
+## 5. 复验命令
+
+```powershell
+$env:Path = "D:\msys64\ucrt64\bin;D:\msys64\usr\bin;$env:Path"
+
+python -m unittest `
+  tests.regression.test_pn2d_minimal6_node_quantity_comparison `
+  tests.regression.test_pn2d_minimal6_topology `
+  tests.regression.test_pn2d_minimal6_fixed_state_audit -v
+
+git diff --check
+```
+
+期望：`Ran 59 tests`，`OK`。
+
+provenance 测试要求 `build-release/pn2d_minimal6_operator_audit.exe`。若隔离
+worktree 缺少该 executable，应先构建 target，不能误判为物理或公式回归。
+
+## 6. 已纠正的范围偏差
+
+曾生成过 1,943-node production BV mesh 的节点表和热图。该产物不是 minimal6
+交付，已标记为 superseded。正确交付始终是 6 nodes / 4 triangles 的 fixed-state
+audit，偏压为 `0/-12/-19 V`。不要将 full-mesh causal sweep、factor bisection
+或 continuation 结论混入 minimal6 operator audit。
+
+## 7. 后续建议
+
+1. 推送 `codex-pn2d-minimal6-operator-audit` 的本地 7 个提交。
+2. 若继续物理验证，另立任务设计 minimal6 nonlinear sweep；不得把 fixed-state replay 称为 BV curve。
+3. 若继续 operator 语义核对，优先分析 `-12 V` 与 `-19 V` 的 Sentaurus/Vela source magnitude discrepancy。
+4. generated reports 保持为 ignored artifacts，只提交脚本、测试和验证文档。
+
+---
 # PN2D Minimal6 Operator Audit 交接文档（2026-07-13）
 
 ## 1. 当前结论（Task 5 完成更新）
