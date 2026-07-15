@@ -100,8 +100,10 @@ def make_segment_deck(template: dict[str, Any], *, topology: str, segment_start:
     return deck
 
 
-def read_vela_endpoint(curve_csv: Path, terminal_csv: Path, target_bias_V: float) -> dict[str, float]:
-    """Read exact endpoint observables from Vela's primary and terminal diagnostics."""
+def read_vela_endpoint(
+    curve_csv: Path, terminal_csv: Path, edge_source_csv: Path, target_bias_V: float,
+) -> dict[str, float]:
+    """Read exact endpoint observables and independently close Vela's SG source."""
     with curve_csv.open(newline="", encoding="utf-8") as handle:
         curve_rows = [row for row in csv.DictReader(handle) if abs(float(row["bias_V"]) - target_bias_V) <= 1.0e-12]
     if len(curve_rows) != 1:
@@ -111,11 +113,26 @@ def read_vela_endpoint(curve_csv: Path, terminal_csv: Path, target_bias_V: float
     contacts = {row["contact"]: row for row in terminal_rows}
     if set(contacts) != {"Anode", "Cathode"}:
         raise ValueError("Vela terminal diagnostics lack both contacts at the endpoint")
+    with edge_source_csv.open(newline="", encoding="utf-8") as handle:
+        edge_rows = [
+            row for row in csv.DictReader(handle)
+            if abs(float(row["bias_V"]) - target_bias_V) <= 1.0e-12
+        ]
+    if not edge_rows:
+        raise ValueError("Vela edge diagnostics lack the target-bias endpoint")
+    native_source = float(contacts["Anode"]["sg_avalanche_source_integral_total"])
+    reconstructed_source = sum(float(row["edge_source_integral"]) for row in edge_rows)
+    if not math.isclose(native_source, reconstructed_source, rel_tol=1.0e-12, abs_tol=1.0e-285):
+        raise ValueError(
+            "Vela native/reconstructed source closure exceeds tolerance: "
+            f"native={native_source:.17g}, reconstructed={reconstructed_source:.17g}"
+        )
     values = {
         "anode_current_A_per_um": float(contacts["Anode"]["I_sgflux_A_per_um"]),
         "cathode_current_A_per_um": float(contacts["Cathode"]["I_sgflux_A_per_um"]),
         "max_field_V_per_m": float(curve_rows[0]["max_electric_field_V_per_m"]),
-        "reconstructed_source_integral_s_inv_per_cm": float(contacts["Anode"]["sg_avalanche_source_integral_total"]),
+        "native_source_integral_s_inv_per_cm": native_source,
+        "reconstructed_source_integral_s_inv_per_cm": reconstructed_source,
     }
     if not all(math.isfinite(value) for value in values.values()):
         raise ValueError("Vela endpoint contains non-finite observables")
@@ -132,13 +149,16 @@ def _read_export_vector(path: Path) -> dict[int, tuple[float, float]]:
 
 
 def _required_field_region(fields: list[dict[str, Any]], name: str, *, components: int, unit: str, region_name: str = "R.Si") -> int:
-    matches = [field for field in fields if field.get("name") == name and field.get("region_name") == region_name]
+    matches = [
+        field for field in fields
+        if field.get("name") == name and field.get("region_name") == region_name
+        and field.get("components") == components and field.get("unit") == unit
+    ]
     if len(matches) != 1:
-        raise ValueError(f"Sentaurus export lacks exactly one {name} field for {region_name}")
-    field = matches[0]
-    if field.get("components") != components or field.get("unit") != unit:
-        raise ValueError(f"Sentaurus export has incompatible {name} field contract")
-    return int(field["region"])
+        raise ValueError(
+            f"Sentaurus export lacks exactly one contract-compatible {name} field for {region_name}"
+        )
+    return int(matches[0]["region"])
 
 
 def _contact_field_region(fields: list[dict[str, Any]], name: str, contact: str, unit: str) -> int:
@@ -298,16 +318,14 @@ def run_vela_subprocess_segment(root: Path, executable: Path, segment: dict[str,
     state = segment_state_path(root, topology, start, target)
     diagnostics = root / "vela" / topology / "diagnostics"
     terminal = diagnostics / f"segment_{abs(int(start)):02d}_terminal_current_method_compare.csv"
+    edge_source = diagnostics / f"segment_{abs(int(start)):02d}_sg_avalanche_edges.csv"
     curve = root / "vela" / topology / f"segment_{abs(int(start)):02d}.csv"
-    if completed.returncode != 0 or not state.is_file() or not terminal.is_file() or not curve.is_file():
+    if completed.returncode != 0 or not state.is_file() or not terminal.is_file() or not edge_source.is_file() or not curve.is_file():
         return {"exit_code": completed.returncode, "actual_bias_V": None, "state_path": None, "observables": None,
                 "stdout": completed.stdout, "stderr": completed.stderr}
-    endpoint = read_vela_endpoint(curve, terminal, target)
-    # Vela has a reconstructed source only.  Native Sentaurus source is deliberately
-    # absent here and causes the common package gate to reject rather than relabel it.
-    return {"exit_code": completed.returncode, "actual_bias_V": target, "state_path": state, "observables": None,
-            "partial_observables": endpoint, "stdout": completed.stdout, "stderr": completed.stderr,
-            "incomplete_reason": "Vela has no native Sentaurus source integral"}
+    endpoint = read_vela_endpoint(curve, terminal, edge_source, target)
+    return {"exit_code": completed.returncode, "actual_bias_V": target, "state_path": state,
+            "observables": endpoint, "stdout": completed.stdout, "stderr": completed.stderr}
 
 def execute_segments(manifest: dict[str, Any], root: Path, runner) -> None:
     """Run each topology independently and retain its first failed segment."""

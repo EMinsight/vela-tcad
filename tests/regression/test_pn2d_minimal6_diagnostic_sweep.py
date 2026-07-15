@@ -16,6 +16,7 @@ from scripts.run_pn2d_minimal6_diagnostic_sweep import (
     execute_segments,
     read_vela_endpoint,
     read_sentaurus_endpoint,
+    _required_field_region,
     write_sentaurus_decks,
     main,
 )
@@ -52,6 +53,21 @@ class DiagnosticSweepTest(unittest.TestCase):
             self.assertEqual(endpoint["observables"]["max_field_V_per_m"], 500.0)
             self.assertAlmostEqual(endpoint["observables"]["native_source_integral_s_inv_per_cm"], 1.0e-8)
             self.assertAlmostEqual(endpoint["observables"]["reconstructed_source_integral_s_inv_per_cm"], 5.0e-9)
+
+    def test_required_field_region_selects_exactly_one_contract_match(self):
+        fields = [
+            {"name": "ElectricField", "components": 1, "unit": "V*cm^-1", "region": 0, "region_name": "R.Si"},
+            {"name": "ElectricField", "components": 2, "unit": "V*cm^-1", "region": 0, "region_name": "R.Si"},
+        ]
+        self.assertEqual(
+            _required_field_region(fields, "ElectricField", components=2, unit="V*cm^-1"),
+            0,
+        )
+        fields.append(
+            {"name": "ElectricField", "components": 2, "unit": "V*cm^-1", "region": 0, "region_name": "R.Si"}
+        )
+        with self.assertRaisesRegex(ValueError, "exactly one contract-compatible"):
+            _required_field_region(fields, "ElectricField", components=2, unit="V*cm^-1")
     def test_cli_resume_loads_declared_sentaurus_checkpoint_results(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -136,12 +152,23 @@ class DiagnosticSweepTest(unittest.TestCase):
             root = Path(temp)
             curve = root / "curve.csv"
             terminals = root / "terminals.csv"
+            edges = root / "edges.csv"
             curve.write_text("bias_V,max_electric_field_V_per_m\n-1,2\n", encoding="utf-8")
             terminals.write_text("bias_V,contact,I_sgflux_A_per_um,sg_avalanche_source_integral_total\n-1,Anode,-3,5\n-1,Cathode,3,5\n", encoding="utf-8")
-            result = read_vela_endpoint(curve, terminals, -1.0)
+            edges.write_text(
+                "bias_V,edge_id,edge_source_integral\n"
+                "-1,0,1.25\n"
+                "-1,1,3.75\n",
+                encoding="utf-8",
+            )
+            result = read_vela_endpoint(curve, terminals, edges, -1.0)
             self.assertEqual(result["anode_current_A_per_um"], -3.0)
+            self.assertEqual(result["native_source_integral_s_inv_per_cm"], 5.0)
             self.assertEqual(result["reconstructed_source_integral_s_inv_per_cm"], 5.0)
-            with self.assertRaises(ValueError): read_vela_endpoint(curve, terminals, -2.0)
+            with self.assertRaises(ValueError): read_vela_endpoint(curve, terminals, edges, -2.0)
+            edges.write_text("bias_V,edge_id,edge_source_integral\n-1,0,4.0\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "source closure"):
+                read_vela_endpoint(curve, terminals, edges, -1.0)
     def test_fake_runner_preserves_first_failure_and_stops_later_segments(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
