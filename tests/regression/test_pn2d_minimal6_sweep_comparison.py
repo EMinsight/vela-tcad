@@ -39,6 +39,7 @@ def manifest(solver, accepted, failures=()):
         "failed_transition": list(failures)[0] if failures else None,
         "segments": [], "sentaurus_segments": [], "targets_V": [0.0, -1.0, -2.0],
         "interpolation": "forbidden",
+        "branch_threshold_version": "v1: multiplication=[0.1,10], leakage<=1e-3",
     }
 
 
@@ -60,6 +61,18 @@ class SweepComparisonTest(unittest.TestCase):
         self.assertEqual(row["sentaurus_one_volt_current_growth"]["value"], 4.0)
         self.assertEqual(row["maximum_field_ratio"]["value"], 2.0)
         self.assertEqual(row["native_source_ratio"]["value"], 2.0)
+        self.assertEqual(row["branch_classification"], "multiplication_like")
+        self.assertEqual(row["branch_threshold_version"],
+                         "v1: multiplication=[0.1,10], leakage<=1e-3")
+        self.assertEqual(report["branch_threshold_version"], row["branch_threshold_version"])
+        validate_bv_comparison_v1(report)
+        tampered = json.loads(json.dumps(report))
+        del tampered["checkpoints"][0]["branch_classification"]
+        with self.assertRaisesRegex(ValueError, "typed branch classification"):
+            validate_bv_comparison_v1(tampered)
+        sentaurus["branch_threshold_version"] = "v2"
+        with self.assertRaisesRegex(ValueError, "same non-empty branch threshold version"):
+            compare_sweeps(vela, sentaurus, fixed_state_report={})
 
     def test_comparison_uses_only_exact_common_biases_and_preserves_missing_tail(self):
         vela = manifest("vela", [checkpoint("vela", "sketch", -1.0, -1.0, 1.0, 2.0, 3.0, 4.0)])

@@ -1348,3 +1348,85 @@ They comprise a 36-row joined table, three 12-row bias tables, three PNG
 comparison figures, and a manifest containing source hashes and image QA.
 These remain fixed-state diagnostic results and do not establish a physical BV
 curve or breakdown voltage.
+
+## PN2D Minimal6 Task 8 final validation (2026-07-15)
+
+Answer first: Tasks 1-8 are complete as a diagnostic evidence workflow. The
+six exact Sentaurus states, production C++ replay, independent fixed-state
+formulas, real Vela sweep, real Sentaurus sweep, and exact-checkpoint
+comparison all validate. They do not establish a physical breakdown voltage,
+and no production physics formula, solver default, or convergence gate was
+changed or relaxed.
+
+The regenerated authoritative state root is
+`build-release/reference_tcad/pn2d_sentaurus2018_minimal6/state_exports/minimal6_states_live_20260713_v2/`.
+It retains sketch/mirror x `0/-12/-19 V`, `outputs_complete=true`, and exact
+six-node/nine-edge/four-triangle topology contracts. The manifest SHA-256 is
+`43305a3b4b3f565d600c2ccb783af36c62ed385e0ea6aa9c13f71b3a34e370c0`.
+The independently generated 355-member recovery seal passes with zero
+mismatches and SHA-256
+`c343539775337038848adc3a1f88b45880110d6960a3fe8ea3f3309032645f6d`.
+The deterministic replay executable SHA-256 remains
+`6b08653047289819063dee8bce8a87268ed54fa2588baa102dd06e90fb92e9f2`.
+
+The final fixed-state formula package is
+`build-release/pn2d-minimal6-formula-diff-task8-20260715/`. It retains exact
+`36/54/24` node/edge/triangle identities and five reviewed PNG/PDF pairs. Its
+root-cause status is `insufficient_data`: the Sentaurus and production C++
+replay ledgers are complete, but the raw Vela state required for named
+counterfactual substitutions is unavailable. Therefore no dominance ranking
+or causal gap closure is claimed.
+
+The real nonlinear outcomes are:
+
+| solver | sketch | mirror | first retained failure |
+|---|---|---|---|
+| Vela | exact `-1 V` accepted | exact `-1 V` accepted | both `-1 -> -2 V`, exit 1, `nonfinite_residual` |
+| Sentaurus | exact `0..-20 V`, 21 accepted | exact `0..-20 V`, 21 accepted | none |
+
+At Vela `-1 V`, the production SG total and independently summed per-edge
+source close exactly: `724.0031412262038` (sketch) and
+`744.3065189513418 s^-1/cm` (mirror). The Vela sweep manifest SHA-256 is
+`5d09974cf9cd26e9343616c2b0e5b9f9bfa197793aa2efd8061265364343f202`.
+The Sentaurus sweep manifest SHA-256 is
+`be161376a33b08bab03e061fb2374c3d5d6c221a18fe8486e7d669168b5b0f71`;
+all 42 imported endpoints match their target contact voltage within `1e-12 V`
+and pass the unique field-name/region/component/unit contract. The clean 0 V
+rows supersede the two pre-fix import rejections described in the handoff.
+
+The final comparison package is
+`build-release/pn2d-minimal6-comparison-task8-final-r2-20260715/`. Its JSON
+SHA-256 is
+`19ba959de98670f978adb77e121883d80061de89ce0189a8a03363a7ce70d69d`.
+The deepest and only common exact bias is `-1 V` (one row per topology); 40
+Sentaurus-only rows are retained without interpolation. At the common bias:
+
+| topology | Vela/Sentaurus terminal current | Vela/Sentaurus maximum field | Vela/Sentaurus native source |
+|---|---:|---:|---:|
+| sketch | `1.4457180849345512e-4` | `1.0143336690953608e6` | `1.729030228122193e53` |
+| mirror | `1.5145723823453054e-4` | `1.0143336690953608e6` | `1.7775177992676597e53` |
+
+The terminal-current signs align. Each common record serializes
+`branch_classification=leakage_like` and
+`branch_threshold_version=v1: multiplication=[0.1,10], leakage<=1e-3`.
+The comparison does not infer a
+causal decomposition: residual gap closure is explicitly `unidentifiable`,
+and the `0/-12/-19 V` fixed-state rechecks remain `insufficient_data` because
+there is no self-consistent exact common nonlinear checkpoint at those biases.
+All five comparison figures passed manual title, axis, unit, legend,
+termination-marker, disclaimer, and clipping inspection.
+
+Mandatory interpretation for every sweep artifact:
+
+> minimal6 diagnostic sweep; not a physical BV curve
+
+No solver tail was extrapolated, and interpolation remains forbidden.
+
+Fresh final verification used the plan's explicit commands:
+
+| verification | result |
+|---|---|
+| 10 Minimal6 Python regression modules | `146` tests in `81.926 s`, PASS |
+| `test_fixed_state_operator_audit` | `4` cases / `67` assertions, PASS |
+| `test_impact_ionization` | `40` cases / `511` assertions, PASS |
+| `test_cell_reconstructed_avalanche` | `14` cases / `83` assertions, PASS |

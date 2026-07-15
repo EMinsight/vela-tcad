@@ -141,3 +141,40 @@ the summed Vela sources are approximately `4.4944e14` and `3.0765e18 m^-1 s^-1`,
 versus Sentaurus `3.1472e2` and `2.8566e5 m^-1 s^-1`. The next physical task
 remains current/source-semantics reconciliation before any minimal6 breakdown
 claim or nonlinear Vela BV validation.
+
+## 2026-07-15 Minimal6 Tasks 1-8 completion status
+
+Tasks 1-8 are complete for the scoped diagnostic workflow. This supersedes the
+previous statement that no nonlinear Vela solve had been run.
+
+- Six-state state/replay evidence: PASS for sketch/mirror x `0/-12/-19 V`;
+  manifest SHA-256
+  `43305a3b4b3f565d600c2ccb783af36c62ed385e0ea6aa9c13f71b3a34e370c0`.
+- Recovery evidence: 355 members, zero hash mismatches; seal SHA-256
+  `c343539775337038848adc3a1f88b45880110d6960a3fe8ea3f3309032645f6d`.
+- Fixed-state formula report: exact `36/54/24` identities and five reviewed
+  figure pairs; strict result remains `insufficient_data` because named
+  counterfactual substitutions lack raw Vela state input.
+- Vela sweep: sketch and mirror accept exact `-1 V`; both first fail at
+  `-1 -> -2 V` with exit code 1 and `nonfinite_residual`. Native/reconstructed
+  production SG source totals close exactly at the accepted endpoints.
+- Sentaurus sweep: sketch and mirror each accept all 21 exact targets from
+  `0` through `-20 V`; no failed transition. The regenerated clean 0 V imports
+  pass the corrected scalar/vector field selector.
+- Final comparison: the only common exact bias is `-1 V`. The terminal-current
+  ratios are `1.4457180849345512e-4` (sketch) and
+  `1.5145723823453054e-4` (mirror), both below the recorded leakage-like
+  threshold. Forty Sentaurus-only checkpoints are retained without
+  interpolation or tail extrapolation.
+
+Primary generated roots are
+`build-release/pn2d-minimal6-formula-diff-task8-20260715/`,
+`build-release/pn2d-minimal6-vela-task8-final-r3-20260715/`,
+`build-release/pn2d-minimal6-sentaurus-task8-final-r2-20260715/`, and
+`build-release/pn2d-minimal6-comparison-task8-final-r2-20260715/`.
+
+The physical conclusion has not changed: the evidence exposes a large
+cross-solver operator/state gap but does not identify a closed causal ranking
+or a physical breakdown voltage. Every curve is labelled:
+
+> minimal6 diagnostic sweep; not a physical BV curve

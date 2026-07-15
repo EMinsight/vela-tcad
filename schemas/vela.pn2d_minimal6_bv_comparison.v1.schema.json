@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "vela.pn2d_minimal6_bv_comparison.v1",
   "type": "object",
-  "required": ["schema", "diagnostic_disclaimer", "solver_configurations", "accepted_transitions", "failed_transitions", "checkpoints", "terminal_currents", "maximum_fields", "source_integrals", "convergence_metadata", "curve_artifact_hashes", "records"],
-  "properties": {"schema":{"const":"vela.pn2d_minimal6_bv_comparison.v1"},"diagnostic_disclaimer":{"const":"minimal6 diagnostic sweep; not a physical BV curve"},"records":{"type":"array"}},
+  "required": ["schema", "diagnostic_disclaimer", "solver_configurations", "accepted_transitions", "failed_transitions", "checkpoints", "terminal_currents", "maximum_fields", "source_integrals", "convergence_metadata", "curve_artifact_hashes", "records", "branch_threshold_version"],
+  "properties": {"schema":{"const":"vela.pn2d_minimal6_bv_comparison.v1"},"diagnostic_disclaimer":{"const":"minimal6 diagnostic sweep; not a physical BV curve"},"branch_threshold_version":{"type":"string","minLength":1},"records":{"type":"array","items":{"type":"object","required":["branch_classification","branch_threshold_version"],"properties":{"branch_classification":{"enum":["multiplication_like","leakage_like","unidentified"]},"branch_threshold_version":{"type":"string","minLength":1}},"additionalProperties":true}}},
   "additionalProperties": true
 }

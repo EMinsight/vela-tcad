@@ -2,7 +2,7 @@ import math
 
 DISCLAIMER = "minimal6 diagnostic sweep; not a physical BV curve"
 _FORMULA_FIELDS = {"input_provenance", "audit_provenance", "state_matrix", "row_counts", "waterfall_paths", "interactions", "dominance_rules", "sentaurus_internal_semantics_residual", "vela_parameter_agreement", "artifact_hashes", "records"}
-_BV_FIELDS = {"solver_configurations", "accepted_transitions", "failed_transitions", "checkpoints", "terminal_currents", "maximum_fields", "source_integrals", "convergence_metadata", "curve_artifact_hashes", "records"}
+_BV_FIELDS = {"solver_configurations", "accepted_transitions", "failed_transitions", "checkpoints", "terminal_currents", "maximum_fields", "source_integrals", "convergence_metadata", "curve_artifact_hashes", "records", "branch_threshold_version"}
 _BV_COMPARISON_FIELDS = {"deepest_common_bias_V", "missing_tails", "topology_sensitivity", "fixed_state_recheck", "failure_transitions", "artifact_hashes", "input_artifacts", "closure"}
 def _finite(value):
     if isinstance(value, float) and not math.isfinite(value): raise ValueError("non-finite values are forbidden")
@@ -24,3 +24,11 @@ def validate_bv_comparison_v1(report:dict)->None:
     if missing: raise ValueError(f"missing required comparison fields: {missing}")
     if report.get("interpolation") != "forbidden": raise ValueError("comparison must forbid interpolation")
     if report.get("closure", {}).get("status") != "closed": raise ValueError("comparison closure is not closed")
+    version = report.get("branch_threshold_version")
+    if not isinstance(version, str) or not version: raise ValueError("missing branch threshold version")
+    allowed = {"multiplication_like", "leakage_like", "unidentified"}
+    for row in report.get("checkpoints", []):
+        if row.get("branch_classification") not in allowed:
+            raise ValueError("checkpoint lacks typed branch classification")
+        if row.get("branch_threshold_version") != version:
+            raise ValueError("checkpoint branch threshold version mismatch")

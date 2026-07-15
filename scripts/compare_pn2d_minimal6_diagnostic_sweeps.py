@@ -19,6 +19,7 @@ REPO = Path(__file__).resolve().parents[1]
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 from scripts.pn2d_minimal6_diagnostics.schemas import DISCLAIMER, validate_bv_comparison_v1
+from scripts.run_pn2d_minimal6_diagnostic_sweep import classify_branch
 
 SCHEMA = "vela.pn2d_minimal6_bv_comparison.v1"
 EPSILON = 1.0e-12
@@ -132,6 +133,11 @@ def _fixed_state_recheck(common: dict[tuple[str, float], tuple[dict[str, Any], d
 
 def compare_sweeps(vela_manifest: dict[str, Any], sentaurus_manifest: dict[str, Any], *, fixed_state_report: dict[str, Any]) -> dict[str, Any]:
     """Produce a comparison object from accepted, exact-bias rows only."""
+    vela_threshold = vela_manifest.get("branch_threshold_version")
+    sentaurus_threshold = sentaurus_manifest.get("branch_threshold_version")
+    if not isinstance(vela_threshold, str) or not vela_threshold or vela_threshold != sentaurus_threshold:
+        raise ValueError("sweep manifests must declare the same non-empty branch threshold version")
+    branch_threshold_version = vela_threshold
     vela_rows, sentaurus_rows = _accepted(vela_manifest, "vela"), _accepted(sentaurus_manifest, "sentaurus")
     vela_index, sentaurus_index = _index(vela_rows), _index(sentaurus_rows)
     keys = sorted(set(vela_index) & set(sentaurus_index), key=lambda key: (key[0], -key[1]))
@@ -141,6 +147,8 @@ def compare_sweeps(vela_manifest: dict[str, Any], sentaurus_manifest: dict[str, 
         vela, sentaurus = common[(topology, bias)]
         checkpoints.append({
             "topology": topology, "bias_V": bias, "classification": "common_exact", "vela": vela, "sentaurus": sentaurus,
+            "branch_classification": classify_branch(_current(sentaurus), _current(vela)),
+            "branch_threshold_version": branch_threshold_version,
             "terminal_current_sign_alignment": "aligned" if math.copysign(1.0, _current(vela)) == math.copysign(1.0, _current(sentaurus)) else "opposed",
             "terminal_current_ratio": _ratio_rows(vela, sentaurus, "anode_current_A_per_um", absolute=True),
             "maximum_field_ratio": _ratio_rows(vela, sentaurus, "max_field_V_per_m"),
@@ -174,6 +182,7 @@ def compare_sweeps(vela_manifest: dict[str, Any], sentaurus_manifest: dict[str, 
     deepest = min((bias for _, bias in keys), default=None)
     report = {
         "schema": SCHEMA, "diagnostic_disclaimer": DISCLAIMER, "interpolation": "forbidden",
+        "branch_threshold_version": branch_threshold_version,
         "solver_configurations": {
             "vela": {"template": vela_manifest.get("template"), "topology_input_sha256": vela_manifest.get("topology_input_sha256", {}), "deck_sha256": _deck_hashes(vela_manifest, "segments")},
             "sentaurus": {"template": sentaurus_manifest.get("template"), "topology_input_sha256": sentaurus_manifest.get("topology_input_sha256", {}), "deck_sha256": _deck_hashes(sentaurus_manifest, "sentaurus_segments")}},
@@ -247,11 +256,11 @@ def _render_figures(out_dir: Path, report: dict[str, Any]) -> list[Path]:
 def _write_csv(path: Path, report: dict[str, Any]) -> None:
     rows: list[dict[str, Any]] = []
     for row in report["checkpoints"]:
-        rows.append({"classification": row["classification"], "solver": "both", "topology": row["topology"], "bias_V": row["bias_V"], "terminal_current_ratio": row["terminal_current_ratio"]["value"], "maximum_field_ratio": row["maximum_field_ratio"]["value"], "native_source_ratio": row["native_source_ratio"]["value"], "reason": "exact common checkpoint"})
+        rows.append({"classification": row["classification"], "branch_classification": row["branch_classification"], "branch_threshold_version": row["branch_threshold_version"], "solver": "both", "topology": row["topology"], "bias_V": row["bias_V"], "terminal_current_ratio": row["terminal_current_ratio"]["value"], "maximum_field_ratio": row["maximum_field_ratio"]["value"], "native_source_ratio": row["native_source_ratio"]["value"], "reason": "exact common checkpoint"})
     for row in report["side_only_checkpoints"]:
-        rows.append({"classification": "side_only", "solver": row["solver"], "topology": row["topology"], "bias_V": row["bias_V"], "terminal_current_ratio": None, "maximum_field_ratio": None, "native_source_ratio": None, "reason": "no accepted exact checkpoint from the other solver"})
+        rows.append({"classification": "side_only", "branch_classification": None, "branch_threshold_version": report["branch_threshold_version"], "solver": row["solver"], "topology": row["topology"], "bias_V": row["bias_V"], "terminal_current_ratio": None, "maximum_field_ratio": None, "native_source_ratio": None, "reason": "no accepted exact checkpoint from the other solver"})
     with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=["classification", "solver", "topology", "bias_V", "terminal_current_ratio", "maximum_field_ratio", "native_source_ratio", "reason"])
+        writer = csv.DictWriter(handle, fieldnames=["classification", "branch_classification", "branch_threshold_version", "solver", "topology", "bias_V", "terminal_current_ratio", "maximum_field_ratio", "native_source_ratio", "reason"])
         writer.writeheader(); writer.writerows(rows)
 
 
@@ -259,6 +268,7 @@ def _markdown(report: dict[str, Any]) -> str:
     deepest = report["deepest_common_bias_V"]
     deepest_text = str(deepest["value"]) if deepest["classification"] == "available" else f"unavailable ({deepest['reason']})"
     lines = ["# PN2D minimal6 diagnostic sweep comparison", "", DISCLAIMER, "", "## Exact-checkpoint result", "", f"- Deepest common accepted bias: {deepest_text}.", f"- Common exact checkpoints: {len(report['checkpoints'])}.", f"- Recorded rejected transitions: {len(report['failure_transitions'])}.", "- Interpolation is forbidden; solver tails and physical breakdown voltage are not extrapolated.", "", "## Fixed-state recheck", ""]
+    lines[10:10] = [f"- {row['topology']} {row['bias_V']:.0f} V: {row['branch_classification']} ({row['branch_threshold_version']})." for row in report["checkpoints"]]
     lines.extend(f"- {row['bias_V']:.0f} V: {row['status']} — {row['reason']}" for row in report["fixed_state_recheck"])
     lines.extend(["", "## Termination", ""])
     lines.extend(f"- {row.get('solver')} {row.get('topology')} {row.get('start_bias_V')} V to {row.get('target_bias_V')} V: {row.get('incomplete_reason', 'rejected transition')}" for row in report["failure_transitions"])
