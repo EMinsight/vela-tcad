@@ -10,10 +10,17 @@ import json
 import math
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
 REPO = Path(__file__).resolve().parents[1]
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
+from scripts.pn2d_minimal6_diagnostics.counterfactual import (
+    integrate_native_nodal_per_unit_depth,
+    sentaurus_alpha_current_nodal,
+)
 DISCLAIMER = "minimal6 diagnostic sweep; not a physical BV curve"
 SCHEMA = "vela.pn2d_minimal6_sweep_manifest.v1"
 
@@ -114,6 +121,90 @@ def read_vela_endpoint(curve_csv: Path, terminal_csv: Path, target_bias_V: float
         raise ValueError("Vela endpoint contains non-finite observables")
     return values
 
+def _read_export_scalar(path: Path) -> dict[int, float]:
+    with path.open(newline="", encoding="utf-8") as handle:
+        return {int(row["node_id"]): float(row["component0"]) for row in csv.DictReader(handle)}
+
+
+def _read_export_vector(path: Path) -> dict[int, tuple[float, float]]:
+    with path.open(newline="", encoding="utf-8") as handle:
+        return {int(row["node_id"]): (float(row["component0"]), float(row["component1"])) for row in csv.DictReader(handle)}
+
+
+def _required_field_region(fields: list[dict[str, Any]], name: str, *, components: int, unit: str, region_name: str = "R.Si") -> int:
+    matches = [field for field in fields if field.get("name") == name and field.get("region_name") == region_name]
+    if len(matches) != 1:
+        raise ValueError(f"Sentaurus export lacks exactly one {name} field for {region_name}")
+    field = matches[0]
+    if field.get("components") != components or field.get("unit") != unit:
+        raise ValueError(f"Sentaurus export has incompatible {name} field contract")
+    return int(field["region"])
+
+
+def _contact_field_region(fields: list[dict[str, Any]], name: str, contact: str, unit: str) -> int:
+    matches = [field for field in fields if field.get("name") == name and field.get("region_name") == contact]
+    if len(matches) != 1 or matches[0].get("components") != 1 or matches[0].get("unit") != unit:
+        raise ValueError(f"Sentaurus export lacks exactly one {name} field for {contact}")
+    return int(matches[0]["region"])
+
+
+def _single_contact_scalar(export_dir: Path, name: str, region: int) -> float:
+    values = _read_export_scalar(export_dir / "fields" / f"{name}_region{region}.csv")
+    if len(values) != 1:
+        raise ValueError(f"Sentaurus contact field {name} must contain one scalar")
+    value = next(iter(values.values()))
+    if not math.isfinite(value):
+        raise ValueError(f"Sentaurus contact field {name} is non-finite")
+    return value
+
+
+def read_sentaurus_endpoint(export_dir: Path, mesh_path: Path, target_bias_V: float) -> dict[str, Any]:
+    """Recover exact, unit-normalized endpoint observables from one imported Sentaurus TDR."""
+    field_manifest = export_dir / "field_manifest.json"
+    if not field_manifest.is_file() or not mesh_path.is_file():
+        raise FileNotFoundError("Sentaurus endpoint requires exported fields and the topology mesh")
+    fields = json.loads(field_manifest.read_text(encoding="utf-8")).get("fields", [])
+    requirements = {
+        "ElectricField": (2, "V*cm^-1"), "ImpactIonization": (1, "cm^-3*s^-1"),
+        "eAlphaAvalanche": (1, "cm^-1"), "hAlphaAvalanche": (1, "cm^-1"),
+        "eCurrentDensity": (2, "A*cm^-2"), "hCurrentDensity": (2, "A*cm^-2"),
+    }
+    regions = {name: _required_field_region(fields, name, components=components, unit=unit) for name, (components, unit) in requirements.items()}
+    if len(set(regions.values())) != 1:
+        raise ValueError("Sentaurus volume fields do not share one semiconductor region")
+    anode_current_region = _contact_field_region(fields, "ContactCurrentFlux", "Anode", "A")
+    cathode_current_region = _contact_field_region(fields, "ContactCurrentFlux", "Cathode", "A")
+    anode_voltage_region = _contact_field_region(fields, "ContactExternalVoltage", "Anode", "V")
+    cathode_voltage_region = _contact_field_region(fields, "ContactExternalVoltage", "Cathode", "V")
+    actual_bias = _single_contact_scalar(export_dir, "ContactExternalVoltage", anode_voltage_region) - _single_contact_scalar(export_dir, "ContactExternalVoltage", cathode_voltage_region)
+    if abs(actual_bias - target_bias_V) > 1.0e-12:
+        raise ValueError("Sentaurus endpoint does not match the exact target bias")
+    region = regions["ImpactIonization"]
+    field_dir = export_dir / "fields"
+    mesh = json.loads(mesh_path.read_text(encoding="utf-8"))
+    native = integrate_native_nodal_per_unit_depth(mesh, _read_export_scalar(field_dir / f"ImpactIonization_region{region}.csv"))
+    reconstructed = integrate_native_nodal_per_unit_depth(
+        mesh,
+        sentaurus_alpha_current_nodal(
+            _read_export_scalar(field_dir / f"eAlphaAvalanche_region{region}.csv"),
+            _read_export_vector(field_dir / f"eCurrentDensity_region{region}.csv"),
+            _read_export_scalar(field_dir / f"hAlphaAvalanche_region{region}.csv"),
+            _read_export_vector(field_dir / f"hCurrentDensity_region{region}.csv"),
+        ),
+    )
+    maximum_field = max(math.hypot(*value) for value in _read_export_vector(field_dir / f"ElectricField_region{region}.csv").values()) * 100.0
+    observables = {
+        "anode_current_A_per_um": _single_contact_scalar(export_dir, "ContactCurrentFlux", anode_current_region) * 1.0e-4,
+        "cathode_current_A_per_um": _single_contact_scalar(export_dir, "ContactCurrentFlux", cathode_current_region) * 1.0e-4,
+        "max_field_V_per_m": maximum_field,
+        "native_source_integral_s_inv_per_cm": native["value_s_inv_per_unit_depth"],
+        "reconstructed_source_integral_s_inv_per_cm": reconstructed["value_s_inv_per_unit_depth"],
+    }
+    if not all(math.isfinite(value) for value in observables.values()):
+        raise ValueError("Sentaurus endpoint contains non-finite observables")
+    return {"actual_bias_V": actual_bias, "observables": observables,
+            "depth_convention": native["depth_convention"], "current_conversion": "ContactCurrentFlux A per 1 cm depth * 1e-4 = A/um"}
+
 def copy_topology_inputs(authoritative_state_root: Path, destination_root: Path, topologies: tuple[str, ...] = ("sketch", "mirror")) -> dict[str, dict[str, str]]:
     """Copy only canonical 0 V mesh/doping inputs into the independent sweep root."""
     hashes: dict[str, dict[str, str]] = {}
@@ -158,10 +249,44 @@ def record_transition(
     else:
         if incomplete_reason:
             row["incomplete_reason"] = incomplete_reason
+        manifest.setdefault("failed_transitions", []).append(row)
         if manifest.get("failed_transition") is None:
             manifest["failed_transition"] = row
     return row
 
+
+def record_sentaurus_checkpoint(
+    manifest: dict[str, Any], *, topology: str, start_bias_V: float, target_bias_V: float,
+    state_path: Path, export_dir: Path, mesh_path: Path,
+) -> dict[str, Any]:
+    """Promote one imported exact-bias Sentaurus TDR into immutable sweep evidence."""
+    matches = [segment for segment in manifest.get("sentaurus_segments", [])
+               if segment.get("topology") == topology and float(segment.get("target_bias_V")) == target_bias_V]
+    if len(matches) != 1:
+        raise ValueError("Sentaurus checkpoint does not match exactly one generated segment")
+    try:
+        endpoint = read_sentaurus_endpoint(export_dir, mesh_path, target_bias_V)
+        row = record_transition(
+            manifest, solver="sentaurus", topology=topology, start_bias_V=start_bias_V,
+            target_bias_V=target_bias_V, exit_code=0, actual_bias_V=endpoint["actual_bias_V"],
+            state_path=state_path, observables=endpoint["observables"],
+            diagnostics={"stdout": "", "stderr": ""},
+        )
+        row["export_dir"] = str(export_dir)
+        row["export_field_manifest_sha256"] = _sha(export_dir / "field_manifest.json")
+        row["depth_convention"] = endpoint["depth_convention"]
+        row["current_conversion"] = endpoint["current_conversion"]
+    except (FileNotFoundError, ValueError) as error:
+        row = record_transition(
+            manifest, solver="sentaurus", topology=topology, start_bias_V=start_bias_V,
+            target_bias_V=target_bias_V, exit_code=1, actual_bias_V=None,
+            state_path=state_path if state_path.is_file() else None, observables=None,
+            diagnostics={"stdout": "", "stderr": str(error)}, incomplete_reason="Sentaurus checkpoint export is incomplete or invalid",
+        )
+    matches[0]["status"] = row["status"]
+    matches[0]["state_path"] = str(state_path)
+    matches[0]["state_sha256"] = _sha(state_path) if state_path.is_file() else None
+    return row
 
 def run_vela_subprocess_segment(root: Path, executable: Path, segment: dict[str, Any]) -> dict[str, Any]:
     """Run one generated Vela deck and return evidence without inventing a native source."""
@@ -185,22 +310,25 @@ def run_vela_subprocess_segment(root: Path, executable: Path, segment: dict[str,
             "incomplete_reason": "Vela has no native Sentaurus source integral"}
 
 def execute_segments(manifest: dict[str, Any], root: Path, runner) -> None:
-    """Run pending segments in order and permanently retain the first failed one."""
-    for segment in manifest.get("segments", []):
-        if segment.get("status") != "pending":
-            continue
-        result = runner(segment)
-        row = record_transition(
-            manifest, solver=str(segment["solver"]), topology=str(segment["topology"]),
-            start_bias_V=float(segment["start_bias_V"]), target_bias_V=float(segment["target_bias_V"]),
-            exit_code=int(result.get("exit_code", 1)), actual_bias_V=result.get("actual_bias_V"),
-            state_path=result.get("state_path"), observables=result.get("observables"),
-            diagnostics={"stdout": str(result.get("stdout", "")), "stderr": str(result.get("stderr", ""))},
-            incomplete_reason=None if result.get("incomplete_reason") is None else str(result["incomplete_reason"]),
-        )
-        segment["status"] = row["status"]
-        if row["status"] != "accepted":
-            break
+    """Run each topology independently and retain its first failed segment."""
+    segments = manifest.get("segments", [])
+    topologies = list(dict.fromkeys(str(segment["topology"]) for segment in segments))
+    for topology in topologies:
+        for segment in segments:
+            if str(segment["topology"]) != topology or segment.get("status") != "pending":
+                continue
+            result = runner(segment)
+            row = record_transition(
+                manifest, solver=str(segment["solver"]), topology=topology,
+                start_bias_V=float(segment["start_bias_V"]), target_bias_V=float(segment["target_bias_V"]),
+                exit_code=int(result.get("exit_code", 1)), actual_bias_V=result.get("actual_bias_V"),
+                state_path=result.get("state_path"), observables=result.get("observables"),
+                diagnostics={"stdout": str(result.get("stdout", "")), "stderr": str(result.get("stderr", ""))},
+                incomplete_reason=None if result.get("incomplete_reason") is None else str(result["incomplete_reason"]),
+            )
+            segment["status"] = row["status"]
+            if row["status"] != "accepted":
+                break
 
 def validate_sweep_manifest(manifest: dict[str, Any]) -> None:
     if manifest.get("schema") != SCHEMA:
@@ -217,6 +345,9 @@ def validate_sweep_manifest(manifest: dict[str, Any]) -> None:
             raise ValueError("accepted checkpoint state is missing or hash-tampered")
         if not isinstance(row.get("observables"), dict):
             raise ValueError("accepted checkpoint lacks observables")
+    failed_rows = manifest.get("failed_transitions", [])
+    if any(row.get("status") != "rejected" or row.get("observables") is not None for row in failed_rows):
+        raise ValueError("failed transition must preserve no fabricated observables")
     failed = manifest.get("failed_transition")
     if failed is not None and (failed.get("status") != "rejected" or failed.get("observables") is not None):
         raise ValueError("failed transition must preserve no fabricated observables")
@@ -260,12 +391,32 @@ def initialise_package(root: Path, template_path: Path, topologies: tuple[str, .
     sentaurus_segments = write_sentaurus_decks(root, sentaurus_template, topologies)
     manifest = {"schema": SCHEMA, "diagnostic_disclaimer": DISCLAIMER, "targets_V": list(targets),
                 "template": {"path": str(template_path), "sha256": _sha(template_path)}, "topology_input_sha256": input_hashes, "segments": segments, "sentaurus_segments": sentaurus_segments,
-                "accepted_checkpoints": [], "failed_transition": None, "interpolation": "forbidden",
+                "accepted_checkpoints": [], "failed_transition": None, "failed_transitions": [], "interpolation": "forbidden",
                 "branch_threshold_version": "v1: multiplication=[0.1,10], leakage<=1e-3"}
     manifest_path = root / "sweep_manifest.json"
     _write_json(manifest_path, manifest)
     return manifest_path
 
+
+def record_sentaurus_results(manifest: dict[str, Any], results_path: Path) -> list[dict[str, Any]]:
+    """Load declared imported Sentaurus checkpoints without changing solver configuration."""
+    payload = json.loads(results_path.read_text(encoding="utf-8-sig"))
+    if not isinstance(payload, list):
+        raise ValueError("Sentaurus results JSON must be a list")
+    required = {"topology", "start_bias_V", "target_bias_V", "state_path", "export_dir", "mesh_path"}
+    rows: list[dict[str, Any]] = []
+    for item in payload:
+        if not isinstance(item, dict) or set(item) != required:
+            raise ValueError("Sentaurus result has an invalid contract")
+        def resolve(value: Any) -> Path:
+            path = Path(str(value))
+            return path if path.is_absolute() else (results_path.parent / path).resolve()
+        rows.append(record_sentaurus_checkpoint(
+            manifest, topology=str(item["topology"]), start_bias_V=float(item["start_bias_V"]),
+            target_bias_V=float(item["target_bias_V"]), state_path=resolve(item["state_path"]),
+            export_dir=resolve(item["export_dir"]), mesh_path=resolve(item["mesh_path"]),
+        ))
+    return rows
 
 def main() -> int:
     parser = argparse.ArgumentParser()
@@ -273,12 +424,19 @@ def main() -> int:
     parser.add_argument("--template", type=Path, default=REPO / "reference_tcad" / "pn2d_sentaurus2018_minimal6" / "vela" / "pn2d_minimal6_sweep_template.json")
     parser.add_argument("--state-root", type=Path)
     parser.add_argument("--vela-runner", type=Path)
+    parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--sentaurus-results-json", type=Path)
     args = parser.parse_args()
     args.out_dir = args.out_dir.resolve()
-    manifest_path = initialise_package(args.out_dir, args.template, authoritative_state_root=args.state_root)
-    if args.vela_runner is not None:
+    manifest_path = args.out_dir / "sweep_manifest.json" if args.resume else initialise_package(args.out_dir, args.template, authoritative_state_root=args.state_root)
+    if args.resume and not manifest_path.is_file():
+        raise FileNotFoundError("--resume requires an existing sweep manifest")
+    if args.sentaurus_results_json is not None or args.vela_runner is not None:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        execute_segments(manifest, args.out_dir, lambda segment: run_vela_subprocess_segment(args.out_dir, args.vela_runner, segment))
+        if args.sentaurus_results_json is not None:
+            record_sentaurus_results(manifest, args.sentaurus_results_json.resolve())
+        if args.vela_runner is not None:
+            execute_segments(manifest, args.out_dir, lambda segment: run_vela_subprocess_segment(args.out_dir, args.vela_runner, segment))
         validate_sweep_manifest(manifest)
         _write_json(manifest_path, manifest)
     return 0

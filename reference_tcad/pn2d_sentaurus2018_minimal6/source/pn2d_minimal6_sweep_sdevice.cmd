@@ -8,7 +8,7 @@ File {
 }
 Electrode { { Name="Anode" Voltage=0.0 } { Name="Cathode" Voltage=0.0 } }
 Physics { Mobility(DopingDependence HighFieldSaturation) Recombination(SRH Avalanche(VanOverstraeten)) EffectiveIntrinsicDensity(OldSlotboom) }
-Plot { Potential eDensity hDensity eCurrent hCurrent TotalCurrent ElectricField/Vector ImpactIonization eAlphaAvalanche hAlphaAvalanche }
+Plot { Potential eDensity hDensity eCurrentDensity/Vector hCurrentDensity/Vector TotalCurrentDensity/Vector ElectricField/Vector ImpactIonization eAlphaAvalanche hAlphaAvalanche }
 Math { Extrapolate RelErrControl Digits=5 Iterations=80 NotDamped=100 Method=Blocked }
 Solve {
   Coupled(Iterations=100) { Poisson }
