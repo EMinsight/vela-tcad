@@ -178,3 +178,18 @@ cross-solver operator/state gap but does not identify a closed causal ranking
 or a physical breakdown voltage. Every curve is labelled:
 
 > minimal6 diagnostic sweep; not a physical BV curve
+
+## 2026-07-15 Minimal6 Task 8 corrected-unit supersession
+
+The Task 8 status above is superseded. Correct conversion of imported mesh
+coordinates from metres to micrometres allows Vela and Sentaurus to share all
+40 exact `-1..-20 V` checkpoints across sketch and mirror. The final roots end
+in `vela-task8-source-unit-corrected-20260715`,
+`sentaurus-task8-current-corrected-20260715`, and
+`comparison-task8-source-unit-corrected-20260715`.
+
+The self-consistent audit isolates the mismatch to the quasi-Fermi/carrier and
+continuity-transport path rather than Poisson electrostatics or the
+Van Overstraeten alpha formula. Full numbers, unit derivation and the proposed
+test-driven correction are recorded in
+`docs/validation/pn2d_minimal6_task8_physics_error_analysis_2026-07-15.md`.

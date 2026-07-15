@@ -23,6 +23,7 @@ from scripts.pn2d_minimal6_diagnostics.counterfactual import (
 )
 DISCLAIMER = "minimal6 diagnostic sweep; not a physical BV curve"
 SCHEMA = "vela.pn2d_minimal6_sweep_manifest.v1"
+VELA_SOURCE_AREA_CM2_PER_UM2 = 1.0e-8
 
 
 def integer_targets() -> tuple[float, ...]:
@@ -127,12 +128,14 @@ def read_vela_endpoint(
             "Vela native/reconstructed source closure exceeds tolerance: "
             f"native={native_source:.17g}, reconstructed={reconstructed_source:.17g}"
         )
+    # Native diagnostics combine cm^-1 and cm^-2 s^-1 values with mesh areas
+    # stored numerically in um^2. Convert um^2 to cm^2 for the published source.
     values = {
         "anode_current_A_per_um": float(contacts["Anode"]["I_sgflux_A_per_um"]),
         "cathode_current_A_per_um": float(contacts["Cathode"]["I_sgflux_A_per_um"]),
         "max_field_V_per_m": float(curve_rows[0]["max_electric_field_V_per_m"]),
-        "native_source_integral_s_inv_per_cm": native_source,
-        "reconstructed_source_integral_s_inv_per_cm": reconstructed_source,
+        "native_source_integral_s_inv_per_cm": native_source * VELA_SOURCE_AREA_CM2_PER_UM2,
+        "reconstructed_source_integral_s_inv_per_cm": reconstructed_source * VELA_SOURCE_AREA_CM2_PER_UM2,
     }
     if not all(math.isfinite(value) for value in values.values()):
         raise ValueError("Vela endpoint contains non-finite observables")
@@ -214,8 +217,8 @@ def read_sentaurus_endpoint(export_dir: Path, mesh_path: Path, target_bias_V: fl
     )
     maximum_field = max(math.hypot(*value) for value in _read_export_vector(field_dir / f"ElectricField_region{region}.csv").values()) * 100.0
     observables = {
-        "anode_current_A_per_um": _single_contact_scalar(export_dir, "ContactCurrentFlux", anode_current_region) * 1.0e-4,
-        "cathode_current_A_per_um": _single_contact_scalar(export_dir, "ContactCurrentFlux", cathode_current_region) * 1.0e-4,
+        "anode_current_A_per_um": _single_contact_scalar(export_dir, "ContactCurrentFlux", anode_current_region),
+        "cathode_current_A_per_um": _single_contact_scalar(export_dir, "ContactCurrentFlux", cathode_current_region),
         "max_field_V_per_m": maximum_field,
         "native_source_integral_s_inv_per_cm": native["value_s_inv_per_unit_depth"],
         "reconstructed_source_integral_s_inv_per_cm": reconstructed["value_s_inv_per_unit_depth"],
@@ -223,23 +226,49 @@ def read_sentaurus_endpoint(export_dir: Path, mesh_path: Path, target_bias_V: fl
     if not all(math.isfinite(value) for value in observables.values()):
         raise ValueError("Sentaurus endpoint contains non-finite observables")
     return {"actual_bias_V": actual_bias, "observables": observables,
-            "depth_convention": native["depth_convention"], "current_conversion": "ContactCurrentFlux A per 1 cm depth * 1e-4 = A/um"}
+            "depth_convention": native["depth_convention"], "current_conversion": "Sentaurus 2-D ContactCurrentFlux A compared numerically with Vela A/um"}
 
 def copy_topology_inputs(authoritative_state_root: Path, destination_root: Path, topologies: tuple[str, ...] = ("sketch", "mirror")) -> dict[str, dict[str, str]]:
-    """Copy only canonical 0 V mesh/doping inputs into the independent sweep root."""
+    """Prepare canonical 0 V topology inputs for Vela TCAD-internal units.
+
+    Sentaurus state exports serialize mesh coordinates in metres. A Vela deck
+    with scaling.mode = unit_scaling interprets JSON coordinates as
+    micrometres, so the mesh must be converted by 1e6 while doping.csv remains
+    in its exported cm^-3 units.
+    """
     hashes: dict[str, dict[str, str]] = {}
     for topology in topologies:
         source = authoritative_state_root / "states" / topology / "p0V" / "export"
         target = destination_root / "inputs" / topology
         target.mkdir(parents=True, exist_ok=True)
-        hashes[topology] = {}
-        for name in ("mesh.json", "doping.csv"):
-            member = source / name
+        source_mesh = source / "mesh.json"
+        source_doping = source / "doping.csv"
+        for member in (source_mesh, source_doping):
             if not member.is_file():
                 raise FileNotFoundError(f"authoritative topology input is missing: {member}")
-            copied = target / name
-            shutil.copyfile(member, copied)
-            hashes[topology][name] = _sha(copied)
+
+        mesh = json.loads(source_mesh.read_text(encoding="utf-8"))
+        nodes = mesh.get("nodes")
+        if not isinstance(nodes, list) or not nodes:
+            raise ValueError("authoritative topology mesh requires a non-empty nodes list")
+        for node in nodes:
+            if not isinstance(node, dict) or "x" not in node or "y" not in node:
+                raise ValueError("authoritative topology mesh node lacks x/y coordinates")
+            x_m, y_m = float(node["x"]), float(node["y"])
+            if not math.isfinite(x_m) or not math.isfinite(y_m):
+                raise ValueError("authoritative topology mesh coordinates must be finite")
+            node["x"] = x_m * 1.0e6
+            node["y"] = y_m * 1.0e6
+        mesh["coordinate_unit"] = "um"
+
+        copied_mesh = target / "mesh.json"
+        _write_json(copied_mesh, mesh)
+        copied_doping = target / "doping.csv"
+        shutil.copyfile(source_doping, copied_doping)
+        hashes[topology] = {
+            "mesh.json": _sha(copied_mesh),
+            "doping.csv": _sha(copied_doping),
+        }
     return hashes
 
 def record_transition(

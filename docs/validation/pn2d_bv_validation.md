@@ -1430,3 +1430,28 @@ Fresh final verification used the plan's explicit commands:
 | `test_fixed_state_operator_audit` | `4` cases / `67` assertions, PASS |
 | `test_impact_ionization` | `40` cases / `511` assertions, PASS |
 | `test_cell_reconstructed_avalanche` | `14` cases / `83` assertions, PASS |
+
+## PN2D Minimal6 Task 8 corrected-unit supersession (2026-07-15)
+
+The preceding Task 8 section is superseded by
+`docs/validation/pn2d_minimal6_task8_physics_error_analysis_2026-07-15.md`.
+The final corrected comparison contains 40 exact common checkpoints for
+sketch/mirror x `-1..-20 V`; Vela no longer terminates at `-1 V` after converting
+the imported Sentaurus mesh coordinates from metres to micrometres. The
+authoritative roots are:
+
+- `build-release/pn2d-minimal6-vela-task8-source-unit-corrected-20260715/`
+- `build-release/pn2d-minimal6-sentaurus-task8-current-corrected-20260715/`
+- `build-release/pn2d-minimal6-comparison-task8-source-unit-corrected-20260715/`
+
+The corrected audit finds excellent interior potential and electric-field
+agreement, and 1.5-4.0% peak electron-ionization-coefficient agreement at
+`-12..-20 V`. The dominant discrepancy is a `0.30..0.37 V` interior quasi-Fermi
+offset and the resulting `1e5`-scale carrier excess. The leading code-level
+cause is a missing micrometre-to-centimetre line/area conversion in the coupled
+continuity residual, which overweights volumetric source terms by `1e4`
+relative to transport. The diagnostic integrated-source export also required a
+separate `1e-8` area conversion; that reporting correction does not change the
+nonlinear solution.
+
+The result remains a diagnostic sweep, not a physical BV curve.

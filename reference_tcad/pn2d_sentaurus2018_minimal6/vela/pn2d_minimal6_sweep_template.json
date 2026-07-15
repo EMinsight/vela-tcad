@@ -20,6 +20,7 @@
                    "max_iter":  40,
                    "reltol":  1E-08,
                    "abstol":  1E-09,
+                   "contact_boundary_minority_electron_relaxation":  false,
                    "mobility":  {
                                     "model":  "masetti_field",
                                     "high_field_driving_force":  "quasi_fermi_gradient"

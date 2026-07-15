@@ -1,4 +1,5 @@
 import copy
+import json
 import sys
 import tempfile
 from unittest.mock import patch
@@ -48,8 +49,8 @@ class DiagnosticSweepTest(unittest.TestCase):
             (fields / "ContactExternalVoltage_region2.csv").write_text("node_id,component0\n0,-1\n", encoding="utf-8")
             endpoint = read_sentaurus_endpoint(export, mesh, -1.0)
             self.assertEqual(endpoint["actual_bias_V"], -1.0)
-            self.assertEqual(endpoint["observables"]["anode_current_A_per_um"], -2.0e-4)
-            self.assertEqual(endpoint["observables"]["cathode_current_A_per_um"], 2.0e-4)
+            self.assertEqual(endpoint["observables"]["anode_current_A_per_um"], -2.0)
+            self.assertEqual(endpoint["observables"]["cathode_current_A_per_um"], 2.0)
             self.assertEqual(endpoint["observables"]["max_field_V_per_m"], 500.0)
             self.assertAlmostEqual(endpoint["observables"]["native_source_integral_s_inv_per_cm"], 1.0e-8)
             self.assertAlmostEqual(endpoint["observables"]["reconstructed_source_integral_s_inv_per_cm"], 5.0e-9)
@@ -99,11 +100,38 @@ class DiagnosticSweepTest(unittest.TestCase):
             root = Path(temp)
             source = root / "authoritative" / "states" / "sketch" / "p0V" / "export"
             source.mkdir(parents=True)
-            (source / "mesh.json").write_text("mesh", encoding="utf-8")
+            source_mesh = {
+                "nodes": [
+                    {"id": 0, "x": 0.0, "y": 0.5e-6},
+                    {"id": 1, "x": 1.0e-6, "y": 0.5e-6},
+                ],
+                "triangles": [],
+                "regions": [],
+                "contacts": [],
+            }
+            (source / "mesh.json").write_text(
+                json.dumps(source_mesh), encoding="utf-8"
+            )
             (source / "doping.csv").write_text("doping", encoding="utf-8")
             destination = root / "sweep"
             hashes = copy_topology_inputs(root / "authoritative", destination, ("sketch",))
-            self.assertEqual((destination / "inputs" / "sketch" / "mesh.json").read_text(encoding="utf-8"), "mesh")
+            copied_mesh = json.loads(
+                (destination / "inputs" / "sketch" / "mesh.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(copied_mesh["nodes"][1]["x"], 1.0)
+            self.assertEqual(copied_mesh["nodes"][0]["y"], 0.5)
+            self.assertEqual(
+                json.loads((source / "mesh.json").read_text(encoding="utf-8")),
+                source_mesh,
+            )
+            self.assertEqual(
+                (destination / "inputs" / "sketch" / "doping.csv").read_text(
+                    encoding="utf-8"
+                ),
+                "doping",
+            )
             self.assertIn("sketch", hashes)
     def test_record_sentaurus_checkpoint_promotes_complete_export_to_manifest(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -114,7 +142,7 @@ class DiagnosticSweepTest(unittest.TestCase):
             export.mkdir()
             (export / "field_manifest.json").write_text("{}\n", encoding="utf-8")
             manifest = {"schema": "vela.pn2d_minimal6_sweep_manifest.v1", "targets_V": [0.0, -1.0], "segments": [], "sentaurus_segments": [{"solver": "sentaurus", "topology": "sketch", "target_bias_V": -1.0, "status": "pending"}], "accepted_checkpoints": [], "failed_transition": None}
-            endpoint = {"actual_bias_V": -1.0, "depth_convention": "unit_out_of_plane_length_cm", "current_conversion": "A per 1 cm depth * 1e-4 = A/um", "observables": {"anode_current_A_per_um": -1.0, "cathode_current_A_per_um": 1.0, "max_field_V_per_m": 2.0, "native_source_integral_s_inv_per_cm": 3.0, "reconstructed_source_integral_s_inv_per_cm": 4.0}}
+            endpoint = {"actual_bias_V": -1.0, "depth_convention": "unit_out_of_plane_length_cm", "current_conversion": "Sentaurus 2-D ContactCurrentFlux A compared numerically with Vela A/um", "observables": {"anode_current_A_per_um": -1.0, "cathode_current_A_per_um": 1.0, "max_field_V_per_m": 2.0, "native_source_integral_s_inv_per_cm": 3.0, "reconstructed_source_integral_s_inv_per_cm": 4.0}}
             with patch("scripts.run_pn2d_minimal6_diagnostic_sweep.read_sentaurus_endpoint", return_value=endpoint):
                 row = record_sentaurus_checkpoint(manifest, topology="sketch", start_bias_V=0.0, target_bias_V=-1.0, state_path=state, export_dir=export, mesh_path=root / "mesh.json")
             self.assertEqual(row["status"], "accepted")
@@ -137,6 +165,21 @@ class DiagnosticSweepTest(unittest.TestCase):
         deck = source.read_text(encoding="utf-8")
         self.assertIn("eCurrentDensity/Vector", deck)
         self.assertIn("hCurrentDensity/Vector", deck)
+
+    def test_vela_sweep_template_uses_sentaurus_equivalent_ohmic_qf_pinning(self):
+        source = (
+            Path(__file__).resolve().parents[2]
+            / "reference_tcad"
+            / "pn2d_sentaurus2018_minimal6"
+            / "vela"
+            / "pn2d_minimal6_sweep_template.json"
+        )
+        deck = json.loads(source.read_text(encoding="utf-8"))
+        self.assertIs(
+            deck["solver"]["contact_boundary_minority_electron_relaxation"],
+            False,
+        )
+
     def test_sentaurus_decks_are_exact_and_checkpoint_paths_are_unique(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -163,8 +206,8 @@ class DiagnosticSweepTest(unittest.TestCase):
             )
             result = read_vela_endpoint(curve, terminals, edges, -1.0)
             self.assertEqual(result["anode_current_A_per_um"], -3.0)
-            self.assertEqual(result["native_source_integral_s_inv_per_cm"], 5.0)
-            self.assertEqual(result["reconstructed_source_integral_s_inv_per_cm"], 5.0)
+            self.assertAlmostEqual(result["native_source_integral_s_inv_per_cm"], 5.0e-8)
+            self.assertAlmostEqual(result["reconstructed_source_integral_s_inv_per_cm"], 5.0e-8)
             with self.assertRaises(ValueError): read_vela_endpoint(curve, terminals, edges, -2.0)
             edges.write_text("bias_V,edge_id,edge_source_integral\n-1,0,4.0\n", encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "source closure"):
