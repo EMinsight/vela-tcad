@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import math
 import os
@@ -66,7 +67,47 @@ _FIELD_CONTRACT = {
     "hMobility": (1, "cm^2*V^-1*s^-1"),
     "eAlphaAvalanche": (1, "cm^-1"),
     "hAlphaAvalanche": (1, "cm^-1"),
+    "ImpactIonization": (1, "cm^-3*s^-1"),
+    "eVelocity": (1, "cm*s^-1"),
+    "hVelocity": (1, "cm*s^-1"),
+    "eIonIntegral": (1, "1"),
+    "hIonIntegral": (1, "1"),
+    "MeanIonIntegral": (1, "1"),
 }
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+def collect_member_hashes(root: Path) -> dict[str, str]:
+    root = Path(root)
+    return {path.relative_to(root).as_posix(): _sha256(path)
+            for path in sorted(root.rglob("*")) if path.is_file()}
+
+def validate_member_hashes(root: Path, expected: dict[str, str]) -> None:
+    actual = collect_member_hashes(root)
+    if set(actual) != set(expected):
+        raise ValueError("archive member set mismatch")
+    for name, digest in expected.items():
+        if actual[name] != digest:
+            raise ValueError(f"archive member hash mismatch: {name}")
+
+
+def validate_recovered_archive(root: Path, expected_manifest_sha256: str) -> dict[str, object]:
+    root = Path(root)
+    manifest_path = root / "manifest.json"
+    if not manifest_path.is_file():
+        raise ValueError("recovered archive is missing manifest.json")
+    if _sha256(manifest_path).lower() != expected_manifest_sha256.lower():
+        raise ValueError("recovered archive manifest hash mismatch")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if manifest.get("outputs_complete") is not True:
+        raise ValueError("recovered archive outputs are incomplete")
+    validate_state_matrix(manifest.get("states", []))
+    return manifest
 
 
 def _bias_tag(bias_V: float) -> str:
@@ -420,6 +461,7 @@ def run_exports(
                 raise ValueError(f"missing neutral export directory: {export_dir}")
             state["state_csv"] = str(write_state_csv(export_dir))
             state["field_manifest"] = str(export_dir / "field_manifest.json")
+            state["member_sha256"] = collect_member_hashes(export_dir)
             state["status"] = "passed"
             write_manifest(manifest_path, manifest)
         except Exception as error:
