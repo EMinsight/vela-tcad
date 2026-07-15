@@ -24,7 +24,7 @@ class DiagnosticContractsTest(unittest.TestCase):
             QuantityRecord(StateIdentity("run", "sketch", -19.0), "electron", SupportKind.NODE, "0", "G", SourceKind.VELA, "v1", 1.0, "cm^-3*s^-1", "", "", "")
     def test_report_schema_rejects_nonfinite_and_missing_disclaimer(self):
         from scripts.pn2d_minimal6_diagnostics.schemas import validate_formula_difference_v1
-        report = {"schema":"vela.pn2d_minimal6_formula_difference.v1", "diagnostic_disclaimer":"minimal6 diagnostic sweep; not a physical BV curve", "records":[], "input_provenance":{}, "audit_provenance":{}, "state_matrix":[], "row_counts":{}, "waterfall_paths":[], "interactions":[], "dominance_rules":{}, "sentaurus_internal_semantics_residual":0.0, "artifact_hashes":{}}
+        report = {"schema":"vela.pn2d_minimal6_formula_difference.v1", "diagnostic_disclaimer":"minimal6 diagnostic sweep; not a physical BV curve", "records":[], "input_provenance":{}, "audit_provenance":{}, "state_matrix":[], "row_counts":{}, "waterfall_paths":[], "interactions":[], "dominance_rules":{}, "sentaurus_internal_semantics_residual":0.0, "vela_parameter_agreement":[], "artifact_hashes":{}}
         self.assertIsNone(validate_formula_difference_v1(report))
         with self.assertRaises(ValueError): validate_formula_difference_v1({"schema":report["schema"], "records":[{"value":float("nan")} ]})
         with self.assertRaises(ValueError): validate_formula_difference_v1({"schema":report["schema"], "diagnostic_disclaimer":report["diagnostic_disclaimer"]})
