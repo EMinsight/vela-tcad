@@ -146,7 +146,7 @@ class FormulaDifferenceTest(unittest.TestCase):
                 encoding="utf-8")
             (root / "manifest.json").write_text(json.dumps({"outputs_complete":True,"states":states}), encoding="utf-8")
             out = Path(temp) / "out"
-            command = [sys.executable, str(Path(__file__).parents[2] / "scripts" / "diagnose_pn2d_minimal6_formula_difference.py"), "--state-root", str(root), "--audit-root", temp, "--out-dir", str(out)]
+            command = [sys.executable, str(Path(__file__).parents[2] / "scripts" / "diagnose_pn2d_minimal6_formula_difference.py"), "--state-root", str(root), "--audit-root", temp, "--out-dir", str(out), "--qa-status", "reviewed"]
             completed = subprocess.run(command, capture_output=True, text=True)
             self.assertEqual(completed.returncode, 0, completed.stderr)
             with (out / "quantity_ledger.csv").open(newline="", encoding="utf-8") as handle:
@@ -174,6 +174,37 @@ class FormulaDifferenceTest(unittest.TestCase):
             self.assertEqual(report["waterfall_paths"][0]["factor_availability"][0]["status"], "unavailable")
             self.assertEqual(report["dominance_rules"]["status"], "insufficient_data")
             self.assertIn("vela_native_minus_reconstruction", report["records"][0])
+            summary_markdown = (out / "root_cause_summary.md").read_text(encoding="utf-8")
+            self.assertIn("reference_tcad/pn2d_sentaurus2018_minimal6/source/models.par", summary_markdown)
+            self.assertIn("scripts/pn2d_minimal6_diagnostics/physics.py", summary_markdown)
+            self.assertIn("src/physics/ImpactIonizationModel.cpp", summary_markdown)
+            figure_manifest_path = out / "figure_manifest.json"
+            self.assertTrue(figure_manifest_path.is_file(), figure_manifest_path)
+            figure_manifest = json.loads(figure_manifest_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                figure_manifest["diagnostic_disclaimer"],
+                "minimal6 diagnostic sweep; not a physical BV curve",
+            )
+            self.assertEqual(figure_manifest["manual_qa"]["status"], "reviewed")
+            self.assertEqual(
+                [item["stem"] for item in figure_manifest["figures"]],
+                ["gradient", "current_alpha", "source_waterfall", "interaction", "topology_symmetry"],
+            )
+            for item in figure_manifest["figures"]:
+                self.assertIn("unit", item)
+                for relative_path in item["artifacts"]:
+                    path = out / relative_path
+                    self.assertTrue(path.is_file(), path)
+                    payload = path.read_bytes()
+                    if path.suffix == ".png":
+                        self.assertTrue(payload.startswith(b"\x89PNG\r\n\x1a\n"))
+                        from PIL import Image
+                        with Image.open(path) as image:
+                            self.assertGreaterEqual(image.width, 640)
+                            self.assertGreaterEqual(image.height, 360)
+                            self.assertGreater(len(image.getcolors(maxcolors=image.width * image.height)), 1)
+                    else:
+                        self.assertTrue(payload.startswith(b"%PDF-"))
     def test_rejects_inexact_bias(self):
         states = [{"topology_id":t,"requested_bias_V":b,"actual_bias_V":b,"status":"passed"}
                   for t in ("sketch","mirror") for b in (0.0,-12.0,-19.0)]

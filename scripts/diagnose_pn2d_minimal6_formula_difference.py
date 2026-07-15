@@ -36,6 +36,7 @@ from scripts.pn2d_minimal6_diagnostics.counterfactual import (
 )
 from scripts.pn2d_minimal6_diagnostics.schemas import DISCLAIMER, validate_formula_difference_v1
 from scripts.pn2d_minimal6_diagnostics.support import project_vector_to_edge
+from scripts.pn2d_minimal6_diagnostics.plots import render_formula_difference_figures
 
 _NODE_STATE_FIELDS = {
     "ElectrostaticPotential": "V", "eDensity": "cm^-3", "hDensity": "cm^-3",
@@ -265,7 +266,28 @@ def _write_artifacts(out_dir: Path, records: list[dict], waterfall_paths: list[d
                                  "factor": factor["factor"], "contribution_dex": "", "status": factor["status"]})
             writer.writerow({"topology": path["topology"], "bias_V": path["bias_V"],
                              "factor": "unattributed_residual", "contribution_dex": path["residual_dex"], "status": path["status"]})
-    markdown = "\n".join(["# PN2D minimal6 formula difference", "", "minimal6 diagnostic sweep; not a physical BV curve.", "", "All source integrals use 1 cm out-of-plane length.", "", "Native Sentaurus anchor: `ImpactIonization`.", "Sentaurus reconstruction: `(alpha_e*|J_e| + alpha_h*|J_h|)/q`.", "Vela reconstruction: `alpha*flux*partial_volume` from the triangle audit.", "", "Counterfactual factor substitutions are unavailable until Vela raw nodal states and operator inputs are exported; no causal ranking is emitted."]) + "\n"
+    markdown = """# PN2D minimal6 formula difference
+
+minimal6 diagnostic sweep; not a physical BV curve
+
+All source integrals use 1 cm out-of-plane length.
+
+## Source labels
+
+- Native Sentaurus anchor: `ImpactIonization`.
+- Sentaurus reconstruction: `(alpha_e*|J_e| + alpha_h*|J_h|)/q`.
+- Vela reconstruction: `alpha*flux*partial_volume` from the triangle audit.
+
+## Root-cause implementation map
+
+- Sentaurus parameter entry: `reference_tcad/pn2d_sentaurus2018_minimal6/source/models.par`; export deck: `reference_tcad/pn2d_sentaurus2018_minimal6/source/pn2d_minimal6_state_sdevice.cmd`.
+- Independent formula implementation: `scripts/pn2d_minimal6_diagnostics/physics.py` (`infer_ni_eff`, `van_overstraeten_alpha`) and `scripts/pn2d_minimal6_diagnostics/counterfactual.py`.
+- C++ control implementation: `src/physics/ImpactIonizationModel.cpp` (`VanOverstraetenImpactIonization`) and `src/simulation/DCSweep.cpp` (avalanche source assembly).
+
+Parameter agreement is a control only; it does not establish a causal factor without a closed counterfactual substitution.
+
+Counterfactual factor substitutions are unavailable until Vela raw nodal states and operator inputs are exported; no causal ranking is emitted.
+"""
     (out_dir / "root_cause_summary.md").write_text(markdown, encoding="utf-8")
 
 
@@ -291,6 +313,9 @@ def main() -> int:
     parser.add_argument("--state-root", type=Path, required=True)
     parser.add_argument("--audit-root", type=Path, required=True)
     parser.add_argument("--out-dir", type=Path, required=True)
+    parser.add_argument("--qa-reviewer", default="unreviewed")
+    parser.add_argument("--qa-date", default="")
+    parser.add_argument("--qa-status", choices=("pending_visual_inspection", "reviewed"), default="pending_visual_inspection")
     args = parser.parse_args()
     manifest_path = args.state_root / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -317,6 +342,18 @@ def main() -> int:
     args.out_dir.mkdir(parents=True, exist_ok=True)
     (args.out_dir / "root_cause_summary.json").write_text(json.dumps(report, sort_keys=True, indent=2, allow_nan=False) + "\n", encoding="utf-8")
     _write_artifacts(args.out_dir, records, waterfall_paths)
+    figure_manifest = render_formula_difference_figures(
+        ledger_path=args.out_dir / "quantity_ledger.csv",
+        waterfall_path=args.out_dir / "factor_waterfall.csv",
+        report_path=args.out_dir / "root_cause_summary.json",
+        out_dir=args.out_dir,
+        reviewer=args.qa_reviewer,
+        reviewed_on=args.qa_date,
+        qa_status=args.qa_status,
+    )
+    (args.out_dir / "figure_manifest.json").write_text(
+        json.dumps(figure_manifest, sort_keys=True, indent=2) + "\n", encoding="utf-8"
+    )
     return 0
 
 
