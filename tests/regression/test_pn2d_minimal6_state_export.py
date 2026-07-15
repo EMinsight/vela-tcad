@@ -25,6 +25,9 @@ SCALAR_FIELDS = {
     "hMobility": "cm^2*V^-1*s^-1",
     "eAlphaAvalanche": "cm^-1",
     "hAlphaAvalanche": "cm^-1",
+    "ImpactIonization": "cm^-3*s^-1",
+    "eVelocity": "cm*s^-1", "hVelocity": "cm*s^-1",
+    "eIonIntegral": "1", "hIonIntegral": "1", "MeanIonIntegral": "1",
 }
 VECTOR_FIELDS = {
     "ElectricField": "V*cm^-1",
@@ -398,6 +401,30 @@ class PN2DMinimal6StateExportTest(unittest.TestCase):
         self.assertTrue(saved["outputs_complete"])
         self.assertEqual(len(matrix), 6)
         self.assertTrue(all(path.name == "state.csv" for path in state_paths))
+        self.assertTrue(all("member_sha256" in state for state in saved["states"]))
+
+    def test_member_hashes_fail_closed_after_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            member = root / "member.txt"
+            member.write_text("original", encoding="utf-8")
+            hashes = export.collect_member_hashes(root)
+            export.validate_member_hashes(root, hashes)
+            member.write_text("changed", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "hash mismatch"):
+                export.validate_member_hashes(root, hashes)
+
+    def test_recovered_archive_requires_manifest_hash_and_six_states(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manifest = {"outputs_complete": True, "states": [
+                {"topology_id":t,"requested_bias_V":b,"actual_bias_V":b,"status":"passed"}
+                for t in ("sketch","mirror") for b in (0.0,-12.0,-19.0)]}
+            path = root / "manifest.json"; path.write_text(json.dumps(manifest), encoding="utf-8")
+            digest = export._sha256(path)
+            export.validate_recovered_archive(root, digest)
+            with self.assertRaisesRegex(ValueError, "manifest hash mismatch"):
+                export.validate_recovered_archive(root, "0" * 64)
 
 if __name__ == "__main__":
     unittest.main()
