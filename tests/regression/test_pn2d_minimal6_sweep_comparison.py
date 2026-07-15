@@ -7,6 +7,7 @@ from pathlib import Path
 from scripts.compare_pn2d_minimal6_diagnostic_sweeps import (
     compare_sweeps,
     ratio_record,
+    verify_comparison_artifacts,
     write_comparison_package,
 )
 from scripts.pn2d_minimal6_diagnostics.schemas import validate_bv_comparison_v1
@@ -121,6 +122,28 @@ class SweepComparisonTest(unittest.TestCase):
             self.assertTrue(payload["artifact_hashes"])
             self.assertEqual(payload["closure"]["status"], "closed")
 
+    def test_package_records_and_verifies_input_and_generated_artifact_hashes(self):
+        vela = manifest("vela", [])
+        sentaurus = manifest("sentaurus", [checkpoint("sentaurus", "sketch", -1.0, -1.0, 1.0, 2.0, 3.0, 4.0)])
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            input_path = root / "vela_manifest.json"
+            input_path.write_text("vela evidence\n", encoding="utf-8")
+            write_comparison_package(root, vela, sentaurus, fixed_state_report={}, input_artifacts={"vela_manifest": input_path})
+            report_path = root / "sweep_comparison.json"
+            self.assertTrue(verify_comparison_artifacts(report_path))
+            (root / "sweep_comparison.csv").write_text("tampered\n", encoding="utf-8")
+            with self.assertRaises(ValueError):
+                verify_comparison_artifacts(report_path)
+
+    def test_solver_configuration_exposes_both_solver_deck_hashes(self):
+        vela = manifest("vela", [])
+        sentaurus = manifest("sentaurus", [])
+        vela["segments"] = [{"deck": "vela/sketch.json", "deck_sha256": "vela-deck"}]
+        sentaurus["sentaurus_segments"] = [{"deck": "sentaurus/sketch.cmd", "deck_sha256": "sentaurus-deck"}]
+        report = compare_sweeps(vela, sentaurus, fixed_state_report={})
+        self.assertEqual(report["solver_configurations"]["vela"]["deck_sha256"], ["vela-deck"])
+        self.assertEqual(report["solver_configurations"]["sentaurus"]["deck_sha256"], ["sentaurus-deck"])
 
 if __name__ == "__main__":
     unittest.main()

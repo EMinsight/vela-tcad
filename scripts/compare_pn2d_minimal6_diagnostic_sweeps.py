@@ -108,6 +108,13 @@ def _failures(manifest: dict[str, Any]) -> list[dict[str, Any]]:
     return rows
 
 
+def _deck_hashes(manifest: dict[str, Any], key: str) -> list[str]:
+    rows = manifest.get(key, [])
+    if not isinstance(rows, list):
+        raise ValueError(f"{key} must be a list")
+    hashes = {str(row["deck_sha256"]) for row in rows if isinstance(row, dict) and isinstance(row.get("deck_sha256"), str)}
+    return sorted(hashes)
+
 def _fixed_state_recheck(common: dict[tuple[str, float], tuple[dict[str, Any], dict[str, Any]]], fixed: dict[str, Any]) -> list[dict[str, Any]]:
     original = fixed.get("root_cause_status", "unavailable")
     reason = fixed.get("root_cause_reason", "fixed-state report was not supplied")
@@ -168,8 +175,8 @@ def compare_sweeps(vela_manifest: dict[str, Any], sentaurus_manifest: dict[str, 
     report = {
         "schema": SCHEMA, "diagnostic_disclaimer": DISCLAIMER, "interpolation": "forbidden",
         "solver_configurations": {
-            "vela": {"template": vela_manifest.get("template"), "topology_input_sha256": vela_manifest.get("topology_input_sha256", {})},
-            "sentaurus": {"template": sentaurus_manifest.get("template"), "topology_input_sha256": sentaurus_manifest.get("topology_input_sha256", {})}},
+            "vela": {"template": vela_manifest.get("template"), "topology_input_sha256": vela_manifest.get("topology_input_sha256", {}), "deck_sha256": _deck_hashes(vela_manifest, "segments")},
+            "sentaurus": {"template": sentaurus_manifest.get("template"), "topology_input_sha256": sentaurus_manifest.get("topology_input_sha256", {}), "deck_sha256": _deck_hashes(sentaurus_manifest, "sentaurus_segments")}},
         "accepted_transitions": {"vela": vela_rows, "sentaurus": sentaurus_rows},
         "failed_transitions": failures, "failure_transitions": failures,
         "checkpoints": checkpoints, "records": checkpoints, "terminal_currents": checkpoints, "maximum_fields": checkpoints, "source_integrals": checkpoints,
@@ -181,6 +188,7 @@ def compare_sweeps(vela_manifest: dict[str, Any], sentaurus_manifest: dict[str, 
         "topology_sensitivity": topology_sensitivity,
         "fixed_state_recheck": _fixed_state_recheck(common, fixed_state_report),
         "artifact_hashes": {},
+        "input_artifacts": {},
         "closure": {"status": "closed", "eligible_gaps": len(checkpoints), "rule": "each eligible gap records named contributions and a typed residual; non-common points are side-only"},
     }
     return report
@@ -257,17 +265,44 @@ def _markdown(report: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def write_comparison_package(out_dir: Path, vela_manifest: dict[str, Any], sentaurus_manifest: dict[str, Any], *, fixed_state_report: dict[str, Any], input_hashes: dict[str, str] | None = None) -> dict[str, Any]:
+def verify_comparison_artifacts(report_path: Path) -> bool:
+    """Verify every hash-addressed comparison artifact and declared input path."""
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    validate_bv_comparison_v1(report)
+    hashes = report["artifact_hashes"]
+    for name, item in report["input_artifacts"].items():
+        if not isinstance(item, dict) or set(item) != {"path", "sha256"}:
+            raise ValueError(f"input artifact {name} has an invalid contract")
+        path = Path(item["path"])
+        if not path.is_file() or _sha_bytes(path.read_bytes()) != item["sha256"]:
+            raise ValueError(f"input artifact hash mismatch: {name}")
+        if hashes.get(f"input:{name}") != item["sha256"]:
+            raise ValueError(f"input artifact is not hash-addressed: {name}")
+    for name, digest in hashes.items():
+        if name.startswith("input:"):
+            continue
+        path = report_path.parent / name
+        if not path.is_file() or _sha_bytes(path.read_bytes()) != digest:
+            raise ValueError(f"generated artifact hash mismatch: {name}")
+    return True
+
+
+def write_comparison_package(out_dir: Path, vela_manifest: dict[str, Any], sentaurus_manifest: dict[str, Any], *, fixed_state_report: dict[str, Any], input_artifacts: dict[str, Path] | None = None) -> dict[str, Any]:
     out_dir.mkdir(parents=True, exist_ok=True)
     report = compare_sweeps(vela_manifest, sentaurus_manifest, fixed_state_report=fixed_state_report)
     csv_path = out_dir / "sweep_comparison.csv"; _write_csv(csv_path, report)
     md_path = out_dir / "sweep_comparison.md"; md_path.write_text(_markdown(report), encoding="utf-8")
     figures = _render_figures(out_dir, report)
+    input_records = {name: {"path": str(path.resolve()), "sha256": _sha_bytes(path.read_bytes())} for name, path in (input_artifacts or {}).items()}
     hashes = {"sweep_comparison.csv": _sha_bytes(csv_path.read_bytes()), "sweep_comparison.md": _sha_bytes(md_path.read_bytes())}
-    hashes.update({path.name: _sha_bytes(path.read_bytes()) for path in figures}); hashes.update(input_hashes or {})
+    hashes.update({path.name: _sha_bytes(path.read_bytes()) for path in figures})
+    hashes.update({f"input:{name}": item["sha256"] for name, item in input_records.items()})
     report["artifact_hashes"] = hashes
+    report["input_artifacts"] = input_records
     validate_bv_comparison_v1(report)
-    (out_dir / "sweep_comparison.json").write_text(json.dumps(report, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+    report_path = out_dir / "sweep_comparison.json"
+    report_path.write_text(json.dumps(report, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+    verify_comparison_artifacts(report_path)
     return report
 
 
@@ -276,13 +311,8 @@ def main() -> int:
     parser.add_argument("--vela-manifest", type=Path, required=True); parser.add_argument("--sentaurus-manifest", type=Path, required=True)
     parser.add_argument("--fixed-state-report", type=Path, required=True); parser.add_argument("--out-dir", type=Path, required=True)
     args = parser.parse_args()
-    hashes = {
-        "input:vela_manifest": _sha_bytes(args.vela_manifest.read_bytes()),
-        "input:sentaurus_manifest": _sha_bytes(args.sentaurus_manifest.read_bytes()),
-        "input:fixed_state_report": _sha_bytes(args.fixed_state_report.read_bytes()),
-    }
     vela = json.loads(args.vela_manifest.read_text(encoding="utf-8")); sentaurus = json.loads(args.sentaurus_manifest.read_text(encoding="utf-8")); fixed = json.loads(args.fixed_state_report.read_text(encoding="utf-8"))
-    write_comparison_package(args.out_dir.resolve(), vela, sentaurus, fixed_state_report=fixed, input_hashes=hashes)
+    write_comparison_package(args.out_dir.resolve(), vela, sentaurus, fixed_state_report=fixed, input_artifacts={"vela_manifest": args.vela_manifest, "sentaurus_manifest": args.sentaurus_manifest, "fixed_state_report": args.fixed_state_report})
     return 0
 
 
