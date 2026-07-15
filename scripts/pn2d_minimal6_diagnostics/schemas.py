@@ -3,6 +3,7 @@ import math
 DISCLAIMER = "minimal6 diagnostic sweep; not a physical BV curve"
 _FORMULA_FIELDS = {"input_provenance", "audit_provenance", "state_matrix", "row_counts", "waterfall_paths", "interactions", "dominance_rules", "sentaurus_internal_semantics_residual", "vela_parameter_agreement", "artifact_hashes", "records"}
 _BV_FIELDS = {"solver_configurations", "accepted_transitions", "failed_transitions", "checkpoints", "terminal_currents", "maximum_fields", "source_integrals", "convergence_metadata", "curve_artifact_hashes", "records"}
+_BV_COMPARISON_FIELDS = {"deepest_common_bias_V", "missing_tails", "topology_sensitivity", "fixed_state_recheck", "failure_transitions", "artifact_hashes", "closure"}
 def _finite(value):
     if isinstance(value, float) and not math.isfinite(value): raise ValueError("non-finite values are forbidden")
     if isinstance(value, dict):
@@ -19,3 +20,7 @@ def validate_formula_difference_v1(report:dict)->None:
     _validate(report, "vela.pn2d_minimal6_formula_difference.v1", _FORMULA_FIELDS)
 def validate_bv_comparison_v1(report:dict)->None:
     _validate(report, "vela.pn2d_minimal6_bv_comparison.v1", _BV_FIELDS)
+    missing = sorted(_BV_COMPARISON_FIELDS - set(report))
+    if missing: raise ValueError(f"missing required comparison fields: {missing}")
+    if report.get("interpolation") != "forbidden": raise ValueError("comparison must forbid interpolation")
+    if report.get("closure", {}).get("status") != "closed": raise ValueError("comparison closure is not closed")
