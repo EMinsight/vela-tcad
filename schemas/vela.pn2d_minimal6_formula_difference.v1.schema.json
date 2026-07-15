@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "vela.pn2d_minimal6_formula_difference.v1",
+  "type": "object",
+  "required": ["schema", "diagnostic_disclaimer", "input_provenance", "audit_provenance", "state_matrix", "row_counts", "waterfall_paths", "interactions", "dominance_rules", "sentaurus_internal_semantics_residual", "artifact_hashes", "records"],
+  "properties": {"schema":{"const":"vela.pn2d_minimal6_formula_difference.v1"},"diagnostic_disclaimer":{"const":"minimal6 diagnostic sweep; not a physical BV curve"},"records":{"type":"array"}},
+  "additionalProperties": true
+}
