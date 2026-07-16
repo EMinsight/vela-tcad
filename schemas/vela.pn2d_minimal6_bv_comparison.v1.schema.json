@@ -2,7 +2,91 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "vela.pn2d_minimal6_bv_comparison.v1",
   "type": "object",
-  "required": ["schema", "diagnostic_disclaimer", "solver_configurations", "accepted_transitions", "failed_transitions", "checkpoints", "terminal_currents", "maximum_fields", "source_integrals", "convergence_metadata", "curve_artifact_hashes", "records", "branch_threshold_version"],
-  "properties": {"schema":{"const":"vela.pn2d_minimal6_bv_comparison.v1"},"diagnostic_disclaimer":{"const":"minimal6 diagnostic sweep; not a physical BV curve"},"branch_threshold_version":{"type":"string","minLength":1},"records":{"type":"array","items":{"type":"object","required":["branch_classification","branch_threshold_version"],"properties":{"branch_classification":{"enum":["multiplication_like","leakage_like","unidentified"]},"branch_threshold_version":{"type":"string","minLength":1}},"additionalProperties":true}}},
+  "required": [
+    "schema", "diagnostic_disclaimer", "interpolation", "branch_threshold_version",
+    "solver_configurations", "accepted_transitions", "failed_transitions",
+    "failure_transitions", "checkpoints", "terminal_currents", "maximum_fields",
+    "source_integrals", "convergence_metadata", "curve_artifact_hashes", "records",
+    "deepest_common_bias_V", "missing_tails", "topology_sensitivity",
+    "fixed_state_recheck", "artifact_hashes", "input_artifacts", "closure"
+  ],
+  "properties": {
+    "schema": {"const": "vela.pn2d_minimal6_bv_comparison.v1"},
+    "diagnostic_disclaimer": {"const": "minimal6 diagnostic sweep; not a physical BV curve"},
+    "interpolation": {"const": "forbidden"},
+    "branch_threshold_version": {"type": "string", "minLength": 1},
+    "solver_configurations": {
+      "type": "object", "required": ["vela", "sentaurus"],
+      "properties": {"vela": {"type": "object"}, "sentaurus": {"type": "object"}},
+      "additionalProperties": false
+    },
+    "accepted_transitions": {
+      "type": "object", "required": ["vela", "sentaurus"],
+      "properties": {
+        "vela": {"type": "array", "items": {"$ref": "#/$defs/acceptedTransition"}},
+        "sentaurus": {"type": "array", "items": {"$ref": "#/$defs/acceptedTransition"}}
+      }, "additionalProperties": false
+    },
+    "failed_transitions": {"type": "array", "items": {"$ref": "#/$defs/failedTransition"}},
+    "failure_transitions": {"type": "array", "items": {"$ref": "#/$defs/failedTransition"}},
+    "checkpoints": {"type": "array", "items": {"$ref": "#/$defs/comparisonCheckpoint"}},
+    "terminal_currents": {"type": "array"}, "maximum_fields": {"type": "array"},
+    "source_integrals": {"type": "array"}, "records": {"type": "array"},
+    "convergence_metadata": {"type": "object", "minProperties": 1},
+    "curve_artifact_hashes": {
+      "type": "object", "required": ["vela_manifest", "sentaurus_manifest"],
+      "properties": {"vela_manifest": {"$ref": "#/$defs/sha256"},
+                     "sentaurus_manifest": {"$ref": "#/$defs/sha256"}},
+      "additionalProperties": true
+    },
+    "deepest_common_bias_V": {"type": "object"}, "missing_tails": {"type": "array"},
+    "topology_sensitivity": {"type": "array"}, "fixed_state_recheck": {"type": "array"},
+    "artifact_hashes": {"type": "object"}, "input_artifacts": {"type": "object"},
+    "closure": {"type": "object", "required": ["status"],
+                "properties": {"status": {"const": "closed"}}, "additionalProperties": true}
+  },
+  "not": {"anyOf": [
+    {"required": ["raw_state"]}, {"required": ["raw_states"]},
+    {"required": ["state_payload"]}, {"required": ["state_vectors"]}
+  ]},
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-fA-F]{64}$"},
+    "observables": {
+      "type": "object",
+      "required": ["anode_current_A_per_um", "cathode_current_A_per_um", "max_field_V_per_m",
+                   "native_source_integral_s_inv_per_cm", "reconstructed_source_integral_s_inv_per_cm"],
+      "properties": {
+        "anode_current_A_per_um": {"type": "number"}, "cathode_current_A_per_um": {"type": "number"},
+        "max_field_V_per_m": {"type": "number"},
+        "native_source_integral_s_inv_per_cm": {"type": "number"},
+        "reconstructed_source_integral_s_inv_per_cm": {"type": "number"}
+      }, "additionalProperties": false
+    },
+    "acceptedTransition": {
+      "type": "object", "required": ["solver", "topology", "target_bias_V", "actual_bias_V", "status", "observables"],
+      "properties": {"solver": {"enum": ["vela", "sentaurus"]},
+                     "topology": {"enum": ["sketch", "mirror"]},
+                     "target_bias_V": {"type": "number"}, "actual_bias_V": {"type": "number"},
+                     "status": {"const": "accepted"}, "observables": {"$ref": "#/$defs/observables"}},
+      "additionalProperties": true
+    },
+    "failedTransition": {
+      "type": "object", "required": ["solver", "topology", "target_bias_V", "status", "observables"],
+      "properties": {"solver": {"enum": ["vela", "sentaurus"]},
+                     "topology": {"enum": ["sketch", "mirror"]},
+                     "target_bias_V": {"type": "number"}, "status": {"const": "rejected"},
+                     "observables": {"type": "null"}}, "additionalProperties": true
+    },
+    "comparisonCheckpoint": {
+      "type": "object",
+      "required": ["topology", "bias_V", "vela", "sentaurus", "branch_classification", "branch_threshold_version"],
+      "properties": {"topology": {"enum": ["sketch", "mirror"]}, "bias_V": {"type": "number"},
+                     "vela": {"$ref": "#/$defs/acceptedTransition"},
+                     "sentaurus": {"$ref": "#/$defs/acceptedTransition"},
+                     "branch_classification": {"enum": ["leakage_like", "multiplication_like", "unidentified"]},
+                     "branch_threshold_version": {"type": "string", "minLength": 1}},
+      "additionalProperties": true
+    }
+  },
   "additionalProperties": true
 }

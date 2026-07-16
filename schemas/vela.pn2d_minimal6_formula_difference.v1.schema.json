@@ -2,7 +2,78 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "vela.pn2d_minimal6_formula_difference.v1",
   "type": "object",
-  "required": ["schema", "diagnostic_disclaimer", "input_provenance", "audit_provenance", "state_matrix", "row_counts", "waterfall_paths", "interactions", "dominance_rules", "sentaurus_internal_semantics_residual", "vela_parameter_agreement", "artifact_hashes", "records"],
-  "properties": {"schema":{"const":"vela.pn2d_minimal6_formula_difference.v1"},"diagnostic_disclaimer":{"const":"minimal6 diagnostic sweep; not a physical BV curve"},"records":{"type":"array"}},
+  "required": [
+    "schema", "diagnostic_disclaimer", "input_provenance", "audit_provenance",
+    "state_matrix", "row_counts", "waterfall_paths", "interactions",
+    "dominance_rules", "sentaurus_internal_semantics_residual",
+    "vela_parameter_agreement", "artifact_hashes", "records"
+  ],
+  "properties": {
+    "schema": {"const": "vela.pn2d_minimal6_formula_difference.v1"},
+    "diagnostic_disclaimer": {"const": "minimal6 diagnostic sweep; not a physical BV curve"},
+    "input_provenance": {"type": "object", "minProperties": 1},
+    "audit_provenance": {"type": "object", "minProperties": 1},
+    "state_matrix": {
+      "type": "array", "minItems": 6, "maxItems": 6, "uniqueItems": true,
+      "items": {"$ref": "#/$defs/state"}
+    },
+    "row_counts": {
+      "type": "object", "required": ["node", "edge", "triangle"],
+      "properties": {"node": {"const": 36}, "edge": {"const": 54}, "triangle": {"const": 24}},
+      "additionalProperties": false
+    },
+    "waterfall_paths": {
+      "type": "array", "minItems": 6, "maxItems": 6,
+      "items": {"$ref": "#/$defs/waterfallPath"}
+    },
+    "interactions": {"type": "array", "items": {"type": "object"}},
+    "dominance_rules": {"type": "object", "minProperties": 1},
+    "sentaurus_internal_semantics_residual": {
+      "type": "array", "minItems": 6, "maxItems": 6,
+      "items": {
+        "type": "object", "required": ["topology", "bias_V", "classification"],
+        "properties": {
+          "topology": {"enum": ["sketch", "mirror"]}, "bias_V": {"type": "number"},
+          "classification": {"type": "string"}, "dex": {"type": ["number", "null"]}
+        }, "additionalProperties": true
+      }
+    },
+    "vela_parameter_agreement": {"type": "array"},
+    "artifact_hashes": {
+      "type": "object", "required": ["state_manifest_sha256"],
+      "properties": {"state_manifest_sha256": {"$ref": "#/$defs/sha256"}},
+      "additionalProperties": true
+    },
+    "records": {"type": "array"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-fA-F]{64}$"},
+    "state": {
+      "type": "object",
+      "required": ["topology_id", "requested_bias_V", "actual_bias_V", "status"],
+      "properties": {
+        "topology_id": {"enum": ["sketch", "mirror"]},
+        "requested_bias_V": {"enum": [0, -12, -19]},
+        "actual_bias_V": {"type": "number"}, "status": {"const": "passed"}
+      }, "additionalProperties": true
+    },
+    "waterfallPath": {
+      "type": "object",
+      "required": ["topology", "bias_V", "forward", "reverse", "interactions", "residual_dex", "status"],
+      "properties": {
+        "topology": {"enum": ["sketch", "mirror"]}, "bias_V": {"enum": [0, -12, -19]},
+        "forward": {"$ref": "#/$defs/pathDefinition"},
+        "reverse": {"$ref": "#/$defs/pathDefinition"},
+        "interactions": {"type": "array", "items": {"type": "object"}},
+        "residual_dex": {"type": ["number", "null"]}, "status": {"type": "string"}
+      }, "additionalProperties": true
+    },
+    "pathDefinition": {
+      "type": "object", "required": ["order", "contributions"],
+      "properties": {"order": {"type": "array", "items": {"type": "string"}},
+                     "contributions": {"type": "array", "items": {"type": "object"}}},
+      "additionalProperties": true
+    }
+  },
   "additionalProperties": true
 }
