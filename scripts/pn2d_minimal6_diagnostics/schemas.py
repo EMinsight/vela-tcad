@@ -21,6 +21,7 @@ _EXPECTED_STATES = {
 }
 _SHA256 = re.compile(r"[0-9a-fA-F]{64}\Z")
 _RAW_STATE_KEYS = {"raw_state", "raw_states", "state_payload", "state_vectors", "state_values"}
+_BIAS_TOLERANCE_V = 1.0e-12
 
 
 def _finite_tree(value, path="report") -> None:
@@ -66,6 +67,9 @@ def _number(value, name: str) -> float:
         raise ValueError(f"{name} must be finite")
     return result
 
+def _within_bias_tolerance(expected: float, actual: float) -> bool:
+    return expected - _BIAS_TOLERANCE_V <= actual <= expected + _BIAS_TOLERANCE_V
+
 
 def _sha(value, name: str) -> None:
     if not isinstance(value, str) or not _SHA256.fullmatch(value):
@@ -80,7 +84,7 @@ def _state_identity(row: Mapping, name: str) -> tuple[str, float]:
     bias_value = _number(bias, f"{name}.bias_V")
     if "actual_bias_V" in row:
         actual = _number(row["actual_bias_V"], f"{name}.actual_bias_V")
-        if not bias_value - 1.0e-12 <= actual <= bias_value + 1.0e-12:
+        if not _within_bias_tolerance(bias_value, actual):
             raise ValueError(f"{name} is not an exact state")
     return str(topology), bias_value
 
@@ -168,7 +172,7 @@ def _accepted_transition(row, name: str, *, strict_package: bool) -> tuple[str, 
         raise ValueError(f"{name} must have accepted status")
     target = _number(row.get("target_bias_V"), f"{name}.target_bias_V")
     actual = _number(row.get("actual_bias_V"), f"{name}.actual_bias_V")
-    if abs(target - actual) > 1.0e-12:
+    if not _within_bias_tolerance(target, actual):
         raise ValueError(f"{name} is not an exact checkpoint")
     _observables(row.get("observables"), f"{name}.observables")
     _branch_evidence(row, name)

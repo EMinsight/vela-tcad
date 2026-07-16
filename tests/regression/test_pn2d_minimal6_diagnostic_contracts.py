@@ -358,6 +358,37 @@ class DiagnosticContractsTest(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         validate_schema_document(outside, document)
 
+    def test_transition_bias_tolerance_uses_inclusive_nonzero_bounds(self):
+        boundaries = {
+            -12.0: (-12.000000000001, -11.999999999999),
+            -19.0: (-19.000000000001, -18.999999999999),
+        }
+
+        def validate(kind, target, actual):
+            report = comparison_report() if kind == "comparison" else sweep_manifest()
+            if kind == "comparison":
+                row = report["accepted_transitions"]["vela"][0]
+                validator = schemas.validate_bv_comparison_v1
+            else:
+                row = report["accepted_checkpoints"][0]
+                validator = schemas.validate_sweep_manifest_v1
+            row["target_bias_V"] = target
+            row["actual_bias_V"] = actual
+            return validator(report)
+
+        for target, bounds in boundaries.items():
+            accepted = (*bounds, target - 1.0e-13, target + 1.0e-13)
+            for actual in accepted:
+                for kind in ("comparison", "sweep"):
+                    with self.subTest(kind=kind, target=target, actual=actual):
+                        self.assertIsNone(validate(kind, target, actual))
+            for sign in (-1.0, 1.0):
+                actual = target + sign * 1.01e-12
+                for kind in ("comparison", "sweep"):
+                    with self.subTest(kind=kind, target=target, actual=actual):
+                        with self.assertRaisesRegex(ValueError, "not an exact checkpoint"):
+                            validate(kind, target, actual)
+
     def test_comparison_schema_golden_and_invalid_fixture(self):
         report = comparison_report()
         self.assertIsNone(schemas.validate_bv_comparison_v1(report))
