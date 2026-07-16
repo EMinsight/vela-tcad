@@ -140,3 +140,123 @@ No parameter-coverage concern remains: Vela exposes the full comparable numeric
 table. The production-default parser intentionally fails closed if those C++
 declarations stop being explicit numeric initializers; such a source-format
 change will require updating this independent audit control.
+
+## Interrupted fix wave (2026-07-16)
+
+This wave resumed at `2f178a8fc60eb5a6273279c92ea3af9e8ad0b7ee`
+without discarding or reimplementing the existing uncommitted changes.
+
+### RED
+
+Before the interrupted implementation was added, the expanded focused suite
+ran 21 tests and reported:
+
+```text
+Ran 21 tests
+FAILED (failures=2, errors=1)
+```
+
+The two failures demonstrated that phonon mismatch and omitted conversion
+provenance were not yet enforced. The error demonstrated that the Vela parser
+did not yet expose `phonon_energy_eV` for the tracked comparison. These were
+expected missing-behavior results, not fixture, import, or syntax failures.
+
+### GREEN
+
+The interrupted implementation added the minimum behavior needed by those
+tests:
+
+- parse Vela's numeric `phononEnergy` and retain the header path and SHA-256;
+- compare `phonon_energy_eV` for both carriers;
+- require recognized, non-native provenance for every node-to-cell and
+  edge-to-cell average, rejecting omitted, unknown, `ImpactIonization`, and
+  `AvalancheGeneration` provenance; and
+- document the `infer_ni_eff` quasi-Fermi sign convention and inverse relations.
+
+The recorded GREEN rerun was:
+
+```text
+Ran 21 tests in 0.020s
+OK
+```
+
+### Phonon units and comparison scope
+
+Sentaurus declares `hbarOmega = 0.063, 0.063` in eV, while Vela declares
+`phononEnergy = 0.063` in eV. Unlike inverse-length and electric-field
+coefficients, this value needs no SI-to-cm conversion. It is compared directly
+for both carriers, with mismatch or unavailable returned on difference or
+omission.
+
+Vela's `aScale` and `bScale` are runtime diagnostic multipliers, not material
+coefficients in the tracked Sentaurus block. Comparing them to `a(low/high)` or
+`b(low/high)` would conflate controls with source parameters, so they remain
+explicitly outside this comparison.
+
+Vela's `referenceTemperature_K` and `temperature_K` are runtime inputs. The
+tracked Sentaurus block documents the thermal factor in terms of `T0` and `T`
+but supplies no numeric values for those inputs. Temperatures therefore remain
+outside the direct default comparison. The common phonon energy is included
+because both sources explicitly serialize it in eV.
+
+### Fresh verification after resume
+
+Focused physics/support:
+
+```text
+python -m unittest tests.regression.test_pn2d_minimal6_diagnostic_physics -v
+Ran 21 tests in 0.020s
+OK
+```
+
+Task 2 contracts and imports:
+
+```text
+python -m unittest tests.regression.test_pn2d_minimal6_diagnostic_contracts -v
+Ran 18 tests in 0.205s
+OK
+python -m compileall -q scripts\pn2d_minimal6_diagnostics
+imports OK
+```
+
+C++ controls:
+
+```text
+build-release\test_impact_ionization.exe
+All tests passed (511 assertions in 40 test cases)
+build-release\test_cell_reconstructed_avalanche.exe
+All tests passed (83 assertions in 14 test cases)
+```
+
+Formula gate and repository hygiene:
+
+```text
+python -m unittest tests.regression.test_pn2d_minimal6_fixed_state_audit.ReviewContractTests.test_complete_matrix_unique_keys_and_formula_gate -v
+Ran 1 test in 0.078s
+OK
+FORMULA_LIMIT = 5.0e-12
+git diff --check
+no output; exit code 0
+```
+
+### Provenance audit and self-review
+
+A repository-wide callsite search found no consumers outside the focused test
+module. Every successful `node_scalar_to_cells` or `edge_scalar_to_cells`
+callsite passes an allowed provenance (`Potential` or `IonizationCoefficient`);
+omitted and unknown values occur only in deliberate rejection tests. The
+helpers fail closed when provenance is absent.
+
+Production header provenance:
+`include/vela/physics/ImpactIonizationModel.h`
+SHA-256 `b1582b41074043207fc5dafcd4c73f95d3fc8b3af3eba4503cddb3113130c008`
+
+Tracked Sentaurus provenance:
+`reference_tcad/pn2d_sentaurus2018_minimal6/source/models.par`
+SHA-256 `b4b3ebfdefba530f756f3855d43d7d587720689771d8badc747b61439ed42742`
+
+Self-review found no correctness gap in the scoped diff. The allowlist is
+intentionally narrow and requires an explicit code-and-test update when a new
+intensive quantity is approved for averaging. The regex parser remains a
+fail-closed audit over explicit numeric C++ initializers, not a general C++
+parser.
