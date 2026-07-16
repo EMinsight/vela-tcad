@@ -21,17 +21,24 @@ from scripts.pn2d_minimal6_diagnostics.counterfactual import (
     integrate_native_nodal_per_unit_depth,
     sentaurus_alpha_current_nodal,
 )
+from scripts.pn2d_minimal6_diagnostics.schemas import validate_sweep_manifest_v1
 DISCLAIMER = "minimal6 diagnostic sweep; not a physical BV curve"
 SCHEMA = "vela.pn2d_minimal6_sweep_manifest.v1"
 VELA_SOURCE_AREA_CM2_PER_UM2 = 1.0e-8
+BRANCH_THRESHOLD_VERSION = "v1: multiplication=[0.1,10], leakage<=1e-3"
 
 
 def integer_targets() -> tuple[float, ...]:
     return tuple(float(-value) for value in range(21))
 
 
-def classify_branch(sentaurus_current_A_per_um: float | None, vela_current_A_per_um: float | None) -> str:
-    if sentaurus_current_A_per_um is None or vela_current_A_per_um is None or sentaurus_current_A_per_um == 0.0:
+def classify_branch(
+    sentaurus_current_A_per_um: float | None,
+    vela_current_A_per_um: float | None,
+    *,
+    geometric_zero: bool = False,
+) -> str:
+    if geometric_zero or sentaurus_current_A_per_um is None or vela_current_A_per_um is None or sentaurus_current_A_per_um == 0.0:
         return "unidentified"
     ratio = abs(vela_current_A_per_um / sentaurus_current_A_per_um)
     if 0.1 <= ratio <= 10.0:
@@ -280,6 +287,12 @@ def record_transition(
     """Append immutable evidence for one segment; rejected rows carry no observables."""
     exact = actual_bias_V is not None and abs(actual_bias_V - target_bias_V) <= 1.0e-12
     accepted = exit_code == 0 and exact and state_path is not None and state_path.is_file() and observables is not None
+    supplied_convergence = None if diagnostics is None else diagnostics.get("convergence_metadata")
+    convergence_metadata = (
+        dict(supplied_convergence)
+        if isinstance(supplied_convergence, dict) and supplied_convergence
+        else {"exit_code": exit_code}
+    )
     row: dict[str, Any] = {
         "solver": solver, "topology": topology, "start_bias_V": start_bias_V,
         "target_bias_V": target_bias_V, "actual_bias_V": actual_bias_V,
@@ -289,6 +302,14 @@ def record_transition(
         "observables": dict(observables) if accepted else None,
         "stdout": "" if diagnostics is None else diagnostics.get("stdout", ""),
         "stderr": "" if diagnostics is None else diagnostics.get("stderr", ""),
+        "branch_classification": "unidentified",
+        "branch_threshold_version": BRANCH_THRESHOLD_VERSION,
+        "convergence_metadata": convergence_metadata,
+        "current_extraction_formula": (
+            "signed SG contact flux in A/um"
+            if solver == "vela"
+            else "Sentaurus 2-D ContactCurrentFlux A compared numerically with Vela A/um"
+        ),
     }
     if accepted:
         required = {"anode_current_A_per_um", "cathode_current_A_per_um", "max_field_V_per_m", "native_source_integral_s_inv_per_cm", "reconstructed_source_integral_s_inv_per_cm"}
@@ -370,17 +391,22 @@ def execute_segments(manifest: dict[str, Any], root: Path, runner) -> None:
                 start_bias_V=float(segment["start_bias_V"]), target_bias_V=float(segment["target_bias_V"]),
                 exit_code=int(result.get("exit_code", 1)), actual_bias_V=result.get("actual_bias_V"),
                 state_path=result.get("state_path"), observables=result.get("observables"),
-                diagnostics={"stdout": str(result.get("stdout", "")), "stderr": str(result.get("stderr", ""))},
+                diagnostics={
+                    "stdout": str(result.get("stdout", "")),
+                    "stderr": str(result.get("stderr", "")),
+                    "convergence_metadata": result.get("convergence_metadata"),
+                },
                 incomplete_reason=None if result.get("incomplete_reason") is None else str(result["incomplete_reason"]),
             )
             segment["status"] = row["status"]
             if row["status"] != "accepted":
                 break
 
-def validate_sweep_manifest(manifest: dict[str, Any]) -> None:
+def validate_sweep_manifest(manifest: dict[str, Any], *, package_root: Path | None = None) -> None:
     if manifest.get("schema") != SCHEMA:
         raise ValueError("invalid sweep manifest schema")
-    if tuple(manifest.get("targets_V", ())) != integer_targets() and tuple(manifest.get("targets_V", ())) != (0.0, -1.0):
+    targets = tuple(manifest.get("targets_V", ()))
+    if targets != integer_targets() and targets != (0.0, -1.0):
         raise ValueError("sweep manifest has non-canonical targets")
     if manifest.get("interpolation", "forbidden") != "forbidden":
         raise ValueError("sweep manifest must forbid interpolation")
@@ -398,6 +424,151 @@ def validate_sweep_manifest(manifest: dict[str, Any]) -> None:
     failed = manifest.get("failed_transition")
     if failed is not None and (failed.get("status") != "rejected" or failed.get("observables") is not None):
         raise ValueError("failed transition must preserve no fabricated observables")
+    if failed is not None and (not failed_rows or failed != failed_rows[0]):
+        raise ValueError("failed_transition must retain the first rejected transfer")
+    if package_root is None:
+        return
+
+    root = package_root.resolve()
+    if targets != integer_targets():
+        raise ValueError("complete sweep package requires exact targets 0..-20 V")
+
+    def checked_path(value: Any, expected_sha256: Any, label: str) -> Path:
+        if not isinstance(value, str) or not value:
+            raise ValueError(f"{label} lacks an artifact path")
+        path = Path(value)
+        if not path.is_absolute():
+            path = root / path
+        path = path.resolve()
+        if not path.is_file():
+            raise ValueError(f"{label} artifact is missing: {path}")
+        if not isinstance(expected_sha256, str) or _sha(path) != expected_sha256:
+            raise ValueError(f"{label} artifact is hash-tampered: {path}")
+        return path
+
+    template_record = manifest.get("template")
+    if not isinstance(template_record, dict):
+        raise ValueError("sweep manifest lacks immutable template provenance")
+    template_path = checked_path(
+        template_record.get("path"), template_record.get("sha256"), "template"
+    )
+    template = json.loads(template_path.read_text(encoding="utf-8"))
+
+    topology_hashes = manifest.get("topology_input_sha256")
+    if not isinstance(topology_hashes, dict) or set(topology_hashes) != {"sketch", "mirror"}:
+        raise ValueError("complete package requires both topology input hash roots")
+    for topology in ("sketch", "mirror"):
+        hashes = topology_hashes[topology]
+        if not isinstance(hashes, dict) or set(hashes) != {"mesh.json", "doping.csv"}:
+            raise ValueError(f"{topology} topology hashes must cover mesh and doping")
+        for name in ("mesh.json", "doping.csv"):
+            checked_path(
+                str(Path("inputs") / topology / name),
+                hashes[name],
+                f"{topology} {name}",
+            )
+
+    expected_vela = [
+        (topology, start_bias, start_bias - 1.0)
+        for topology in ("sketch", "mirror")
+        for start_bias in integer_targets()[:-1]
+    ]
+    segments = manifest.get("segments")
+    if not isinstance(segments, list):
+        raise ValueError("Vela segments must be an array")
+    actual_vela = [
+        (
+            row.get("topology"),
+            float(row.get("start_bias_V", math.nan)),
+            float(row.get("target_bias_V", math.nan)),
+        )
+        for row in segments
+        if isinstance(row, dict)
+    ]
+    if len(actual_vela) != len(segments) or actual_vela != expected_vela:
+        raise ValueError("Vela segments must contain each canonical transition exactly once")
+
+    state_prefixes: set[str] = set()
+    for index, (segment, identity) in enumerate(zip(segments, expected_vela, strict=True)):
+        topology, start_bias, target_bias = identity
+        if segment.get("solver") != "vela":
+            raise ValueError("Vela segment has incorrect solver identity")
+        expected_deck_path = root / "vela" / topology / "decks" / f"segment_{abs(int(start_bias)):02d}.json"
+        if Path(str(segment.get("deck"))) != expected_deck_path.relative_to(root):
+            raise ValueError("Vela segment deck path is noncanonical")
+        deck_path = checked_path(
+            segment.get("deck"), segment.get("deck_sha256"), f"Vela segment {index}"
+        )
+        deck = json.loads(deck_path.read_text(encoding="utf-8"))
+        validate_segment_deck(template, deck)
+        expected_input_root = root / "inputs" / topology
+        if (
+            Path(deck["mesh_file"]) != expected_input_root / "mesh.json"
+            or Path(deck["node_doping_file"]) != expected_input_root / "doping.csv"
+        ):
+            raise ValueError("Vela segment uses topology-mismatched mesh/doping")
+        sweep = deck["sweep"]
+        if float(sweep["start"]) != start_bias or float(sweep["stop"]) != target_bias:
+            raise ValueError("Vela deck bias does not match segment identity")
+        expected_prefix = root / "vela" / topology / "states" / f"segment_{abs(int(start_bias)):02d}"
+        prefix = str(sweep["write_state_every_point_prefix"])
+        if Path(prefix) != expected_prefix or prefix in state_prefixes:
+            raise ValueError("Vela segment state prefixes must be canonical and unique")
+        state_prefixes.add(prefix)
+        restart = sweep.get("initial_state_file")
+        expected_restart = None if start_bias == 0.0 else str(
+            segment_state_path(root, topology, start_bias + 1.0, start_bias)
+        )
+        if restart != expected_restart:
+            raise ValueError("Vela segment restart does not match the prior exact checkpoint")
+
+    sentaurus_segments = manifest.get("sentaurus_segments")
+    if not isinstance(sentaurus_segments, list):
+        raise ValueError("Sentaurus segments must be an array")
+    expected_sentaurus = [
+        (topology, bias)
+        for topology in ("sketch", "mirror")
+        for bias in integer_targets()
+    ]
+    actual_sentaurus = [
+        (row.get("topology"), float(row.get("target_bias_V", math.nan)))
+        for row in sentaurus_segments
+        if isinstance(row, dict)
+    ]
+    if len(actual_sentaurus) != len(sentaurus_segments) or actual_sentaurus != expected_sentaurus:
+        raise ValueError("Sentaurus segments must contain each canonical checkpoint exactly once")
+    sentaurus_template_path = (
+        REPO
+        / "reference_tcad"
+        / "pn2d_sentaurus2018_minimal6"
+        / "source"
+        / "pn2d_minimal6_sweep_sdevice.cmd"
+    )
+    sentaurus_template = sentaurus_template_path.read_text(encoding="utf-8")
+    for index, (segment, identity) in enumerate(
+        zip(sentaurus_segments, expected_sentaurus, strict=True)
+    ):
+        topology, bias = identity
+        if segment.get("solver") != "sentaurus":
+            raise ValueError("Sentaurus segment has incorrect solver identity")
+        tag = f"{topology}_{bias_token(bias)}"
+        expected_deck = Path("sentaurus") / topology / "decks" / f"{tag}.cmd"
+        expected_checkpoint = Path("sentaurus") / topology / "checkpoints" / f"{tag}.tdr"
+        if Path(str(segment.get("deck"))) != expected_deck:
+            raise ValueError("Sentaurus segment deck path is noncanonical")
+        if Path(str(segment.get("checkpoint_tdr"))) != expected_checkpoint:
+            raise ValueError("Sentaurus checkpoint path is noncanonical")
+        deck_path = checked_path(
+            segment.get("deck"), segment.get("deck_sha256"), f"Sentaurus segment {index}"
+        )
+        expected_payload = sentaurus_template.replace("__BIAS_TAG__", tag).replace(
+            "__TARGET_BIAS_V__", f"{bias:.1f}"
+        )
+        if deck_path.read_text(encoding="utf-8") != expected_payload:
+            raise ValueError("Sentaurus deck does not match the immutable exact payload")
+
+    validate_sweep_manifest_v1(manifest)
+
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -439,7 +610,7 @@ def initialise_package(root: Path, template_path: Path, topologies: tuple[str, .
     manifest = {"schema": SCHEMA, "diagnostic_disclaimer": DISCLAIMER, "targets_V": list(targets),
                 "template": {"path": str(template_path), "sha256": _sha(template_path)}, "topology_input_sha256": input_hashes, "segments": segments, "sentaurus_segments": sentaurus_segments,
                 "accepted_checkpoints": [], "failed_transition": None, "failed_transitions": [], "interpolation": "forbidden",
-                "branch_threshold_version": "v1: multiplication=[0.1,10], leakage<=1e-3"}
+                "branch_threshold_version": BRANCH_THRESHOLD_VERSION}
     manifest_path = root / "sweep_manifest.json"
     _write_json(manifest_path, manifest)
     return manifest_path
@@ -484,7 +655,7 @@ def main() -> int:
             record_sentaurus_results(manifest, args.sentaurus_results_json.resolve())
         if args.vela_runner is not None:
             execute_segments(manifest, args.out_dir, lambda segment: run_vela_subprocess_segment(args.out_dir, args.vela_runner, segment))
-        validate_sweep_manifest(manifest)
+        validate_sweep_manifest(manifest, package_root=args.out_dir)
         _write_json(manifest_path, manifest)
     return 0
 
