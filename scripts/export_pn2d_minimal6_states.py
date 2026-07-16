@@ -75,6 +75,23 @@ V2_FIELD_CONTRACT = (
 REQUIRED_TOPOLOGIES = ("sketch", "mirror")
 REQUIRED_BIASES = (0.0, -12.0, -19.0)
 BIAS_TOLERANCE_V = 1.0e-12
+LOCAL_RECOVERY_RUN_ID = "minimal6_states_live_20260713_v2"
+LOCAL_RECOVERY_MANIFEST_SHA256 = (
+    "b44ad95d5df6d57383ba3d5b292818568e358d67f0fc0424ee72f95b673e8aaa"
+)
+AUDIT_PRODUCER = "build-release/pn2d_minimal6_operator_audit.exe"
+AUDIT_PATH_OPTIONS = (
+    ("--mesh", "mesh.json"),
+    ("--doping", "doping.csv"),
+    ("--state", "state.csv"),
+    ("--config", "audit.json"),
+    ("--node-out", "vela_node_state.csv"),
+    ("--edge-out", "vela_edge_audit.csv"),
+    ("--triangle-out", "vela_triangle_audit.csv"),
+)
+AUDIT_INPUT_COUNT = 4
+SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+
 COORDINATE_TOLERANCE_UM = 1.0e-12
 SOURCE_DECK = (
     REPO / "reference_tcad" / "pn2d_sentaurus2018_minimal6" / "source"
@@ -398,6 +415,15 @@ def _validate_recovery_states(
 
 def _validate_v2_manifest_shape(manifest: dict[str, object]) -> None:
     _validate_json_schema(manifest, _load_v2_schema())
+    if manifest["source_kind"] == "local_recovery" and (
+        manifest["source_run_id"] != LOCAL_RECOVERY_RUN_ID
+        or manifest["source_manifest_sha256"]
+        != LOCAL_RECOVERY_MANIFEST_SHA256
+    ):
+        raise ValueError(
+            "local recovery must use the named local recovery run "
+            f"{LOCAL_RECOVERY_RUN_ID} with its prescribed manifest hash"
+        )
     validate_state_matrix(manifest["states"])
     for state in manifest["states"]:
         topology = str(state["topology_id"])
@@ -406,6 +432,19 @@ def _validate_v2_manifest_shape(manifest: dict[str, object]) -> None:
             raise ValueError(f"{topology} at {bias:g} V has wrong bias tag")
         if state["topology_contract"] != _expected_topology_contract(topology):
             raise ValueError(f"{topology} at {bias:g} V has wrong topology contract")
+        state_root = Path("states") / topology / state["bias_tag"]
+        canonical_paths = {
+            "export_dir": (state_root / "export").as_posix(),
+            "field_manifest": (
+                state_root / "export" / "field_manifest.json"
+            ).as_posix(),
+            "state_csv": (state_root / "export" / "state.csv").as_posix(),
+        }
+        for name, expected in canonical_paths.items():
+            if state.get(name) != expected:
+                raise ValueError(
+                    f"{topology} at {bias:g} V has non-canonical state path: {name}"
+                )
         expected_fields = [
             {
                 "normalized_name": normalized,
@@ -418,6 +457,95 @@ def _validate_v2_manifest_shape(manifest: dict[str, object]) -> None:
         ]
         if state["fields"] != expected_fields:
             raise ValueError(f"{topology} at {bias:g} V has wrong v2 field identities")
+
+
+def _validate_audit_provenance(
+    manifest: dict[str, object],
+    artifacts_by_state: dict[tuple[str, float], dict[str, str]],
+) -> None:
+    provenance = manifest.get("audit_provenance")
+    if not isinstance(provenance, dict):
+        raise ValueError("audit provenance is required")
+    producer = provenance.get("producer")
+    producer_hash = provenance.get("producer_sha256")
+    if producer != AUDIT_PRODUCER or not isinstance(producer_hash, str):
+        raise ValueError("audit provenance has an invalid executable reference")
+    producer_path = REPO / producer
+    if (
+        not SHA256_PATTERN.fullmatch(producer_hash)
+        or not producer_path.is_file()
+        or _sha256(producer_path) != producer_hash
+    ):
+        raise ValueError("audit provenance executable hash mismatch")
+    source_commit = provenance.get("task4_source_commit")
+    if not isinstance(source_commit, str) or re.fullmatch(
+        r"[0-9a-f]{40}", source_commit
+    ) is None:
+        raise ValueError("audit provenance has an invalid source commit")
+    if not isinstance(provenance.get("replay_environment"), str) or not str(
+        provenance["replay_environment"]
+    ):
+        raise ValueError("audit provenance has no replay environment")
+    replays = provenance.get("replays")
+    if not isinstance(replays, list) or len(replays) != 6:
+        raise ValueError("audit provenance must contain exactly six replays")
+
+    seen: set[tuple[str, float]] = set()
+    for replay in replays:
+        if not isinstance(replay, dict):
+            raise ValueError("audit provenance replay must be an object")
+        try:
+            key = (str(replay["topology_id"]), float(replay["bias_V"]))
+        except (KeyError, TypeError, ValueError) as error:
+            raise ValueError("audit provenance replay identity is invalid") from error
+        if key not in artifacts_by_state or key in seen:
+            raise ValueError("audit provenance replay matrix is not exact")
+        seen.add(key)
+        if replay.get("producer") != producer or replay.get("exit_code") != 0:
+            raise ValueError("audit provenance replay execution is invalid")
+        arguments = replay.get("arguments")
+        if not isinstance(arguments, list) or len(arguments) != 2 * len(
+            AUDIT_PATH_OPTIONS
+        ):
+            raise ValueError("audit provenance arguments must be a 14-item array")
+        state_root = (
+            Path("states") / key[0] / _bias_tag(key[1]) / "export"
+        )
+        argument_paths: list[str] = []
+        canonical_paths: list[str] = []
+        for index, (option, filename) in enumerate(AUDIT_PATH_OPTIONS):
+            value = arguments[2 * index + 1]
+            if arguments[2 * index] != option or not isinstance(value, str):
+                raise ValueError("audit provenance argument order is invalid")
+            canonical = (state_root / filename).as_posix()
+            normalized = value.replace("\\", "/")
+            if normalized != canonical and not normalized.endswith("/" + canonical):
+                raise ValueError("audit provenance path is not canonical for its state")
+            if canonical not in artifacts_by_state[key]:
+                raise ValueError("audit provenance path is absent from artifact ledger")
+            argument_paths.append(value)
+            canonical_paths.append(canonical)
+        if replay.get("command") != " ".join([producer, *arguments]):
+            raise ValueError("audit provenance command does not match arguments")
+        for label, start, stop in (
+            ("input", 0, AUDIT_INPUT_COUNT),
+            ("output", AUDIT_INPUT_COUNT, len(AUDIT_PATH_OPTIONS)),
+        ):
+            hashes = replay.get(f"{label}_sha256")
+            expected_keys = set(argument_paths[start:stop])
+            if not isinstance(hashes, dict) or set(hashes) != expected_keys:
+                raise ValueError(
+                    f"audit provenance {label} hash references are not exact"
+                )
+            for index in range(start, stop):
+                source_path = argument_paths[index]
+                canonical = canonical_paths[index]
+                if hashes[source_path] != artifacts_by_state[key][canonical]:
+                    raise ValueError(
+                        f"audit provenance {label} hash mismatch: {canonical}"
+                    )
+    if seen != set(artifacts_by_state):
+        raise ValueError("audit provenance replay matrix is not exact")
 
 
 def seal_recovered_archive(
@@ -437,6 +565,21 @@ def seal_recovered_archive(
     if sealed_root.exists():
         raise FileExistsError(f"sealed v2 archive already exists: {sealed_root}")
     source_manifest = validate_recovered_archive(source_root, expected_manifest_sha256)
+    if source_kind == "local_recovery":
+        if (
+            source_manifest.get("run_id") != LOCAL_RECOVERY_RUN_ID
+            or expected_manifest_sha256.lower()
+            != LOCAL_RECOVERY_MANIFEST_SHA256
+        ):
+            raise ValueError(
+                "local recovery must use the named local recovery run "
+                f"{LOCAL_RECOVERY_RUN_ID} with its prescribed manifest hash"
+            )
+    elif source_kind != "regenerated":
+        raise ValueError(f"unsupported source kind: {source_kind}")
+    if not isinstance(source_manifest.get("task4_provenance"), dict):
+        raise ValueError("audit provenance is required in the source manifest")
+
     if source_manifest.get("schema") != SCHEMA:
         raise ValueError("recovered archive must preserve the v1 schema")
     validated_states = _validate_recovery_states(source_root, source_manifest)
@@ -490,8 +633,7 @@ def seal_recovered_archive(
         "outputs_complete": True,
         "states": states,
     }
-    if "task4_provenance" in source_manifest:
-        manifest["audit_provenance"] = source_manifest["task4_provenance"]
+    manifest["audit_provenance"] = source_manifest["task4_provenance"]
     _validate_v2_manifest_shape(manifest)
     write_manifest(sealed_root / "manifest.json", manifest)
     return validate_sealed_archive(sealed_root)
@@ -520,12 +662,24 @@ def validate_sealed_archive(root: Path) -> dict[str, object]:
         or source_manifest.get("outputs_complete") is not True
     ):
         raise ValueError("source manifest identity mismatch")
+    if source_manifest.get("task4_provenance") != manifest["audit_provenance"]:
+        raise ValueError(
+            "audit provenance does not match the source manifest"
+        )
 
+    artifacts_by_state: dict[tuple[str, float], dict[str, str]] = {}
     for state in manifest["states"]:
         topology = str(state["topology_id"])
         bias = float(state["requested_bias_V"])
         tag = str(state["bias_tag"])
         state_root = (root / "states" / topology / tag).resolve()
+        artifact_paths = [
+            str(artifact["path"]) for artifact in state["raw_artifacts"]
+        ]
+        if len(artifact_paths) != len(set(artifact_paths)):
+            raise ValueError(
+                f"duplicate artifact path: {topology} at {bias:g} V"
+            )
         recorded = {
             str(artifact["path"]): str(artifact["sha256"])
             for artifact in state["raw_artifacts"]
@@ -538,6 +692,20 @@ def validate_sealed_archive(root: Path) -> dict[str, object]:
             raise ValueError(
                 f"raw artifact member set mismatch: {topology} at {bias:g} V"
             )
+        required_members = {
+            str(state["field_manifest"]),
+            str(state["state_csv"]),
+        }
+        if not required_members.issubset(recorded):
+            raise ValueError(
+                f"canonical state path is absent from ledger: {topology} at {bias:g} V"
+            )
+        export_prefix = str(state["export_dir"]) + "/"
+        if not any(path.startswith(export_prefix) for path in recorded):
+            raise ValueError(
+                "canonical export_dir does not contain the artifact ledger"
+            )
+        artifacts_by_state[(topology, bias)] = recorded
         for relative, digest in recorded.items():
             path = _resolve_inside(root, relative, "raw artifact path")
             if not path.is_relative_to(state_root) or actual[relative] != digest:
@@ -552,6 +720,7 @@ def validate_sealed_archive(root: Path) -> dict[str, object]:
             raise ValueError(
                 f"v2 field identity mismatch: {topology} at {bias:g} V"
             )
+    _validate_audit_provenance(manifest, artifacts_by_state)
     return manifest
 
 

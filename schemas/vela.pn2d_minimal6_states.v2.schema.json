@@ -12,6 +12,7 @@
     "source_manifest_sha256",
     "bias_tolerance_V",
     "outputs_complete",
+    "audit_provenance",
     "states"
   ],
   "properties": {
@@ -27,7 +28,72 @@
     },
     "bias_tolerance_V": {"type": "number", "const": 1e-12},
     "outputs_complete": {"const": true},
-    "audit_provenance": {"type": "object"},
+    "audit_provenance": {
+      "type": "object",
+      "required": [
+        "producer",
+        "producer_sha256",
+        "task4_source_commit",
+        "replay_environment",
+        "replays"
+      ],
+      "properties": {
+        "producer": {
+          "const": "build-release/pn2d_minimal6_operator_audit.exe"
+        },
+        "producer_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "task4_source_commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "replay_environment": {"type": "string", "minLength": 1},
+        "replays": {
+          "type": "array",
+          "minItems": 6,
+          "maxItems": 6,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "required": [
+              "topology_id",
+              "bias_V",
+              "producer",
+              "command",
+              "arguments",
+              "exit_code",
+              "stdout",
+              "stderr",
+              "input_sha256",
+              "output_sha256"
+            ],
+            "properties": {
+              "topology_id": {"enum": ["sketch", "mirror"]},
+              "bias_V": {"type": "number"},
+              "producer": {
+                "const": "build-release/pn2d_minimal6_operator_audit.exe"
+              },
+              "command": {"type": "string", "minLength": 1},
+              "arguments": {
+                "type": "array",
+                "minItems": 14,
+                "maxItems": 14,
+                "items": {"type": "string", "minLength": 1}
+              },
+              "exit_code": {"const": 0},
+              "stdout": {"type": "string"},
+              "stderr": {"type": "string"},
+              "input_sha256": {"type": "object"},
+              "output_sha256": {"type": "object"}
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
     "states": {
       "type": "array",
       "minItems": 6,
@@ -44,6 +110,7 @@
           "topology_contract",
           "export_dir",
           "field_manifest",
+          "state_csv",
           "fields",
           "raw_artifacts"
         ],

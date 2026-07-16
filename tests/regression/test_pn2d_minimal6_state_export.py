@@ -106,6 +106,7 @@ def write_recovery_candidate(root: Path) -> tuple[Path, str]:
         "mirror": [[1, 5, 6], [1, 6, 2], [2, 6, 3], [6, 4, 3]],
     }
     states = []
+    replays = []
     for topology in ("sketch", "mirror"):
         for bias in (0.0, -12.0, -19.0):
             tag = export._bias_tag(bias)
@@ -117,6 +118,51 @@ def write_recovery_candidate(root: Path) -> tuple[Path, str]:
             (export_dir / "raw_member.txt").write_text(
                 f"{topology} {bias:g}\n", encoding="utf-8"
             )
+            audit_members = {
+                "mesh.json": "{}\n",
+                "doping.csv": "node_id,doping_cm3\n0,0\n",
+                "state.csv": "node_id,potential_V\n0,0\n",
+                "audit.json": "{}\n",
+                "vela_node_state.csv": "node_id\n0\n",
+                "vela_edge_audit.csv": "edge_id\n0\n",
+                "vela_triangle_audit.csv": "triangle_id\n0\n",
+            }
+            for name, contents in audit_members.items():
+                (export_dir / name).write_text(contents, encoding="utf-8")
+            option_names = (
+                ("--mesh", "mesh.json"),
+                ("--doping", "doping.csv"),
+                ("--state", "state.csv"),
+                ("--config", "audit.json"),
+                ("--node-out", "vela_node_state.csv"),
+                ("--edge-out", "vela_edge_audit.csv"),
+                ("--triangle-out", "vela_triangle_audit.csv"),
+            )
+            arguments = [
+                item
+                for option, name in option_names
+                for item in (option, str((export_dir / name).resolve()))
+            ]
+            replays.append({
+                "topology_id": topology,
+                "bias_V": bias,
+                "producer": "build-release/pn2d_minimal6_operator_audit.exe",
+                "command": " ".join([
+                    "build-release/pn2d_minimal6_operator_audit.exe", *arguments
+                ]),
+                "arguments": arguments,
+                "exit_code": 0,
+                "stdout": "",
+                "stderr": "",
+                "input_sha256": {
+                    str((export_dir / name).resolve()): export._sha256(export_dir / name)
+                    for _, name in option_names[:4]
+                },
+                "output_sha256": {
+                    str((export_dir / name).resolve()): export._sha256(export_dir / name)
+                    for _, name in option_names[4:]
+                },
+            })
             states.append({
                 "topology_id": topology,
                 "requested_bias_V": bias,
@@ -137,6 +183,15 @@ def write_recovery_candidate(root: Path) -> tuple[Path, str]:
         "run_id": "candidate-v1",
         "outputs_complete": True,
         "states": states,
+        "task4_provenance": {
+            "producer": "build-release/pn2d_minimal6_operator_audit.exe",
+            "producer_sha256": export._sha256(
+                REPO / "build-release" / "pn2d_minimal6_operator_audit.exe"
+            ),
+            "task4_source_commit": "1" * 40,
+            "replay_environment": "test fixture",
+            "replays": replays,
+        },
     }
     manifest_path = root / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
@@ -234,7 +289,8 @@ class PN2DMinimal6StateExportTest(unittest.TestCase):
             original = manifest_path.read_bytes()
             sealed = Path(tmp) / "candidate-sealed-v2"
             manifest = export.seal_recovered_archive(
-                source, sealed, digest, run_id="candidate-sealed-v2"
+                source, sealed, digest, run_id="candidate-sealed-v2",
+                source_kind="regenerated",
             )
             validated = export.validate_sealed_archive(sealed)
 
@@ -270,7 +326,10 @@ class PN2DMinimal6StateExportTest(unittest.TestCase):
             source.mkdir()
             _, digest = write_recovery_candidate(source)
             sealed = Path(tmp) / "candidate-sealed-v2"
-            export.seal_recovered_archive(source, sealed, digest, run_id="candidate-sealed-v2")
+            export.seal_recovered_archive(
+                source, sealed, digest, run_id="candidate-sealed-v2",
+                source_kind="regenerated",
+            )
 
             source_manifest = sealed / "source_manifest.json"
             source_manifest.write_bytes(source_manifest.read_bytes() + b"\n")
@@ -278,7 +337,10 @@ class PN2DMinimal6StateExportTest(unittest.TestCase):
                 export.validate_sealed_archive(sealed)
 
             shutil.rmtree(sealed)
-            export.seal_recovered_archive(source, sealed, digest, run_id="candidate-sealed-v2")
+            export.seal_recovered_archive(
+                source, sealed, digest, run_id="candidate-sealed-v2",
+                source_kind="regenerated",
+            )
             manifest = json.loads((sealed / "manifest.json").read_text(encoding="utf-8"))
             member = sealed / manifest["states"][0]["raw_artifacts"][0]["path"]
             member.write_bytes(member.read_bytes() + b"mutation")
@@ -286,13 +348,126 @@ class PN2DMinimal6StateExportTest(unittest.TestCase):
                 export.validate_sealed_archive(sealed)
 
             shutil.rmtree(sealed)
-            export.seal_recovered_archive(source, sealed, digest, run_id="candidate-sealed-v2")
+            export.seal_recovered_archive(
+                source, sealed, digest, run_id="candidate-sealed-v2",
+                source_kind="regenerated",
+            )
             path = sealed / "manifest.json"
             manifest = json.loads(path.read_text(encoding="utf-8"))
             manifest["states"][0]["requested_bias_V"] = -11.999999999
             manifest["states"][0]["actual_bias_V"] = -11.999999999
             path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "exact six-state matrix mismatch"):
+                export.validate_sealed_archive(sealed)
+
+    def test_v2_rejects_noncanonical_state_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "candidate"
+            source.mkdir()
+            _, digest = write_recovery_candidate(source)
+            sealed = Path(tmp) / "candidate-sealed-v2"
+            export.seal_recovered_archive(
+                source, sealed, digest, run_id=sealed.name, source_kind="regenerated"
+            )
+            path = sealed / "manifest.json"
+            baseline = json.loads(path.read_text(encoding="utf-8"))
+            variants = []
+            for field in ("export_dir", "field_manifest", "state_csv"):
+                cross_state = json.loads(json.dumps(baseline))
+                cross_state["states"][0][field] = baseline["states"][1][field]
+                variants.append((f"cross-state {field}", cross_state))
+                absolute = json.loads(json.dumps(baseline))
+                absolute["states"][0][field] = str(
+                    (sealed / baseline["states"][0][field]).resolve()
+                )
+                variants.append((f"absolute {field}", absolute))
+            for label, manifest in variants:
+                with self.subTest(label=label):
+                    path.write_text(
+                        json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
+                    )
+                    with self.assertRaisesRegex(ValueError, "canonical state path"):
+                        export.validate_sealed_archive(sealed)
+
+    def test_v2_requires_complete_six_state_audit_provenance(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "candidate"
+            source.mkdir()
+            _, digest = write_recovery_candidate(source)
+            sealed = Path(tmp) / "candidate-sealed-v2"
+            export.seal_recovered_archive(
+                source, sealed, digest, run_id=sealed.name, source_kind="regenerated"
+            )
+            path = sealed / "manifest.json"
+            baseline = json.loads(path.read_text(encoding="utf-8"))
+            missing = json.loads(json.dumps(baseline))
+            missing.pop("audit_provenance")
+            short = json.loads(json.dumps(baseline))
+            short["audit_provenance"]["replays"].pop()
+            bad_argv = json.loads(json.dumps(baseline))
+            bad_argv["audit_provenance"]["replays"][0]["arguments"] = "not-an-array"
+            bad_reference = json.loads(json.dumps(baseline))
+            replay = bad_reference["audit_provenance"]["replays"][0]
+            replay["arguments"][7] = baseline["audit_provenance"]["replays"][1][
+                "arguments"
+            ][7]
+            bad_hash = json.loads(json.dumps(baseline))
+            bad_hash["audit_provenance"]["producer_sha256"] = "0" * 64
+            variants = (
+                ("missing", missing),
+                ("short", short),
+                ("bad argv", bad_argv),
+                ("cross-state audit reference", bad_reference),
+                ("bad executable hash", bad_hash),
+            )
+            for label, manifest in variants:
+                with self.subTest(label=label):
+                    path.write_text(
+                        json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
+                    )
+                    with self.assertRaisesRegex(
+                        ValueError, "audit provenance|schema validation"
+                    ):
+                        export.validate_sealed_archive(sealed)
+
+    def test_local_recovery_is_bound_to_named_run_and_manifest_hash(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "candidate"
+            source.mkdir()
+            _, digest = write_recovery_candidate(source)
+            sealed = Path(tmp) / "candidate-sealed-v2"
+            with self.assertRaisesRegex(ValueError, "named local recovery"):
+                export.seal_recovered_archive(
+                    source, sealed, digest, run_id=sealed.name,
+                    source_kind="local_recovery",
+                )
+            export.seal_recovered_archive(
+                source, sealed, digest, run_id=sealed.name,
+                source_kind="regenerated",
+            )
+            path = sealed / "manifest.json"
+            manifest = json.loads(path.read_text(encoding="utf-8"))
+            manifest["source_kind"] = "local_recovery"
+            path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "named local recovery"):
+                export.validate_sealed_archive(sealed)
+
+
+    def test_v2_rejects_duplicate_artifact_paths_before_hash_mapping(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "candidate"
+            source.mkdir()
+            _, digest = write_recovery_candidate(source)
+            sealed = Path(tmp) / "candidate-sealed-v2"
+            export.seal_recovered_archive(
+                source, sealed, digest, run_id=sealed.name, source_kind="regenerated"
+            )
+            path = sealed / "manifest.json"
+            manifest = json.loads(path.read_text(encoding="utf-8"))
+            artifacts = manifest["states"][0]["raw_artifacts"]
+            artifacts.insert(0, {"path": artifacts[0]["path"], "sha256": "0" * 64})
+            path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "duplicate artifact path"):
                 export.validate_sealed_archive(sealed)
 
 
