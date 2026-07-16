@@ -60,16 +60,24 @@ class DiagnosticPhysicsTest(unittest.TestCase):
         self.assertEqual(len(parsed["sha256"]), 64)
     def test_parameter_agreement_requires_numeric_vela_coefficients(self):
         parsed = {
-            "electron": {"a_low_cm_inv": 1., "a_high_cm_inv": 2., "b_low_v_per_cm": 3., "b_high_v_per_cm": 4.},
-            "hole": {"a_low_cm_inv": 5., "a_high_cm_inv": 6., "b_low_v_per_cm": 7., "b_high_v_per_cm": 8.},
+            "electron": {"a_low_cm_inv": 1., "a_high_cm_inv": 2., "b_low_v_per_cm": 3., "b_high_v_per_cm": 4., "phonon_energy_eV": 0.063},
+            "hole": {"a_low_cm_inv": 5., "a_high_cm_inv": 6., "b_low_v_per_cm": 7., "b_high_v_per_cm": 8., "phonon_energy_eV": 0.063},
             "switch_field_v_per_cm": 9.,
         }
         self.assertEqual(compare_van_overstraeten_parameters(parsed, None)["status"], "unavailable")
         production = {carrier: dict(values) for carrier, values in parsed.items() if carrier in ("electron", "hole")}
         production["switch_field_v_per_cm"] = 9.
         self.assertEqual(compare_van_overstraeten_parameters(parsed, production)["status"], "available")
+        production["electron"]["phonon_energy_eV"] = 0.064
+        self.assertEqual(compare_van_overstraeten_parameters(parsed, production)["status"], "mismatch")
+        production["electron"]["phonon_energy_eV"] = 0.063
         production["electron"]["a_low_cm_inv"] = 1.1
         self.assertEqual(compare_van_overstraeten_parameters(parsed, production)["status"], "mismatch")
+        production["electron"]["a_low_cm_inv"] = 1.0
+        parsed["hole"]["phonon_energy_eV"] = 0.064
+        self.assertEqual(compare_van_overstraeten_parameters(parsed, production)["status"], "mismatch")
+        del production["hole"]["phonon_energy_eV"]
+        self.assertEqual(compare_van_overstraeten_parameters(parsed, production)["status"], "unavailable")
     def test_tracked_models_parameters_match_vela_production_defaults(self):
         root = Path(__file__).resolve().parents[2]
         models = root / "reference_tcad" / "pn2d_sentaurus2018_minimal6" / "source" / "models.par"
@@ -82,13 +90,17 @@ class DiagnosticPhysicsTest(unittest.TestCase):
         self.assertEqual(parsed["hole"]["a_high_cm_inv"], 6.71e5)
         self.assertEqual(parsed["hole"]["b_low_v_per_cm"], 2.036e6)
         self.assertEqual(parsed["switch_field_v_per_cm"], 4.0e5)
+        self.assertEqual(production["electron"]["phonon_energy_eV"], 0.063)
+        self.assertEqual(production["hole"]["phonon_energy_eV"], 0.063)
+        self.assertEqual(production["source"], str(header))
+        self.assertEqual(len(production["sha256"]), 64)
         self.assertEqual(compare_van_overstraeten_parameters(parsed, production)["status"], "available")
     def test_integral_and_node_mapping_are_conservative(self):
         self.assertEqual(integrate_nodal_field((2., 4., 6.), (1., 2., 3.)), 28.)
         mapped = map_local_sources_to_nodes(((0, 1, 2),), (12.,))
         self.assertEqual(mapped, {0: 4., 1: 4., 2: 4.})
     def test_named_support_conversions_return_normalized_weights(self):
-        cells = node_scalar_to_cells({0:3., 1:6., 2:9.}, ((0,1,2),))
+        cells = node_scalar_to_cells({0:3., 1:6., 2:9.}, ((0,1,2),), quantity="Potential")
         self.assertEqual(cells["values"], [6.])
         self.assertEqual(cells["weights"], [{0:1./3., 1:1./3., 2:1./3.}])
         with self.assertRaises(ValueError):
@@ -100,9 +112,22 @@ class DiagnosticPhysicsTest(unittest.TestCase):
         self.assertEqual(nodes["values"], {0:3., 1:3., 2:3.})
         self.assertEqual(nodes["weights"], [{0:0.5, 1:0.5}, {1:0.5, 2:0.5}, {2:0.5, 0:0.5}])
     def test_edge_to_cell_conversion_is_weighted_and_conservative(self):
-        converted = edge_scalar_to_cells({10:3., 11:6., 12:9.}, ((10,11,12),))
+        converted = edge_scalar_to_cells({10:3., 11:6., 12:9.}, ((10,11,12),), quantity="IonizationCoefficient")
         self.assertEqual(converted["values"], [6.])
         self.assertEqual(converted["weights"], [{10:1./3., 11:1./3., 12:1./3.}])
+    def test_support_conversions_reject_omitted_or_unknown_provenance(self):
+        node_values = {0:3., 1:6., 2:9.}
+        cells = ((0,1,2),)
+        edge_values = {10:3., 11:6., 12:9.}
+        cell_edges = ((10,11,12),)
+        with self.assertRaises(ValueError):
+            node_scalar_to_cells(node_values, cells)
+        with self.assertRaises(ValueError):
+            node_scalar_to_cells(node_values, cells, quantity="Unknown")
+        with self.assertRaises(ValueError):
+            edge_scalar_to_cells(edge_values, cell_edges)
+        with self.assertRaises(ValueError):
+            edge_scalar_to_cells(edge_values, cell_edges, quantity="Unknown")
     def test_edge_to_cell_rejects_native_avalanche_generation(self):
         with self.assertRaises(ValueError):
             edge_scalar_to_cells(

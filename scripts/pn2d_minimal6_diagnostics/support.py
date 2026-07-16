@@ -1,6 +1,20 @@
 from __future__ import annotations
 import math
 
+_AVERAGEABLE_QUANTITIES = frozenset({
+    "CarrierDensity",
+    "ElectricField",
+    "IonizationCoefficient",
+    "Mobility",
+    "Potential",
+})
+
+def _validate_average_quantity(quantity):
+    if quantity in {"ImpactIonization", "AvalancheGeneration"}:
+        raise ValueError("native avalanche generation must be integrated, not averaged")
+    if not isinstance(quantity, str) or quantity not in _AVERAGEABLE_QUANTITIES:
+        raise ValueError("averaging requires a recognized non-native quantity provenance")
+
 def project_vector_to_edge(vector, start, end):
     dx,dy = float(end[0])-float(start[0]), float(end[1])-float(start[1])
     length = math.hypot(dx,dy)
@@ -29,8 +43,7 @@ def integrate_cell_field(points, values, *, partial_volume_fraction=1.0):
     return fraction * 0.5 * twice_area * sum(float(value) for value in values) / 3.0
 def node_scalar_to_cells(node_values, cells, *, quantity=None):
     """P1 node-to-cell averaging with explicit normalized node weights."""
-    if quantity in {"ImpactIonization", "AvalancheGeneration"}:
-        raise ValueError("native avalanche generation must be integrated, not averaged")
+    _validate_average_quantity(quantity)
     values, weights = [], []
     for nodes in cells:
         ids = tuple(nodes)
@@ -77,8 +90,7 @@ def local_edge_sources_to_nodes(edges, sources):
     return {"values": values, "weights": weights}
 def edge_scalar_to_cells(edge_values, cell_edges, *, quantity=None):
     """Average three edge-centered intensive values onto each triangle with explicit weights."""
-    if quantity in {"ImpactIonization", "AvalancheGeneration"}:
-        raise ValueError("native avalanche generation must be integrated, not averaged")
+    _validate_average_quantity(quantity)
     values, weights = [], []
     for edges in cell_edges:
         ids = tuple(edges)

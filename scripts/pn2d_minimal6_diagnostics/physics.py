@@ -77,6 +77,12 @@ def parse_vela_van_overstraeten_defaults(path):
     if switch is None:
         raise ValueError("Vela production header lacks numeric switchField")
     parsed["switch_field_v_per_cm"] = float(switch.group(1)) / 100.0
+    phonon = re.search(r"\bReal\s+phononEnergy\s*=\s*([0-9.eE+-]+)\s*;", text)
+    if phonon is None:
+        raise ValueError("Vela production header lacks numeric phononEnergy")
+    phonon_energy_eV = float(phonon.group(1))
+    for carrier in ("electron", "hole"):
+        parsed[carrier]["phonon_energy_eV"] = phonon_energy_eV
     parsed["source"] = str(source)
     parsed["sha256"] = hashlib.sha256(source.read_bytes()).hexdigest()
     return parsed
@@ -88,10 +94,19 @@ def compare_van_overstraeten_parameters(parsed, production_parameters, *, rel_to
     The audit configuration may select a model without serializing numerical
     coefficients.  That is deliberately ``unavailable`` rather than assumed
     equal to Sentaurus defaults.
+
+    Vela's ``aScale`` and ``bScale`` are diagnostic runtime multipliers, not
+    coefficients in the Sentaurus material block.  Vela's reference and active
+    temperatures are runtime thermal inputs; the Sentaurus block states the
+    temperature-factor formula but supplies no numeric ``T0`` or ``T`` value.
+    Those controls therefore have no direct default-value comparison here.
     """
     if not isinstance(production_parameters, dict):
         return {"status": "unavailable", "reason": "Vela production configuration does not serialize DeMan coefficients", "comparisons": []}
-    keys = ("a_low_cm_inv", "a_high_cm_inv", "b_low_v_per_cm", "b_high_v_per_cm")
+    keys = (
+        "a_low_cm_inv", "a_high_cm_inv", "b_low_v_per_cm",
+        "b_high_v_per_cm", "phonon_energy_eV",
+    )
     comparisons = []
     try:
         for carrier in ("electron", "hole"):
@@ -134,6 +149,15 @@ def invert_piecewise_alpha(alpha_cm_inv, *, low_a_cm_inv, low_b_v_per_cm, high_a
             candidates.append({"branch": branch, "field_v_per_cm": field})
     return candidates
 def infer_ni_eff(*, psi_V, phin_V, phip_V, n_cm3, p_cm3, thermal_voltage_V):
+    """Infer ``ni_eff`` independently from electron and hole relations.
+
+    ``psi_V`` is electrostatic potential, while ``phin_V`` and ``phip_V``
+    are the electron and hole quasi-Fermi potentials under the sign convention
+    ``n = ni_eff exp((phi_n - psi) / V_T)`` and
+    ``p = ni_eff exp((psi - phi_p) / V_T)``.  Therefore the returned estimates
+    are ``n exp((psi - phi_n) / V_T)`` and
+    ``p exp((phi_p - psi) / V_T)``.  Inconsistent estimates remain separate.
+    """
     if thermal_voltage_V <= 0.0 or n_cm3 <= 0.0 or p_cm3 <= 0.0: raise ValueError("densities and thermal voltage must be positive")
     electron = float(n_cm3) * math.exp((float(psi_V) - float(phin_V)) / float(thermal_voltage_V))
     hole = float(p_cm3) * math.exp((float(phip_V) - float(psi_V)) / float(thermal_voltage_V))
