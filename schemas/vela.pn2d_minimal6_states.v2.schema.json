@@ -10,6 +10,7 @@
     "source_run_id",
     "source_manifest_path",
     "source_manifest_sha256",
+    "source_validation",
     "bias_tolerance_V",
     "outputs_complete",
     "audit_provenance",
@@ -25,6 +26,53 @@
     "source_manifest_sha256": {
       "type": "string",
       "pattern": "^[0-9a-f]{64}$"
+    },
+    "source_validation": {
+      "type": "object",
+      "required": [
+        "kind",
+        "schema",
+        "path",
+        "sha256",
+        "archive_root",
+        "archive_manifest_sha256",
+        "member_count",
+        "validation"
+      ],
+      "properties": {
+        "kind": {"enum": ["local_recovery", "regenerated"]},
+        "schema": {
+          "const": "vela.pn2d_minimal6_recovery_validation.v1"
+        },
+        "path": {"const": "source_recovery_validation.json"},
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "archive_root": {"type": "string", "minLength": 1},
+        "archive_manifest_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "member_count": {"type": "integer"},
+        "validation": {
+          "type": "object",
+          "required": [
+            "outputs_complete",
+            "exact_state_matrix",
+            "field_contract",
+            "member_hashes_verified"
+          ],
+          "properties": {
+            "outputs_complete": {"const": true},
+            "exact_state_matrix": {"const": true},
+            "field_contract": {"const": true},
+            "member_hashes_verified": {"const": true}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
     },
     "bias_tolerance_V": {"type": "number", "const": 1e-12},
     "outputs_complete": {"const": true},

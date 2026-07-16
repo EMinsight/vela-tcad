@@ -170,6 +170,7 @@ def write_recovery_candidate(root: Path) -> tuple[Path, str]:
                 "bias_tag": tag,
                 "status": "passed",
                 "export_dir": str(export_dir.relative_to(root)),
+                "member_sha256": export.collect_member_hashes(export_dir),
                 "topology_contract": {
                     "nodes": 6,
                     "triangles": 4,
@@ -195,6 +196,25 @@ def write_recovery_candidate(root: Path) -> tuple[Path, str]:
     }
     manifest_path = root / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    members = export.collect_member_hashes(root)
+    recovery_validation = {
+        "schema": "vela.pn2d_minimal6_recovery_validation.v1",
+        "run_id": manifest["run_id"],
+        "generated_at": "2026-07-16T00:00:00+08:00",
+        "archive_root": str(root.resolve()),
+        "archive_manifest_sha256": export._sha256(manifest_path),
+        "member_count": len(members),
+        "member_sha256": members,
+        "validation": {
+            "outputs_complete": True,
+            "exact_state_matrix": True,
+            "field_contract": True,
+            "member_hashes_verified": True,
+        },
+    }
+    (root / "recovery_validation.json").write_text(
+        json.dumps(recovery_validation, indent=2) + "\n", encoding="utf-8"
+    )
     return manifest_path, export._sha256(manifest_path)
 
 
@@ -298,6 +318,14 @@ class PN2DMinimal6StateExportTest(unittest.TestCase):
             self.assertEqual(manifest, validated)
             self.assertEqual(manifest["schema"], "vela.pn2d_minimal6_states.v2")
             self.assertEqual(manifest["source_manifest_sha256"], digest)
+            source_validation = manifest["source_validation"]
+            self.assertEqual(source_validation["kind"], "regenerated")
+            self.assertEqual(
+                source_validation["sha256"],
+                export._sha256(source / "recovery_validation.json"),
+            )
+            self.assertTrue((sealed / source_validation["path"]).is_file())
+            self.assertTrue(source_validation["validation"]["member_hashes_verified"])
             self.assertEqual(len(manifest["states"]), 6)
             self.assertEqual(
                 {(state["topology_id"], state["requested_bias_V"], state["actual_bias_V"])
@@ -344,7 +372,21 @@ class PN2DMinimal6StateExportTest(unittest.TestCase):
             manifest = json.loads((sealed / "manifest.json").read_text(encoding="utf-8"))
             member = sealed / manifest["states"][0]["raw_artifacts"][0]["path"]
             member.write_bytes(member.read_bytes() + b"mutation")
-            with self.assertRaisesRegex(ValueError, "raw artifact hash mismatch"):
+            with self.assertRaisesRegex(
+                ValueError, "raw artifact hash mismatch|sealed source member ledger hash"
+            ):
+                export.validate_sealed_archive(sealed)
+
+            shutil.rmtree(sealed)
+            export.seal_recovered_archive(
+                source, sealed, digest, run_id="candidate-sealed-v2",
+                source_kind="regenerated",
+            )
+            sidecar = sealed / "source_recovery_validation.json"
+            sidecar.write_bytes(sidecar.read_bytes() + b"mutation")
+            with self.assertRaisesRegex(
+                ValueError, "sealed source member ledger validation hash"
+            ):
                 export.validate_sealed_archive(sealed)
 
             shutil.rmtree(sealed)
@@ -452,6 +494,59 @@ class PN2DMinimal6StateExportTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "named local recovery"):
                 export.validate_sealed_archive(sealed)
 
+
+    def test_source_member_ledger_fails_closed_for_all_set_mutations(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            mutations = (
+                "missing-sidecar",
+                "wrong-sidecar-hash",
+                "altered",
+                "extra",
+                "missing",
+                "manifest-binding",
+                "false-validation",
+            )
+            for mutation in mutations:
+                with self.subTest(mutation=mutation):
+                    source = Path(tmp) / f"candidate-{mutation}"
+                    source.mkdir()
+                    _, digest = write_recovery_candidate(source)
+                    export_dir = (
+                        source / "states" / "sketch" / "p0V" / "export"
+                    )
+                    sidecar_path = source / "recovery_validation.json"
+                    if mutation == "missing-sidecar":
+                        sidecar_path.unlink()
+                    elif mutation == "altered":
+                        (export_dir / "raw_member.txt").write_text(
+                            "altered\n", encoding="utf-8"
+                        )
+                    elif mutation == "extra":
+                        (export_dir / "unexpected.txt").write_text(
+                            "extra\n", encoding="utf-8"
+                        )
+                    elif mutation == "missing":
+                        (export_dir / "raw_member.txt").unlink()
+                    elif mutation in ("manifest-binding", "false-validation"):
+                        sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
+                        if mutation == "manifest-binding":
+                            sidecar["archive_manifest_sha256"] = "0" * 64
+                        else:
+                            sidecar["validation"]["member_hashes_verified"] = False
+                        sidecar_path.write_text(
+                            json.dumps(sidecar, indent=2) + "\n", encoding="utf-8"
+                        )
+                    sealed = Path(tmp) / f"sealed-{mutation}"
+                    with self.assertRaisesRegex(
+                        ValueError, "source member ledger|recovery validation"
+                    ):
+                        export.seal_recovered_archive(
+                            source, sealed, digest, run_id=sealed.name,
+                            source_kind="regenerated",
+                            expected_source_validation_sha256=(
+                                "0" * 64 if mutation == "wrong-sidecar-hash" else None
+                            ),
+                        )
 
     def test_v2_rejects_duplicate_artifact_paths_before_hash_mapping(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

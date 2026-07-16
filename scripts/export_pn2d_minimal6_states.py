@@ -101,6 +101,22 @@ DEFAULT_OUTPUT_DIR = (
     REPO / "build-release" / "reference_tcad" / "pn2d_sentaurus2018_minimal6"
     / "state_exports"
 )
+RECOVERY_VALIDATION_SCHEMA = "vela.pn2d_minimal6_recovery_validation.v1"
+SEALED_SOURCE_VALIDATION_PATH = "source_recovery_validation.json"
+LOCAL_RECOVERY_VALIDATION_PATH = (
+    REPO / "build-release" / "reference_tcad" / "pn2d_sentaurus2018_minimal6"
+    / "recovery_validation" / LOCAL_RECOVERY_RUN_ID / "recovery_validation.json"
+)
+LOCAL_RECOVERY_VALIDATION_SHA256 = (
+    "9466ee2db317fda4707254403fa33c2e1ebee666f8fdc72b776fa4a8ab689ec3"
+)
+REQUIRED_RECOVERY_FLAGS = {
+    "outputs_complete": True,
+    "exact_state_matrix": True,
+    "field_contract": True,
+    "member_hashes_verified": True,
+}
+
 DEFAULT_IMPORTER = REPO / "build-release" / (
     "sentaurus_import.exe" if os.name == "nt" else "sentaurus_import"
 )
@@ -147,6 +163,95 @@ def validate_member_hashes(root: Path, expected: dict[str, str]) -> None:
     for name, digest in expected.items():
         if actual[name] != digest:
             raise ValueError(f"archive member hash mismatch: {name}")
+
+
+def _source_member_hashes(root: Path, validation_path: Path) -> dict[str, str]:
+    root = root.resolve()
+    validation_path = validation_path.resolve()
+    members: dict[str, str] = {}
+    for path in sorted(root.rglob("*")):
+        if path.is_file() and path.resolve() != validation_path:
+            members[path.relative_to(root).as_posix()] = _sha256(path)
+    return members
+
+
+def validate_source_recovery(
+    source_root: Path,
+    source_manifest: dict[str, object],
+    expected_manifest_sha256: str,
+    *,
+    source_kind: str,
+    expected_source_validation_sha256: str | None = None,
+) -> tuple[dict[str, object], Path, str]:
+    source_root = source_root.resolve()
+    if source_kind == "local_recovery":
+        required_root = (DEFAULT_OUTPUT_DIR / LOCAL_RECOVERY_RUN_ID).resolve()
+        if source_root != required_root:
+            raise ValueError("local recovery archive root identity mismatch")
+        validation_path = LOCAL_RECOVERY_VALIDATION_PATH.resolve()
+        expected_validation_hash = LOCAL_RECOVERY_VALIDATION_SHA256
+    elif source_kind == "regenerated":
+        validation_path = (source_root / "recovery_validation.json").resolve()
+        if expected_source_validation_sha256 is None:
+            if not validation_path.is_file():
+                raise ValueError("source member ledger recovery validation is missing")
+            expected_validation_hash = _sha256(validation_path)
+        else:
+            expected_validation_hash = expected_source_validation_sha256.lower()
+    else:
+        raise ValueError(f"unsupported source kind: {source_kind}")
+
+    if not SHA256_PATTERN.fullmatch(expected_validation_hash):
+        raise ValueError("source member ledger recovery validation hash is invalid")
+    if (
+        not validation_path.is_file()
+        or _sha256(validation_path) != expected_validation_hash
+    ):
+        raise ValueError("source member ledger recovery validation hash mismatch")
+    try:
+        validation = json.loads(validation_path.read_text(encoding="utf-8-sig"))
+    except json.JSONDecodeError as error:
+        raise ValueError("source member ledger recovery validation is invalid JSON") from error
+    if not isinstance(validation, dict):
+        raise ValueError("source member ledger recovery validation must be an object")
+    if validation.get("schema") != RECOVERY_VALIDATION_SCHEMA:
+        raise ValueError("source member ledger recovery validation schema mismatch")
+    if validation.get("run_id") != source_manifest.get("run_id"):
+        raise ValueError("source member ledger recovery validation run mismatch")
+    archive_root = validation.get("archive_root")
+    if not isinstance(archive_root, str) or Path(archive_root).resolve() != source_root:
+        raise ValueError("source member ledger recovery validation root mismatch")
+    if (
+        validation.get("archive_manifest_sha256")
+        != expected_manifest_sha256.lower()
+    ):
+        raise ValueError("source member ledger recovery validation manifest binding mismatch")
+    if validation.get("validation") != REQUIRED_RECOVERY_FLAGS:
+        raise ValueError("source member ledger recovery validation flags are not all true")
+
+    ledger = validation.get("member_sha256")
+    if not isinstance(ledger, dict) or not ledger:
+        raise ValueError("source member ledger is missing")
+    if not all(
+        isinstance(path, str)
+        and isinstance(digest, str)
+        and SHA256_PATTERN.fullmatch(digest)
+        for path, digest in ledger.items()
+    ):
+        raise ValueError("source member ledger contains an invalid entry")
+    if validation.get("member_count") != len(ledger):
+        raise ValueError("source member ledger count mismatch")
+    actual = _source_member_hashes(source_root, validation_path)
+    if set(actual) != set(ledger):
+        missing = sorted(set(ledger) - set(actual))
+        extra = sorted(set(actual) - set(ledger))
+        raise ValueError(
+            f"source member ledger set mismatch; missing={missing}, extra={extra}"
+        )
+    for relative, digest in ledger.items():
+        if actual[relative] != digest:
+            raise ValueError(f"source member ledger hash mismatch: {relative}")
+    return validation, validation_path, expected_validation_hash
 
 
 def validate_recovered_archive(root: Path, expected_manifest_sha256: str) -> dict[str, object]:
@@ -555,6 +660,7 @@ def seal_recovered_archive(
     *,
     run_id: str,
     source_kind: str = "local_recovery",
+    expected_source_validation_sha256: str | None = None,
 ) -> dict[str, object]:
     source_root = Path(source_root).resolve()
     sealed_root = Path(sealed_root).resolve()
@@ -583,10 +689,21 @@ def seal_recovered_archive(
     if source_manifest.get("schema") != SCHEMA:
         raise ValueError("recovered archive must preserve the v1 schema")
     validated_states = _validate_recovery_states(source_root, source_manifest)
+    source_validation, source_validation_path, source_validation_hash = (
+        validate_source_recovery(
+            source_root, source_manifest, expected_manifest_sha256,
+            source_kind=source_kind,
+            expected_source_validation_sha256=expected_source_validation_sha256,
+        )
+    )
 
     sealed_root.mkdir(parents=True)
     shutil.copyfile(source_root / "manifest.json", sealed_root / "source_manifest.json")
     shutil.copytree(source_root / "states", sealed_root / "states")
+    shutil.copyfile(
+        source_validation_path,
+        sealed_root / SEALED_SOURCE_VALIDATION_PATH,
+    )
     states: list[dict[str, object]] = []
     for source_state in source_manifest["states"]:
         topology = str(source_state["topology_id"])
@@ -632,11 +749,94 @@ def seal_recovered_archive(
         "bias_tolerance_V": BIAS_TOLERANCE_V,
         "outputs_complete": True,
         "states": states,
+        "source_validation": {
+            "kind": source_kind,
+            "schema": RECOVERY_VALIDATION_SCHEMA,
+            "path": SEALED_SOURCE_VALIDATION_PATH,
+            "sha256": source_validation_hash,
+            "archive_root": str(source_validation["archive_root"]),
+            "archive_manifest_sha256": str(
+                source_validation["archive_manifest_sha256"]
+            ),
+            "member_count": int(source_validation["member_count"]),
+            "validation": source_validation["validation"],
+        },
     }
     manifest["audit_provenance"] = source_manifest["task4_provenance"]
     _validate_v2_manifest_shape(manifest)
     write_manifest(sealed_root / "manifest.json", manifest)
     return validate_sealed_archive(sealed_root)
+
+
+def _validate_sealed_source_recovery(
+    root: Path, manifest: dict[str, object]
+) -> None:
+    identity = manifest["source_validation"]
+    if identity["kind"] != manifest["source_kind"]:
+        raise ValueError("sealed source member ledger kind mismatch")
+    if (
+        identity["archive_manifest_sha256"]
+        != manifest["source_manifest_sha256"]
+    ):
+        raise ValueError("sealed source member ledger manifest binding mismatch")
+    if manifest["source_kind"] == "local_recovery":
+        required_root = str((DEFAULT_OUTPUT_DIR / LOCAL_RECOVERY_RUN_ID).resolve())
+        if (
+            identity["sha256"] != LOCAL_RECOVERY_VALIDATION_SHA256
+            or Path(str(identity["archive_root"])).resolve()
+            != Path(required_root).resolve()
+        ):
+            raise ValueError("sealed local recovery validation identity mismatch")
+    validation_path = _resolve_inside(
+        root, str(identity["path"]), "source recovery validation path"
+    )
+    if (
+        not validation_path.is_file()
+        or _sha256(validation_path) != identity["sha256"]
+    ):
+        raise ValueError("sealed source member ledger validation hash mismatch")
+    try:
+        validation = json.loads(validation_path.read_text(encoding="utf-8-sig"))
+    except json.JSONDecodeError as error:
+        raise ValueError("sealed source member ledger validation is invalid") from error
+    summary = {
+        "schema": validation.get("schema"),
+        "archive_root": validation.get("archive_root"),
+        "archive_manifest_sha256": validation.get("archive_manifest_sha256"),
+        "member_count": validation.get("member_count"),
+        "validation": validation.get("validation"),
+    }
+    expected_summary = {
+        "schema": identity["schema"],
+        "archive_root": identity["archive_root"],
+        "archive_manifest_sha256": identity["archive_manifest_sha256"],
+        "member_count": identity["member_count"],
+        "validation": identity["validation"],
+    }
+    if summary != expected_summary or validation.get("run_id") != manifest["source_run_id"]:
+        raise ValueError("sealed source member ledger identity mismatch")
+    if identity["validation"] != REQUIRED_RECOVERY_FLAGS:
+        raise ValueError("sealed source member ledger validation flags are not all true")
+    ledger = validation.get("member_sha256")
+    if not isinstance(ledger, dict) or identity["member_count"] != len(ledger):
+        raise ValueError("sealed source member ledger count mismatch")
+    source_manifest_path = _resolve_inside(
+        root, str(manifest["source_manifest_path"]), "source_manifest_path"
+    )
+    actual = {"manifest.json": _sha256(source_manifest_path)}
+    states_root = root / "states"
+    for path in sorted(states_root.rglob("*")):
+        if path.is_file():
+            actual[path.relative_to(root).as_posix()] = _sha256(path)
+    if set(actual) != set(ledger):
+        missing = sorted(set(ledger) - set(actual))
+        extra = sorted(set(actual) - set(ledger))
+        raise ValueError(
+            f"sealed source member ledger set mismatch; missing={missing}, extra={extra}"
+        )
+    for relative, digest in ledger.items():
+        if not isinstance(digest, str) or actual[relative] != digest:
+            raise ValueError(f"sealed source member ledger hash mismatch: {relative}")
 
 
 def validate_sealed_archive(root: Path) -> dict[str, object]:
@@ -667,6 +867,7 @@ def validate_sealed_archive(root: Path) -> dict[str, object]:
             "audit provenance does not match the source manifest"
         )
 
+    _validate_sealed_source_recovery(root, manifest)
     artifacts_by_state: dict[tuple[str, float], dict[str, str]] = {}
     for state in manifest["states"]:
         topology = str(state["topology_id"])
