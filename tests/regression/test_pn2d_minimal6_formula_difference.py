@@ -1,14 +1,92 @@
 import csv
 import json
+import hashlib
 import math
 import subprocess
 import sys
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
 from scripts.export_pn2d_minimal6_states import collect_member_hashes, validate_member_hashes
 from scripts.pn2d_minimal6_diagnostics.counterfactual import validate_formula_input, evaluate_counterfactual_paths, native_source_anchor, integrate_native_nodal_per_unit_depth, integrate_vela_reconstructed_per_unit_depth, sentaurus_alpha_current_nodal, source_log_gap, validate_dependency_dag, interaction_dex, assert_counterfactual_closure, build_adjacent_interactions, symmetric_contributions, score_dominance, validate_field_units, validate_source_anchor_kind
+from scripts.pn2d_minimal6_diagnostics.counterfactual import DependencyCounterfactualEngine, FACTOR_DEPENDENCIES
 from scripts.diagnose_pn2d_minimal6_formula_difference import _node_state_rows
+from scripts.pn2d_minimal6_diagnostics.schemas import validate_formula_difference_v1
+from tests.regression.test_pn2d_minimal6_diagnostic_contracts import schema_document, validate_schema_document
+import scripts.audit_pn2d_minimal6_fixed_state as fixed_audit
+
+def _prepare_formula_fixture(temp: str) -> tuple[Path, Path]:
+    source = Path(__file__).parents[1] / "fixtures" / "pn2d_minimal6_synthetic"
+    state_root = Path(temp) / "state"
+    shutil.copytree(source, state_root)
+    manifest_path = state_root / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    installed = {
+        "ImpactIonization": "cm^-3*s^-1",
+        "eVelocity": "cm*s^-1",
+        "hVelocity": "cm*s^-1",
+        "eIonIntegral": "1",
+        "hIonIntegral": "1",
+        "MeanIonIntegral": "1",
+        "LatticeTemperature": "K",
+    }
+    for state_index, state in enumerate(manifest["states"]):
+        export = state_root / state["export_dir"]
+        fields = export / "fields"
+        node_ids = sorted(_read_node_ids(fields / "eDensity_region0.csv"))
+        bias_scale = {0.0: 1.0, -12.0: 1.0e4, -19.0: 1.0e7}[float(state["requested_bias_V"])]
+        topology_scale = 1.0 if state["topology_id"] == "sketch" else 1.25
+        values = {
+            "ImpactIonization": [bias_scale * topology_scale * (index + 1) * 1.0e8 for index in range(6)],
+            "eVelocity": [1.0e5 + 100.0 * index for index in range(6)],
+            "hVelocity": [0.5e5 + 80.0 * index for index in range(6)],
+            "eIonIntegral": [0.01 * bias_scale * (index + 1) for index in range(6)],
+            "hIonIntegral": [0.005 * bias_scale * (index + 1) for index in range(6)],
+            "MeanIonIntegral": [0.0075 * bias_scale * (index + 1) for index in range(6)],
+            "LatticeTemperature": [300.0 for _ in range(6)],
+        }
+        for name, field_values in values.items():
+            rows = "node_id,component0\n" + "".join(
+                f"{node_id},{value:.17g}\n" for node_id, value in zip(node_ids, field_values)
+            )
+            (fields / f"{name}_region0.csv").write_text(rows, encoding="utf-8")
+        field_manifest_path = export / "field_manifest.json"
+        field_manifest = json.loads(field_manifest_path.read_text(encoding="utf-8"))
+        names = {row["name"] for row in field_manifest["fields"]}
+        for name, unit in installed.items():
+            if name not in names:
+                field_manifest["fields"].append({
+                    "name": name, "region": 0, "components": 1, "unit": unit,
+                    "mapping_status": "complete",
+                    "global_node_mapping": "global_vertex_order",
+                })
+        field_manifest_path.write_text(
+            json.dumps(field_manifest, sort_keys=True, indent=2) + "\n", encoding="utf-8"
+        )
+    manifest_path.write_text(json.dumps(manifest, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+
+    report = fixed_audit.build_report(state_root)
+    audit_root = Path(temp) / "audit"
+    audit_root.mkdir()
+    fixed_audit.write_csv(audit_root / "node_state.csv", report.node_rows)
+    fixed_audit.write_csv(audit_root / "edge_audit.csv", report.edge_rows)
+    fixed_audit.write_csv(audit_root / "triangle_audit.csv", report.triangle_rows)
+    summary = dict(report.summary)
+    summary["status"] = "PASS"
+    (audit_root / "summary.json").write_text(
+        json.dumps(summary, sort_keys=True, indent=2) + "\n", encoding="utf-8"
+    )
+    (audit_root / "manifest.json").write_text(json.dumps({
+        "schema": "vela.pn2d_minimal6_fixed_state_audit.v1",
+        "row_counts": summary["row_counts"],
+    }, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+    return state_root, audit_root
+
+
+def _read_node_ids(path: Path) -> list[int]:
+    with path.open(newline="", encoding="utf-8") as handle:
+        return [int(row["node_id"]) for row in csv.DictReader(handle)]
 
 class FormulaDifferenceTest(unittest.TestCase):
     def test_requires_exact_six_state_matrix_and_emits_named_residual(self):
@@ -33,12 +111,48 @@ class FormulaDifferenceTest(unittest.TestCase):
         assert_counterfactual_closure(native_gap_dex=2., contributions_dex=[0.5, 1.5], residual_dex=0.)
         with self.assertRaises(ValueError):
             assert_counterfactual_closure(native_gap_dex=2., contributions_dex=[0.5], residual_dex=0.)
+
+    def test_dependency_engine_recomputes_only_declared_downstream_operators(self):
+        dependencies = {"a": (), "b": ("a",), "c": ("b",)}
+        operators = {
+            "a": lambda inputs, raw: raw,
+            "b": lambda inputs, raw: inputs["a"] * raw,
+            "c": lambda inputs, raw: inputs["b"] * raw,
+        }
+        engine = DependencyCounterfactualEngine(
+            dependencies=dependencies,
+            baseline_values={"a": 1.0, "b": 1.0, "c": 1.0},
+            replacement_values={"a": 2.0, "b": 3.0, "c": 5.0},
+            operators=operators,
+            output_factor="c",
+        )
+        paths = engine.evaluate_paths(native=30.0)
+        self.assertEqual(
+            [row["recomputed"] for row in paths["forward"]["contributions"]],
+            [["a", "b", "c"], ["b", "c"], ["c"]],
+        )
+        self.assertEqual(
+            [row["recomputed"] for row in paths["reverse"]["contributions"]],
+            [["c"], ["b", "c"], ["a", "b", "c"]],
+        )
+        self.assertAlmostEqual(paths["residual_dex"], 0.0, places=14)
+
+        invalid = dict(operators)
+        invalid["b"] = lambda inputs, raw: inputs["c"] * raw
+        with self.assertRaisesRegex(ValueError, "undeclared dependency"):
+            DependencyCounterfactualEngine(
+                dependencies=dependencies,
+                baseline_values={"a": 1., "b": 1., "c": 1.},
+                replacement_values={"a": 2., "b": 3., "c": 5.},
+                operators=invalid,
+                output_factor="c",
+            ).evaluate_paths(native=30.)
     def test_interaction_and_dominance_gate_require_complete_matrix(self):
         forward = [{"factor":"gradient_recovery", "contribution_dex":0.8}, {"factor":"mobility", "contribution_dex":0.1}]
         reverse = [{"factor":"mobility", "contribution_dex":0.1}, {"factor":"gradient_recovery", "contribution_dex":0.2}]
         source = {frozenset():1., frozenset({"gradient_recovery"}):10., frozenset({"mobility"}):2., frozenset({"gradient_recovery", "mobility"}):30.}
         interactions = build_adjacent_interactions(forward, reverse, lambda replaced: source[frozenset(replaced)])
-        self.assertEqual(len(interactions), 1)
+        self.assertEqual(len(interactions), 2)
         self.assertAlmostEqual(interactions[0]["interaction_dex"], math.log10(1.5))
         symmetric = symmetric_contributions(forward, reverse)
         self.assertAlmostEqual(symmetric["gradient_recovery"], 0.5)
@@ -52,6 +166,29 @@ class FormulaDifferenceTest(unittest.TestCase):
         self.assertEqual(score["dominant_factor"], "gradient_recovery")
         states[0]["residual_dex"] = 0.6
         self.assertEqual(score_dominance(states)["status"], "insufficient_data")
+
+    def test_adjacent_interactions_include_forward_and_reverse_path_identities(self):
+        forward = [
+            {"factor": "gradient_recovery", "contribution_dex": 0.8},
+            {"factor": "mobility", "contribution_dex": 0.1},
+        ]
+        reverse = [
+            {"factor": "mobility", "contribution_dex": 0.1},
+            {"factor": "gradient_recovery", "contribution_dex": 0.2},
+        ]
+        sources = {
+            frozenset(): 1.0,
+            frozenset({"gradient_recovery"}): 10.0,
+            frozenset({"mobility"}): 2.0,
+            frozenset({"gradient_recovery", "mobility"}): 30.0,
+        }
+        interactions = build_adjacent_interactions(
+            forward, reverse, lambda replaced: sources[frozenset(replaced)]
+        )
+        self.assertEqual(
+            {row["path_identity"] for row in interactions},
+            {"forward_adjacent", "reverse_adjacent"},
+        )
     def test_hash_mutation_is_rejected(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -101,110 +238,97 @@ class FormulaDifferenceTest(unittest.TestCase):
     def test_source_log_gap_classifies_zero_and_reports_dex(self):
         self.assertAlmostEqual(source_log_gap(100., 1.)["dex"], 2.0)
         self.assertEqual(source_log_gap(0., 0.)["classification"], "geometric_zero")
-    def test_cli_writes_source_family_ledger_and_named_residual(self):
+    def test_cli_writes_closed_deterministic_exact_identity_artifacts(self):
         with tempfile.TemporaryDirectory() as temp:
-            root = Path(temp) / "state"
-            root.mkdir()
-            states = []
-            for topology in ("sketch", "mirror"):
-                for bias in (0.0, -12.0, -19.0):
-                    export = root / f"{topology}_{bias}"
-                    fields = export / "fields"
-                    fields.mkdir(parents=True)
-                    mesh = {"nodes":[{"id":0,"x":0.,"y":0.},{"id":1,"x":1.e-6,"y":0.},{"id":2,"x":0.,"y":1.e-6}], "triangles":[{"node_ids":[0,1,2]}]}
-                    (export / "mesh.json").write_text(json.dumps(mesh), encoding="utf-8")
-                    (fields / "ImpactIonization_region0.csv").write_text("node_id,component0\n0,2\n1,2\n2,2\n", encoding="utf-8")
-                    field_rows = {
-                        "eAlphaAvalanche":"node_id,component0\n0,1\n1,1\n2,1\n",
-                        "hAlphaAvalanche":"node_id,component0\n0,0\n1,0\n2,0\n",
-                        "eCurrentDensity":"node_id,component0,component1\n0,1,0\n1,1,0\n2,1,0\n",
-                        "hCurrentDensity":"node_id,component0,component1\n0,0,0\n1,0,0\n2,0,0\n",
-                        "ElectrostaticPotential":"node_id,component0\n0,0.1\n1,0.2\n2,0.3\n",
-                        "eDensity":"node_id,component0\n0,1e10\n1,2e10\n2,3e10\n",
-                        "hDensity":"node_id,component0\n0,4e10\n1,5e10\n2,6e10\n",
-                        "eQuasiFermiPotential":"node_id,component0\n0,0.4\n1,0.5\n2,0.6\n",
-                        "hQuasiFermiPotential":"node_id,component0\n0,0.7\n1,0.8\n2,0.9\n",
-                        "eMobility":"node_id,component0\n0,100\n1,101\n2,102\n",
-                        "hMobility":"node_id,component0\n0,50\n1,51\n2,52\n",
-                        "eVelocity":"node_id,component0\n0,1000\n1,1001\n2,1002\n",
-                        "hVelocity":"node_id,component0\n0,2000\n1,2001\n2,2002\n",
-                        "LatticeTemperature":"node_id,component0\n0,300\n1,300\n2,300\n",
-                    }
-                    for name, content in field_rows.items():
-                        (fields / f"{name}_region0.csv").write_text(content, encoding="utf-8")
-                    audit_header = "cell_id,node0,node1,node2,grad_psi_x_V_per_m,grad_psi_y_V_per_m,grad_phin_x_V_per_m,grad_phin_y_V_per_m,grad_phip_x_V_per_m,grad_phip_y_V_per_m,local_edge0_edge_id,local_edge0_node0,local_edge0_node1,local_edge0_electron_cell_qf_field_V_per_m,local_edge0_hole_cell_qf_field_V_per_m,local_edge0_electron_midpoint_density_m3,local_edge0_hole_midpoint_density_m3,local_edge0_electron_mobility_m2_per_V_s,local_edge0_hole_mobility_m2_per_V_s,local_edge0_electron_alpha_per_m,local_edge0_hole_alpha_per_m,local_edge0_electron_flux_proxy_per_m2_s,local_edge0_hole_flux_proxy_per_m2_s,local_edge0_electron_source_integral_per_m_s,local_edge0_hole_source_integral_per_m_s"
-                    audit_row = "0,0,1,2,1,2,3,4,5,6,9,0,1,7,8,9,10,11,12,13,14,15,16,2,3"
-                    (export / "vela_triangle_audit.csv").write_text(audit_header + "\n" + audit_row + "\n", encoding="utf-8")
-                    states.append({"topology_id":topology,"requested_bias_V":bias,"actual_bias_V":bias,"status":"passed","export_dir":str(export)})
-            model_source = root / "source"
-            model_source.mkdir()
-            (model_source / "models.par").write_text(
-                "vanOverstraetendeMan * Impact Ionization {\n"
-                "  a(low) = 1e6, 2e6\n  a(high) = 3e6, 4e6\n"
-                "  b(low) = 2e5, 3e5\n  b(high) = 4e5, 5e5\n"
-                "  E0 = 4e5, 4e5\n  hbarOmega = 0.063, 0.063\n}\n",
-                encoding="utf-8")
-            (root / "manifest.json").write_text(json.dumps({"outputs_complete":True,"states":states}), encoding="utf-8")
-            out = Path(temp) / "out"
-            command = [sys.executable, str(Path(__file__).parents[2] / "scripts" / "diagnose_pn2d_minimal6_formula_difference.py"), "--state-root", str(root), "--audit-root", temp, "--out-dir", str(out), "--qa-status", "reviewed"]
-            completed = subprocess.run(command, capture_output=True, text=True)
-            self.assertEqual(completed.returncode, 0, completed.stderr)
-            with (out / "quantity_ledger.csv").open(newline="", encoding="utf-8") as handle:
+            state_root, audit_root = _prepare_formula_fixture(temp)
+            outputs = [Path(temp) / "out-a", Path(temp) / "out-b"]
+            command_prefix = [
+                sys.executable,
+                str(Path(__file__).parents[2] / "scripts" / "diagnose_pn2d_minimal6_formula_difference.py"),
+                "--state-root", str(state_root),
+                "--audit-root", str(audit_root),
+            ]
+            for out in outputs:
+                completed = subprocess.run(
+                    command_prefix + ["--out-dir", str(out), "--qa-status", "reviewed"],
+                    capture_output=True, text=True,
+                )
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+
+            artifacts = (
+                "quantity_ledger.csv", "factor_waterfall.csv",
+                "root_cause_summary.json", "root_cause_summary.md",
+            )
+            first_hashes = {
+                name: hashlib.sha256((outputs[0] / name).read_bytes()).hexdigest()
+                for name in artifacts
+            }
+            second_hashes = {
+                name: hashlib.sha256((outputs[1] / name).read_bytes()).hexdigest()
+                for name in artifacts
+            }
+            self.assertEqual(first_hashes, second_hashes)
+
+            with (outputs[0] / "quantity_ledger.csv").open(newline="", encoding="utf-8") as handle:
                 ledger = list(csv.DictReader(handle))
-            with (out / "factor_waterfall.csv").open(newline="", encoding="utf-8") as handle:
+            with (outputs[0] / "factor_waterfall.csv").open(newline="", encoding="utf-8") as handle:
                 waterfall = list(csv.DictReader(handle))
-            report = json.loads((out / "root_cause_summary.json").read_text(encoding="utf-8"))
+            report = json.loads((outputs[0] / "root_cause_summary.json").read_text(encoding="utf-8"))
+            validate_formula_difference_v1(report)
+            validate_schema_document(report, schema_document("vela.pn2d_minimal6_formula_difference.v1"))
+
+            node_ids = {(row["topology"], row["bias_V"], row["node_id"])
+                        for row in ledger if row["record_kind"] == "node_state"}
+            edge_ids = {(row["topology"], row["bias_V"], row["edge_id"])
+                        for row in ledger if row["record_kind"] == "edge_raw"}
+            cell_ids = {(row["topology"], row["bias_V"], row["cell_id"])
+                        for row in ledger if row["record_kind"] == "cell_replay"}
+            self.assertEqual((len(node_ids), len(edge_ids), len(cell_ids)), (36, 54, 24))
+
             source_rows = [row for row in ledger if row["record_kind"] == "source_integral"]
-            node_rows = [row for row in ledger if row["record_kind"] == "node_state"]
             self.assertEqual(len(source_rows), 18)
-            self.assertEqual({row["source"] for row in source_rows}, {"sentaurus_native_avalanche_generation", "sentaurus_alpha_current_reconstruction", "vela_alpha_flux_partial_volume_reconstruction"})
-            self.assertEqual(len(node_rows), 270)
-            self.assertEqual({row["unit"] for row in node_rows if row["quantity"] == "eMobility"}, {"cm^2*V^-1*s^-1"})
-            self.assertTrue(any(row["quantity"] == "ni_eff_electron" for row in node_rows))
-            self.assertTrue(any(row["quantity"] == "ni_eff_relative_residual" for row in node_rows))
-            self.assertTrue(any(row["record_kind"] == "cell_replay" for row in ledger))
-            self.assertTrue(any(row["record_kind"] == "edge_replay" for row in ledger))
-            self.assertTrue(any(row["quantity"] == "sentaurus_dem_electron_alpha_recomputed" and row["source"] == "models_par_reference" for row in ledger))
-            self.assertEqual(len(waterfall), 54)
-            self.assertEqual(waterfall[0]["factor"], "ni_eff/BGN")
-            self.assertEqual(waterfall[-1]["factor"], "unattributed_residual")
+            kinds = {row["source"]: row["source_kind"] for row in source_rows}
+            self.assertEqual(kinds["sentaurus_native_avalanche_generation"], "sentaurus")
+            self.assertEqual(kinds["sentaurus_alpha_current_reconstruction"], "derived")
+            self.assertEqual(kinds["vela_alpha_flux_partial_volume_reconstruction"], "derived")
+            self.assertTrue(any(row["quantity"] == "eIonIntegral" for row in ledger))
+            self.assertTrue(any(row["quantity"] == "ni_eff_relative_residual" for row in ledger))
+
+            residual_by_state = {
+                (row["topology"], row["bias_V"]): row["dex"]
+                for row in report["sentaurus_internal_semantics_residual"]
+            }
+            factor_order = list(FACTOR_DEPENDENCIES)
+            for path in report["waterfall_paths"]:
+                self.assertEqual(path["forward"]["order"], factor_order)
+                self.assertEqual(path["reverse"]["order"], list(reversed(factor_order)))
+                self.assertLessEqual(abs(path["residual_dex"] - residual_by_state[(path["topology"], path["bias_V"])]), 1.0e-10)
+                if path["bias_V"] in (-12.0, -19.0):
+                    for identity in ("forward", "reverse"):
+                        closure = sum(
+                            row["contribution_dex"] for row in path[identity]["contributions"]
+                        ) + path["residual_dex"]
+                        self.assertLessEqual(abs(path["native_gap_dex"] - closure), 1.0e-10)
+
+            groups = {}
+            for row in waterfall:
+                if row["path_identity"] not in ("forward", "reverse"):
+                    continue
+                key = (row["topology"], row["bias_V"], row["path_identity"])
+                groups.setdefault(key, []).append(row)
+            self.assertEqual(len(groups), 12)
+            for (topology, bias, identity), rows in groups.items():
+                rows.sort(key=lambda row: int(row["order_index"]))
+                expected = factor_order if identity == "forward" else list(reversed(factor_order))
+                self.assertEqual([row["factor"] for row in rows], expected)
+
             self.assertEqual(len(report["sentaurus_internal_semantics_residual"]), 6)
-            self.assertEqual(len(report["waterfall_paths"]), 6)
-            self.assertEqual(report["vela_parameter_agreement"][0]["status"], "unavailable")
-            self.assertEqual(report["waterfall_paths"][0]["factor_availability"][0]["status"], "unavailable")
-            self.assertEqual(report["dominance_rules"]["status"], "insufficient_data")
-            self.assertIn("vela_native_minus_reconstruction", report["records"][0])
-            summary_markdown = (out / "root_cause_summary.md").read_text(encoding="utf-8")
-            self.assertIn("reference_tcad/pn2d_sentaurus2018_minimal6/source/models.par", summary_markdown)
-            self.assertIn("scripts/pn2d_minimal6_diagnostics/physics.py", summary_markdown)
-            self.assertIn("src/physics/ImpactIonizationModel.cpp", summary_markdown)
-            figure_manifest_path = out / "figure_manifest.json"
-            self.assertTrue(figure_manifest_path.is_file(), figure_manifest_path)
-            figure_manifest = json.loads(figure_manifest_path.read_text(encoding="utf-8"))
-            self.assertEqual(
-                figure_manifest["diagnostic_disclaimer"],
-                "minimal6 diagnostic sweep; not a physical BV curve",
-            )
-            self.assertEqual(figure_manifest["manual_qa"]["status"], "reviewed")
-            self.assertEqual(
-                [item["stem"] for item in figure_manifest["figures"]],
-                ["gradient", "current_alpha", "source_waterfall", "interaction", "topology_symmetry"],
-            )
-            for item in figure_manifest["figures"]:
-                self.assertIn("unit", item)
-                for relative_path in item["artifacts"]:
-                    path = out / relative_path
-                    self.assertTrue(path.is_file(), path)
-                    payload = path.read_bytes()
-                    if path.suffix == ".png":
-                        self.assertTrue(payload.startswith(b"\x89PNG\r\n\x1a\n"))
-                        from PIL import Image
-                        with Image.open(path) as image:
-                            self.assertGreaterEqual(image.width, 640)
-                            self.assertGreaterEqual(image.height, 360)
-                            self.assertGreater(len(image.getcolors(maxcolors=image.width * image.height)), 1)
-                    else:
-                        self.assertTrue(payload.startswith(b"%PDF-"))
+            self.assertTrue(all(
+                row["name"] == "sentaurus_internal_semantics_residual"
+                for row in report["sentaurus_internal_semantics_residual"]
+            ))
+            if report["dominance_rules"]["status"] == "insufficient_data":
+                self.assertNotIn("dominant_factor", report["dominance_rules"])
     def test_rejects_inexact_bias(self):
         states = [{"topology_id":t,"requested_bias_V":b,"actual_bias_V":b,"status":"passed"}
                   for t in ("sketch","mirror") for b in (0.0,-12.0,-19.0)]

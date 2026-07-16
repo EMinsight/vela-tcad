@@ -49,6 +49,133 @@ def validate_dependency_dag(dependencies: Mapping[str, Iterable[str]]) -> list[s
     return order
 
 
+class _DeclaredInputs(Mapping[str, float]):
+    def __init__(self, factor: str, allowed: tuple[str, ...], values: Mapping[str, float]):
+        self._factor = factor
+        self._allowed = allowed
+        self._values = values
+
+    def __getitem__(self, name: str) -> float:
+        if name not in self._allowed:
+            raise ValueError(f"{self._factor} accessed undeclared dependency {name}")
+        return self._values[name]
+
+    def __iter__(self):
+        return iter(self._allowed)
+
+    def __len__(self) -> int:
+        return len(self._allowed)
+
+
+class DependencyCounterfactualEngine:
+    """Replay one named operator replacement through its declared DAG dependents."""
+
+    def __init__(self, *, dependencies, baseline_values, replacement_values,
+                 operators, output_factor):
+        self.dependencies = {name: tuple(parents) for name, parents in dependencies.items()}
+        self.order = validate_dependency_dag(self.dependencies)
+        names = set(self.dependencies)
+        for label, values in (("baseline", baseline_values),
+                              ("replacement", replacement_values),
+                              ("operator", operators)):
+            if set(values) != names:
+                raise ValueError(f"{label} values must cover exactly the declared operators")
+        if output_factor not in names:
+            raise ValueError("output factor is not declared")
+        self.baseline_values = {name: float(value) for name, value in baseline_values.items()}
+        self.replacement_values = {name: float(value) for name, value in replacement_values.items()}
+        if any(not math.isfinite(value) for value in (*self.baseline_values.values(), *self.replacement_values.values())):
+            raise ValueError("counterfactual operator values must be finite")
+        self.operators = dict(operators)
+        self.output_factor = output_factor
+        self.downstream = {}
+        for changed in self.order:
+            affected = {changed}
+            for name in self.order:
+                if any(parent in affected for parent in self.dependencies[name]):
+                    affected.add(name)
+            self.downstream[changed] = tuple(name for name in self.order if name in affected)
+
+    def _compute(self, name: str, replaced: set[str], cache: dict[str, float]) -> float:
+        raw = self.replacement_values[name] if name in replaced else self.baseline_values[name]
+        inputs = _DeclaredInputs(name, self.dependencies[name], cache)
+        value = float(self.operators[name](inputs, raw))
+        if not math.isfinite(value):
+            raise ValueError(f"operator {name} produced a non-finite result")
+        return value
+
+    def _full(self, replaced: set[str]) -> dict[str, float]:
+        unknown = set(replaced) - set(self.dependencies)
+        if unknown:
+            raise ValueError(f"undeclared replacement operators: {sorted(unknown)}")
+        cache = {}
+        for name in self.order:
+            cache[name] = self._compute(name, replaced, cache)
+        return cache
+
+    def _advance(self, replaced: set[str], cache: dict[str, float], changed: str):
+        recomputed = self.downstream[changed]
+        updated = dict(cache)
+        for name in recomputed:
+            updated[name] = self._compute(name, replaced, updated)
+        return updated, list(recomputed)
+
+    def evaluate_replacements(self, replaced: set[str]) -> float:
+        value = self._full(set(replaced))[self.output_factor]
+        if value <= 0.0:
+            raise ValueError("counterfactual output must be positive")
+        return value
+
+    def _path(self, sequence: Iterable[str]) -> dict:
+        sequence = list(sequence)
+        replaced: set[str] = set()
+        cache = self._full(replaced)
+        current = cache[self.output_factor]
+        if current <= 0.0:
+            raise ValueError("counterfactual baseline must be positive")
+        contributions = []
+        for name in sequence:
+            if name in replaced:
+                raise ValueError(f"operator {name} was replaced more than once")
+            replaced.add(name)
+            cache, recomputed = self._advance(replaced, cache, name)
+            next_value = cache[self.output_factor]
+            if next_value <= 0.0:
+                raise ValueError("counterfactual output must be positive")
+            contributions.append({
+                "factor": name,
+                "contribution_dex": math.log10(next_value / current),
+                "recomputed": recomputed,
+            })
+            current = next_value
+        return {"order": sequence, "contributions": contributions, "result": current}
+
+    def evaluate_paths(self, *, native: float) -> dict:
+        native = float(native)
+        baseline = self.evaluate_replacements(set())
+        if not math.isfinite(native) or native <= 0.0:
+            raise ValueError("native source must be finite and positive")
+        forward = self._path(self.order)
+        reverse = self._path(reversed(self.order))
+        native_gap = math.log10(native / baseline)
+        residual = native_gap - sum(row["contribution_dex"] for row in forward["contributions"])
+        assert_counterfactual_closure(
+            native_gap_dex=native_gap,
+            contributions_dex=(row["contribution_dex"] for row in forward["contributions"]),
+            residual_dex=residual,
+        )
+        assert_counterfactual_closure(
+            native_gap_dex=native_gap,
+            contributions_dex=(row["contribution_dex"] for row in reverse["contributions"]),
+            residual_dex=residual,
+        )
+        return {
+            "dependency_order": list(self.order),
+            "forward": forward,
+            "reverse": reverse,
+            "native_gap_dex": native_gap,
+            "residual_dex": residual,
+        }
 def evaluate_counterfactual_paths(*, native: float, baseline: float, factors: Mapping[str, float], dependencies: Mapping[str, Iterable[str]]) -> dict:
     if set(factors) != set(dependencies):
         raise ValueError("counterfactual factors and dependencies must name the same operators")
@@ -91,6 +218,19 @@ def build_adjacent_interactions(forward: list[dict], reverse: list[dict], evalua
         both = evaluate_replacements({a, b})
         result.append({
             "first_factor": a, "second_factor": b, "path_identity": "forward_adjacent",
+            "baseline": baseline, "a_only": a_only, "b_only": b_only, "both": both,
+            "interaction_dex": interaction_dex(baseline=baseline, a_only=a_only, b_only=b_only, both=both),
+        })
+    for first, second in zip(reverse, reverse[1:]):
+        a, b = first["factor"], second["factor"]
+        if max(abs(forward_by_name[a] - reverse_by_name[a]), abs(forward_by_name[b] - reverse_by_name[b])) <= threshold_dex:
+            continue
+        baseline = evaluate_replacements(set())
+        a_only = evaluate_replacements({a})
+        b_only = evaluate_replacements({b})
+        both = evaluate_replacements({a, b})
+        result.append({
+            "first_factor": a, "second_factor": b, "path_identity": "reverse_adjacent",
             "baseline": baseline, "a_only": a_only, "b_only": b_only, "both": both,
             "interaction_dex": interaction_dex(baseline=baseline, a_only=a_only, b_only=b_only, both=both),
         })

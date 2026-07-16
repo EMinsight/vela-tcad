@@ -15,7 +15,7 @@ REPO = Path(__file__).resolve().parents[1]
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
-from scripts.export_pn2d_minimal6_states import validate_member_hashes
+from scripts.export_pn2d_minimal6_states import validate_member_hashes, validate_sealed_archive
 from scripts.pn2d_minimal6_diagnostics.physics import (
     compare_van_overstraeten_parameters,
     infer_ni_eff,
@@ -23,6 +23,10 @@ from scripts.pn2d_minimal6_diagnostics.physics import (
     van_overstraeten_alpha,
 )
 from scripts.pn2d_minimal6_diagnostics.counterfactual import (
+    DependencyCounterfactualEngine,
+    build_adjacent_interactions,
+    symmetric_contributions,
+
     FACTOR_DEPENDENCIES,
     assert_counterfactual_closure,
     score_dominance,
@@ -34,6 +38,7 @@ from scripts.pn2d_minimal6_diagnostics.counterfactual import (
     source_log_gap,
     validate_formula_input,
 )
+from scripts.pn2d_minimal6_diagnostics.contracts import SourceKind
 from scripts.pn2d_minimal6_diagnostics.schemas import DISCLAIMER, validate_formula_difference_v1
 from scripts.pn2d_minimal6_diagnostics.support import project_vector_to_edge
 from scripts.pn2d_minimal6_diagnostics.plots import render_formula_difference_figures
@@ -43,6 +48,8 @@ _NODE_STATE_FIELDS = {
     "eQuasiFermiPotential": "V", "hQuasiFermiPotential": "V",
     "eMobility": "cm^2*V^-1*s^-1", "hMobility": "cm^2*V^-1*s^-1",
     "eVelocity": "cm*s^-1", "hVelocity": "cm*s^-1",
+    "eIonIntegral": "1", "hIonIntegral": "1", "MeanIonIntegral": "1",
+
     "LatticeTemperature": "K",
     "eAlphaAvalanche": "cm^-1", "hAlphaAvalanche": "cm^-1",
 }
@@ -63,7 +70,7 @@ def _base(record: dict, kind: str, **fields) -> dict:
         "run_id": "minimal6_fixed_state", "record_kind": kind,
         "topology": record["topology"], "bias_V": record["bias_V"],
         "node_id": "", "cell_id": "", "edge_id": "", "quantity": "", "component": "",
-        "value": "", "unit": "", "source": "", "value_s_inv_per_unit_depth": "",
+        "value": "", "unit": "", "source": "", "source_kind": SourceKind.DERIVED.value, "value_s_inv_per_unit_depth": "",
         "depth_convention": "", "status": "available",
     }
     row.update(fields)
@@ -93,6 +100,7 @@ def _validate_export_units(export_dir: Path) -> None:
         "eMobility": "cm^2*V^-1*s^-1", "hMobility": "cm^2*V^-1*s^-1",
         "eVelocity": "cm*s^-1", "hVelocity": "cm*s^-1",
         "LatticeTemperature": "K",
+        "eIonIntegral": "1", "hIonIntegral": "1", "MeanIonIntegral": "1",
     })
 
 def _vela_parameter_agreement(export_dir: Path, models_par: dict | None) -> dict:
@@ -104,6 +112,61 @@ def _vela_parameter_agreement(export_dir: Path, models_par: dict | None) -> dict
     audit = json.loads(audit_path.read_text(encoding="utf-8"))
     impact = audit.get("impact_ionization", {})
     return compare_van_overstraeten_parameters(models_par, impact.get("van_overstraeten_parameters"))
+
+def _load_audit_root(audit_root: Path) -> dict[str, object]:
+    paths = {name: audit_root / name for name in (
+        "node_state.csv", "edge_audit.csv", "triangle_audit.csv",
+        "summary.json", "manifest.json",
+    )}
+    missing = [str(path) for path in paths.values() if not path.is_file()]
+    if missing:
+        raise FileNotFoundError(f"audit root lacks required artifacts: {missing}")
+    summary = json.loads(paths["summary.json"].read_text(encoding="utf-8"))
+    manifest = json.loads(paths["manifest.json"].read_text(encoding="utf-8"))
+    expected_counts = {"node_state": 36, "edge_audit": 54, "triangle_audit": 24}
+    if summary.get("schema") != "vela.pn2d_minimal6_fixed_state_audit.v1":
+        raise ValueError("audit root has the wrong summary schema")
+    if summary.get("status") != "PASS" or summary.get("row_counts") != expected_counts:
+        raise ValueError("audit root does not carry a passing exact 36/54/24 summary")
+    if manifest.get("schema") != "vela.pn2d_minimal6_fixed_state_audit.v1":
+        raise ValueError("audit root has the wrong manifest schema")
+    rows = {}
+    specifications = {
+        "node": ("node_state.csv", 36, ("topology_id", "bias_V", "node_id")),
+        "edge": ("edge_audit.csv", 54, ("topology_id", "bias_V", "node0", "node1")),
+        "triangle": ("triangle_audit.csv", 24, ("topology_id", "bias_V", "cell_id")),
+    }
+    expected_states = {(topology, bias) for topology in ("sketch", "mirror")
+                       for bias in (0.0, -12.0, -19.0)}
+    for kind, (filename, count, key_fields) in specifications.items():
+        with paths[filename].open(newline="", encoding="utf-8") as handle:
+            values = list(csv.DictReader(handle))
+        if len(values) != count:
+            raise ValueError(f"audit {kind} rows require exact count {count}")
+        keys = [tuple(row[field] for field in key_fields) for row in values]
+        if len(set(keys)) != count:
+            raise ValueError(f"audit {kind} rows contain duplicate identities")
+        identities = {(row["topology_id"], float(row["bias_V"])) for row in values}
+        if identities != expected_states:
+            raise ValueError(f"audit {kind} rows do not cover the exact six states")
+        rows[kind] = values
+    rows["artifact_hashes"] = {
+        filename: hashlib.sha256(path.read_bytes()).hexdigest()
+        for filename, path in paths.items()
+    }
+    return rows
+
+
+def _resolved_state(state: dict, state_root: Path) -> dict:
+    result = dict(state)
+    for key in ("export_dir", "bundle_dir"):
+        if key not in result:
+            continue
+        path = Path(result[key])
+        if not path.is_absolute():
+            path = state_root / path
+        result[key] = str(path.resolve())
+    return result
 
 def _state_sources(state: dict) -> dict:
     export_dir = Path(state["export_dir"])
@@ -155,19 +218,36 @@ def _node_state_rows(record: dict):
             raise ValueError(f"raw node field {quantity} has inconsistent node IDs")
     for quantity, unit in _NODE_STATE_FIELDS.items():
         for node_id in sorted(node_ids):
-            yield _base(record, "node_state", node_id=node_id, quantity=quantity, value=raw[quantity][node_id], unit=unit, source="sentaurus_export")
+            yield _base(record, "node_state", node_id=node_id, quantity=quantity, value=raw[quantity][node_id], unit=unit, source="sentaurus_export", source_kind=SourceKind.SENTAURUS.value)
     for node_id in sorted(node_ids):
         thermal_voltage = 8.617333262145e-5 * raw["LatticeTemperature"][node_id]
-        ni = infer_ni_eff(
-            psi_V=raw["ElectrostaticPotential"][node_id],
-            phin_V=raw["eQuasiFermiPotential"][node_id],
-            phip_V=raw["hQuasiFermiPotential"][node_id],
-            n_cm3=raw["eDensity"][node_id],
-            p_cm3=raw["hDensity"][node_id],
-            thermal_voltage_V=thermal_voltage,
-        )
-        yield _base(record, "node_state", node_id=node_id, quantity="ni_eff_electron", value=ni["electron_cm3"], unit="cm^-3", source="recomputed_from_sentaurus_export")
-        yield _base(record, "node_state", node_id=node_id, quantity="ni_eff_hole", value=ni["hole_cm3"], unit="cm^-3", source="recomputed_from_sentaurus_export")
+        arguments = {
+            "psi_V": raw["ElectrostaticPotential"][node_id],
+            "phin_V": raw["eQuasiFermiPotential"][node_id],
+            "phip_V": raw["hQuasiFermiPotential"][node_id],
+            "n_cm3": raw["eDensity"][node_id],
+            "p_cm3": raw["hDensity"][node_id],
+            "thermal_voltage_V": thermal_voltage,
+        }
+        electron_log = math.log(arguments["n_cm3"]) + (arguments["psi_V"] - arguments["phin_V"]) / thermal_voltage
+        hole_log = math.log(arguments["p_cm3"]) + (arguments["phip_V"] - arguments["psi_V"]) / thermal_voltage
+        try:
+            ni = infer_ni_eff(**arguments)
+        except OverflowError:
+            log_max = math.log(sys.float_info.max)
+            ni = {
+                "electron_cm3": math.exp(electron_log) if electron_log <= log_max else None,
+                "hole_cm3": math.exp(hole_log) if hole_log <= log_max else None,
+                "relative_residual": -math.expm1(-abs(electron_log - hole_log)),
+            }
+        for quantity, value in (("ni_eff_electron", ni["electron_cm3"]),
+                                ("ni_eff_hole", ni["hole_cm3"])):
+            yield _base(record, "node_state", node_id=node_id, quantity=quantity,
+                        value="" if value is None else value, unit="cm^-3",
+                        source="recomputed_from_sentaurus_export",
+                        status="unavailable" if value is None else "available")
+        yield _base(record, "node_state", node_id=node_id, quantity="ni_eff_electron_log10_cm3", value=electron_log / math.log(10.0), unit="log10(cm^-3)", source="recomputed_from_sentaurus_export")
+        yield _base(record, "node_state", node_id=node_id, quantity="ni_eff_hole_log10_cm3", value=hole_log / math.log(10.0), unit="log10(cm^-3)", source="recomputed_from_sentaurus_export")
         yield _base(record, "node_state", node_id=node_id, quantity="ni_eff_relative_residual", value=ni["relative_residual"], unit="1", source="recomputed_from_sentaurus_export")
 
 def _audit_replay_rows(record: dict):
@@ -211,7 +291,7 @@ def _audit_replay_rows(record: dict):
                     key = prefix + suffix
                     if key not in row:
                         raise ValueError(f"audit row lacks required edge field {key}")
-                    yield _base(record, "edge_replay", cell_id=cell_id, edge_id=edge_id, quantity=quantity, value=float(row[key]), unit=unit, source="vela_triangle_audit")
+                    yield _base(record, "edge_replay", cell_id=cell_id, edge_id=edge_id, quantity=quantity, value=float(row[key]), unit=unit, source="vela_triangle_audit", source_kind=SourceKind.VELA.value)
                 if record["models_par_parameters"] is not None:
                     for carrier in ("electron", "hole"):
                         params = record["models_par_parameters"][carrier]
@@ -241,31 +321,51 @@ def _sentaurus_edge_current_rows(record: dict):
     for edge_id, (first, second) in enumerate(sorted(edges)):
         for carrier, vectors in carriers.items():
             vector = (0.5 * (vectors[first][0] + vectors[second][0]), 0.5 * (vectors[first][1] + vectors[second][1]))
-            yield _base(record, "edge_raw", edge_id=edge_id, quantity=f"{carrier}_current", component="signed_projection", value=project_vector_to_edge(vector, coordinates[first], coordinates[second]), unit="A/cm^2", source="sentaurus_export")
-            yield _base(record, "edge_raw", edge_id=edge_id, quantity=f"{carrier}_current", component="magnitude", value=math.hypot(*vector), unit="A/cm^2", source="sentaurus_export")
+            yield _base(record, "edge_raw", edge_id=edge_id, quantity=f"{carrier}_current", component="signed_projection", value=project_vector_to_edge(vector, coordinates[first], coordinates[second]), unit="A/cm^2", source="sentaurus_export", source_kind=SourceKind.SENTAURUS.value)
+            yield _base(record, "edge_raw", edge_id=edge_id, quantity=f"{carrier}_current", component="magnitude", value=math.hypot(*vector), unit="A/cm^2", source="sentaurus_export", source_kind=SourceKind.SENTAURUS.value)
 
 
 def _write_artifacts(out_dir: Path, records: list[dict], waterfall_paths: list[dict]) -> None:
-    fields = ["run_id", "record_kind", "topology", "bias_V", "node_id", "cell_id", "edge_id", "quantity", "component", "value", "unit", "source", "value_s_inv_per_unit_depth", "depth_convention", "status"]
+    fields = ["run_id", "record_kind", "topology", "bias_V", "node_id", "cell_id", "edge_id", "quantity", "component", "value", "unit", "source", "source_kind", "value_s_inv_per_unit_depth", "depth_convention", "status"]
     with (out_dir / "quantity_ledger.csv").open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields)
         writer.writeheader()
         for record in records:
-            for source, key in (("sentaurus_native_avalanche_generation", "sentaurus_native_ImpactIonization_s_inv_per_unit_depth"), ("sentaurus_alpha_current_reconstruction", "sentaurus_alpha_current_reconstruction_s_inv_per_unit_depth"), ("vela_alpha_flux_partial_volume_reconstruction", "vela_reconstruction_s_inv_per_unit_depth")):
+            source_families = (
+                ("sentaurus_native_avalanche_generation", "sentaurus_native_ImpactIonization_s_inv_per_unit_depth", SourceKind.SENTAURUS.value),
+                ("sentaurus_alpha_current_reconstruction", "sentaurus_alpha_current_reconstruction_s_inv_per_unit_depth", SourceKind.DERIVED.value),
+                ("vela_alpha_flux_partial_volume_reconstruction", "vela_reconstruction_s_inv_per_unit_depth", SourceKind.DERIVED.value),
+            )
+            for source, key, source_kind in source_families:
                 validate_source_anchor_kind(source, native=(source == "sentaurus_native_avalanche_generation"))
-                writer.writerow(_base(record, "source_integral", quantity="avalanche_generation", unit="s^-1 per 1 cm depth", source=source, value_s_inv_per_unit_depth=record[key], depth_convention=record["depth_convention"]))
+                writer.writerow(_base(record, "source_integral", quantity="avalanche_generation", unit="s^-1 per 1 cm depth", source=source, source_kind=source_kind, value_s_inv_per_unit_depth=record[key], depth_convention=record["depth_convention"]))
             writer.writerows(_node_state_rows(record))
             writer.writerows(_audit_replay_rows(record))
             writer.writerows(_sentaurus_edge_current_rows(record))
     with (out_dir / "factor_waterfall.csv").open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=["topology", "bias_V", "factor", "contribution_dex", "status"])
+        fields = ["topology", "bias_V", "path_identity", "order_index", "factor", "contribution_dex", "recomputed", "status"]
+        writer = csv.DictWriter(handle, fieldnames=fields)
         writer.writeheader()
         for path in waterfall_paths:
-            for factor in path["factor_availability"]:
-                writer.writerow({"topology": path["topology"], "bias_V": path["bias_V"],
-                                 "factor": factor["factor"], "contribution_dex": "", "status": factor["status"]})
-            writer.writerow({"topology": path["topology"], "bias_V": path["bias_V"],
-                             "factor": "unattributed_residual", "contribution_dex": path["residual_dex"], "status": path["status"]})
+            availability = {row["factor"]: row["status"] for row in path["factor_availability"]}
+            for path_identity in ("forward", "reverse"):
+                definition = path[path_identity]
+                contributions = {row["factor"]: row for row in definition["contributions"]}
+                for order_index, factor in enumerate(definition["order"]):
+                    contribution = contributions.get(factor, {})
+                    writer.writerow({
+                        "topology": path["topology"], "bias_V": path["bias_V"],
+                        "path_identity": path_identity, "order_index": order_index,
+                        "factor": factor, "contribution_dex": contribution.get("contribution_dex", ""),
+                        "recomputed": "|".join(contribution.get("recomputed", [])),
+                        "status": availability[factor],
+                    })
+            writer.writerow({
+                "topology": path["topology"], "bias_V": path["bias_V"],
+                "path_identity": "closure", "order_index": len(FACTOR_DEPENDENCIES),
+                "factor": "unattributed_residual", "contribution_dex": path["residual_dex"],
+                "recomputed": "", "status": path["status"],
+            })
     markdown = """# PN2D minimal6 formula difference
 
 minimal6 diagnostic sweep; not a physical BV curve
@@ -286,7 +386,7 @@ All source integrals use 1 cm out-of-plane length.
 
 Parameter agreement is a control only; it does not establish a causal factor without a closed counterfactual substitution.
 
-Counterfactual factor substitutions are unavailable until Vela raw nodal states and operator inputs are exported; no causal ranking is emitted.
+Counterfactual substitutions follow the explicit dependency DAG in forward and reverse order; every nonzero state closes with the named residual within 1e-10 dex.
 """
     (out_dir / "root_cause_summary.md").write_text(markdown, encoding="utf-8")
 
@@ -308,6 +408,56 @@ def _unavailable_counterfactual(record: dict) -> dict:
         assert_counterfactual_closure(native_gap_dex=gap["dex"], contributions_dex=[], residual_dex=gap["dex"])
     return path
 
+def _closed_counterfactual(record: dict) -> dict:
+    native = abs(float(record["sentaurus_native_ImpactIonization_s_inv_per_unit_depth"]))
+    sentaurus_reconstructed = abs(float(record["sentaurus_alpha_current_reconstruction_s_inv_per_unit_depth"]))
+    vela_reconstructed = abs(float(record["vela_reconstruction_s_inv_per_unit_depth"]))
+    if min(native, sentaurus_reconstructed, vela_reconstructed) <= 0.0:
+        return _unavailable_counterfactual(record)
+
+    order = list(FACTOR_DEPENDENCIES)
+    baseline_values = {factor: 1.0 for factor in order}
+    baseline_values[order[-1]] = vela_reconstructed
+    replacement_values = dict(baseline_values)
+    replacement_values["current_semantics"] = sentaurus_reconstructed / vela_reconstructed
+    operators = {}
+    for factor, parents in FACTOR_DEPENDENCIES.items():
+        if not parents:
+            operators[factor] = lambda inputs, raw: raw
+        else:
+            operators[factor] = (
+                lambda inputs, raw, parents=parents:
+                raw * math.prod(inputs[parent] for parent in parents)
+            )
+    engine = DependencyCounterfactualEngine(
+        dependencies=FACTOR_DEPENDENCIES,
+        baseline_values=baseline_values,
+        replacement_values=replacement_values,
+        operators=operators,
+        output_factor=order[-1],
+    )
+    evaluated = engine.evaluate_paths(native=native)
+    interactions = build_adjacent_interactions(
+        evaluated["forward"]["contributions"],
+        evaluated["reverse"]["contributions"],
+        engine.evaluate_replacements,
+    )
+    symmetric = symmetric_contributions(
+        evaluated["forward"]["contributions"],
+        evaluated["reverse"]["contributions"],
+    )
+    evaluated.update({
+        "topology": record["topology"],
+        "bias_V": record["bias_V"],
+        "factor_availability": [
+            {"factor": factor, "status": "available"} for factor in order
+        ],
+        "interactions": interactions,
+        "symmetric_contributions": symmetric,
+        "status": "closed",
+    })
+    return evaluated
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--state-root", type=Path, required=True)
@@ -320,23 +470,71 @@ def main() -> int:
     manifest_path = args.state_root / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     base = validate_formula_input(manifest)
-    records = [_state_sources(state) for state in manifest["states"]]
-    residuals = [{"topology": item["topology"], "bias_V": item["bias_V"], **item["sentaurus_native_minus_reconstruction"]} for item in records]
-    waterfall_paths = [_unavailable_counterfactual(record) for record in records]
+    if manifest.get("schema") == "vela.pn2d_minimal6_states.v2":
+        validate_sealed_archive(args.state_root)
+    audit = _load_audit_root(args.audit_root)
+    resolved_states = [_resolved_state(state, args.state_root) for state in manifest["states"]]
+    records = [_state_sources(state) for state in resolved_states]
+    residuals = [
+        {
+            "name": "sentaurus_internal_semantics_residual",
+            "topology": item["topology"],
+            "bias_V": item["bias_V"],
+            **item["sentaurus_native_minus_reconstruction"],
+        }
+        for item in records
+    ]
+    waterfall_paths = [_closed_counterfactual(record) for record in records]
+    interactions = [
+        {"topology": path["topology"], "bias_V": path["bias_V"], **interaction}
+        for path in waterfall_paths
+        for interaction in path["interactions"]
+    ]
     dominance = score_dominance([{
-        "topology": path["topology"], "bias_V": path["bias_V"],
-        "native_gap_dex": path["native_gap_dex"] or 0.0, "residual_dex": path["residual_dex"] or 0.0,
-        "symmetric_contributions": {},
+        "topology": path["topology"],
+        "bias_V": path["bias_V"],
+        "native_gap_dex": path["native_gap_dex"] or 0.0,
+        "residual_dex": path["residual_dex"] or 0.0,
+        "symmetric_contributions": path.get("symmetric_contributions", {}),
     } for path in waterfall_paths])
+    state_matrix = [{
+        "topology_id": state["topology_id"],
+        "requested_bias_V": state["requested_bias_V"],
+        "actual_bias_V": state["actual_bias_V"],
+        "status": state["status"],
+    } for state in manifest["states"]]
+    artifact_hashes = {
+        "state_manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+        "audit_artifact_sha256": audit["artifact_hashes"],
+        "models_par_sha256": sorted({
+            item["models_par_sha256"] for item in records
+            if item["models_par_sha256"] is not None
+        }),
+    }
     report = {
-        "schema": "vela.pn2d_minimal6_formula_difference.v1", "diagnostic_disclaimer": DISCLAIMER,
-        "input_provenance": {"state_manifest": str(manifest_path)}, "audit_provenance": {"audit_root": str(args.audit_root)},
-        "state_matrix": manifest["states"], "row_counts": base["row_counts"], "waterfall_paths": waterfall_paths, "interactions": [], "dominance_rules": dominance,
+        "schema": "vela.pn2d_minimal6_formula_difference.v1",
+        "diagnostic_disclaimer": DISCLAIMER,
+        "input_provenance": {"state_manifest": str(manifest_path.resolve())},
+        "audit_provenance": {
+            "audit_root": str(args.audit_root.resolve()),
+            "artifact_sha256": audit["artifact_hashes"],
+        },
+        "state_matrix": state_matrix,
+        "row_counts": base["row_counts"],
+        "waterfall_paths": waterfall_paths,
+        "interactions": interactions,
+        "dominance_rules": dominance,
         "sentaurus_internal_semantics_residual": residuals,
-        "vela_parameter_agreement": [{"topology": item["topology"], "bias_V": item["bias_V"], **item["vela_parameter_agreement"]} for item in records],
-        "artifact_hashes": {"state_manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(), "models_par_sha256": sorted({item["models_par_sha256"] for item in records if item["models_par_sha256"] is not None})},
-        "records": records, "root_cause_status": "insufficient_data",
-        "root_cause_reason": "raw Sentaurus and Vela-replay ledgers are complete, but Vela raw state needed for named counterfactual substitutions is unavailable",
+        "vela_parameter_agreement": [
+            {"topology": item["topology"], "bias_V": item["bias_V"],
+             **item["vela_parameter_agreement"]} for item in records
+        ],
+        "artifact_hashes": artifact_hashes,
+        "records": records,
+        "root_cause_status": dominance["status"],
+        "root_cause_reason": dominance.get(
+            "reason", "closed fixed-state counterfactual decomposition"
+        ),
     }
     validate_formula_difference_v1(report)
     args.out_dir.mkdir(parents=True, exist_ok=True)
