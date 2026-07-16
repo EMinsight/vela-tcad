@@ -2,19 +2,40 @@
 
 ## Authoritative state recovery
 
-- Recovered run: `minimal6_states_live_20260713_v2`.
-- Manifest SHA-256: `43305a3b4b3f565d600c2ccb783af36c62ed385e0ea6aa9c13f71b3a34e370c0`.
+- Source v1 run: `minimal6_states_live_20260713_v2`.
+- Source v1 manifest SHA-256: `b44ad95d5df6d57383ba3d5b292818568e358d67f0fc0424ee72f95b673e8aaa`.
+- Sealed v2 run: `minimal6_states_v2_20260716_104019`.
+- Sealed v2 manifest SHA-256: `f519aea82717d190e33e82bcbc5ed3521a81c1d8f6883c7411ed685d88769ac0`.
 - State identity: `sketch/mirror x 0/-12/-19 V`; all six entries are passed and `outputs_complete=true`.
-- Required raw fields: `ImpactIonization` (`cm^-3*s^-1`), `eVelocity`/`hVelocity` (`cm*s^-1`), and `eIonIntegral`/`hIonIntegral`/`MeanIonIntegral` (`1`).
+- Input source: validated local recovery. Remote regeneration and SSH were not used.
+- Integrity coverage: 354 state-local raw artifacts plus the copied source manifest, for all 355 source members.
 
-The archive is read-only evidence. New exports record each state export's member SHA-256 table and reject altered members during validation.
+The v2 manifest was validated against
+`schemas/vela.pn2d_minimal6_states.v2.schema.json` before it was written.
+Every state preserves relative raw-artifact paths and SHA-256 values. The
+source v1 manifest is copied byte-for-byte as `source_manifest.json`; the
+source directory and its v1 manifest were not rewritten. Both source-manifest
+and raw-member mutation tests fail closed.
 
-A recovered-archive seal covering 355 members was generated and immediately
-verified at
-`build-release/reference_tcad/pn2d_sentaurus2018_minimal6/recovery_validation/minimal6_states_live_20260713_v2/recovery_validation.json`.
-Its SHA-256 is
-`c343539775337038848adc3a1f88b45880110d6960a3fe8ea3f3309032645f6d`,
-and its recorded manifest hash is the value above.
+The installed Sentaurus Device 2018 deck already requests
+`AvalancheGeneration`, `eVelocity`, `hVelocity`, `eIonIntegral`,
+`hIonIntegral`, and `MeanIonIntegral`. The validated raw-to-normalized
+identities are:
+
+| normalized name | raw name | components | unit | semantic role |
+|---|---|---:|---|---|
+| `sentaurus_native_avalanche_generation` | `ImpactIonization` | 1 | `cm^-3*s^-1` | `native_avalanche_generation` |
+| `sentaurus_electron_speed` | `eVelocity` | 1 | `cm*s^-1` | `carrier_speed` |
+| `sentaurus_hole_speed` | `hVelocity` | 1 | `cm*s^-1` | `carrier_speed` |
+| `sentaurus_electron_ionization_integral` | `eIonIntegral` | 1 | `1` | `path_ionization_integral` |
+| `sentaurus_hole_ionization_integral` | `hIonIntegral` | 1 | `1` | `path_ionization_integral` |
+| `sentaurus_mean_ionization_integral` | `MeanIonIntegral` | 1 | `1` | `path_ionization_integral` |
+
+The C++ fixed-state replay validated all six immutable provenance records,
+including full argv arrays and executable/config/input/output hashes. The
+joined audit passed with `36/54/24` node/edge/triangle rows, maximum imported
+state parity `0.0` (gate `<1e-12`), and maximum C++/Python formula error
+`1.79954895429546e-12` (gate `<5e-12`).
 
 ## Scope
 

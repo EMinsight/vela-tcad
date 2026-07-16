@@ -10,6 +10,7 @@ import json
 import math
 import os
 import re
+import shutil
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -36,6 +37,41 @@ from scripts.sentaurus_import import parse_quoted_list, parse_values_block  # no
 
 
 SCHEMA = "vela.pn2d_minimal6_states.v1"
+V2_SCHEMA = "vela.pn2d_minimal6_states.v2"
+V2_SCHEMA_PATH = REPO / "schemas" / "vela.pn2d_minimal6_states.v2.schema.json"
+V2_FIELD_CONTRACT = (
+    ("sentaurus_electrostatic_potential", "ElectrostaticPotential", 1, "V",
+     "electrostatic_potential"),
+    ("sentaurus_electron_quasi_fermi_potential", "eQuasiFermiPotential", 1, "V",
+     "carrier_quasi_fermi_potential"),
+    ("sentaurus_hole_quasi_fermi_potential", "hQuasiFermiPotential", 1, "V",
+     "carrier_quasi_fermi_potential"),
+    ("sentaurus_electron_density", "eDensity", 1, "cm^-3", "carrier_density"),
+    ("sentaurus_hole_density", "hDensity", 1, "cm^-3", "carrier_density"),
+    ("sentaurus_electric_field", "ElectricField", 2, "V*cm^-1", "electric_field"),
+    ("sentaurus_electron_current_density", "eCurrentDensity", 2, "A*cm^-2",
+     "carrier_current_density"),
+    ("sentaurus_hole_current_density", "hCurrentDensity", 2, "A*cm^-2",
+     "carrier_current_density"),
+    ("sentaurus_electron_mobility", "eMobility", 1, "cm^2*V^-1*s^-1",
+     "carrier_mobility"),
+    ("sentaurus_hole_mobility", "hMobility", 1, "cm^2*V^-1*s^-1",
+     "carrier_mobility"),
+    ("sentaurus_electron_avalanche_coefficient", "eAlphaAvalanche", 1, "cm^-1",
+     "impact_ionization_coefficient"),
+    ("sentaurus_hole_avalanche_coefficient", "hAlphaAvalanche", 1, "cm^-1",
+     "impact_ionization_coefficient"),
+    ("sentaurus_native_avalanche_generation", "ImpactIonization", 1,
+     "cm^-3*s^-1", "native_avalanche_generation"),
+    ("sentaurus_electron_speed", "eVelocity", 1, "cm*s^-1", "carrier_speed"),
+    ("sentaurus_hole_speed", "hVelocity", 1, "cm*s^-1", "carrier_speed"),
+    ("sentaurus_electron_ionization_integral", "eIonIntegral", 1, "1",
+     "path_ionization_integral"),
+    ("sentaurus_hole_ionization_integral", "hIonIntegral", 1, "1",
+     "path_ionization_integral"),
+    ("sentaurus_mean_ionization_integral", "MeanIonIntegral", 1, "1",
+     "path_ionization_integral"),
+)
 REQUIRED_TOPOLOGIES = ("sketch", "mirror")
 REQUIRED_BIASES = (0.0, -12.0, -19.0)
 BIAS_TOLERANCE_V = 1.0e-12
@@ -177,6 +213,347 @@ def validate_field_manifest(manifest: dict[str, object]) -> dict[str, dict[str, 
             raise ValueError(f"{name} must satisfy {contract}; got {candidates}")
         selected[name] = match
     return selected
+
+
+def validate_v2_field_manifest(
+    manifest: dict[str, object],
+) -> dict[str, dict[str, object]]:
+    fields = manifest.get("fields")
+    if not isinstance(fields, list):
+        raise ValueError("field_manifest.json must contain a fields list")
+    selected: dict[str, dict[str, object]] = {}
+    raw_aliases: set[str] = set()
+    for normalized, raw, components, unit, semantic_role in V2_FIELD_CONTRACT:
+        if raw in raw_aliases:
+            raise ValueError(f"duplicate v2 raw alias in contract: {raw}")
+        raw_aliases.add(raw)
+        candidates = [
+            field for field in fields
+            if isinstance(field, dict) and field.get("name") == raw
+        ]
+        expected = {
+            "region": 0,
+            "components": components,
+            "unit": unit,
+            "mapping_status": "complete",
+            "global_node_mapping": "global_vertex_order",
+        }
+        matches = [
+            candidate for candidate in candidates
+            if all(candidate.get(key) == value for key, value in expected.items())
+        ]
+        if len(matches) > 1:
+            raise ValueError(f"duplicate alias for required field {raw}")
+        if len(matches) != 1:
+            contract = ", ".join(f"{key}={value}" for key, value in expected.items())
+            raise ValueError(f"{raw} must satisfy {contract}; got {candidates}")
+        selected[normalized] = {
+            "normalized_name": normalized,
+            "raw_name": raw,
+            "components": components,
+            "unit": unit,
+            "semantic_role": semantic_role,
+        }
+    return selected
+
+
+def _schema_error(path: str, message: str) -> None:
+    raise ValueError(f"v2 schema validation failed at {path}: {message}")
+
+
+def _validate_json_schema(instance: object, schema: dict[str, object], path: str = "$") -> None:
+    expected_type = schema.get("type")
+    type_matches = {
+        "object": isinstance(instance, dict),
+        "array": isinstance(instance, list),
+        "string": isinstance(instance, str),
+        "number": isinstance(instance, (int, float)) and not isinstance(instance, bool),
+        "integer": isinstance(instance, int) and not isinstance(instance, bool),
+        "boolean": isinstance(instance, bool),
+    }
+    if expected_type in type_matches and not type_matches[expected_type]:
+        _schema_error(path, f"expected {expected_type}")
+    if expected_type == "number" and not math.isfinite(float(instance)):
+        _schema_error(path, "number must be finite")
+    if "const" in schema and instance != schema["const"]:
+        _schema_error(path, f"expected constant {schema['const']!r}")
+    if "enum" in schema and instance not in schema["enum"]:
+        _schema_error(path, f"value {instance!r} is not in enum")
+    if isinstance(instance, str):
+        if len(instance) < int(schema.get("minLength", 0)):
+            _schema_error(path, "string is too short")
+        pattern = schema.get("pattern")
+        if isinstance(pattern, str) and re.search(pattern, instance) is None:
+            _schema_error(path, f"string does not match {pattern}")
+    if isinstance(instance, list):
+        if len(instance) < int(schema.get("minItems", 0)):
+            _schema_error(path, "array has too few items")
+        if "maxItems" in schema and len(instance) > int(schema["maxItems"]):
+            _schema_error(path, "array has too many items")
+        if schema.get("uniqueItems") is True:
+            encoded = [json.dumps(item, sort_keys=True) for item in instance]
+            if len(encoded) != len(set(encoded)):
+                _schema_error(path, "array items must be unique")
+        item_schema = schema.get("items")
+        if isinstance(item_schema, dict):
+            for index, item in enumerate(instance):
+                _validate_json_schema(item, item_schema, f"{path}[{index}]")
+    if isinstance(instance, dict):
+        required = schema.get("required", [])
+        if isinstance(required, list):
+            missing = [name for name in required if name not in instance]
+            if missing:
+                _schema_error(path, f"missing required properties {missing}")
+        properties = schema.get("properties", {})
+        if not isinstance(properties, dict):
+            _schema_error(path, "schema properties must be an object")
+        for name, value in instance.items():
+            child = properties.get(name)
+            if isinstance(child, dict):
+                _validate_json_schema(value, child, f"{path}.{name}")
+            elif schema.get("additionalProperties") is False:
+                _schema_error(path, f"unexpected property {name}")
+
+
+def _load_v2_schema() -> dict[str, object]:
+    try:
+        schema = json.loads(V2_SCHEMA_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError(f"cannot load v2 state schema: {error}") from error
+    if (
+        not isinstance(schema, dict)
+        or schema.get("$schema") != "https://json-schema.org/draft/2020-12/schema"
+        or schema.get("title") != V2_SCHEMA
+    ):
+        raise ValueError("unexpected v2 state schema document")
+    return schema
+
+
+def _expected_topology_contract(topology_id: str) -> dict[str, object]:
+    topology = load_topology(TOPOLOGY_FIXTURE, topology_id)
+    edges = {
+        tuple(sorted(edge))
+        for triangle in topology.triangles
+        for edge in (
+            (triangle[0], triangle[1]),
+            (triangle[1], triangle[2]),
+            (triangle[2], triangle[0]),
+        )
+    }
+    return {
+        "nodes": len(topology.nodes),
+        "triangles": len(topology.triangles),
+        "edges": len(edges),
+        "contact_edges": {
+            name: list(edge) for name, edge in topology.contacts.items()
+        },
+        "triangle_connectivity": [list(triangle) for triangle in topology.triangles],
+    }
+
+
+def _resolve_inside(root: Path, value: str, label: str) -> Path:
+    path = Path(value)
+    resolved = path.resolve() if path.is_absolute() else (root / path).resolve()
+    if not resolved.is_relative_to(root.resolve()):
+        raise ValueError(f"{label} escapes recovered archive root")
+    return resolved
+
+
+def _validate_recovery_states(
+    root: Path, manifest: dict[str, object]
+) -> dict[tuple[str, float], dict[str, object]]:
+    validated: dict[tuple[str, float], dict[str, object]] = {}
+    for state in manifest["states"]:
+        topology = str(state["topology_id"])
+        bias = float(state["requested_bias_V"])
+        tag = _bias_tag(bias)
+        if state.get("bias_tag") != tag:
+            raise ValueError(f"{topology} at {bias:g} V has wrong bias tag")
+        expected_topology = _expected_topology_contract(topology)
+        if state.get("topology_contract") != expected_topology:
+            raise ValueError(f"{topology} at {bias:g} V has wrong topology contract")
+        export_dir = _resolve_inside(root, str(state.get("export_dir", "")), "export_dir")
+        field_manifest = export_dir / "field_manifest.json"
+        if not field_manifest.is_file():
+            raise ValueError(f"{topology} at {bias:g} V is missing field_manifest.json")
+        try:
+            raw_fields = json.loads(field_manifest.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as error:
+            raise ValueError(f"{topology} at {bias:g} V has invalid field manifest") from error
+        fields = validate_v2_field_manifest(raw_fields)
+        state_root = (root / "states" / topology / tag).resolve()
+        if not state_root.is_dir() or not export_dir.is_relative_to(state_root):
+            raise ValueError(f"{topology} at {bias:g} V has invalid state artifact root")
+        members = collect_member_hashes(state_root)
+        if not members:
+            raise ValueError(f"{topology} at {bias:g} V has no raw artifacts")
+        validated[(topology, bias)] = {
+            "state_root": state_root,
+            "export_dir": export_dir,
+            "fields": fields,
+            "member_sha256": members,
+        }
+    return validated
+
+
+def _validate_v2_manifest_shape(manifest: dict[str, object]) -> None:
+    _validate_json_schema(manifest, _load_v2_schema())
+    validate_state_matrix(manifest["states"])
+    for state in manifest["states"]:
+        topology = str(state["topology_id"])
+        bias = float(state["requested_bias_V"])
+        if state["bias_tag"] != _bias_tag(bias):
+            raise ValueError(f"{topology} at {bias:g} V has wrong bias tag")
+        if state["topology_contract"] != _expected_topology_contract(topology):
+            raise ValueError(f"{topology} at {bias:g} V has wrong topology contract")
+        expected_fields = [
+            {
+                "normalized_name": normalized,
+                "raw_name": raw,
+                "components": components,
+                "unit": unit,
+                "semantic_role": role,
+            }
+            for normalized, raw, components, unit, role in V2_FIELD_CONTRACT
+        ]
+        if state["fields"] != expected_fields:
+            raise ValueError(f"{topology} at {bias:g} V has wrong v2 field identities")
+
+
+def seal_recovered_archive(
+    source_root: Path,
+    sealed_root: Path,
+    expected_manifest_sha256: str,
+    *,
+    run_id: str,
+    source_kind: str = "local_recovery",
+) -> dict[str, object]:
+    source_root = Path(source_root).resolve()
+    sealed_root = Path(sealed_root).resolve()
+    if source_root.parent != sealed_root.parent:
+        raise ValueError("sealed v2 archive must be a sibling of the source archive")
+    if not _SAFE_RUN_ID.fullmatch(run_id) or sealed_root.name != run_id:
+        raise ValueError("sealed v2 run ID is invalid or does not match its directory")
+    if sealed_root.exists():
+        raise FileExistsError(f"sealed v2 archive already exists: {sealed_root}")
+    source_manifest = validate_recovered_archive(source_root, expected_manifest_sha256)
+    if source_manifest.get("schema") != SCHEMA:
+        raise ValueError("recovered archive must preserve the v1 schema")
+    validated_states = _validate_recovery_states(source_root, source_manifest)
+
+    sealed_root.mkdir(parents=True)
+    shutil.copyfile(source_root / "manifest.json", sealed_root / "source_manifest.json")
+    shutil.copytree(source_root / "states", sealed_root / "states")
+    states: list[dict[str, object]] = []
+    for source_state in source_manifest["states"]:
+        topology = str(source_state["topology_id"])
+        bias = float(source_state["requested_bias_V"])
+        tag = _bias_tag(bias)
+        state_root = sealed_root / "states" / topology / tag
+        export_dir = state_root / "export"
+        fields = list(validated_states[(topology, bias)]["fields"].values())
+        raw_artifacts = [
+            {"path": path, "sha256": digest}
+            for path, digest in collect_member_hashes(state_root).items()
+        ]
+        for artifact in raw_artifacts:
+            artifact["path"] = (
+                Path("states") / topology / tag / artifact["path"]
+            ).as_posix()
+        state = {
+            "topology_id": topology,
+            "requested_bias_V": bias,
+            "actual_bias_V": float(source_state["actual_bias_V"]),
+            "bias_tag": tag,
+            "status": "passed",
+            "topology_contract": source_state["topology_contract"],
+            "export_dir": export_dir.relative_to(sealed_root).as_posix(),
+            "field_manifest": (
+                export_dir / "field_manifest.json"
+            ).relative_to(sealed_root).as_posix(),
+            "fields": fields,
+            "raw_artifacts": raw_artifacts,
+        }
+        state_csv = export_dir / "state.csv"
+        if state_csv.is_file():
+            state["state_csv"] = state_csv.relative_to(sealed_root).as_posix()
+        states.append(state)
+    manifest: dict[str, object] = {
+        "schema": V2_SCHEMA,
+        "run_id": run_id,
+        "source_kind": source_kind,
+        "source_schema": SCHEMA,
+        "source_run_id": str(source_manifest.get("run_id", "")),
+        "source_manifest_path": "source_manifest.json",
+        "source_manifest_sha256": expected_manifest_sha256.lower(),
+        "bias_tolerance_V": BIAS_TOLERANCE_V,
+        "outputs_complete": True,
+        "states": states,
+    }
+    if "task4_provenance" in source_manifest:
+        manifest["audit_provenance"] = source_manifest["task4_provenance"]
+    _validate_v2_manifest_shape(manifest)
+    write_manifest(sealed_root / "manifest.json", manifest)
+    return validate_sealed_archive(sealed_root)
+
+
+def validate_sealed_archive(root: Path) -> dict[str, object]:
+    root = Path(root).resolve()
+    manifest_path = root / "manifest.json"
+    if not manifest_path.is_file():
+        raise ValueError("sealed archive is missing manifest.json")
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as error:
+        raise ValueError("sealed archive manifest is invalid JSON") from error
+    _validate_v2_manifest_shape(manifest)
+
+    source_path = _resolve_inside(
+        root, str(manifest["source_manifest_path"]), "source_manifest_path"
+    )
+    if not source_path.is_file() or _sha256(source_path) != manifest["source_manifest_sha256"]:
+        raise ValueError("source manifest hash mismatch")
+    source_manifest = json.loads(source_path.read_text(encoding="utf-8"))
+    if (
+        source_manifest.get("schema") != SCHEMA
+        or source_manifest.get("run_id") != manifest["source_run_id"]
+        or source_manifest.get("outputs_complete") is not True
+    ):
+        raise ValueError("source manifest identity mismatch")
+
+    for state in manifest["states"]:
+        topology = str(state["topology_id"])
+        bias = float(state["requested_bias_V"])
+        tag = str(state["bias_tag"])
+        state_root = (root / "states" / topology / tag).resolve()
+        recorded = {
+            str(artifact["path"]): str(artifact["sha256"])
+            for artifact in state["raw_artifacts"]
+        }
+        actual = {
+            (state_root / relative).relative_to(root).as_posix(): digest
+            for relative, digest in collect_member_hashes(state_root).items()
+        }
+        if set(recorded) != set(actual):
+            raise ValueError(
+                f"raw artifact member set mismatch: {topology} at {bias:g} V"
+            )
+        for relative, digest in recorded.items():
+            path = _resolve_inside(root, relative, "raw artifact path")
+            if not path.is_relative_to(state_root) or actual[relative] != digest:
+                raise ValueError(f"raw artifact hash mismatch: {relative}")
+        field_manifest = _resolve_inside(
+            root, str(state["field_manifest"]), "field_manifest"
+        )
+        identities = list(validate_v2_field_manifest(
+            json.loads(field_manifest.read_text(encoding="utf-8"))
+        ).values())
+        if identities != state["fields"]:
+            raise ValueError(
+                f"v2 field identity mismatch: {topology} at {bias:g} V"
+            )
+    return manifest
+
 
 
 def canonical_minimal6_coordinates() -> dict[int, tuple[float, float]]:

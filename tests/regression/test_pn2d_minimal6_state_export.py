@@ -2,6 +2,7 @@ import csv
 import importlib.util
 import json
 import math
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -99,7 +100,202 @@ def write_neutral_state(root: Path, missing: str | None = None) -> None:
         )
 
 
+def write_recovery_candidate(root: Path) -> tuple[Path, str]:
+    topology_contracts = {
+        "sketch": [[1, 5, 2], [5, 6, 2], [2, 6, 4], [2, 4, 3]],
+        "mirror": [[1, 5, 6], [1, 6, 2], [2, 6, 3], [6, 4, 3]],
+    }
+    states = []
+    for topology in ("sketch", "mirror"):
+        for bias in (0.0, -12.0, -19.0):
+            tag = export._bias_tag(bias)
+            export_dir = root / "states" / topology / tag / "export"
+            export_dir.mkdir(parents=True)
+            (export_dir / "field_manifest.json").write_text(
+                json.dumps(valid_field_manifest(), indent=2) + "\n", encoding="utf-8"
+            )
+            (export_dir / "raw_member.txt").write_text(
+                f"{topology} {bias:g}\n", encoding="utf-8"
+            )
+            states.append({
+                "topology_id": topology,
+                "requested_bias_V": bias,
+                "actual_bias_V": bias,
+                "bias_tag": tag,
+                "status": "passed",
+                "export_dir": str(export_dir.relative_to(root)),
+                "topology_contract": {
+                    "nodes": 6,
+                    "triangles": 4,
+                    "edges": 9,
+                    "contact_edges": {"Anode": [1, 5], "Cathode": [3, 4]},
+                    "triangle_connectivity": topology_contracts[topology],
+                },
+            })
+    manifest = {
+        "schema": "vela.pn2d_minimal6_states.v1",
+        "run_id": "candidate-v1",
+        "outputs_complete": True,
+        "states": states,
+    }
+    manifest_path = root / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    return manifest_path, export._sha256(manifest_path)
+
+
 class PN2DMinimal6StateExportTest(unittest.TestCase):
+    def test_v2_native_avalanche_identity_uses_raw_impact_ionization(self) -> None:
+        fields = export.validate_v2_field_manifest(valid_field_manifest())
+        native = fields["sentaurus_native_avalanche_generation"]
+        self.assertEqual(
+            native,
+            {
+                "normalized_name": "sentaurus_native_avalanche_generation",
+                "raw_name": "ImpactIonization",
+                "components": 1,
+                "unit": "cm^-3*s^-1",
+                "semantic_role": "native_avalanche_generation",
+            },
+        )
+
+    def test_v2_velocity_and_ionization_integrals_are_installed_scalars(self) -> None:
+        fields = export.validate_v2_field_manifest(valid_field_manifest())
+        expected = {
+            "sentaurus_electron_speed": ("eVelocity", "cm*s^-1", "carrier_speed"),
+            "sentaurus_hole_speed": ("hVelocity", "cm*s^-1", "carrier_speed"),
+            "sentaurus_electron_ionization_integral": (
+                "eIonIntegral", "1", "path_ionization_integral"
+            ),
+            "sentaurus_hole_ionization_integral": (
+                "hIonIntegral", "1", "path_ionization_integral"
+            ),
+            "sentaurus_mean_ionization_integral": (
+                "MeanIonIntegral", "1", "path_ionization_integral"
+            ),
+        }
+        for normalized, (raw, unit, role) in expected.items():
+            with self.subTest(normalized=normalized):
+                self.assertEqual(fields[normalized]["raw_name"], raw)
+                self.assertEqual(fields[normalized]["components"], 1)
+                self.assertEqual(fields[normalized]["unit"], unit)
+                self.assertEqual(fields[normalized]["semantic_role"], role)
+
+    def test_v2_selects_one_exact_vector_match_among_scalar_aliases(self) -> None:
+        manifest = valid_field_manifest()
+        vector = next(
+            field for field in manifest["fields"] if field["name"] == "ElectricField"
+        )
+        scalar = dict(vector)
+        scalar["components"] = 1
+        manifest["fields"].append(scalar)
+        fields = export.validate_v2_field_manifest(manifest)
+        self.assertEqual(fields["sentaurus_electric_field"]["components"], 2)
+
+        manifest["fields"].append(dict(vector))
+        with self.assertRaisesRegex(ValueError, "duplicate alias.*ElectricField"):
+            export.validate_v2_field_manifest(manifest)
+
+    def test_v2_fields_require_one_complete_region_zero_alias(self) -> None:
+        manifest = valid_field_manifest()
+        manifest["fields"].append(dict(
+            next(field for field in manifest["fields"] if field["name"] == "ImpactIonization")
+        ))
+        with self.assertRaisesRegex(ValueError, "duplicate alias.*ImpactIonization"):
+            export.validate_v2_field_manifest(manifest)
+
+        for key, value in (("region", 1), ("mapping_status", "partial"),
+                           ("global_node_mapping", "region_node_order")):
+            manifest = valid_field_manifest()
+            native = next(
+                field for field in manifest["fields"] if field["name"] == "ImpactIonization"
+            )
+            native[key] = value
+            with self.subTest(key=key):
+                with self.assertRaisesRegex(ValueError, rf"ImpactIonization.*{key}"):
+                    export.validate_v2_field_manifest(manifest)
+
+    def test_v1_contract_remains_unchanged_when_v2_is_added(self) -> None:
+        self.assertEqual(export.SCHEMA, "vela.pn2d_minimal6_states.v1")
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest = export.prepare_exports(
+                topology_ids=("sketch", "mirror"),
+                biases=(0.0, -12.0, -19.0),
+                run_id="v1-compatibility",
+                output_dir=Path(tmp),
+                ssh_target="sentaurus",
+            )
+        self.assertEqual(manifest["schema"], "vela.pn2d_minimal6_states.v1")
+
+    def test_v2_seal_preserves_exact_bias_artifact_paths_and_hashes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "candidate"
+            source.mkdir()
+            manifest_path, digest = write_recovery_candidate(source)
+            original = manifest_path.read_bytes()
+            sealed = Path(tmp) / "candidate-sealed-v2"
+            manifest = export.seal_recovered_archive(
+                source, sealed, digest, run_id="candidate-sealed-v2"
+            )
+            validated = export.validate_sealed_archive(sealed)
+
+            self.assertEqual(manifest_path.read_bytes(), original)
+            self.assertEqual(manifest, validated)
+            self.assertEqual(manifest["schema"], "vela.pn2d_minimal6_states.v2")
+            self.assertEqual(manifest["source_manifest_sha256"], digest)
+            self.assertEqual(len(manifest["states"]), 6)
+            self.assertEqual(
+                {(state["topology_id"], state["requested_bias_V"], state["actual_bias_V"])
+                 for state in manifest["states"]},
+                {(topology, bias, bias) for topology in ("sketch", "mirror")
+                 for bias in (0.0, -12.0, -19.0)},
+            )
+            for state in manifest["states"]:
+                self.assertTrue(state["raw_artifacts"])
+                self.assertTrue(all(
+                    set(artifact) == {"path", "sha256"}
+                    and not Path(artifact["path"]).is_absolute()
+                    and len(artifact["sha256"]) == 64
+                    for artifact in state["raw_artifacts"]
+                ))
+                self.assertTrue(all(
+                    set(field) == {
+                        "normalized_name", "raw_name", "components", "unit", "semantic_role"
+                    }
+                    for field in state["fields"]
+                ))
+
+    def test_v2_manifest_and_member_hash_mutation_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "candidate"
+            source.mkdir()
+            _, digest = write_recovery_candidate(source)
+            sealed = Path(tmp) / "candidate-sealed-v2"
+            export.seal_recovered_archive(source, sealed, digest, run_id="candidate-sealed-v2")
+
+            source_manifest = sealed / "source_manifest.json"
+            source_manifest.write_bytes(source_manifest.read_bytes() + b"\n")
+            with self.assertRaisesRegex(ValueError, "source manifest hash mismatch"):
+                export.validate_sealed_archive(sealed)
+
+            shutil.rmtree(sealed)
+            export.seal_recovered_archive(source, sealed, digest, run_id="candidate-sealed-v2")
+            manifest = json.loads((sealed / "manifest.json").read_text(encoding="utf-8"))
+            member = sealed / manifest["states"][0]["raw_artifacts"][0]["path"]
+            member.write_bytes(member.read_bytes() + b"mutation")
+            with self.assertRaisesRegex(ValueError, "raw artifact hash mismatch"):
+                export.validate_sealed_archive(sealed)
+
+            shutil.rmtree(sealed)
+            export.seal_recovered_archive(source, sealed, digest, run_id="candidate-sealed-v2")
+            path = sealed / "manifest.json"
+            manifest = json.loads(path.read_text(encoding="utf-8"))
+            manifest["states"][0]["requested_bias_V"] = -11.999999999
+            manifest["states"][0]["actual_bias_V"] = -11.999999999
+            path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "exact six-state matrix mismatch"):
+                export.validate_sealed_archive(sealed)
+
+
     def test_required_state_matrix_is_exact_and_complete(self) -> None:
         states = [
             {"topology_id": topology, "requested_bias_V": bias, "actual_bias_V": bias,
