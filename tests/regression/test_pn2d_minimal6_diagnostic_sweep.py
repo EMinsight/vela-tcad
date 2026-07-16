@@ -2,10 +2,12 @@ import copy
 import hashlib
 import inspect
 import json
+import shutil
 import sys
 import tempfile
 from unittest.mock import patch
 from pathlib import Path
+from types import SimpleNamespace
 import unittest
 
 from scripts.run_pn2d_minimal6_diagnostic_sweep import (
@@ -14,10 +16,14 @@ from scripts.run_pn2d_minimal6_diagnostic_sweep import (
     validate_segment_deck,
     record_transition,
     record_sentaurus_checkpoint,
+    record_sentaurus_results,
     validate_sweep_manifest,
     copy_topology_inputs,
     execute_segments,
+    run_vela_subprocess_segment,
+    segment_state_path,
     read_vela_endpoint,
+    read_vela_convergence_metadata,
     read_sentaurus_endpoint,
     initialise_package,
     _required_field_region,
@@ -135,6 +141,61 @@ class DiagnosticSweepTest(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     self._validate_package_compat(manifest, root)
 
+    def test_package_records_and_rechecks_authoritative_state_root(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            manifest = self._complete_package(root)
+            fixture = (
+                Path(__file__).resolve().parents[2]
+                / "tests"
+                / "fixtures"
+                / "pn2d_minimal6_synthetic"
+            ).resolve()
+            expected = {
+                "resolved_path": str(fixture),
+                "manifest_json_sha256": self._sha256(fixture / "manifest.json"),
+                "topology_sources": {
+                    topology: {
+                        "mesh_path": f"states/{topology}/p0V/export/mesh.json",
+                        "mesh_sha256": self._sha256(
+                            fixture / "states" / topology / "p0V" / "export" / "mesh.json"
+                        ),
+                        "doping_path": f"states/{topology}/p0V/export/doping.csv",
+                        "doping_sha256": self._sha256(
+                            fixture / "states" / topology / "p0V" / "export" / "doping.csv"
+                        ),
+                    }
+                    for topology in ("sketch", "mirror")
+                },
+            }
+            self.assertEqual(manifest["authoritative_state_root"], expected)
+            missing = copy.deepcopy(manifest)
+            del missing["authoritative_state_root"]
+            with self.assertRaisesRegex(ValueError, "authoritative state root"):
+                validate_sweep_manifest(missing, package_root=root)
+            tampered = copy.deepcopy(manifest)
+            tampered["authoritative_state_root"]["topology_sources"]["sketch"][
+                "mesh_sha256"
+            ] = tampered["authoritative_state_root"]["topology_sources"]["mirror"][
+                "mesh_sha256"
+            ]
+            with self.assertRaisesRegex(ValueError, "authoritative"):
+                validate_sweep_manifest(tampered, package_root=root)
+
+    def test_package_rejects_synchronized_cross_topology_input_substitution(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            manifest = self._complete_package(root)
+            for name in ("mesh.json", "doping.csv"):
+                source = root / "inputs" / "mirror" / name
+                destination = root / "inputs" / "sketch" / name
+                shutil.copyfile(source, destination)
+                manifest["topology_input_sha256"]["sketch"][name] = self._sha256(
+                    destination
+                )
+            with self.assertRaisesRegex(ValueError, "authoritative"):
+                validate_sweep_manifest(manifest, package_root=root)
+
     def test_generated_package_rejects_deck_hash_tampering(self):
         signature = inspect.signature(validate_sweep_manifest)
         self.assertIn(
@@ -232,6 +293,112 @@ class DiagnosticSweepTest(unittest.TestCase):
             classify_branch(1.0, 1.0, geometric_zero=True), "unidentified"
         )
 
+    def test_accepted_common_exact_rows_refresh_ratio_branch_evidence(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            manifest = {
+                "schema": "vela.pn2d_minimal6_sweep_manifest.v1",
+                "targets_V": [0.0, -1.0],
+                "accepted_checkpoints": [],
+                "failed_transition": None,
+                "failed_transitions": [],
+                "interpolation": "forbidden",
+                "branch_threshold_version": "v1: multiplication=[0.1,10], leakage<=1e-3",
+            }
+            sentaurus_state = root / "sentaurus.tdr"
+            vela_state = root / "vela.csv"
+            sentaurus_state.write_text("state\n", encoding="utf-8")
+            vela_state.write_text("state\n", encoding="utf-8")
+            sentaurus_observables = {
+                "anode_current_A_per_um": 1.0,
+                "cathode_current_A_per_um": -1.0,
+                "max_field_V_per_m": 2.0,
+                "native_source_integral_s_inv_per_cm": 3.0,
+                "reconstructed_source_integral_s_inv_per_cm": 4.0,
+            }
+            vela_observables = dict(sentaurus_observables)
+            vela_observables["anode_current_A_per_um"] = 5.0
+            record_transition(
+                manifest,
+                solver="sentaurus",
+                topology="sketch",
+                start_bias_V=0.0,
+                target_bias_V=-1.0,
+                exit_code=0,
+                actual_bias_V=-1.0,
+                state_path=sentaurus_state,
+                observables=sentaurus_observables,
+            )
+            record_transition(
+                manifest,
+                solver="vela",
+                topology="sketch",
+                start_bias_V=0.0,
+                target_bias_V=-1.0,
+                exit_code=0,
+                actual_bias_V=-1.0,
+                state_path=vela_state,
+                observables=vela_observables,
+            )
+            sentaurus, vela = manifest["accepted_checkpoints"]
+            expected_evidence = {
+                "vela_anode_current_A_per_um": 5.0,
+                "sentaurus_anode_current_A_per_um": 1.0,
+                "absolute_vela_over_sentaurus": 5.0,
+                "geometric_zero": False,
+                "threshold_version": manifest["branch_threshold_version"],
+            }
+            for row in (sentaurus, vela):
+                self.assertEqual(row["branch_classification"], "multiplication_like")
+                self.assertEqual(row["branch_ratio_evidence"], expected_evidence)
+
+    def test_branch_refresh_is_exact_only_and_geometric_zero_fails_closed(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            manifest = {
+                "schema": "vela.pn2d_minimal6_sweep_manifest.v1",
+                "targets_V": [0.0, -1.0, -2.0],
+                "accepted_checkpoints": [],
+                "failed_transition": None,
+                "failed_transitions": [],
+                "interpolation": "forbidden",
+                "branch_threshold_version": "v1: multiplication=[0.1,10], leakage<=1e-3",
+            }
+            def accepted(solver, bias, current, native, reconstructed):
+                state = root / f"{solver}_{abs(int(bias))}.state"
+                state.write_text("state\n", encoding="utf-8")
+                return record_transition(
+                    manifest,
+                    solver=solver,
+                    topology="mirror",
+                    start_bias_V=bias + 1.0,
+                    target_bias_V=bias,
+                    exit_code=0,
+                    actual_bias_V=bias,
+                    state_path=state,
+                    observables={
+                        "anode_current_A_per_um": current,
+                        "cathode_current_A_per_um": -current,
+                        "max_field_V_per_m": 2.0,
+                        "native_source_integral_s_inv_per_cm": native,
+                        "reconstructed_source_integral_s_inv_per_cm": reconstructed,
+                    },
+                )
+            sentaurus = accepted("sentaurus", -1.0, 1.0, 0.0, 1.0e-286)
+            vela_other_bias = accepted("vela", -2.0, 5.0, 3.0, 4.0)
+            self.assertEqual(sentaurus["branch_classification"], "unidentified")
+            self.assertNotIn("branch_ratio_evidence", sentaurus)
+            self.assertEqual(vela_other_bias["branch_classification"], "unidentified")
+            self.assertNotIn("branch_ratio_evidence", vela_other_bias)
+            vela = accepted("vela", -1.0, 5.0, 3.0, 4.0)
+            for row in (sentaurus, vela):
+                self.assertEqual(row["branch_classification"], "unidentified")
+                self.assertTrue(row["branch_ratio_evidence"]["geometric_zero"])
+                self.assertEqual(
+                    row["branch_ratio_evidence"]["absolute_vela_over_sentaurus"],
+                    5.0,
+                )
+
     def test_input_copy_is_separate_from_authoritative_state_root(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -270,6 +437,248 @@ class DiagnosticSweepTest(unittest.TestCase):
                 "doping",
             )
             self.assertIn("sketch", hashes)
+    def test_package_local_sentaurus_rejects_checkpoint_path_escape_before_write(self):
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            package = base / "package"
+            package.mkdir()
+            external = base / "external"
+            external.mkdir()
+            (external / "checkpoint.tdr").write_text("tdr\n", encoding="utf-8")
+            (external / "export").mkdir()
+            (external / "mesh.json").write_text("{}\n", encoding="utf-8")
+            results = external / "results.json"
+            results.write_text(
+                json.dumps([
+                    {
+                        "topology": "sketch",
+                        "start_bias_V": 0.0,
+                        "target_bias_V": -1.0,
+                        "state_path": "checkpoint.tdr",
+                        "export_dir": "export",
+                        "mesh_path": "mesh.json",
+                    }
+                ]),
+                encoding="utf-8",
+            )
+            manifest = {
+                "sentaurus_segments": [
+                    {
+                        "solver": "sentaurus",
+                        "topology": "sketch",
+                        "target_bias_V": -1.0,
+                        "checkpoint_tdr": "../escape.tdr",
+                        "status": "pending",
+                    }
+                ],
+                "accepted_checkpoints": [],
+                "failed_transition": None,
+                "failed_transitions": [],
+            }
+            with self.assertRaisesRegex(ValueError, "canonical"):
+                record_sentaurus_results(
+                    manifest, results, package_root=package
+                )
+            self.assertFalse((base / "escape.tdr").exists())
+
+    def test_package_local_sentaurus_missing_external_state_records_rejection(self):
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            package = base / "package"
+            package.mkdir()
+            external = base / "external"
+            external.mkdir()
+            export = external / "export"
+            export.mkdir()
+            (export / "field_manifest.json").write_text("{}\n", encoding="utf-8")
+            (external / "mesh.json").write_text("{}\n", encoding="utf-8")
+            results = external / "results.json"
+            results.write_text(
+                json.dumps([
+                    {
+                        "topology": "sketch",
+                        "start_bias_V": 0.0,
+                        "target_bias_V": -1.0,
+                        "state_path": "missing.tdr",
+                        "export_dir": "export",
+                        "mesh_path": "mesh.json",
+                    }
+                ]),
+                encoding="utf-8",
+            )
+            checkpoint = (
+                Path("sentaurus")
+                / "sketch"
+                / "checkpoints"
+                / "sketch_m1p000000.tdr"
+            )
+            manifest = {
+                "sentaurus_segments": [
+                    {
+                        "solver": "sentaurus",
+                        "topology": "sketch",
+                        "target_bias_V": -1.0,
+                        "checkpoint_tdr": str(checkpoint),
+                        "status": "pending",
+                    }
+                ],
+                "accepted_checkpoints": [],
+                "failed_transition": None,
+                "failed_transitions": [],
+            }
+            rows = record_sentaurus_results(
+                manifest, results, package_root=package
+            )
+            self.assertEqual(rows[0]["status"], "rejected")
+            self.assertEqual(manifest["failed_transition"], rows[0])
+            self.assertIn("missing", rows[0]["incomplete_reason"].lower())
+            self.assertFalse((package / checkpoint).exists())
+
+    def test_package_local_state_paths_are_canonical_and_external_import_is_preserved(self):
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            package = base / "package"
+            package.mkdir()
+            external = base / "external"
+            external.mkdir()
+            state = external / "checkpoint.tdr"
+            state.write_text("external tdr\n", encoding="utf-8")
+            export = external / "export"
+            export.mkdir()
+            (export / "field_manifest.json").write_text("{}\n", encoding="utf-8")
+            mesh = external / "mesh.json"
+            mesh.write_text("{}\n", encoding="utf-8")
+            results = external / "results.json"
+            results.write_text(
+                json.dumps([
+                    {
+                        "topology": "sketch",
+                        "start_bias_V": 0.0,
+                        "target_bias_V": -1.0,
+                        "state_path": "checkpoint.tdr",
+                        "export_dir": "export",
+                        "mesh_path": "mesh.json",
+                    }
+                ]),
+                encoding="utf-8",
+            )
+            checkpoint = (
+                Path("sentaurus")
+                / "sketch"
+                / "checkpoints"
+                / "sketch_m1p000000.tdr"
+            )
+            manifest = {
+                "schema": "vela.pn2d_minimal6_sweep_manifest.v1",
+                "targets_V": [0.0, -1.0],
+                "segments": [],
+                "sentaurus_segments": [
+                    {
+                        "solver": "sentaurus",
+                        "topology": "sketch",
+                        "target_bias_V": -1.0,
+                        "checkpoint_tdr": str(checkpoint),
+                        "status": "pending",
+                    }
+                ],
+                "accepted_checkpoints": [],
+                "failed_transition": None,
+            }
+            endpoint = {
+                "actual_bias_V": -1.0,
+                "depth_convention": "unit_out_of_plane_length_cm",
+                "current_conversion": "fixture",
+                "observables": {
+                    "anode_current_A_per_um": -1.0,
+                    "cathode_current_A_per_um": 1.0,
+                    "max_field_V_per_m": 2.0,
+                    "native_source_integral_s_inv_per_cm": 3.0,
+                    "reconstructed_source_integral_s_inv_per_cm": 4.0,
+                },
+            }
+            with patch(
+                "scripts.run_pn2d_minimal6_diagnostic_sweep.read_sentaurus_endpoint",
+                return_value=endpoint,
+            ):
+                rows = record_sentaurus_results(
+                    manifest, results, package_root=package
+                )
+            copied = package / checkpoint
+            self.assertEqual(copied.read_text(encoding="utf-8"), "external tdr\n")
+            self.assertTrue(state.is_file())
+            self.assertEqual(rows[0]["state_path"], str(checkpoint))
+            self.assertEqual(rows[0]["state_sha256"], self._sha256(copied))
+
+    def test_execute_segments_serializes_package_relative_vela_state_path(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            state = segment_state_path(root, "sketch", 0.0, -1.0)
+            state.parent.mkdir(parents=True)
+            state.write_text("state\n", encoding="utf-8")
+            manifest = {
+                "schema": "vela.pn2d_minimal6_sweep_manifest.v1",
+                "targets_V": [0.0, -1.0],
+                "segments": [
+                    {
+                        "solver": "vela",
+                        "topology": "sketch",
+                        "start_bias_V": 0.0,
+                        "target_bias_V": -1.0,
+                        "status": "pending",
+                    }
+                ],
+                "accepted_checkpoints": [],
+                "failed_transition": None,
+            }
+            execute_segments(
+                manifest,
+                root,
+                lambda _: {
+                    "exit_code": 0,
+                    "actual_bias_V": -1.0,
+                    "state_path": state,
+                    "observables": {
+                        "anode_current_A_per_um": 1.0,
+                        "cathode_current_A_per_um": -1.0,
+                        "max_field_V_per_m": 2.0,
+                        "native_source_integral_s_inv_per_cm": 3.0,
+                        "reconstructed_source_integral_s_inv_per_cm": 4.0,
+                    },
+                },
+                package_local_state_paths=True,
+            )
+            self.assertEqual(
+                manifest["accepted_checkpoints"][0]["state_path"],
+                str(state.relative_to(root)),
+            )
+
+    def test_strict_package_validator_resolves_canonical_relative_vela_state(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            manifest = self._complete_package(root)
+            state = segment_state_path(root, "sketch", 0.0, -1.0)
+            state.parent.mkdir(parents=True, exist_ok=True)
+            state.write_text("state\n", encoding="utf-8")
+            row = record_transition(
+                manifest,
+                solver="vela",
+                topology="sketch",
+                start_bias_V=0.0,
+                target_bias_V=-1.0,
+                exit_code=0,
+                actual_bias_V=-1.0,
+                state_path=state,
+                observables={
+                    "anode_current_A_per_um": 1.0,
+                    "cathode_current_A_per_um": -1.0,
+                    "max_field_V_per_m": 2.0,
+                    "native_source_integral_s_inv_per_cm": 3.0,
+                    "reconstructed_source_integral_s_inv_per_cm": 4.0,
+                },
+            )
+            row["state_path"] = str(state.relative_to(root))
+            validate_sweep_manifest(manifest, package_root=root)
+
     def test_record_sentaurus_checkpoint_promotes_complete_export_to_manifest(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -349,6 +758,220 @@ class DiagnosticSweepTest(unittest.TestCase):
             edges.write_text("bias_V,edge_id,edge_source_integral\n-1,0,4.0\n", encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "source closure"):
                 read_vela_endpoint(curve, terminals, edges, -1.0)
+    def _prepare_vela_segment_artifacts(self, root, topology):
+        state = segment_state_path(root, topology, 0.0, -1.0)
+        state.parent.mkdir(parents=True, exist_ok=True)
+        state.write_text("state\n", encoding="utf-8")
+        diagnostics = root / "vela" / topology / "diagnostics"
+        diagnostics.mkdir(parents=True, exist_ok=True)
+        (diagnostics / "segment_00_terminal_current_method_compare.csv").write_text(
+            "placeholder\n", encoding="utf-8"
+        )
+        (diagnostics / "segment_00_sg_avalanche_edges.csv").write_text(
+            "placeholder\n", encoding="utf-8"
+        )
+        curve = root / "vela" / topology / "segment_00.csv"
+        curve.parent.mkdir(parents=True, exist_ok=True)
+        curve.write_text("placeholder\n", encoding="utf-8")
+        return {
+            "solver": "vela",
+            "topology": topology,
+            "start_bias_V": 0.0,
+            "target_bias_V": -1.0,
+            "deck": f"vela/{topology}/decks/segment_00.json",
+            "status": "pending",
+        }
+
+    def test_vela_curve_parser_serializes_exact_convergence_and_failure_fields(self):
+        with tempfile.TemporaryDirectory() as temp:
+            curve = Path(temp) / "curve.csv"
+            curve.write_text(
+                "bias_V,max_electric_field_V_per_m,converged,iterations,newton_iterations,step_diagnostics,validation_diagnostics,failure_reason,newton_failure_class,newton_failure_diagnostics_json\n"
+                "0,1,1,1,1,accepted_step=0,validation=ok,,,\n"
+                "-1,2,0,7,4,attempted_step=-1;retry_count=2,carrier=invalid,minimum step reached,line_search_non_decrease,failure.json\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                read_vela_convergence_metadata(curve, -1.0),
+                {
+                    "converged": False,
+                    "iterations": 7,
+                    "newton_iterations": 4,
+                    "step_diagnostics": "attempted_step=-1;retry_count=2",
+                    "validation_diagnostics": "carrier=invalid",
+                    "failure_reason": "minimum step reached",
+                    "newton_failure_class": "line_search_non_decrease",
+                    "newton_failure_diagnostics_json": "failure.json",
+                },
+            )
+            inexact = Path(temp) / "inexact.csv"
+            inexact.write_text(
+                "bias_V,converged,iterations,newton_iterations,step_diagnostics\n"
+                "-0.9,1,2,2,accepted_step=-0.9\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "exactly one target-bias"):
+                read_vela_convergence_metadata(inexact, -1.0)
+            nonfinite = Path(temp) / "nonfinite.csv"
+            nonfinite.write_text(
+                "bias_V,converged,iterations,newton_iterations,step_diagnostics\n"
+                "-1,1,nan,2,accepted_step=-1\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "finite integer"):
+                read_vela_convergence_metadata(nonfinite, -1.0)
+
+    def test_real_vela_adapter_returns_curve_convergence_on_success_and_failure(self):
+        observables = {
+            "anode_current_A_per_um": 1.0,
+            "cathode_current_A_per_um": -1.0,
+            "max_field_V_per_m": 2.0,
+            "native_source_integral_s_inv_per_cm": 3.0,
+            "reconstructed_source_integral_s_inv_per_cm": 4.0,
+        }
+        success_row = "-1,2,1,4,4,accepted_step=-1;retry_count=0,validation=ok,\n"
+        failure_row = "-1,2,0,7,4,attempted_step=-1;retry_count=2,carrier=invalid,minimum step reached\n"
+        success_metadata = {
+            "converged": True,
+            "iterations": 4,
+            "newton_iterations": 4,
+            "step_diagnostics": "accepted_step=-1;retry_count=0",
+            "validation_diagnostics": "validation=ok",
+        }
+        failure_metadata = {
+            "converged": False,
+            "iterations": 7,
+            "newton_iterations": 4,
+            "step_diagnostics": "attempted_step=-1;retry_count=2",
+            "validation_diagnostics": "carrier=invalid",
+            "failure_reason": "minimum step reached",
+        }
+        cases = (
+            ("success", 0, observables, success_row, success_metadata, True),
+            ("endpoint_failure", 0, ValueError("source closure failed"), failure_row, failure_metadata, False),
+            ("solver_failure", 9, None, failure_row, failure_metadata, False),
+            ("nonconverged_exit_zero", 0, observables, failure_row, failure_metadata, False),
+        )
+        for label, returncode, endpoint_side_effect, curve_row, expected_metadata, accepted in cases:
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                segment = self._prepare_vela_segment_artifacts(root, "sketch")
+                curve = root / "vela" / "sketch" / "segment_00.csv"
+                curve.write_text(
+                    "bias_V,max_electric_field_V_per_m,converged,iterations,newton_iterations,step_diagnostics,validation_diagnostics,failure_reason\n"
+                    + curve_row,
+                    encoding="utf-8",
+                )
+                completed = SimpleNamespace(
+                    returncode=returncode,
+                    stdout="solver stdout",
+                    stderr="solver stderr",
+                )
+                with patch(
+                    "scripts.run_pn2d_minimal6_diagnostic_sweep.subprocess.run",
+                    return_value=completed,
+                ):
+                    with patch(
+                        "scripts.run_pn2d_minimal6_diagnostic_sweep.read_vela_endpoint",
+                        side_effect=endpoint_side_effect,
+                    ):
+                        result = run_vela_subprocess_segment(
+                            root, Path("vela.exe"), segment
+                        )
+                self.assertEqual(result["convergence_metadata"], expected_metadata)
+                if accepted:
+                    self.assertIsNotNone(result["observables"])
+                else:
+                    self.assertIsNone(result["observables"])
+                if label == "nonconverged_exit_zero":
+                    self.assertIn("not converged", result["incomplete_reason"])
+
+    def test_real_vela_adapter_converts_endpoint_errors_to_rejected_payload(self):
+        errors = (
+            "Vela curve lacks exactly one target-bias endpoint",
+            "could not convert string to float: malformed",
+            "Vela native/reconstructed source closure failed",
+        )
+        for message in errors:
+            with self.subTest(message=message), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                segment = self._prepare_vela_segment_artifacts(root, "sketch")
+                completed = SimpleNamespace(
+                    returncode=0, stdout="solver stdout", stderr="solver stderr"
+                )
+                with patch(
+                    "scripts.run_pn2d_minimal6_diagnostic_sweep.subprocess.run",
+                    return_value=completed,
+                ):
+                    with patch(
+                        "scripts.run_pn2d_minimal6_diagnostic_sweep.read_vela_endpoint",
+                        side_effect=ValueError(message),
+                    ):
+                        result = run_vela_subprocess_segment(
+                            root, Path("vela.exe"), segment
+                        )
+                self.assertEqual(result["exit_code"], 0)
+                self.assertIsNone(result["actual_bias_V"])
+                self.assertIsNone(result["state_path"])
+                self.assertIsNone(result["observables"])
+                self.assertEqual(result["stdout"], "solver stdout")
+                self.assertEqual(result["stderr"], "solver stderr")
+                self.assertIn(message, result["incomplete_reason"])
+
+    def test_real_vela_adapter_failure_is_retained_and_other_topology_runs(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            sketch = self._prepare_vela_segment_artifacts(root, "sketch")
+            mirror = self._prepare_vela_segment_artifacts(root, "mirror")
+            manifest = {
+                "schema": "vela.pn2d_minimal6_sweep_manifest.v1",
+                "targets_V": [0.0, -1.0],
+                "segments": [sketch, mirror],
+                "accepted_checkpoints": [],
+                "failed_transition": None,
+                "failed_transitions": [],
+            }
+            completed = SimpleNamespace(
+                returncode=0, stdout="solver stdout", stderr="solver stderr"
+            )
+            observables = {
+                "anode_current_A_per_um": 1.0,
+                "cathode_current_A_per_um": -1.0,
+                "max_field_V_per_m": 2.0,
+                "native_source_integral_s_inv_per_cm": 3.0,
+                "reconstructed_source_integral_s_inv_per_cm": 4.0,
+            }
+            with patch(
+                "scripts.run_pn2d_minimal6_diagnostic_sweep.subprocess.run",
+                return_value=completed,
+            ) as subprocess_run:
+                with patch(
+                    "scripts.run_pn2d_minimal6_diagnostic_sweep.read_vela_endpoint",
+                    side_effect=[
+                        ValueError("Vela curve lacks exactly one target-bias endpoint"),
+                        observables,
+                    ],
+                ):
+                    execute_segments(
+                        manifest,
+                        root,
+                        lambda segment: run_vela_subprocess_segment(
+                            root, Path("vela.exe"), segment
+                        ),
+                    )
+            self.assertEqual(subprocess_run.call_count, 2)
+            self.assertEqual(manifest["failed_transition"]["topology"], "sketch")
+            self.assertIn(
+                "exactly one target-bias endpoint",
+                manifest["failed_transition"]["incomplete_reason"],
+            )
+            mirror_rows = [
+                row
+                for row in manifest["accepted_checkpoints"]
+                if row["topology"] == "mirror"
+            ]
+            self.assertEqual(len(mirror_rows), 1)
+
     def test_fake_runner_preserves_first_failure_and_stops_later_segments(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

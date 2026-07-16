@@ -26,6 +26,7 @@ DISCLAIMER = "minimal6 diagnostic sweep; not a physical BV curve"
 SCHEMA = "vela.pn2d_minimal6_sweep_manifest.v1"
 VELA_SOURCE_AREA_CM2_PER_UM2 = 1.0e-8
 BRANCH_THRESHOLD_VERSION = "v1: multiplication=[0.1,10], leakage<=1e-3"
+GEOMETRIC_ZERO_SOURCE_INTEGRAL = 1.0e-285
 
 
 def integer_targets() -> tuple[float, ...]:
@@ -106,6 +107,63 @@ def make_segment_deck(template: dict[str, Any], *, topology: str, segment_start:
         sweep["initial_state_file"] = str(restart)
     validate_segment_deck(template, deck)
     return deck
+
+
+def read_vela_convergence_metadata(
+    curve_csv: Path, target_bias_V: float,
+) -> dict[str, Any] | None:
+    """Read typed convergence evidence from one exact Vela curve endpoint."""
+    with curve_csv.open(newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        required = {
+            "bias_V",
+            "converged",
+            "iterations",
+            "newton_iterations",
+            "step_diagnostics",
+        }
+        if reader.fieldnames is None or not required.issubset(reader.fieldnames):
+            return None
+        rows = [
+            row
+            for row in reader
+            if abs(float(row["bias_V"]) - target_bias_V) <= 1.0e-12
+        ]
+    if len(rows) != 1:
+        raise ValueError(
+            "Vela convergence curve lacks exactly one target-bias endpoint"
+        )
+    row = rows[0]
+
+    def finite_integer(name: str) -> int:
+        value = float(row[name])
+        if not math.isfinite(value) or not value.is_integer() or value < 0.0:
+            raise ValueError(f"Vela convergence {name} must be a finite integer")
+        return int(value)
+
+    converged_token = row["converged"].strip().lower()
+    if converged_token in {"1", "true"}:
+        converged = True
+    elif converged_token in {"0", "false"}:
+        converged = False
+    else:
+        raise ValueError("Vela convergence flag must be boolean")
+
+    metadata: dict[str, Any] = {
+        "converged": converged,
+        "iterations": finite_integer("iterations"),
+        "newton_iterations": finite_integer("newton_iterations"),
+        "step_diagnostics": row["step_diagnostics"],
+    }
+    for name in (
+        "validation_diagnostics",
+        "failure_reason",
+        "newton_failure_class",
+        "newton_failure_diagnostics_json",
+    ):
+        if name in row and row[name] not in (None, ""):
+            metadata[name] = row[name]
+    return metadata
 
 
 def read_vela_endpoint(
@@ -235,6 +293,56 @@ def read_sentaurus_endpoint(export_dir: Path, mesh_path: Path, target_bias_V: fl
     return {"actual_bias_V": actual_bias, "observables": observables,
             "depth_convention": native["depth_convention"], "current_conversion": "Sentaurus 2-D ContactCurrentFlux A compared numerically with Vela A/um"}
 
+def _converted_topology_mesh(source_mesh: Path) -> dict[str, Any]:
+    mesh = json.loads(source_mesh.read_text(encoding="utf-8"))
+    nodes = mesh.get("nodes")
+    if not isinstance(nodes, list) or not nodes:
+        raise ValueError("authoritative topology mesh requires a non-empty nodes list")
+    for node in nodes:
+        if not isinstance(node, dict) or "x" not in node or "y" not in node:
+            raise ValueError("authoritative topology mesh node lacks x/y coordinates")
+        x_m, y_m = float(node["x"]), float(node["y"])
+        if not math.isfinite(x_m) or not math.isfinite(y_m):
+            raise ValueError("authoritative topology mesh coordinates must be finite")
+        node["x"] = x_m * 1.0e6
+        node["y"] = y_m * 1.0e6
+    mesh["coordinate_unit"] = "um"
+    return mesh
+
+
+def _authoritative_state_root_identity(
+    authoritative_state_root: Path,
+    topologies: tuple[str, ...] = ("sketch", "mirror"),
+) -> dict[str, Any]:
+    root = authoritative_state_root.resolve()
+    manifest_path = root / "manifest.json"
+    if not manifest_path.is_file():
+        raise FileNotFoundError(
+            f"authoritative state root manifest is missing: {manifest_path}"
+        )
+    topology_sources: dict[str, dict[str, str]] = {}
+    for topology in topologies:
+        relative_root = Path("states") / topology / "p0V" / "export"
+        mesh = root / relative_root / "mesh.json"
+        doping = root / relative_root / "doping.csv"
+        for member in (mesh, doping):
+            if not member.is_file():
+                raise FileNotFoundError(
+                    f"authoritative topology input is missing: {member}"
+                )
+        topology_sources[topology] = {
+            "mesh_path": f"states/{topology}/p0V/export/mesh.json",
+            "mesh_sha256": _sha(mesh),
+            "doping_path": f"states/{topology}/p0V/export/doping.csv",
+            "doping_sha256": _sha(doping),
+        }
+    return {
+        "resolved_path": str(root),
+        "manifest_json_sha256": _sha(manifest_path),
+        "topology_sources": topology_sources,
+    }
+
+
 def copy_topology_inputs(authoritative_state_root: Path, destination_root: Path, topologies: tuple[str, ...] = ("sketch", "mirror")) -> dict[str, dict[str, str]]:
     """Prepare canonical 0 V topology inputs for Vela TCAD-internal units.
 
@@ -254,19 +362,7 @@ def copy_topology_inputs(authoritative_state_root: Path, destination_root: Path,
             if not member.is_file():
                 raise FileNotFoundError(f"authoritative topology input is missing: {member}")
 
-        mesh = json.loads(source_mesh.read_text(encoding="utf-8"))
-        nodes = mesh.get("nodes")
-        if not isinstance(nodes, list) or not nodes:
-            raise ValueError("authoritative topology mesh requires a non-empty nodes list")
-        for node in nodes:
-            if not isinstance(node, dict) or "x" not in node or "y" not in node:
-                raise ValueError("authoritative topology mesh node lacks x/y coordinates")
-            x_m, y_m = float(node["x"]), float(node["y"])
-            if not math.isfinite(x_m) or not math.isfinite(y_m):
-                raise ValueError("authoritative topology mesh coordinates must be finite")
-            node["x"] = x_m * 1.0e6
-            node["y"] = y_m * 1.0e6
-        mesh["coordinate_unit"] = "um"
+        mesh = _converted_topology_mesh(source_mesh)
 
         copied_mesh = target / "mesh.json"
         _write_json(copied_mesh, mesh)
@@ -277,6 +373,67 @@ def copy_topology_inputs(authoritative_state_root: Path, destination_root: Path,
             "doping.csv": _sha(copied_doping),
         }
     return hashes
+
+def _refresh_common_exact_branch_evidence(manifest: dict[str, Any]) -> None:
+    accepted = manifest.get("accepted_checkpoints", [])
+    if not isinstance(accepted, list):
+        return
+    identities = {
+        (row.get("topology"), float(row.get("target_bias_V", math.nan)))
+        for row in accepted
+        if isinstance(row, dict) and row.get("status") == "accepted"
+    }
+    for topology, target_bias in identities:
+        matches = [
+            row
+            for row in accepted
+            if isinstance(row, dict)
+            and row.get("status") == "accepted"
+            and row.get("topology") == topology
+            and float(row.get("target_bias_V", math.nan)) == target_bias
+            and float(row.get("actual_bias_V", math.nan)) == target_bias
+        ]
+        by_solver = {row.get("solver"): row for row in matches}
+        if len(matches) != 2 or set(by_solver) != {"vela", "sentaurus"}:
+            continue
+        vela = by_solver["vela"]
+        sentaurus = by_solver["sentaurus"]
+        vela_observables = vela["observables"]
+        sentaurus_observables = sentaurus["observables"]
+        geometric_zero = any(
+            abs(float(observables["native_source_integral_s_inv_per_cm"]))
+            <= GEOMETRIC_ZERO_SOURCE_INTEGRAL
+            and abs(float(observables["reconstructed_source_integral_s_inv_per_cm"]))
+            <= GEOMETRIC_ZERO_SOURCE_INTEGRAL
+            for observables in (vela_observables, sentaurus_observables)
+        )
+        vela_current = float(vela_observables["anode_current_A_per_um"])
+        sentaurus_current = float(sentaurus_observables["anode_current_A_per_um"])
+        ratio = (
+            None
+            if sentaurus_current == 0.0
+            else abs(vela_current / sentaurus_current)
+        )
+        threshold_version = manifest.get(
+            "branch_threshold_version", BRANCH_THRESHOLD_VERSION
+        )
+        evidence = {
+            "vela_anode_current_A_per_um": vela_current,
+            "sentaurus_anode_current_A_per_um": sentaurus_current,
+            "absolute_vela_over_sentaurus": ratio,
+            "geometric_zero": geometric_zero,
+            "threshold_version": threshold_version,
+        }
+        classification = classify_branch(
+            sentaurus_current,
+            vela_current,
+            geometric_zero=geometric_zero,
+        )
+        for row in (vela, sentaurus):
+            row["branch_classification"] = classification
+            row["branch_threshold_version"] = threshold_version
+            row["branch_ratio_evidence"] = dict(evidence)
+
 
 def record_transition(
     manifest: dict[str, Any], *, solver: str, topology: str, start_bias_V: float,
@@ -316,6 +473,7 @@ def record_transition(
         if observables is None or set(observables) != required or not all(math.isfinite(float(value)) for value in observables.values()):
             raise ValueError("accepted checkpoint lacks complete finite observables")
         manifest.setdefault("accepted_checkpoints", []).append(row)
+        _refresh_common_exact_branch_evidence(manifest)
     else:
         if incomplete_reason:
             row["incomplete_reason"] = incomplete_reason
@@ -328,34 +486,63 @@ def record_transition(
 def record_sentaurus_checkpoint(
     manifest: dict[str, Any], *, topology: str, start_bias_V: float, target_bias_V: float,
     state_path: Path, export_dir: Path, mesh_path: Path,
+    package_root: Path | None = None,
 ) -> dict[str, Any]:
     """Promote one imported exact-bias Sentaurus TDR into immutable sweep evidence."""
     matches = [segment for segment in manifest.get("sentaurus_segments", [])
                if segment.get("topology") == topology and float(segment.get("target_bias_V")) == target_bias_V]
     if len(matches) != 1:
         raise ValueError("Sentaurus checkpoint does not match exactly one generated segment")
+    evidence_state = state_path
+    canonical_state_path: Path | None = None
+    if package_root is not None:
+        checkpoint_value = matches[0].get("checkpoint_tdr")
+        if not isinstance(checkpoint_value, str) or not checkpoint_value:
+            raise ValueError("Sentaurus segment lacks canonical checkpoint path")
+        canonical_state_path = Path(checkpoint_value)
+        expected_checkpoint = (
+            Path("sentaurus")
+            / topology
+            / "checkpoints"
+            / f"{topology}_{bias_token(target_bias_V)}.tdr"
+        )
+        if canonical_state_path != expected_checkpoint:
+            raise ValueError("Sentaurus checkpoint path is not canonical")
+        package_root_resolved = package_root.resolve()
+        evidence_state = (package_root_resolved / canonical_state_path).resolve()
+        try:
+            evidence_state.relative_to(package_root_resolved)
+        except ValueError as error:
+            raise ValueError(
+                "Sentaurus checkpoint path escapes package root"
+            ) from error
     try:
+        if package_root is not None and state_path.resolve() != evidence_state:
+            evidence_state.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(state_path, evidence_state)
         endpoint = read_sentaurus_endpoint(export_dir, mesh_path, target_bias_V)
         row = record_transition(
             manifest, solver="sentaurus", topology=topology, start_bias_V=start_bias_V,
             target_bias_V=target_bias_V, exit_code=0, actual_bias_V=endpoint["actual_bias_V"],
-            state_path=state_path, observables=endpoint["observables"],
+            state_path=evidence_state, observables=endpoint["observables"],
             diagnostics={"stdout": "", "stderr": ""},
         )
         row["export_dir"] = str(export_dir)
         row["export_field_manifest_sha256"] = _sha(export_dir / "field_manifest.json")
         row["depth_convention"] = endpoint["depth_convention"]
         row["current_conversion"] = endpoint["current_conversion"]
-    except (FileNotFoundError, ValueError) as error:
+    except (OSError, ValueError) as error:
         row = record_transition(
             manifest, solver="sentaurus", topology=topology, start_bias_V=start_bias_V,
             target_bias_V=target_bias_V, exit_code=1, actual_bias_V=None,
             state_path=state_path if state_path.is_file() else None, observables=None,
-            diagnostics={"stdout": "", "stderr": str(error)}, incomplete_reason="Sentaurus checkpoint export is incomplete or invalid",
+            diagnostics={"stdout": "", "stderr": str(error)}, incomplete_reason=f"Sentaurus checkpoint export is incomplete or invalid: {error}",
         )
+    if canonical_state_path is not None and row["status"] == "accepted":
+        row["state_path"] = str(canonical_state_path)
     matches[0]["status"] = row["status"]
-    matches[0]["state_path"] = str(state_path)
-    matches[0]["state_sha256"] = _sha(state_path) if state_path.is_file() else None
+    matches[0]["state_path"] = row["state_path"]
+    matches[0]["state_sha256"] = row["state_sha256"]
     return row
 
 def run_vela_subprocess_segment(root: Path, executable: Path, segment: dict[str, Any]) -> dict[str, Any]:
@@ -370,14 +557,66 @@ def run_vela_subprocess_segment(root: Path, executable: Path, segment: dict[str,
     terminal = diagnostics / f"segment_{abs(int(start)):02d}_terminal_current_method_compare.csv"
     edge_source = diagnostics / f"segment_{abs(int(start)):02d}_sg_avalanche_edges.csv"
     curve = root / "vela" / topology / f"segment_{abs(int(start)):02d}.csv"
+    convergence_metadata = None
+    if curve.is_file():
+        try:
+            convergence_metadata = read_vela_convergence_metadata(curve, target)
+        except (ValueError, KeyError, csv.Error) as error:
+            return {
+                "exit_code": completed.returncode,
+                "actual_bias_V": None,
+                "state_path": None,
+                "observables": None,
+                "stdout": completed.stdout,
+                "stderr": completed.stderr,
+                "convergence_metadata": None,
+                "incomplete_reason": f"Vela convergence evidence invalid: {error}",
+            }
     if completed.returncode != 0 or not state.is_file() or not terminal.is_file() or not edge_source.is_file() or not curve.is_file():
-        return {"exit_code": completed.returncode, "actual_bias_V": None, "state_path": None, "observables": None,
-                "stdout": completed.stdout, "stderr": completed.stderr}
-    endpoint = read_vela_endpoint(curve, terminal, edge_source, target)
+        return {
+            "exit_code": completed.returncode,
+            "actual_bias_V": None,
+            "state_path": None,
+            "observables": None,
+            "stdout": completed.stdout,
+            "stderr": completed.stderr,
+            "convergence_metadata": convergence_metadata,
+        }
+    if convergence_metadata is not None and not convergence_metadata["converged"]:
+        return {
+            "exit_code": completed.returncode,
+            "actual_bias_V": None,
+            "state_path": None,
+            "observables": None,
+            "stdout": completed.stdout,
+            "stderr": completed.stderr,
+            "convergence_metadata": convergence_metadata,
+            "incomplete_reason": "Vela exact endpoint is not converged",
+        }
+    try:
+        endpoint = read_vela_endpoint(curve, terminal, edge_source, target)
+    except (ValueError, KeyError, csv.Error) as error:
+        return {
+            "exit_code": completed.returncode,
+            "actual_bias_V": None,
+            "state_path": None,
+            "observables": None,
+            "stdout": completed.stdout,
+            "stderr": completed.stderr,
+            "convergence_metadata": convergence_metadata,
+            "incomplete_reason": f"Vela endpoint evidence invalid: {error}",
+        }
     return {"exit_code": completed.returncode, "actual_bias_V": target, "state_path": state,
-            "observables": endpoint, "stdout": completed.stdout, "stderr": completed.stderr}
+            "observables": endpoint, "stdout": completed.stdout, "stderr": completed.stderr,
+            "convergence_metadata": convergence_metadata}
 
-def execute_segments(manifest: dict[str, Any], root: Path, runner) -> None:
+def execute_segments(
+    manifest: dict[str, Any],
+    root: Path,
+    runner,
+    *,
+    package_local_state_paths: bool = False,
+) -> None:
     """Run each topology independently and retain its first failed segment."""
     segments = manifest.get("segments", [])
     topologies = list(dict.fromkeys(str(segment["topology"]) for segment in segments))
@@ -398,6 +637,17 @@ def execute_segments(manifest: dict[str, Any], root: Path, runner) -> None:
                 },
                 incomplete_reason=None if result.get("incomplete_reason") is None else str(result["incomplete_reason"]),
             )
+            if package_local_state_paths and row["status"] == "accepted":
+                expected_state = segment_state_path(
+                    root,
+                    topology,
+                    float(segment["start_bias_V"]),
+                    float(segment["target_bias_V"]),
+                )
+                actual_state = Path(str(result["state_path"])).resolve()
+                if actual_state != expected_state.resolve():
+                    raise ValueError("Vela accepted state path is noncanonical")
+                row["state_path"] = str(expected_state.relative_to(root))
             segment["status"] = row["status"]
             if row["status"] != "accepted":
                 break
@@ -414,6 +664,10 @@ def validate_sweep_manifest(manifest: dict[str, Any], *, package_root: Path | No
         if row.get("status") != "accepted" or abs(float(row["actual_bias_V"]) - float(row["target_bias_V"])) > 1.0e-12:
             raise ValueError("accepted checkpoint is not exact")
         state = Path(str(row["state_path"]))
+        if not state.is_absolute():
+            if package_root is None:
+                raise ValueError("relative accepted checkpoint requires package_root")
+            state = package_root.resolve() / state
         if not state.is_file() or _sha(state) != row.get("state_sha256"):
             raise ValueError("accepted checkpoint state is missing or hash-tampered")
         if not isinstance(row.get("observables"), dict):
@@ -454,6 +708,17 @@ def validate_sweep_manifest(manifest: dict[str, Any], *, package_root: Path | No
     )
     template = json.loads(template_path.read_text(encoding="utf-8"))
 
+    authoritative = manifest.get("authoritative_state_root")
+    if not isinstance(authoritative, dict):
+        raise ValueError("complete package lacks authoritative state root provenance")
+    source_root_value = authoritative.get("resolved_path")
+    if not isinstance(source_root_value, str) or not Path(source_root_value).is_absolute():
+        raise ValueError("authoritative state root path must be resolved")
+    source_root = Path(source_root_value).resolve()
+    expected_authoritative = _authoritative_state_root_identity(source_root)
+    if authoritative != expected_authoritative:
+        raise ValueError("authoritative state root provenance is missing or hash-tampered")
+
     topology_hashes = manifest.get("topology_input_sha256")
     if not isinstance(topology_hashes, dict) or set(topology_hashes) != {"sketch", "mirror"}:
         raise ValueError("complete package requires both topology input hash roots")
@@ -461,11 +726,26 @@ def validate_sweep_manifest(manifest: dict[str, Any], *, package_root: Path | No
         hashes = topology_hashes[topology]
         if not isinstance(hashes, dict) or set(hashes) != {"mesh.json", "doping.csv"}:
             raise ValueError(f"{topology} topology hashes must cover mesh and doping")
-        for name in ("mesh.json", "doping.csv"):
-            checked_path(
-                str(Path("inputs") / topology / name),
-                hashes[name],
-                f"{topology} {name}",
+        package_mesh = checked_path(
+            str(Path("inputs") / topology / "mesh.json"),
+            hashes["mesh.json"],
+            f"{topology} mesh.json",
+        )
+        package_doping = checked_path(
+            str(Path("inputs") / topology / "doping.csv"),
+            hashes["doping.csv"],
+            f"{topology} doping.csv",
+        )
+        source = expected_authoritative["topology_sources"][topology]
+        source_mesh = source_root / Path(source["mesh_path"])
+        source_doping = source_root / Path(source["doping_path"])
+        if json.loads(package_mesh.read_text(encoding="utf-8")) != _converted_topology_mesh(source_mesh):
+            raise ValueError(
+                f"{topology} package mesh does not match authoritative reconstruction"
+            )
+        if package_doping.read_bytes() != source_doping.read_bytes():
+            raise ValueError(
+                f"{topology} package doping does not match authoritative source"
             )
 
     expected_vela = [
@@ -567,6 +847,36 @@ def validate_sweep_manifest(manifest: dict[str, Any], *, package_root: Path | No
         if deck_path.read_text(encoding="utf-8") != expected_payload:
             raise ValueError("Sentaurus deck does not match the immutable exact payload")
 
+    for row in manifest.get("accepted_checkpoints", []):
+        state_path = Path(str(row["state_path"]))
+        if state_path.is_absolute():
+            raise ValueError("strict package accepted state path must be relative")
+        topology = str(row["topology"])
+        target_bias = float(row["target_bias_V"])
+        if row["solver"] == "vela":
+            expected_state = segment_state_path(
+                root,
+                topology,
+                float(row["start_bias_V"]),
+                target_bias,
+            ).relative_to(root)
+        elif row["solver"] == "sentaurus":
+            matches = [
+                segment
+                for segment in sentaurus_segments
+                if segment["topology"] == topology
+                and float(segment["target_bias_V"]) == target_bias
+            ]
+            if len(matches) != 1:
+                raise ValueError("accepted Sentaurus state lacks canonical segment")
+            expected_state = Path(str(matches[0]["checkpoint_tdr"]))
+        else:
+            raise ValueError("accepted state has invalid solver")
+        if state_path != expected_state:
+            raise ValueError(
+                f"{row['solver']} accepted state path is noncanonical"
+            )
+
     validate_sweep_manifest_v1(manifest)
 
 
@@ -594,6 +904,10 @@ def write_sentaurus_decks(root: Path, deck_template: Path, topologies: tuple[str
 def initialise_package(root: Path, template_path: Path, topologies: tuple[str, ...] = ("sketch", "mirror"), authoritative_state_root: Path | None = None) -> Path:
     template = json.loads(template_path.read_text(encoding="utf-8"))
     input_hashes = {} if authoritative_state_root is None else copy_topology_inputs(authoritative_state_root, root, topologies)
+    authoritative_identity = (
+        None if authoritative_state_root is None
+        else _authoritative_state_root_identity(authoritative_state_root, topologies)
+    )
     targets = integer_targets()
     segments: list[dict[str, Any]] = []
     for topology in topologies:
@@ -608,7 +922,7 @@ def initialise_package(root: Path, template_path: Path, topologies: tuple[str, .
     sentaurus_template = REPO / "reference_tcad" / "pn2d_sentaurus2018_minimal6" / "source" / "pn2d_minimal6_sweep_sdevice.cmd"
     sentaurus_segments = write_sentaurus_decks(root, sentaurus_template, topologies)
     manifest = {"schema": SCHEMA, "diagnostic_disclaimer": DISCLAIMER, "targets_V": list(targets),
-                "template": {"path": str(template_path), "sha256": _sha(template_path)}, "topology_input_sha256": input_hashes, "segments": segments, "sentaurus_segments": sentaurus_segments,
+                "template": {"path": str(template_path), "sha256": _sha(template_path)}, "authoritative_state_root": authoritative_identity, "topology_input_sha256": input_hashes, "segments": segments, "sentaurus_segments": sentaurus_segments,
                 "accepted_checkpoints": [], "failed_transition": None, "failed_transitions": [], "interpolation": "forbidden",
                 "branch_threshold_version": BRANCH_THRESHOLD_VERSION}
     manifest_path = root / "sweep_manifest.json"
@@ -616,7 +930,12 @@ def initialise_package(root: Path, template_path: Path, topologies: tuple[str, .
     return manifest_path
 
 
-def record_sentaurus_results(manifest: dict[str, Any], results_path: Path) -> list[dict[str, Any]]:
+def record_sentaurus_results(
+    manifest: dict[str, Any],
+    results_path: Path,
+    *,
+    package_root: Path | None = None,
+) -> list[dict[str, Any]]:
     """Load declared imported Sentaurus checkpoints without changing solver configuration."""
     payload = json.loads(results_path.read_text(encoding="utf-8-sig"))
     if not isinstance(payload, list):
@@ -633,6 +952,7 @@ def record_sentaurus_results(manifest: dict[str, Any], results_path: Path) -> li
             manifest, topology=str(item["topology"]), start_bias_V=float(item["start_bias_V"]),
             target_bias_V=float(item["target_bias_V"]), state_path=resolve(item["state_path"]),
             export_dir=resolve(item["export_dir"]), mesh_path=resolve(item["mesh_path"]),
+            package_root=package_root,
         ))
     return rows
 
@@ -652,9 +972,9 @@ def main() -> int:
     if args.sentaurus_results_json is not None or args.vela_runner is not None:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         if args.sentaurus_results_json is not None:
-            record_sentaurus_results(manifest, args.sentaurus_results_json.resolve())
+            record_sentaurus_results(manifest, args.sentaurus_results_json.resolve(), package_root=args.out_dir)
         if args.vela_runner is not None:
-            execute_segments(manifest, args.out_dir, lambda segment: run_vela_subprocess_segment(args.out_dir, args.vela_runner, segment))
+            execute_segments(manifest, args.out_dir, lambda segment: run_vela_subprocess_segment(args.out_dir, args.vela_runner, segment), package_local_state_paths=True)
         validate_sweep_manifest(manifest, package_root=args.out_dir)
         _write_json(manifest_path, manifest)
     return 0
