@@ -189,14 +189,67 @@ def _plot_interactions(ax: plt.Axes, report: dict[str, Any]) -> None:
 
 
 def _plot_symmetry(ax: plt.Axes, ledger: list[dict[str, str]]) -> None:
-    rows = [row for row in _source_rows(ledger) if row["source"] == "sentaurus_native_avalanche_generation"]
-    by_key = {(row["topology"], row["bias_V"]): _number(row["value_s_inv_per_unit_depth"]) or 0.0 for row in rows}
+    rows = [
+        row for row in _source_rows(ledger)
+        if row["source"] == "sentaurus_native_avalanche_generation"
+    ]
+    by_key = {(row["topology"], row["bias_V"]): row for row in rows}
     biases = sorted({bias for _, bias in by_key}, key=float, reverse=True)
     x = list(range(len(biases)))
-    sketch = [by_key.get(("sketch", bias), 0.0) for bias in biases]
-    mirror = [by_key.get(("mirror", bias), 0.0) for bias in biases]
-    ax.plot(x, sketch, marker="o", label="sketch native source")
-    ax.plot(x, mirror, marker="s", label="mirror native source")
+    styles = {
+        "sketch": ("o", "tab:blue"),
+        "mirror": ("s", "tab:orange"),
+    }
+    allowed = {"available", "geometric_zero", "unavailable"}
+    for topology, (marker, color) in styles.items():
+        values: list[float] = []
+        geometric_positions: list[int] = []
+        unavailable_positions: list[int] = []
+        for position, bias in enumerate(biases):
+            row = by_key.get((topology, bias))
+            if row is None:
+                values.append(math.nan)
+                continue
+            status = row.get("status")
+            if status not in allowed:
+                raise ValueError(
+                    f"invalid topology-symmetry source status: {status!r}"
+                )
+            if status == "available":
+                value = _number(row.get("value_s_inv_per_unit_depth"))
+                if value is None or not math.isfinite(value):
+                    raise ValueError(
+                        "available topology-symmetry source requires a finite numeric value"
+                    )
+                values.append(value)
+            elif status == "geometric_zero":
+                values.append(math.nan)
+                geometric_positions.append(position)
+            else:
+                values.append(math.nan)
+                unavailable_positions.append(position)
+
+        ax.plot(
+            x, values, marker=marker, color=color,
+            label=f"{topology} native source",
+        )
+        if geometric_positions:
+            ax.scatter(
+                geometric_positions, [0.0] * len(geometric_positions),
+                marker="x", color=color,
+                label=f"{topology} explicit geometric zero (not log floored)",
+            )
+        if unavailable_positions:
+            text_height = 0.02 if topology == "sketch" else 0.10
+            for position in unavailable_positions:
+                ax.text(
+                    position, text_height, "N/A", ha="center", va="bottom",
+                    color=color, transform=ax.get_xaxis_transform(),
+                )
+            ax.scatter(
+                [], [], marker="s", facecolors="none", edgecolors=color,
+                label=f"{topology} unavailable (N/A)",
+            )
     ax.set_xticks(x, [f"{bias} V" for bias in biases])
     ax.set_xlabel("exact fixed-state bias")
     ax.legend(loc="best")

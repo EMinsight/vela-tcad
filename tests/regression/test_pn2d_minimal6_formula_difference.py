@@ -20,7 +20,7 @@ from scripts.pn2d_minimal6_diagnostics.schemas import validate_formula_differenc
 from tests.regression.test_pn2d_minimal6_diagnostic_contracts import schema_document, validate_schema_document
 import scripts.audit_pn2d_minimal6_fixed_state as fixed_audit
 import scripts.diagnose_pn2d_minimal6_formula_difference as formula_cli
-from scripts.pn2d_minimal6_diagnostics.plots import _plot_interactions, _plot_sources, render_formula_difference_figures
+from scripts.pn2d_minimal6_diagnostics.plots import _plot_interactions, _plot_sources, _plot_symmetry, render_formula_difference_figures
 
 
 def _prepare_formula_fixture(temp: str) -> tuple[Path, Path]:
@@ -730,6 +730,62 @@ class FormulaDifferenceTest(unittest.TestCase):
                 next(row for row in manifest["figures"] if row["stem"] == "interaction")["unit"],
                 "dex",
             )
+
+    def test_symmetry_plot_preserves_available_zero_and_status_gaps(self):
+        def native(topology: str, bias: str, status: str, value: str) -> dict:
+            return {
+                "record_kind": "source_integral",
+                "source": "sentaurus_native_avalanche_generation",
+                "topology": topology,
+                "bias_V": bias,
+                "status": status,
+                "value_s_inv_per_unit_depth": value,
+            }
+
+        fig, axis = plt.subplots()
+        self.addCleanup(plt.close, fig)
+        _plot_symmetry(axis, [
+            native("sketch", "0", "available", "0"),
+            native("sketch", "-12", "available", "2"),
+            native("sketch", "-19", "geometric_zero", "not-a-number"),
+            native("mirror", "0", "available", "1"),
+            native("mirror", "-12", "unavailable", "not-a-number"),
+            native("mirror", "-19", "available", "3"),
+        ])
+
+        lines = {line.get_label(): list(line.get_ydata()) for line in axis.lines}
+        self.assertEqual(lines["sketch native source"][:2], [0.0, 2.0])
+        self.assertTrue(math.isnan(lines["sketch native source"][2]))
+        self.assertEqual(lines["mirror native source"][0], 1.0)
+        self.assertTrue(math.isnan(lines["mirror native source"][1]))
+        self.assertEqual(lines["mirror native source"][2], 3.0)
+        self.assertEqual(
+            [tick.get_text() for tick in axis.get_xticklabels()],
+            ["0 V", "-12 V", "-19 V"],
+        )
+        collection_labels = {collection.get_label() for collection in axis.collections}
+        self.assertIn(
+            "sketch explicit geometric zero (not log floored)", collection_labels
+        )
+        self.assertIn("mirror unavailable (N/A)", collection_labels)
+        self.assertIn("N/A", [label.get_text() for label in axis.texts])
+
+    def test_symmetry_plot_available_missing_or_nonfinite_fails_closed(self):
+        for value in ("", "bad", "nan", "inf"):
+            with self.subTest(value=value):
+                fig, axis = plt.subplots()
+                with self.assertRaisesRegex(
+                    ValueError, "available topology-symmetry source"
+                ):
+                    _plot_symmetry(axis, [{
+                        "record_kind": "source_integral",
+                        "source": "sentaurus_native_avalanche_generation",
+                        "topology": "sketch",
+                        "bias_V": "0",
+                        "status": "available",
+                        "value_s_inv_per_unit_depth": value,
+                    }])
+                plt.close(fig)
 
     def test_validation_doc_names_one_current_authoritative_phase_a_chain(self):
         document = (

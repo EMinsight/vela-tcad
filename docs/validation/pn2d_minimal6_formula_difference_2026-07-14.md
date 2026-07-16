@@ -98,7 +98,7 @@ hybrid error `1.7995489542954602e-12`, and replay provenance.
 
 Two fresh real reports are byte-identical for every deterministic report
 artifact. The reviewed package is
-`build-release/pn2d-minimal6-formula-diff-task5-reviewfix-20260717-a/`.
+`build-release/pn2d-minimal6-formula-diff-task5-symmetryfix-20260717-a/`.
 It validates against `vela.pn2d_minimal6_formula_difference.v1`, reports
 `insufficient_data` because `ni_eff/BGN`, `impact_driving_field`, `alpha_law`,
 and `source_to_node_mapping` remain unavailable, and emits no
@@ -119,8 +119,12 @@ handling, three distinct native/reconstructed source labels, waterfall
 closure, all 24 readable heatmap cells, and the mandatory disclaimer. All 18
 real source rows are explicitly `available`; independent visual QA confirmed
 that no false geometric-zero or `N/A` marker is present and that the color key,
-labels, and disclaimer are unclipped. The manifest is marked `reviewed` by
-Codex on 2026-07-17. The complete final Task 1-5 Python gate passes `166/166`;
+labels, and disclaimer are unclipped. The topology-symmetry PNG remains
+byte-identical to the previously reviewed real figure (SHA-256
+`15c1c3b9a6b9f4166215094e5f0839edd23636ee8103cec49c9598d32f6572c3`);
+the real all-available matrix correctly requires no gap markers. The manifest
+is marked `reviewed` by
+Codex on 2026-07-17. The complete final Task 1-5 Python gate passes `168/168`;
 the release build exits `0`; C++ controls
 pass `511` assertions / `40` cases and `83` assertions / `14` cases.
 
