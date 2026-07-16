@@ -2,6 +2,7 @@ import csv
 import json
 import hashlib
 import math
+import matplotlib.pyplot as plt
 import subprocess
 import sys
 import shutil
@@ -9,6 +10,8 @@ import tempfile
 import unittest
 from unittest import mock
 from pathlib import Path
+import fitz
+from PIL import Image, ImageStat
 from scripts.export_pn2d_minimal6_states import collect_member_hashes, validate_member_hashes
 from scripts.pn2d_minimal6_diagnostics.counterfactual import validate_formula_input, evaluate_counterfactual_paths, native_source_anchor, integrate_native_nodal_per_unit_depth, integrate_vela_reconstructed_per_unit_depth, sentaurus_alpha_current_nodal, source_log_gap, validate_dependency_dag, interaction_dex, assert_counterfactual_closure, build_adjacent_interactions, symmetric_contributions, score_dominance, validate_field_units, validate_source_anchor_kind
 from scripts.pn2d_minimal6_diagnostics.counterfactual import DependencyCounterfactualEngine, FACTOR_DEPENDENCIES, make_formula_operator_engine, evaluate_formula_counterfactual
@@ -17,7 +20,8 @@ from scripts.pn2d_minimal6_diagnostics.schemas import validate_formula_differenc
 from tests.regression.test_pn2d_minimal6_diagnostic_contracts import schema_document, validate_schema_document
 import scripts.audit_pn2d_minimal6_fixed_state as fixed_audit
 import scripts.diagnose_pn2d_minimal6_formula_difference as formula_cli
-from scripts.pn2d_minimal6_diagnostics.plots import render_formula_difference_figures
+from scripts.pn2d_minimal6_diagnostics.plots import _plot_interactions, render_formula_difference_figures
+
 
 def _prepare_formula_fixture(temp: str) -> tuple[Path, Path]:
     source = Path(__file__).parents[1] / "fixtures" / "pn2d_minimal6_synthetic"
@@ -422,6 +426,15 @@ class FormulaDifferenceTest(unittest.TestCase):
             report = json.loads((outputs[0] / "root_cause_summary.json").read_text(encoding="utf-8"))
             validate_formula_difference_v1(report)
             validate_schema_document(report, schema_document("vela.pn2d_minimal6_formula_difference.v1"))
+            summary_md = (outputs[0] / "root_cause_summary.md").read_text(encoding="utf-8")
+            for factor in FACTOR_DEPENDENCIES:
+                row = next(
+                    line for line in summary_md.splitlines()
+                    if line.startswith(f"| `{factor}` |")
+                )
+                for linked_token in ("[state deck](", "[independent function](", "[C++ helper]("):
+                    self.assertIn(linked_token, row)
+            self.assertIn("Parameter agreement is a control", summary_md)
 
             node_ids = {(row["topology"], row["bias_V"], row["node_id"])
                         for row in ledger if row["record_kind"] == "node_state"}
@@ -500,6 +513,113 @@ class FormulaDifferenceTest(unittest.TestCase):
             ))
             if report["dominance_rules"]["status"] == "insufficient_data":
                 self.assertNotIn("dominant_factor", report["dominance_rules"])
+
+    def test_fixed_pairs_decode_and_current_alpha_plots_si_alpha_series(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            ledger = root / "quantity_ledger.csv"
+            rows = [
+                {"record_kind": "cell_replay", "quantity": "minus_grad_psi", "component": "x", "value": "-2", "source": "fixed_state_audit", "topology": "sketch", "bias_V": "-19"},
+                {"record_kind": "cell_replay", "quantity": "minus_grad_psi", "component": "y", "value": "3", "source": "fixed_state_audit", "topology": "sketch", "bias_V": "-19"},
+                {"record_kind": "edge_raw", "quantity": "electron_current", "component": "signed_projection", "value": "-4", "source": "fixed_state_audit", "topology": "sketch", "bias_V": "-19"},
+                {"record_kind": "edge_raw", "quantity": "hole_current", "component": "signed_projection", "value": "5", "source": "fixed_state_audit", "topology": "sketch", "bias_V": "-19"},
+                {"record_kind": "edge_replay", "quantity": "vela_electron_alpha_per_m", "component": "", "value": "6", "source": "fixed_state_audit", "topology": "sketch", "bias_V": "-19"},
+                {"record_kind": "edge_replay", "quantity": "vela_hole_alpha_per_m", "component": "", "value": "7", "source": "fixed_state_audit", "topology": "sketch", "bias_V": "-19"},
+            ]
+            for source, value in (
+                ("sentaurus_native_avalanche_generation", "8"),
+                ("sentaurus_alpha_current_reconstruction", "9"),
+                ("vela_alpha_flux_partial_volume_reconstruction", "10"),
+            ):
+                rows.append({"record_kind": "source_integral", "quantity": "avalanche_generation", "component": "", "value": "", "source": source, "topology": "sketch", "bias_V": "-19", "value_s_inv_per_unit_depth": value})
+            fields = sorted({key for row in rows for key in row})
+            with ledger.open("w", newline="", encoding="utf-8") as handle:
+                writer = csv.DictWriter(handle, fieldnames=fields)
+                writer.writeheader()
+                writer.writerows(rows)
+            waterfall = root / "factor_waterfall.csv"
+            waterfall.write_text("path_identity\n", encoding="utf-8")
+            report = root / "root_cause_summary.json"
+            report.write_text(json.dumps({"interactions": []}), encoding="utf-8")
+
+            manifest = render_formula_difference_figures(
+                ledger_path=ledger, waterfall_path=waterfall,
+                report_path=report, out_dir=root, reviewer="Codex",
+                reviewed_on="2026-07-16", qa_status="reviewed",
+            )
+
+            expected = {
+                "gradient": "V/m",
+                "current_alpha": "A/m^2 and m^-1",
+                "source_waterfall": "s^-1 per 1 cm depth",
+                "interaction": "dex",
+                "topology_symmetry": "s^-1 per 1 cm depth",
+            }
+            self.assertEqual({row["stem"]: row["unit"] for row in manifest["figures"]}, expected)
+            for entry in manifest["figures"]:
+                stem = entry["stem"]
+                self.assertEqual(set(entry["artifacts"]), {f"{stem}.png", f"{stem}.pdf"})
+                png, pdf = root / f"{stem}.png", root / f"{stem}.pdf"
+                self.assertTrue(png.read_bytes().startswith(b"\x89PNG\r\n\x1a\n"), stem)
+                with Image.open(png) as image:
+                    image.verify()
+                with Image.open(png).convert("L") as image:
+                    self.assertGreaterEqual(image.width, 800, stem)
+                    self.assertGreaterEqual(image.height, 450, stem)
+                    self.assertGreater(ImageStat.Stat(image).stddev[0], 1.0, stem)
+                self.assertTrue(pdf.read_bytes().startswith(b"%PDF-"), stem)
+                with fitz.open(filename=str(pdf)) as document:
+                    self.assertEqual(document.page_count, 1, stem)
+                    page = document[0]
+                    self.assertGreaterEqual(page.rect.width, 500, stem)
+                    self.assertGreaterEqual(page.rect.height, 300, stem)
+                    self.assertIn(manifest["diagnostic_disclaimer"], page.get_text(), stem)
+                    pixmap = page.get_pixmap(colorspace=fitz.csGRAY, alpha=False)
+                    pixels = memoryview(pixmap.samples)
+                    self.assertGreater(max(pixels) - min(pixels), 1, stem)
+            with fitz.open(filename=str(root / "current_alpha.pdf")) as document:
+                text = document[0].get_text()
+            self.assertIn("electron alpha", text)
+            self.assertIn("hole alpha", text)
+
+    def test_interaction_matrix_has_compact_unique_axes_and_one_annotation_per_record(self):
+        interactions = []
+        columns = (
+            ("forward_adjacent", "gradient_recovery", "mobility"),
+            ("forward_adjacent", "mobility", "current_semantics"),
+            ("reverse_adjacent", "current_semantics", "mobility"),
+            ("reverse_adjacent", "mobility", "gradient_recovery"),
+        )
+        for topology in ("sketch", "mirror"):
+            for bias in (0.0, -12.0, -19.0):
+                for index, (path_identity, first, second) in enumerate(columns):
+                    interactions.append({
+                        "topology": topology,
+                        "bias_V": bias,
+                        "path_identity": path_identity,
+                        "first_factor": first,
+                        "second_factor": second,
+                        "interaction_dex": 0.4 + 0.1 * index,
+                    })
+        figure, axis = plt.subplots()
+        self.addCleanup(plt.close, figure)
+        _plot_interactions(axis, {"interactions": interactions})
+
+        self.assertEqual(
+            {tick.get_text() for tick in axis.get_yticklabels()},
+            {"sketch 0 V", "sketch -12 V", "sketch -19 V",
+             "mirror 0 V", "mirror -12 V", "mirror -19 V"},
+        )
+        self.assertEqual(
+            {tick.get_text() for tick in axis.get_xticklabels()},
+            {"F: gradient_recovery\n-> mobility",
+             "F: mobility\n-> current_semantics",
+             "R: current_semantics\n-> mobility",
+             "R: mobility\n-> gradient_recovery"},
+        )
+        self.assertEqual(len(axis.texts), len(interactions))
+        self.assertEqual(len(axis.images), 1)
+
     def test_triggered_interaction_renders_first_second_factor_contract(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
