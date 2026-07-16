@@ -43,6 +43,45 @@ def parse_van_overstraeten_de_man(path):
         },
         "switch_field_v_per_cm": pairs["E0"][0],
     }
+
+
+def parse_vela_van_overstraeten_defaults(path):
+    """Read Vela's production defaults from its C++ configuration header.
+
+    Vela stores inverse lengths and electric fields in SI units.  The
+    diagnostic contract converts them to the cm-based units used by the
+    tracked Sentaurus parameter file before comparison.
+    """
+    from pathlib import Path
+    source = Path(path)
+    text = source.read_text(encoding="utf-8")
+    names = {
+        "electronALow": ("electron", "a_low_cm_inv"),
+        "electronAHigh": ("electron", "a_high_cm_inv"),
+        "electronBLow": ("electron", "b_low_v_per_cm"),
+        "electronBHigh": ("electron", "b_high_v_per_cm"),
+        "holeALow": ("hole", "a_low_cm_inv"),
+        "holeAHigh": ("hole", "a_high_cm_inv"),
+        "holeBLow": ("hole", "b_low_v_per_cm"),
+        "holeBHigh": ("hole", "b_high_v_per_cm"),
+    }
+    parsed = {"electron": {}, "hole": {}}
+    for cpp_name, (carrier, key) in names.items():
+        match = re.search(
+            rf"\bReal\s+{cpp_name}\s*=\s*([0-9.eE+-]+)\s*;", text
+        )
+        if match is None:
+            raise ValueError(f"Vela production header lacks numeric {cpp_name}")
+        parsed[carrier][key] = float(match.group(1)) / 100.0
+    switch = re.search(r"\bReal\s+switchField\s*=\s*([0-9.eE+-]+)\s*;", text)
+    if switch is None:
+        raise ValueError("Vela production header lacks numeric switchField")
+    parsed["switch_field_v_per_cm"] = float(switch.group(1)) / 100.0
+    parsed["source"] = str(source)
+    parsed["sha256"] = hashlib.sha256(source.read_bytes()).hexdigest()
+    return parsed
+
+
 def compare_van_overstraeten_parameters(parsed, production_parameters, *, rel_tol=1.e-12):
     """Compare parsed Sentaurus DeMan coefficients with an explicit Vela table.
 

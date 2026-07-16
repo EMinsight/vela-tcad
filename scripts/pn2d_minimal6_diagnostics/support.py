@@ -75,8 +75,10 @@ def local_edge_sources_to_nodes(edges, sources):
     if abs(sum(values.values()) - sum(float(source) for source in sources)) > 1.0e-12:
         raise AssertionError("local-edge mapping is not conservative")
     return {"values": values, "weights": weights}
-def edge_scalar_to_cells(edge_values, cell_edges):
+def edge_scalar_to_cells(edge_values, cell_edges, *, quantity=None):
     """Average three edge-centered intensive values onto each triangle with explicit weights."""
+    if quantity in {"ImpactIonization", "AvalancheGeneration"}:
+        raise ValueError("native avalanche generation must be integrated, not averaged")
     values, weights = [], []
     for edges in cell_edges:
         ids = tuple(edges)
