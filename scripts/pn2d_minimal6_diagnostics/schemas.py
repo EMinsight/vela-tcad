@@ -78,8 +78,10 @@ def _state_identity(row: Mapping, name: str) -> tuple[str, float]:
     if topology not in {"sketch", "mirror"}:
         raise ValueError(f"{name} has invalid topology")
     bias_value = _number(bias, f"{name}.bias_V")
-    if "actual_bias_V" in row and abs(_number(row["actual_bias_V"], f"{name}.actual_bias_V") - bias_value) > 1.0e-12:
-        raise ValueError(f"{name} is not an exact state")
+    if "actual_bias_V" in row:
+        actual = _number(row["actual_bias_V"], f"{name}.actual_bias_V")
+        if not bias_value - 1.0e-12 <= actual <= bias_value + 1.0e-12:
+            raise ValueError(f"{name} is not an exact state")
     return str(topology), bias_value
 
 
@@ -307,6 +309,8 @@ def validate_bv_comparison_v1(report: dict) -> None:
             raise ValueError("checkpoint branch threshold version mismatch")
         for solver in ("vela", "sentaurus"):
             nested = _accepted_transition(row.get(solver), f"checkpoints[{index}].{solver}", strict_package=False)
+            if row[solver]["branch_threshold_version"] != version:
+                raise ValueError("checkpoint nested branch threshold version mismatch")
             if nested != (solver, identity[0], identity[1]):
                 raise ValueError("checkpoint nested solver identity mismatch")
     for name in ("terminal_currents", "maximum_fields", "source_integrals", "records"):
@@ -358,8 +362,12 @@ def validate_sweep_manifest_v1(report: dict) -> None:
     failures = _require_list(report["failed_transitions"], "failed_transitions")
     for index, row in enumerate(failures):
         _failed_transition(row, f"failed_transitions[{index}]", strict_package=True)
+        if row["branch_threshold_version"] != version:
+            raise ValueError("failed transition branch threshold version mismatch")
     first = report["failed_transition"]
     if first is not None:
         _failed_transition(first, "failed_transition", strict_package=True)
+        if first["branch_threshold_version"] != version:
+            raise ValueError("failed transition branch threshold version mismatch")
         if first not in failures:
             raise ValueError("failed_transition must be preserved in failed_transitions")

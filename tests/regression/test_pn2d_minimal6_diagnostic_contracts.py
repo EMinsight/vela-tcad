@@ -63,6 +63,11 @@ def validate_schema_document(instance, schema, *, root=None, path="$"):
         raise ValueError(f"{path}: expected {expected}")
     if isinstance(instance, float) and not math.isfinite(instance):
         raise ValueError(f"{path}: number must be finite")
+    if isinstance(instance, (int, float)) and not isinstance(instance, bool):
+        if "minimum" in schema and instance < schema["minimum"]:
+            raise ValueError(f"{path}: below minimum")
+        if "maximum" in schema and instance > schema["maximum"]:
+            raise ValueError(f"{path}: above maximum")
     if "const" in schema and instance != schema["const"]:
         raise ValueError(f"{path}: const mismatch")
     if "enum" in schema and instance not in schema["enum"]:
@@ -326,6 +331,33 @@ class DiagnosticContractsTest(unittest.TestCase):
         invalid["state_matrix"][-1] = copy.deepcopy(invalid["state_matrix"][0])
         with self.assertRaises(ValueError): schemas.validate_formula_difference_v1(invalid)
 
+    def test_formula_actual_bias_tolerance_matches_runtime_and_schema(self):
+        document = schema_document("vela.pn2d_minimal6_formula_difference.v1")
+        for index, state in enumerate(state_matrix()):
+            expected = state["requested_bias_V"]
+            for sign in (-1.0, 1.0):
+                for deviation in (1.0e-13, 1.0e-12):
+                    report = formula_report()
+                    report["state_matrix"][index]["actual_bias_V"] = expected + sign * deviation
+                    with self.subTest(
+                        index=index, sign=sign, deviation=deviation, validator="runtime"
+                    ):
+                        self.assertIsNone(schemas.validate_formula_difference_v1(report))
+                    with self.subTest(
+                        index=index, sign=sign, deviation=deviation, validator="schema"
+                    ):
+                        validate_schema_document(report, document)
+
+            for sign in (-1.0, 1.0):
+                outside = formula_report()
+                outside["state_matrix"][index]["actual_bias_V"] = expected + sign * 1.01e-12
+                with self.subTest(index=index, sign=sign, validator="runtime-outside"):
+                    with self.assertRaises(ValueError):
+                        schemas.validate_formula_difference_v1(outside)
+                with self.subTest(index=index, sign=sign, validator="schema-outside"):
+                    with self.assertRaises(ValueError):
+                        validate_schema_document(outside, document)
+
     def test_comparison_schema_golden_and_invalid_fixture(self):
         report = comparison_report()
         self.assertIsNone(schemas.validate_bv_comparison_v1(report))
@@ -412,6 +444,64 @@ class DiagnosticContractsTest(unittest.TestCase):
             with self.subTest(collection=collection, field=field), self.assertRaises(ValueError):
                 schemas.validate_bv_comparison_v1(invalid)
 
+    def test_comparison_runtime_ties_every_transition_version_to_report(self):
+        failure = {
+            "solver": "vela", "topology": "mirror", "start_bias_V": 0.0,
+            "target_bias_V": -1.0, "status": "rejected", "observables": None,
+            "branch_classification": "unidentified", "branch_threshold_version": THRESHOLD,
+            "convergence_metadata": {"exit_code": 1, "reason": "Newton failure"},
+        }
+        golden = comparison_report()
+        golden["failed_transitions"] = [failure]
+        golden["failure_transitions"] = [copy.deepcopy(failure)]
+        mutations = []
+        for solver in ("vela", "sentaurus"):
+            invalid = copy.deepcopy(golden)
+            invalid["accepted_transitions"][solver][0]["branch_threshold_version"] = "contradictory"
+            mutations.append((f"accepted-{solver}", invalid))
+        invalid = copy.deepcopy(golden)
+        invalid["failed_transitions"][0]["branch_threshold_version"] = "contradictory"
+        invalid["failure_transitions"][0]["branch_threshold_version"] = "contradictory"
+        mutations.append(("failed", invalid))
+        invalid = copy.deepcopy(golden)
+        invalid["checkpoints"][0]["branch_threshold_version"] = "contradictory"
+        mutations.append(("checkpoint", invalid))
+        for solver in ("vela", "sentaurus"):
+            invalid = copy.deepcopy(golden)
+            invalid["checkpoints"][0][solver]["branch_threshold_version"] = "contradictory"
+            mutations.append((f"checkpoint-{solver}", invalid))
+        for location, invalid in mutations:
+            with self.subTest(location=location), self.assertRaisesRegex(
+                ValueError, "branch threshold version mismatch"
+            ):
+                schemas.validate_bv_comparison_v1(invalid)
+
+    def test_sweep_runtime_ties_every_transition_version_to_package(self):
+        failure = {
+            "solver": "vela", "topology": "mirror", "start_bias_V": 0.0,
+            "target_bias_V": -1.0, "status": "rejected", "observables": None,
+            "branch_classification": "unidentified", "branch_threshold_version": THRESHOLD,
+            "convergence_metadata": {"exit_code": 1, "reason": "Newton failure"},
+        }
+        golden = sweep_manifest()
+        golden["failed_transition"] = copy.deepcopy(failure)
+        golden["failed_transitions"] = [copy.deepcopy(failure)]
+        mutations = []
+        invalid = copy.deepcopy(golden)
+        invalid["accepted_checkpoints"][0]["branch_threshold_version"] = "contradictory"
+        mutations.append(("accepted", invalid))
+        invalid = copy.deepcopy(golden)
+        invalid["failed_transitions"][0]["branch_threshold_version"] = "contradictory"
+        mutations.append(("failed-list", invalid))
+        invalid = copy.deepcopy(golden)
+        invalid["failed_transition"]["branch_threshold_version"] = "contradictory"
+        mutations.append(("failed-singular", invalid))
+        for location, invalid in mutations:
+            with self.subTest(location=location), self.assertRaisesRegex(
+                ValueError, "branch threshold version mismatch"
+            ):
+                schemas.validate_sweep_manifest_v1(invalid)
+
     def test_schema_documents_execute_against_golden_and_invalid_fixtures(self):
         formula = formula_report()
         formula_schema = schema_document("vela.pn2d_minimal6_formula_difference.v1")
@@ -434,7 +524,7 @@ class DiagnosticContractsTest(unittest.TestCase):
         extra_state_property["state_matrix"][0]["label"] = "free-form"
         formula_mutations.append(extra_state_property)
         wrong_actual_bias = copy.deepcopy(formula)
-        wrong_actual_bias["state_matrix"][0]["actual_bias_V"] = 1.0e-13
+        wrong_actual_bias["state_matrix"][0]["actual_bias_V"] = 1.000001e-12
         formula_mutations.append(wrong_actual_bias)
         wrong_residual_name = copy.deepcopy(formula)
         wrong_residual_name["sentaurus_internal_semantics_residual"][0]["name"] = "residual"

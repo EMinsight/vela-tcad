@@ -16,12 +16,12 @@
     "state_matrix": {
       "type": "array", "minItems": 6, "maxItems": 6,
       "prefixItems": [
-        {"const": {"topology_id": "sketch", "requested_bias_V": 0, "actual_bias_V": 0, "status": "passed"}},
-        {"const": {"topology_id": "sketch", "requested_bias_V": -12, "actual_bias_V": -12, "status": "passed"}},
-        {"const": {"topology_id": "sketch", "requested_bias_V": -19, "actual_bias_V": -19, "status": "passed"}},
-        {"const": {"topology_id": "mirror", "requested_bias_V": 0, "actual_bias_V": 0, "status": "passed"}},
-        {"const": {"topology_id": "mirror", "requested_bias_V": -12, "actual_bias_V": -12, "status": "passed"}},
-        {"const": {"topology_id": "mirror", "requested_bias_V": -19, "actual_bias_V": -19, "status": "passed"}}
+        {"type": "object", "required": ["topology_id", "requested_bias_V", "actual_bias_V", "status"], "properties": {"topology_id": {"const": "sketch"}, "requested_bias_V": {"const": 0}, "actual_bias_V": {"type": "number", "minimum": -1e-12, "maximum": 1e-12}, "status": {"const": "passed"}}, "additionalProperties": false},
+        {"type": "object", "required": ["topology_id", "requested_bias_V", "actual_bias_V", "status"], "properties": {"topology_id": {"const": "sketch"}, "requested_bias_V": {"const": -12}, "actual_bias_V": {"type": "number", "minimum": -12.000000000001, "maximum": -11.999999999999}, "status": {"const": "passed"}}, "additionalProperties": false},
+        {"type": "object", "required": ["topology_id", "requested_bias_V", "actual_bias_V", "status"], "properties": {"topology_id": {"const": "sketch"}, "requested_bias_V": {"const": -19}, "actual_bias_V": {"type": "number", "minimum": -19.000000000001, "maximum": -18.999999999999}, "status": {"const": "passed"}}, "additionalProperties": false},
+        {"type": "object", "required": ["topology_id", "requested_bias_V", "actual_bias_V", "status"], "properties": {"topology_id": {"const": "mirror"}, "requested_bias_V": {"const": 0}, "actual_bias_V": {"type": "number", "minimum": -1e-12, "maximum": 1e-12}, "status": {"const": "passed"}}, "additionalProperties": false},
+        {"type": "object", "required": ["topology_id", "requested_bias_V", "actual_bias_V", "status"], "properties": {"topology_id": {"const": "mirror"}, "requested_bias_V": {"const": -12}, "actual_bias_V": {"type": "number", "minimum": -12.000000000001, "maximum": -11.999999999999}, "status": {"const": "passed"}}, "additionalProperties": false},
+        {"type": "object", "required": ["topology_id", "requested_bias_V", "actual_bias_V", "status"], "properties": {"topology_id": {"const": "mirror"}, "requested_bias_V": {"const": -19}, "actual_bias_V": {"type": "number", "minimum": -19.000000000001, "maximum": -18.999999999999}, "status": {"const": "passed"}}, "additionalProperties": false}
       ],
       "items": false
     },
