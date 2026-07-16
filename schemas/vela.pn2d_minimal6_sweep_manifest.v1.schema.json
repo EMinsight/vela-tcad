@@ -2,6 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "vela.pn2d_minimal6_sweep_manifest.v1",
   "type": "object",
+  "allOf": [{"$ref": "#/$defs/noRawStateTree"}],
   "required": [
     "schema", "diagnostic_disclaimer", "targets_V", "template",
     "topology_input_sha256", "segments", "sentaurus_segments",
@@ -27,11 +28,16 @@
     "interpolation": {"const": "forbidden"},
     "branch_threshold_version": {"type": "string", "minLength": 1}
   },
-  "not": {"anyOf": [
-    {"required": ["raw_state"]}, {"required": ["raw_states"]},
-    {"required": ["state_payload"]}, {"required": ["state_vectors"]}
-  ]},
   "$defs": {
+    "noRawStateTree": {
+      "not": {"type": "object", "anyOf": [
+        {"required": ["raw_state"]}, {"required": ["raw_states"]},
+        {"required": ["state_payload"]}, {"required": ["state_vectors"]},
+        {"required": ["state_values"]}
+      ]},
+      "additionalProperties": {"$ref": "#/$defs/noRawStateTree"},
+      "items": {"$ref": "#/$defs/noRawStateTree"}
+    },
     "sha256": {"type": "string", "pattern": "^[0-9a-fA-F]{64}$"},
     "observables": {
       "type": "object",
@@ -62,11 +68,14 @@
     },
     "failedTransition": {
       "type": "object",
-      "required": ["solver", "topology", "start_bias_V", "target_bias_V", "status", "observables", "convergence_metadata"],
+      "required": ["solver", "topology", "start_bias_V", "target_bias_V", "status", "observables",
+                   "branch_classification", "branch_threshold_version", "convergence_metadata"],
       "properties": {
         "solver": {"enum": ["vela", "sentaurus"]}, "topology": {"enum": ["sketch", "mirror"]},
         "start_bias_V": {"type": "number"}, "target_bias_V": {"type": "number"},
         "status": {"const": "rejected"}, "observables": {"type": "null"},
+        "branch_classification": {"const": "unidentified"},
+        "branch_threshold_version": {"type": "string", "minLength": 1},
         "convergence_metadata": {"type": "object", "minProperties": 1}
       }, "additionalProperties": true
     }

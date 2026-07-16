@@ -19,6 +19,109 @@ SHA_A, SHA_B = "a" * 64, "b" * 64
 THRESHOLD = "v1: multiplication=[0.1,10], leakage<=1e-3"
 
 
+def validate_schema_document(instance, schema, *, root=None, path="$"):
+    """Validate the Draft 2020-12 subset used by the three tracked schemas."""
+    root = schema if root is None else root
+    if "$ref" in schema:
+        pointer = schema["$ref"]
+        if not isinstance(pointer, str) or not pointer.startswith("#/"):
+            raise ValueError(f"{path}: only local JSON pointers are supported")
+        target = root
+        for token in pointer[2:].split("/"):
+            token = token.replace("~1", "/").replace("~0", "~")
+            target = target[token]
+        validate_schema_document(instance, target, root=root, path=path)
+
+    def accepts(candidate):
+        try:
+            validate_schema_document(instance, candidate, root=root, path=path)
+            return True
+        except ValueError:
+            return False
+
+    if "allOf" in schema and not all(accepts(item) for item in schema["allOf"]):
+        raise ValueError(f"{path}: allOf failed")
+    if "anyOf" in schema and not any(accepts(item) for item in schema["anyOf"]):
+        raise ValueError(f"{path}: anyOf failed")
+    if "oneOf" in schema and sum(accepts(item) for item in schema["oneOf"]) != 1:
+        raise ValueError(f"{path}: oneOf failed")
+    if "not" in schema and accepts(schema["not"]):
+        raise ValueError(f"{path}: forbidden by not")
+
+    expected = schema.get("type")
+    expected_types = expected if isinstance(expected, list) else [expected]
+    type_matches = {
+        "object": isinstance(instance, dict),
+        "array": isinstance(instance, list),
+        "string": isinstance(instance, str),
+        "number": isinstance(instance, (int, float)) and not isinstance(instance, bool),
+        "integer": isinstance(instance, int) and not isinstance(instance, bool),
+        "boolean": isinstance(instance, bool),
+        "null": instance is None,
+    }
+    if expected is not None and not any(type_matches.get(item, False) for item in expected_types):
+        raise ValueError(f"{path}: expected {expected}")
+    if isinstance(instance, float) and not math.isfinite(instance):
+        raise ValueError(f"{path}: number must be finite")
+    if "const" in schema and instance != schema["const"]:
+        raise ValueError(f"{path}: const mismatch")
+    if "enum" in schema and instance not in schema["enum"]:
+        raise ValueError(f"{path}: enum mismatch")
+    if isinstance(instance, str):
+        if len(instance) < int(schema.get("minLength", 0)):
+            raise ValueError(f"{path}: string too short")
+        if "pattern" in schema:
+            import re
+            if re.search(schema["pattern"], instance) is None:
+                raise ValueError(f"{path}: pattern mismatch")
+    if isinstance(instance, list):
+        if len(instance) < int(schema.get("minItems", 0)):
+            raise ValueError(f"{path}: too few items")
+        if "maxItems" in schema and len(instance) > int(schema["maxItems"]):
+            raise ValueError(f"{path}: too many items")
+        if schema.get("uniqueItems"):
+            encoded = [json.dumps(item, sort_keys=True, allow_nan=False) for item in instance]
+            if len(encoded) != len(set(encoded)):
+                raise ValueError(f"{path}: duplicate items")
+        prefixes = schema.get("prefixItems", [])
+        if not isinstance(prefixes, list):
+            raise ValueError(f"{path}: prefixItems must be an array")
+        for index, item in enumerate(instance):
+            if index < len(prefixes):
+                validate_schema_document(item, prefixes[index], root=root, path=f"{path}[{index}]")
+            else:
+                item_schema = schema.get("items")
+                if item_schema is False:
+                    raise ValueError(f"{path}: additional array item")
+                if isinstance(item_schema, dict):
+                    validate_schema_document(item, item_schema, root=root, path=f"{path}[{index}]")
+        if not prefixes and isinstance(schema.get("items"), dict):
+            for index, item in enumerate(instance):
+                validate_schema_document(item, schema["items"], root=root, path=f"{path}[{index}]")
+    if isinstance(instance, dict):
+        if len(instance) < int(schema.get("minProperties", 0)):
+            raise ValueError(f"{path}: too few properties")
+        missing = [name for name in schema.get("required", []) if name not in instance]
+        if missing:
+            raise ValueError(f"{path}: missing {missing}")
+        properties = schema.get("properties", {})
+        for name, value in instance.items():
+            child = properties.get(name)
+            if isinstance(child, dict):
+                validate_schema_document(value, child, root=root, path=f"{path}.{name}")
+            elif schema.get("additionalProperties") is False:
+                raise ValueError(f"{path}: unexpected property {name}")
+            elif isinstance(schema.get("additionalProperties"), dict):
+                validate_schema_document(
+                    value, schema["additionalProperties"], root=root, path=f"{path}.{name}"
+                )
+
+
+def schema_document(name):
+    path = Path(__file__).parents[2] / "schemas" / f"{name}.schema.json"
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 def state_matrix():
     return [
         {"topology_id": topology, "requested_bias_V": bias,
@@ -39,6 +142,7 @@ def formula_report():
             "status": "insufficient_data",
         })
         residuals.append({"topology": topology, "bias_V": bias,
+                          "name": "sentaurus_internal_semantics_residual",
                           "classification": "available", "dex": 0.0})
     return {
         "schema": "vela.pn2d_minimal6_formula_difference.v1",
@@ -241,6 +345,162 @@ class DiagnosticContractsTest(unittest.TestCase):
         invalid = copy.deepcopy(report)
         invalid["raw_states"] = [{"potential": [0.0] * 6}]
         with self.assertRaises(ValueError): validator(invalid)
+
+    def test_formula_runtime_requires_paths_interactions_and_named_residual_identities(self):
+        interaction = {
+            "first_factor": "mobility", "second_factor": "alpha_law",
+            "path_identity": "forward_adjacent", "baseline": 1.0,
+            "a_only": 2.0, "b_only": 3.0, "both": 6.0, "interaction_dex": 0.0,
+        }
+        golden = formula_report()
+        golden["waterfall_paths"][0]["interactions"] = [copy.deepcopy(interaction)]
+        golden["interactions"] = [{
+            "topology": "sketch", "bias_V": 0.0, **copy.deepcopy(interaction)
+        }]
+        self.assertIsNone(schemas.validate_formula_difference_v1(golden))
+
+        mutations = []
+        empty_forward = copy.deepcopy(golden)
+        empty_forward["waterfall_paths"][0]["forward"] = {}
+        mutations.append(empty_forward)
+        malformed_interaction = copy.deepcopy(golden)
+        del malformed_interaction["interactions"][0]["first_factor"]
+        mutations.append(malformed_interaction)
+        wrong_interaction_identity = copy.deepcopy(golden)
+        wrong_interaction_identity["interactions"][0]["bias_V"] = -12.0
+        wrong_interaction_identity["interactions"].append(
+            copy.deepcopy(wrong_interaction_identity["interactions"][0])
+        )
+        mutations.append(wrong_interaction_identity)
+        unnamed_residual = copy.deepcopy(golden)
+        del unnamed_residual["sentaurus_internal_semantics_residual"][0]["name"]
+        mutations.append(unnamed_residual)
+        wrong_residual_name = copy.deepcopy(golden)
+        wrong_residual_name["sentaurus_internal_semantics_residual"][0]["name"] = "residual"
+        mutations.append(wrong_residual_name)
+        duplicate_residual = copy.deepcopy(golden)
+        duplicate_residual["sentaurus_internal_semantics_residual"][-1] = copy.deepcopy(
+            duplicate_residual["sentaurus_internal_semantics_residual"][0]
+        )
+        mutations.append(duplicate_residual)
+        for index, mutation in enumerate(mutations):
+            with self.subTest(index=index), self.assertRaises(ValueError):
+                schemas.validate_formula_difference_v1(mutation)
+
+    def test_comparison_runtime_requires_transition_branch_threshold_and_convergence(self):
+        failure = {
+            "solver": "vela", "topology": "mirror", "start_bias_V": 0.0,
+            "target_bias_V": -1.0, "status": "rejected", "observables": None,
+            "branch_classification": "unidentified", "branch_threshold_version": THRESHOLD,
+            "convergence_metadata": {"exit_code": 1, "reason": "Newton failure"},
+        }
+        golden = comparison_report()
+        golden["failed_transitions"] = [failure]
+        golden["failure_transitions"] = [copy.deepcopy(failure)]
+        self.assertIsNone(schemas.validate_bv_comparison_v1(golden))
+        for collection, index, field in (
+            ("accepted_transitions", 0, "branch_classification"),
+            ("accepted_transitions", 0, "branch_threshold_version"),
+            ("accepted_transitions", 0, "convergence_metadata"),
+            ("failed_transitions", 0, "branch_classification"),
+            ("failed_transitions", 0, "branch_threshold_version"),
+            ("failed_transitions", 0, "convergence_metadata"),
+        ):
+            invalid = copy.deepcopy(golden)
+            rows = invalid[collection]["vela"] if collection == "accepted_transitions" else invalid[collection]
+            del rows[index][field]
+            with self.subTest(collection=collection, field=field), self.assertRaises(ValueError):
+                schemas.validate_bv_comparison_v1(invalid)
+
+    def test_schema_documents_execute_against_golden_and_invalid_fixtures(self):
+        formula = formula_report()
+        formula_schema = schema_document("vela.pn2d_minimal6_formula_difference.v1")
+        comparison = comparison_report()
+        comparison_schema = schema_document("vela.pn2d_minimal6_bv_comparison.v1")
+        sweep = sweep_manifest()
+        sweep_schema = schema_document("vela.pn2d_minimal6_sweep_manifest.v1")
+        for instance, document in (
+            (formula, formula_schema), (comparison, comparison_schema), (sweep, sweep_schema)
+        ):
+            validate_schema_document(instance, document)
+
+        formula_mutations = []
+        wrong_order = copy.deepcopy(formula)
+        wrong_order["state_matrix"][0], wrong_order["state_matrix"][1] = (
+            wrong_order["state_matrix"][1], wrong_order["state_matrix"][0]
+        )
+        formula_mutations.append(wrong_order)
+        extra_state_property = copy.deepcopy(formula)
+        extra_state_property["state_matrix"][0]["label"] = "free-form"
+        formula_mutations.append(extra_state_property)
+        wrong_actual_bias = copy.deepcopy(formula)
+        wrong_actual_bias["state_matrix"][0]["actual_bias_V"] = 1.0e-13
+        formula_mutations.append(wrong_actual_bias)
+        wrong_residual_name = copy.deepcopy(formula)
+        wrong_residual_name["sentaurus_internal_semantics_residual"][0]["name"] = "residual"
+        formula_mutations.append(wrong_residual_name)
+        malformed_interaction = copy.deepcopy(formula)
+        malformed_interaction["waterfall_paths"][0]["interactions"] = [{"first_factor": "mobility"}]
+        formula_mutations.append(malformed_interaction)
+        for index, invalid in enumerate(formula_mutations):
+            with self.subTest(schema="formula", index=index), self.assertRaises(ValueError):
+                validate_schema_document(invalid, formula_schema)
+
+        for location in ("accepted", "checkpoint", "solver_configuration"):
+            invalid = copy.deepcopy(comparison)
+            if location == "accepted":
+                invalid["accepted_transitions"]["vela"][0]["raw_state"] = {"psi": [0.0]}
+            elif location == "checkpoint":
+                invalid["checkpoints"][0]["raw_states"] = []
+            else:
+                invalid["solver_configurations"]["vela"]["state_payload"] = {}
+            with self.subTest(schema="comparison", location=location), self.assertRaises(ValueError):
+                validate_schema_document(invalid, comparison_schema)
+
+        for field in ("branch_classification", "branch_threshold_version", "convergence_metadata"):
+            invalid = copy.deepcopy(comparison)
+            del invalid["accepted_transitions"]["vela"][0][field]
+            with self.subTest(schema="comparison", field=field), self.assertRaises(ValueError):
+                validate_schema_document(invalid, comparison_schema)
+        failed = {
+            "solver": "vela", "topology": "mirror", "start_bias_V": 0.0,
+            "target_bias_V": -1.0, "status": "rejected", "observables": None,
+            "branch_classification": "unidentified", "branch_threshold_version": THRESHOLD,
+            "convergence_metadata": {"exit_code": 1},
+        }
+        comparison_with_failure = copy.deepcopy(comparison)
+        comparison_with_failure["failed_transitions"] = [failed]
+        comparison_with_failure["failure_transitions"] = [copy.deepcopy(failed)]
+        validate_schema_document(comparison_with_failure, comparison_schema)
+        for field in ("branch_classification", "branch_threshold_version", "convergence_metadata"):
+            invalid = copy.deepcopy(comparison_with_failure)
+            del invalid["failed_transitions"][0][field]
+            with self.subTest(schema="comparison-failure", field=field), self.assertRaises(ValueError):
+                validate_schema_document(invalid, comparison_schema)
+
+        for location in ("checkpoint", "segment"):
+            invalid = copy.deepcopy(sweep)
+            if location == "checkpoint":
+                invalid["accepted_checkpoints"][0]["raw_state"] = {"psi": [0.0]}
+            else:
+                invalid["segments"] = [{"solver": "vela", "raw_states": []}]
+            with self.subTest(schema="sweep", location=location), self.assertRaises(ValueError):
+                validate_schema_document(invalid, sweep_schema)
+
+        sweep_with_failure = copy.deepcopy(sweep)
+        sweep_with_failure["failed_transition"] = failed
+        sweep_with_failure["failed_transitions"] = [copy.deepcopy(failed)]
+        validate_schema_document(sweep_with_failure, sweep_schema)
+        for field in ("branch_classification", "branch_threshold_version", "convergence_metadata"):
+            invalid = copy.deepcopy(sweep_with_failure)
+            del invalid["failed_transitions"][0][field]
+            with self.subTest(schema="sweep-failure", field=field), self.assertRaises(ValueError):
+                validate_schema_document(invalid, sweep_schema)
+
+        nonfinite = copy.deepcopy(comparison)
+        nonfinite["accepted_transitions"]["vela"][0]["observables"]["max_field_V_per_m"] = math.nan
+        with self.assertRaises(ValueError):
+            validate_schema_document(nonfinite, comparison_schema)
 
 
 if __name__ == "__main__":

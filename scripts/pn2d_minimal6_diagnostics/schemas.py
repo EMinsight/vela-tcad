@@ -106,6 +106,56 @@ def _observables(value, name: str) -> Mapping:
     return values
 
 
+def _branch_evidence(row: Mapping, name: str) -> str:
+    classification = row.get("branch_classification")
+    if classification not in _BRANCHES:
+        raise ValueError(f"{name} lacks typed branch classification")
+    version = row.get("branch_threshold_version")
+    if not isinstance(version, str) or not version:
+        raise ValueError(f"{name} lacks branch-threshold provenance")
+    _require_mapping(row.get("convergence_metadata"), f"{name}.convergence_metadata", nonempty=True)
+    return version
+
+
+def _path_definition(value, name: str) -> tuple[str, ...]:
+    definition = _require_mapping(value, name, nonempty=True)
+    missing = {"order", "contributions"} - set(definition)
+    if missing:
+        raise ValueError(f"{name} lacks explicit path fields: {sorted(missing)}")
+    order = _require_list(definition["order"], f"{name}.order")
+    if not order or any(not isinstance(factor, str) or not factor for factor in order):
+        raise ValueError(f"{name}.order must contain named factors")
+    if len(order) != len(set(order)):
+        raise ValueError(f"{name}.order contains duplicate factors")
+    _require_list(definition["contributions"], f"{name}.contributions")
+    return tuple(order)
+
+
+def _interaction_record(value, name: str, *, expected_identity=None, require_identity=False):
+    row = _require_mapping(value, name)
+    required = {
+        "first_factor", "second_factor", "path_identity", "baseline", "a_only",
+        "b_only", "both", "interaction_dex",
+    }
+    missing = required - set(row)
+    if missing:
+        raise ValueError(f"{name} lacks interaction fields: {sorted(missing)}")
+    for field in ("first_factor", "second_factor", "path_identity"):
+        if not isinstance(row[field], str) or not row[field]:
+            raise ValueError(f"{name}.{field} must be a non-empty string")
+    for field in ("baseline", "a_only", "b_only", "both", "interaction_dex"):
+        _number(row[field], f"{name}.{field}")
+    identity = expected_identity
+    if require_identity:
+        identity = _state_identity(row, name)
+    elif "topology" in row or "bias_V" in row:
+        supplied = _state_identity(row, name)
+        if expected_identity is not None and supplied != expected_identity:
+            raise ValueError(f"{name} state identity does not match its waterfall path")
+        identity = supplied
+    return identity, row["first_factor"], row["second_factor"], row["path_identity"]
+
+
 def _accepted_transition(row, name: str, *, strict_package: bool) -> tuple[str, str, float]:
     row = _require_mapping(row, name)
     solver = row.get("solver")
@@ -119,15 +169,11 @@ def _accepted_transition(row, name: str, *, strict_package: bool) -> tuple[str, 
     if abs(target - actual) > 1.0e-12:
         raise ValueError(f"{name} is not an exact checkpoint")
     _observables(row.get("observables"), f"{name}.observables")
+    _branch_evidence(row, name)
     if strict_package:
         if not isinstance(row.get("state_path"), str) or not row["state_path"]:
             raise ValueError(f"{name} lacks a state path")
         _sha(row.get("state_sha256"), f"{name}.state_sha256")
-        if row.get("branch_classification") not in _BRANCHES:
-            raise ValueError(f"{name} lacks typed branch classification")
-        if not isinstance(row.get("branch_threshold_version"), str) or not row["branch_threshold_version"]:
-            raise ValueError(f"{name} lacks branch-threshold provenance")
-        _require_mapping(row.get("convergence_metadata"), f"{name}.convergence_metadata", nonempty=True)
     return str(solver), str(topology), target
 
 
@@ -139,8 +185,9 @@ def _failed_transition(row, name: str, *, strict_package: bool) -> tuple[str, st
     if row.get("status") != "rejected" or row.get("observables") is not None:
         raise ValueError("failed transition must preserve no fabricated observables")
     target = _number(row.get("target_bias_V"), f"{name}.target_bias_V")
-    if strict_package:
-        _require_mapping(row.get("convergence_metadata"), f"{name}.convergence_metadata", nonempty=True)
+    _branch_evidence(row, name)
+    if row["branch_classification"] != "unidentified":
+        raise ValueError("failed transition branch must be unidentified")
     return str(solver), str(topology), target
 
 
@@ -169,16 +216,43 @@ def validate_formula_difference_v1(report: dict) -> None:
         missing = {"topology", "bias_V", "forward", "reverse", "interactions", "residual_dex", "status"} - set(path)
         if missing:
             raise ValueError(f"waterfall path lacks definitions: {sorted(missing)}")
-        path_ids.add(_state_identity(path, f"waterfall_paths[{index}]"))
-        _require_mapping(path["forward"], f"waterfall_paths[{index}].forward")
-        _require_mapping(path["reverse"], f"waterfall_paths[{index}].reverse")
-        _require_list(path["interactions"], f"waterfall_paths[{index}].interactions")
+        identity = _state_identity(path, f"waterfall_paths[{index}]")
+        path_ids.add(identity)
+        forward = _path_definition(path["forward"], f"waterfall_paths[{index}].forward")
+        reverse = _path_definition(path["reverse"], f"waterfall_paths[{index}].reverse")
+        if set(forward) != set(reverse):
+            raise ValueError("forward and reverse paths must cover the same named factors")
+        interactions = _require_list(path["interactions"], f"waterfall_paths[{index}].interactions")
+        seen_path_interactions = set()
+        for interaction_index, interaction in enumerate(interactions):
+            key = _interaction_record(
+                interaction,
+                f"waterfall_paths[{index}].interactions[{interaction_index}]",
+                expected_identity=identity,
+            )
+            if key in seen_path_interactions:
+                raise ValueError("duplicate waterfall interaction record")
+            seen_path_interactions.add(key)
     if path_ids != _EXPECTED_STATES or len(paths) != 6:
         raise ValueError("waterfall paths must cover the exact six-state matrix")
-    _require_list(report["interactions"], "interactions")
+    interactions = _require_list(report["interactions"], "interactions")
+    seen_interactions = set()
+    for index, interaction in enumerate(interactions):
+        key = _interaction_record(interaction, f"interactions[{index}]", require_identity=True)
+        if key in seen_interactions:
+            raise ValueError("duplicate state interaction record")
+        seen_interactions.add(key)
     _require_mapping(report["dominance_rules"], "dominance_rules", nonempty=True)
     residuals = _require_list(report["sentaurus_internal_semantics_residual"], "sentaurus_internal_semantics_residual")
-    if len(residuals) != 6:
+    residual_ids = set()
+    for index, residual in enumerate(residuals):
+        residual = _require_mapping(residual, f"sentaurus_internal_semantics_residual[{index}]")
+        if residual.get("name") != "sentaurus_internal_semantics_residual":
+            raise ValueError("residual record has the wrong name")
+        residual_ids.add(
+            _state_identity(residual, f"sentaurus_internal_semantics_residual[{index}]")
+        )
+    if len(residuals) != 6 or residual_ids != _EXPECTED_STATES:
         raise ValueError("named residual must cover all six states")
     hashes = _require_mapping(report["artifact_hashes"], "artifact_hashes", nonempty=True)
     _sha(hashes.get("state_manifest_sha256"), "artifact_hashes.state_manifest_sha256")
@@ -210,9 +284,15 @@ def validate_bv_comparison_v1(report: dict) -> None:
             identity = _accepted_transition(row, f"accepted_transitions.{solver}[{index}]", strict_package=False)
             if identity[0] != solver or identity[1:] in seen:
                 raise ValueError("accepted transition solver/identity mismatch or duplicate")
+            if row["branch_threshold_version"] != version:
+                raise ValueError("accepted transition branch threshold version mismatch")
             seen.add(identity[1:])
     for index, row in enumerate(_require_list(report["failed_transitions"], "failed_transitions")):
         _failed_transition(row, f"failed_transitions[{index}]", strict_package=False)
+        if row["branch_threshold_version"] != version:
+            raise ValueError("failed transition branch threshold version mismatch")
+    if report["failure_transitions"] != report["failed_transitions"]:
+        raise ValueError("failure transition aliases must preserve identical evidence")
     checkpoints = _require_list(report["checkpoints"], "checkpoints")
     seen = set()
     for index, row in enumerate(checkpoints):

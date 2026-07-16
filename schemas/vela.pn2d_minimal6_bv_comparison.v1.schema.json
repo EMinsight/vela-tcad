@@ -2,6 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "vela.pn2d_minimal6_bv_comparison.v1",
   "type": "object",
+  "allOf": [{"$ref": "#/$defs/noRawStateTree"}],
   "required": [
     "schema", "diagnostic_disclaimer", "interpolation", "branch_threshold_version",
     "solver_configurations", "accepted_transitions", "failed_transitions",
@@ -45,11 +46,16 @@
     "closure": {"type": "object", "required": ["status"],
                 "properties": {"status": {"const": "closed"}}, "additionalProperties": true}
   },
-  "not": {"anyOf": [
-    {"required": ["raw_state"]}, {"required": ["raw_states"]},
-    {"required": ["state_payload"]}, {"required": ["state_vectors"]}
-  ]},
   "$defs": {
+    "noRawStateTree": {
+      "not": {"type": "object", "anyOf": [
+        {"required": ["raw_state"]}, {"required": ["raw_states"]},
+        {"required": ["state_payload"]}, {"required": ["state_vectors"]},
+        {"required": ["state_values"]}
+      ]},
+      "additionalProperties": {"$ref": "#/$defs/noRawStateTree"},
+      "items": {"$ref": "#/$defs/noRawStateTree"}
+    },
     "sha256": {"type": "string", "pattern": "^[0-9a-fA-F]{64}$"},
     "observables": {
       "type": "object",
@@ -63,29 +69,40 @@
       }, "additionalProperties": false
     },
     "acceptedTransition": {
-      "type": "object", "required": ["solver", "topology", "target_bias_V", "actual_bias_V", "status", "observables"],
-      "properties": {"solver": {"enum": ["vela", "sentaurus"]},
-                     "topology": {"enum": ["sketch", "mirror"]},
-                     "target_bias_V": {"type": "number"}, "actual_bias_V": {"type": "number"},
-                     "status": {"const": "accepted"}, "observables": {"$ref": "#/$defs/observables"}},
-      "additionalProperties": true
+      "type": "object",
+      "required": ["solver", "topology", "target_bias_V", "actual_bias_V", "status", "observables",
+                   "branch_classification", "branch_threshold_version", "convergence_metadata"],
+      "properties": {
+        "solver": {"enum": ["vela", "sentaurus"]}, "topology": {"enum": ["sketch", "mirror"]},
+        "target_bias_V": {"type": "number"}, "actual_bias_V": {"type": "number"},
+        "status": {"const": "accepted"}, "observables": {"$ref": "#/$defs/observables"},
+        "branch_classification": {"enum": ["leakage_like", "multiplication_like", "unidentified"]},
+        "branch_threshold_version": {"type": "string", "minLength": 1},
+        "convergence_metadata": {"type": "object", "minProperties": 1}
+      }, "additionalProperties": true
     },
     "failedTransition": {
-      "type": "object", "required": ["solver", "topology", "target_bias_V", "status", "observables"],
-      "properties": {"solver": {"enum": ["vela", "sentaurus"]},
-                     "topology": {"enum": ["sketch", "mirror"]},
-                     "target_bias_V": {"type": "number"}, "status": {"const": "rejected"},
-                     "observables": {"type": "null"}}, "additionalProperties": true
+      "type": "object",
+      "required": ["solver", "topology", "target_bias_V", "status", "observables",
+                   "branch_classification", "branch_threshold_version", "convergence_metadata"],
+      "properties": {
+        "solver": {"enum": ["vela", "sentaurus"]}, "topology": {"enum": ["sketch", "mirror"]},
+        "target_bias_V": {"type": "number"}, "status": {"const": "rejected"},
+        "observables": {"type": "null"}, "branch_classification": {"const": "unidentified"},
+        "branch_threshold_version": {"type": "string", "minLength": 1},
+        "convergence_metadata": {"type": "object", "minProperties": 1}
+      }, "additionalProperties": true
     },
     "comparisonCheckpoint": {
       "type": "object",
       "required": ["topology", "bias_V", "vela", "sentaurus", "branch_classification", "branch_threshold_version"],
-      "properties": {"topology": {"enum": ["sketch", "mirror"]}, "bias_V": {"type": "number"},
-                     "vela": {"$ref": "#/$defs/acceptedTransition"},
-                     "sentaurus": {"$ref": "#/$defs/acceptedTransition"},
-                     "branch_classification": {"enum": ["leakage_like", "multiplication_like", "unidentified"]},
-                     "branch_threshold_version": {"type": "string", "minLength": 1}},
-      "additionalProperties": true
+      "properties": {
+        "topology": {"enum": ["sketch", "mirror"]}, "bias_V": {"type": "number"},
+        "vela": {"$ref": "#/$defs/acceptedTransition"},
+        "sentaurus": {"$ref": "#/$defs/acceptedTransition"},
+        "branch_classification": {"enum": ["leakage_like", "multiplication_like", "unidentified"]},
+        "branch_threshold_version": {"type": "string", "minLength": 1}
+      }, "additionalProperties": true
     }
   },
   "additionalProperties": true
