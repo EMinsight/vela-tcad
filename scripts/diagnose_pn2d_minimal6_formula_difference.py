@@ -26,8 +26,6 @@ from scripts.pn2d_minimal6_diagnostics.counterfactual import (
     build_adjacent_interactions,
     symmetric_contributions,
     evaluate_formula_counterfactual,
-    make_formula_operator_engine,
-
     FACTOR_DEPENDENCIES,
     assert_counterfactual_closure,
     score_dominance,
@@ -445,7 +443,8 @@ def _audit_replay_rows(record: dict):
             ):
                 yield _base(
                     record, "cell_replay", cell_id=cell_id, quantity=quantity,
-                    component=component, value=value, unit="V/m",
+                    component=component, value=value,
+                    unit="rad" if component == "direction_rad" else "V/m",
                     source="fixed_state_audit", source_kind=SourceKind.DERIVED.value,
                 )
         for quantity, value in _numeric_audit_values(
@@ -638,25 +637,17 @@ def _formula_operator_inputs(record: dict):
     baseline["current_semantics"] = None
     baseline = {factor: (value if value is None else tuple(value)) for factor, value in baseline.items()}
     replacements = {factor: tuple(value) for factor, value in replacements.items()}
-    target = float(record["sentaurus_alpha_current_reconstruction_s_inv_per_unit_depth"])
-    if not math.isfinite(target) or target <= 0.0:
-        replacements.pop("source_to_node_mapping")
-        unavailable["source_to_node_mapping"] = (
-            "Sentaurus alpha-current anchor is absent or nonpositive"
-        )
-    else:
-        preliminary = make_formula_operator_engine(
-            baseline_values=baseline, replacement_values=replacements
-        ).evaluate_replacements(set(FACTOR_DEPENDENCIES))
-        scale = target / preliminary
-        replacements["source_to_node_mapping"] = tuple(
-            weight * scale for weight in replacements["source_to_node_mapping"]
-        )
-    if any(isinstance(value, (int, float)) for value in baseline["alpha_law"]):
-        replacements.pop("impact_driving_field")
-        unavailable["impact_driving_field"] = (
-            "direct exported alpha lacks coefficient provenance for independent impact-field replay"
-        )
+    unavailable_inputs = {
+        "ni_eff/BGN": "raw carrier-density averaging is not an independently inferred ni_eff/BGN replay",
+        "impact_driving_field": "direct exported alpha lacks coefficient provenance for independent impact-field replay",
+        "alpha_law": "direct exported alpha confounds driving field and law because coefficient provenance is absent",
+        "source_to_node_mapping": (
+            "Sentaurus mapping weights are not independently exported; conservative Vela/Python weights are controls only"
+        ),
+    }
+    for factor, reason in unavailable_inputs.items():
+        replacements.pop(factor)
+        unavailable[factor] = reason
     return baseline, replacements, unavailable
 
 
@@ -726,16 +717,20 @@ def main() -> int:
         if tuple(len(audit_state[kind]) for kind in ("node", "edge", "triangle")) != (6, 9, 4):
             raise ValueError(f"audit rows do not bind exact state {topology} {bias:g} V")
         records.append(_state_sources(state, audit_state))
+    waterfall_paths = [_closed_counterfactual(record) for record in records]
     residuals = [
         {
             "name": "sentaurus_internal_semantics_residual",
-            "topology": item["topology"],
-            "bias_V": item["bias_V"],
-            **item["sentaurus_native_minus_reconstruction"],
+            "topology": record["topology"],
+            "bias_V": record["bias_V"],
+            "classification": (
+                "available" if path["residual_dex"] is not None
+                else record["sentaurus_native_minus_reconstruction"]["classification"]
+            ),
+            "dex": path["residual_dex"],
         }
-        for item in records
+        for record, path in zip(records, waterfall_paths)
     ]
-    waterfall_paths = [_closed_counterfactual(record) for record in records]
     interactions = [
         {"topology": path["topology"], "bias_V": path["bias_V"], **interaction}
         for path in waterfall_paths

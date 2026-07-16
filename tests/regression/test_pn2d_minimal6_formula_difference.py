@@ -350,6 +350,40 @@ class FormulaDifferenceTest(unittest.TestCase):
     def test_source_log_gap_classifies_zero_and_reports_dex(self):
         self.assertAlmostEqual(source_log_gap(100., 1.)["dex"], 2.0)
         self.assertEqual(source_log_gap(0., 0.)["classification"], "geometric_zero")
+    def test_real_mapping_is_conservative_and_never_calibrated_to_target(self):
+        with tempfile.TemporaryDirectory() as temp:
+            state_root, audit_root = _prepare_formula_fixture(temp)
+            manifest = json.loads((state_root / "manifest.json").read_text(encoding="utf-8"))
+            audit = formula_cli.validate_audit_binding(state_root, audit_root)
+            state = next(
+                row for row in manifest["states"]
+                if row["topology_id"] == "sketch" and row["requested_bias_V"] == -19.0
+            )
+            resolved = formula_cli._resolved_state(state, state_root)
+            audit_state = {
+                kind: [
+                    row for row in audit[kind]
+                    if row["topology_id"] == "sketch" and float(row["bias_V"]) == -19.0
+                ]
+                for kind in ("node", "edge", "triangle")
+            }
+            record = formula_cli._state_sources(resolved, audit_state)
+            changed_target = dict(record)
+            target_name = "sentaurus_alpha_current_reconstruction_s_inv_per_unit_depth"
+            changed_target[target_name] *= 17.0
+            baseline, replacements, unavailable = formula_cli._formula_operator_inputs(record)
+            changed_baseline, changed_replacements, _ = formula_cli._formula_operator_inputs(changed_target)
+            factor = "source_to_node_mapping"
+            self.assertEqual(baseline[factor], changed_baseline[factor])
+            self.assertEqual(replacements.get(factor), changed_replacements.get(factor))
+            self.assertNotIn(factor, replacements)
+            self.assertIn("conservative", unavailable[factor])
+            for triangle in audit_state["triangle"]:
+                for source in ("vela", "python"):
+                    for carrier in ("electron", "hole"):
+                        self.assertAlmostEqual(
+                            formula_cli._mapping_scale(triangle, source, carrier), 1.0
+                        )
     def test_cli_writes_closed_deterministic_exact_identity_artifacts(self):
         with tempfile.TemporaryDirectory() as temp:
             state_root, audit_root = _prepare_formula_fixture(temp)
@@ -406,13 +440,28 @@ class FormulaDifferenceTest(unittest.TestCase):
             self.assertTrue(any(row["quantity"] == "eIonIntegral" for row in ledger))
             self.assertTrue(any(row["quantity"] == "ni_eff_relative_residual" for row in ledger))
 
+            direction_rows = [row for row in ledger if row["component"] == "direction_rad"]
+            self.assertTrue(direction_rows)
+            self.assertEqual({row["unit"] for row in direction_rows}, {"rad"})
+
+            unavailable_factors = {
+                "ni_eff/BGN": "independently inferred ni_eff/BGN",
+                "impact_driving_field": "coefficient provenance",
+                "alpha_law": "coefficient provenance",
+                "source_to_node_mapping": "conservative",
+            }
             for path in report["waterfall_paths"]:
-                impact_field = next(
-                    row for row in path["factor_availability"]
-                    if row["factor"] == "impact_driving_field"
-                )
-                self.assertEqual(impact_field["status"], "unavailable")
-                self.assertIn("coefficient provenance", impact_field["reason"])
+                availability = {row["factor"]: row for row in path["factor_availability"]}
+                for factor, reason in unavailable_factors.items():
+                    self.assertEqual(availability[factor]["status"], "unavailable")
+                    self.assertIn(reason, availability[factor]["reason"])
+                for identity in ("forward", "reverse"):
+                    contributions = {
+                        row["factor"]: row["contribution_dex"]
+                        for row in path[identity]["contributions"]
+                    }
+                    for factor in unavailable_factors:
+                        self.assertAlmostEqual(contributions[factor], 0.0)
             self.assertEqual(report["dominance_rules"]["status"], "insufficient_data")
             self.assertNotIn("dominant_factor", report["dominance_rules"])
 

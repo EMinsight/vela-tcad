@@ -1,5 +1,7 @@
 # Task 4 Report: Fixed-State Formula-Difference CLI And Counterfactual Engine
 
+> **Authoritative supersession (2026-07-16 terminal review):** The final section of this report supersedes every earlier causal-availability, factor-contribution, residual, dominance, interaction-count, and artifact-hash claim. Earlier RED/GREEN and provenance history remains historical evidence only; do not use its numerical conclusions.
+
 ## Status
 Implemented from clean base `658b6b2de297a6a61cbb5e936e227842748e23f7` without production C++ changes.
 
@@ -118,3 +120,78 @@ Two fresh runs produced identical artifact hashes:
 No adjacent pair in the real fixture crosses the strict `>0.3 dex` forward/reverse trigger, so no real interaction is fabricated. The focused interaction case uses `baseline=1`, `A=10`, `B=2`, and `A+B=50`, giving `log10(2.5) = 0.3979400086720376 dex`; it renders both `interaction.png` and `interaction.pdf` through the `first_factor/second_factor` schema.
 
 The remaining limitation is explicit rather than hidden: direct exported alpha cannot independently identify the impact-driving-field effect without bound Vela coefficient provenance. The large direct alpha-output contribution must not be interpreted as a dominant causal factor; the fail-closed `insufficient_data` result is the reviewed outcome.
+
+## Terminal causal-attribution review (authoritative, 2026-07-16)
+
+This section supersedes the earlier Task 4 and review-fix causal results, including the `03391e1` hashes and the stale `299.35969964281963 dex` alpha attribution. Provenance and adversarial gates remain valid, but all earlier availability, contribution, residual, dominance, interaction-count, and hash values are historical.
+
+### Corrected design
+
+- Removed the target/preliminary calibration entirely. `source_to_node_mapping` weights are never scaled to force the Sentaurus alpha-current reconstruction.
+- Preserved the actual conservative Vela and independent-Python mapping controls in the ledger. Their maximum partition/local conservation error is `0.0`.
+- Marked `source_to_node_mapping` unavailable because Sentaurus mapping weights are not independently exported. Its unexplained total difference remains in the named residual.
+- Marked `ni_eff/BGN` unavailable because raw carrier-density averaging is not an independently inferred, formula-bound `ni_eff/BGN` replay. Density interpolation remains visible only as ledger evidence.
+- Marked both `impact_driving_field` and `alpha_law` unavailable because direct exported alpha confounds the field and law while bound Vela coefficient provenance is absent.
+- Corrected `direction_rad` ledger units from `V/m` to `rad`.
+- Kept the generic eight-operator engine and its fully supplied synthetic activation test unchanged.
+
+### TDD and verification
+
+- RED: the target-independence test changed mapping weights from `0.009763849402817335` to `0.16598543984789466` when only the target was multiplied by `17`; the real CLI also emitted `V/m` instead of `rad` (`2` tests, `29.052s`, two expected failures).
+- GREEN: targeted conservative-mapping and real-CLI acceptance passed (`2/2`, `25.172s`).
+- Fresh Task 4 formula suite passed (`24/24`, `63.305s`).
+- Fresh Task 2 contracts plus Task 3 physics passed (`39/39`, `0.199s`).
+- Fresh Task 1 state-export plus fixed-state audit/import boundary passed (`67/67`, `35.183s`).
+- `compileall -q -f` exited `0`; direct imports of the CLI, counterfactual, plot, and regression modules printed `imports OK`.
+- Configured Windows Git (`core.autocrlf=true`) reported `git diff --check` exit `0`.
+
+### Authoritative factor availability
+
+| Factor | Maximum absolute path contribution (dex) | Real-fixture status |
+|---|---:|---|
+| `ni_eff/BGN` | `0.0` | unavailable; raw density averaging is not inferred ni/BGN |
+| `gradient_recovery` | `0.21386353869419972` | available |
+| `mobility` | `0.0` | available; exact equal-input control |
+| `current_semantics` | `0.22165744282050193` | available |
+| `impact_driving_field` | `0.0` | unavailable; coefficient provenance absent |
+| `alpha_law` | `0.0` | unavailable; exported alpha confounds field and law |
+| `partial_volume` | `4.821637332766436e-17` | available C++/independent-Python control |
+| `source_to_node_mapping` | `0.0` | unavailable; only conservative control weights exist |
+
+All four unavailable factors contribute exactly zero on both paths. Dominance is `insufficient_data` with reason `unavailable factors: alpha_law, impact_driving_field, ni_eff/BGN, source_to_node_mapping`; no `dominant_factor` is emitted.
+
+### Exact closure and named residual
+
+- Exact identities: `36 node / 54 edge / 24 triangle`.
+- Maximum eligible forward/reverse closure error: `0.0 dex`.
+- Maximum path-residual versus named `sentaurus_internal_semantics_residual` mismatch: `0.0 dex`.
+- Maximum mapping conservation error: `0.0`.
+- Direction units: exactly `rad`.
+
+| State | Named residual (dex) |
+|---|---:|
+| sketch `0 V` | `286.7681499114667` |
+| sketch `-12 V` | `290.6705668672648` |
+| sketch `-19 V` | `293.62234705748955` |
+| mirror `0 V` | `286.89502314785227` |
+| mirror `-12 V` | `290.7974401036503` |
+| mirror `-19 V` | `293.74922029387506` |
+
+The large residual is the reviewed result: missing independent causal inputs dominate the unexplained gap. It is not calibrated away or attributed to alpha, ni/BGN, field, or mapping.
+
+### Determinism, provenance, and interactions
+
+Two fresh runs produced identical authoritative hashes:
+
+| Artifact | SHA-256 |
+|---|---|
+| `quantity_ledger.csv` | `50afbc13f947990469994fee26dc3d7bef6bf7d581bec737245dc13bbd85f132` |
+| `factor_waterfall.csv` | `7874740f80eff42de9e7ffaedafa9a07477677f2d5fc7ac436c5a0a976ec33ad` |
+| `root_cause_summary.json` | `45000b674741538d12983b4d43af3d8bae18ca0f5c69eb04067b4377d2966208` |
+| `root_cause_summary.md` | `1723ccd19357244e1590b62c9cfad077f7fcde34df68a1654c56e3affb9e0402` |
+
+Strict state/audit binding, production replay, byte-exact audit regeneration, six CLI file mutations, undeclared-dependency rejection, and false-native-kind rejection all remain covered. No real adjacent pair crosses the strict `>0.3 dex` trigger, so no real interaction is fabricated. The synthetic interaction contract remains `log10(2.5) = 0.3979400086720376 dex` and renders both PNG and PDF through `first_factor/second_factor`.
+
+### Terminal concern
+
+The package is integrity-complete but scientifically inconclusive. A causal ranking requires independently bound ni/BGN formulas, Vela alpha coefficients that permit field/law separation, and an exported Sentaurus source-mapping operator. Until those exist, the authoritative outcome is exact closure with a large named residual and `insufficient_data`.
