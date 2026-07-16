@@ -53,6 +53,181 @@ class DiagnosticSweepTest(unittest.TestCase):
         manifest_path = initialise_package(root, template, authoritative_state_root=fixture)
         return json.loads(manifest_path.read_text(encoding="utf-8"))
 
+    def _complete_package_with_common_pair(
+        self,
+        root,
+        *,
+        actual_offset_V=0.0,
+        sentaurus_current=1.0,
+    ):
+        manifest = self._complete_package(root)
+        target = -1.0
+        actual = target + actual_offset_V
+        sentaurus_segment = next(
+            segment
+            for segment in manifest["sentaurus_segments"]
+            if segment["topology"] == "sketch"
+            and segment["target_bias_V"] == target
+        )
+        sentaurus_state = root / sentaurus_segment["checkpoint_tdr"]
+        sentaurus_state.parent.mkdir(parents=True, exist_ok=True)
+        sentaurus_state.write_text("sentaurus state\n", encoding="utf-8")
+        vela_state = segment_state_path(root, "sketch", 0.0, target)
+        vela_state.parent.mkdir(parents=True, exist_ok=True)
+        vela_state.write_text("vela state\n", encoding="utf-8")
+
+        def observables(current):
+            return {
+                "anode_current_A_per_um": current,
+                "cathode_current_A_per_um": -current,
+                "max_field_V_per_m": 2.0,
+                "native_source_integral_s_inv_per_cm": 3.0,
+                "reconstructed_source_integral_s_inv_per_cm": 4.0,
+            }
+
+        sentaurus = record_transition(
+            manifest,
+            solver="sentaurus",
+            topology="sketch",
+            start_bias_V=0.0,
+            target_bias_V=target,
+            exit_code=0,
+            actual_bias_V=actual,
+            state_path=sentaurus_state,
+            observables=observables(sentaurus_current),
+        )
+        vela = record_transition(
+            manifest,
+            solver="vela",
+            topology="sketch",
+            start_bias_V=0.0,
+            target_bias_V=target,
+            exit_code=0,
+            actual_bias_V=actual,
+            state_path=vela_state,
+            observables=observables(5.0),
+        )
+        sentaurus["state_path"] = str(sentaurus_state.relative_to(root))
+        vela["state_path"] = str(vela_state.relative_to(root))
+        return manifest, sentaurus, vela
+
+    def test_strict_package_recomputes_common_branch_evidence(self):
+        def delete_evidence(index):
+            def mutate(manifest, rows):
+                del rows[index]["branch_ratio_evidence"]
+            return mutate
+
+        def alter_evidence(field, value, *, both=True):
+            def mutate(manifest, rows):
+                targets = rows if both else rows[:1]
+                for row in targets:
+                    row["branch_ratio_evidence"][field] = value
+            return mutate
+
+        def rows_differ(manifest, rows):
+            rows[0]["branch_ratio_evidence"]["absolute_vela_over_sentaurus"] = 6.0
+
+        def wrong_classification(manifest, rows):
+            for row in rows:
+                row["branch_classification"] = "leakage_like"
+
+        def noncanonical_threshold(manifest, rows):
+            manifest["branch_threshold_version"] = "v2-noncanonical"
+            for row in rows:
+                row["branch_threshold_version"] = "v2-noncanonical"
+                row["branch_ratio_evidence"]["threshold_version"] = "v2-noncanonical"
+
+        mutations = (
+            ("missing_sentaurus_evidence", delete_evidence(0)),
+            ("missing_vela_evidence", delete_evidence(1)),
+            ("ratio", alter_evidence("absolute_vela_over_sentaurus", 6.0)),
+            ("vela_current", alter_evidence("vela_anode_current_A_per_um", 6.0)),
+            ("sentaurus_current", alter_evidence("sentaurus_anode_current_A_per_um", 2.0)),
+            ("geometric_zero", alter_evidence("geometric_zero", True)),
+            ("ratio_bool", alter_evidence("absolute_vela_over_sentaurus", True)),
+            ("sentaurus_current_bool", alter_evidence("sentaurus_anode_current_A_per_um", True)),
+            ("geometric_zero_int", alter_evidence("geometric_zero", 0)),
+            ("rows_differ", rows_differ),
+            ("wrong_allowed_classification", wrong_classification),
+            ("noncanonical_threshold", noncanonical_threshold),
+        )
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            baseline, _, _ = self._complete_package_with_common_pair(root)
+            validate_sweep_manifest(baseline, package_root=root)
+        for label, mutate in mutations:
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                manifest, sentaurus, vela = self._complete_package_with_common_pair(root)
+                mutate(manifest, [sentaurus, vela])
+                with self.assertRaises(ValueError):
+                    validate_sweep_manifest(manifest, package_root=root)
+
+    def test_strict_common_pair_uses_none_ratio_only_for_zero_reference(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            manifest, sentaurus, vela = self._complete_package_with_common_pair(
+                root, sentaurus_current=0.0
+            )
+            validate_sweep_manifest(manifest, package_root=root)
+            for row in (sentaurus, vela):
+                self.assertEqual(row["branch_classification"], "unidentified")
+                self.assertIsNone(
+                    row["branch_ratio_evidence"]["absolute_vela_over_sentaurus"]
+                )
+
+    def test_strict_side_only_row_stays_unidentified_without_ratio_evidence(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            manifest = self._complete_package(root)
+            state = segment_state_path(root, "sketch", 0.0, -1.0)
+            state.parent.mkdir(parents=True, exist_ok=True)
+            state.write_text("vela state\n", encoding="utf-8")
+            row = record_transition(
+                manifest,
+                solver="vela",
+                topology="sketch",
+                start_bias_V=0.0,
+                target_bias_V=-1.0,
+                exit_code=0,
+                actual_bias_V=-1.0,
+                state_path=state,
+                observables={
+                    "anode_current_A_per_um": 5.0,
+                    "cathode_current_A_per_um": -5.0,
+                    "max_field_V_per_m": 2.0,
+                    "native_source_integral_s_inv_per_cm": 3.0,
+                    "reconstructed_source_integral_s_inv_per_cm": 4.0,
+                },
+            )
+            row["state_path"] = str(state.relative_to(root))
+            validate_sweep_manifest(manifest, package_root=root)
+            self.assertEqual(row["branch_classification"], "unidentified")
+            self.assertNotIn("branch_ratio_evidence", row)
+            row["branch_ratio_evidence"] = {
+                "vela_anode_current_A_per_um": 5.0,
+                "sentaurus_anode_current_A_per_um": 1.0,
+                "absolute_vela_over_sentaurus": 5.0,
+                "geometric_zero": False,
+                "threshold_version": manifest["branch_threshold_version"],
+            }
+            with self.assertRaises(ValueError):
+                validate_sweep_manifest(manifest, package_root=root)
+
+    def test_common_pair_refresh_uses_exact_bias_tolerance(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            manifest, sentaurus, vela = self._complete_package_with_common_pair(
+                root, actual_offset_V=5.0e-13
+            )
+            validate_sweep_manifest(manifest, package_root=root)
+            for row in (sentaurus, vela):
+                self.assertEqual(row["branch_classification"], "multiplication_like")
+                self.assertEqual(
+                    row["branch_ratio_evidence"]["absolute_vela_over_sentaurus"],
+                    5.0,
+                )
+
     def test_complete_package_rejects_config_drift_and_identity_tampering(self):
         def template_tamper(root, manifest):
             path = Path(manifest["template"]["path"])

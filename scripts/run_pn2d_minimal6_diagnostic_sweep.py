@@ -374,65 +374,157 @@ def copy_topology_inputs(authoritative_state_root: Path, destination_root: Path,
         }
     return hashes
 
-def _refresh_common_exact_branch_evidence(manifest: dict[str, Any]) -> None:
+def _accepted_branch_groups(manifest: dict[str, Any]) -> list[list[dict[str, Any]]]:
     accepted = manifest.get("accepted_checkpoints", [])
     if not isinstance(accepted, list):
-        return
-    identities = {
-        (row.get("topology"), float(row.get("target_bias_V", math.nan)))
-        for row in accepted
-        if isinstance(row, dict) and row.get("status") == "accepted"
-    }
-    for topology, target_bias in identities:
-        matches = [
-            row
-            for row in accepted
-            if isinstance(row, dict)
-            and row.get("status") == "accepted"
-            and row.get("topology") == topology
-            and float(row.get("target_bias_V", math.nan)) == target_bias
-            and float(row.get("actual_bias_V", math.nan)) == target_bias
-        ]
-        by_solver = {row.get("solver"): row for row in matches}
-        if len(matches) != 2 or set(by_solver) != {"vela", "sentaurus"}:
+        return []
+    groups: dict[tuple[str, float], list[dict[str, Any]]] = {}
+    for row in accepted:
+        if not isinstance(row, dict) or row.get("status") != "accepted":
             continue
-        vela = by_solver["vela"]
-        sentaurus = by_solver["sentaurus"]
-        vela_observables = vela["observables"]
-        sentaurus_observables = sentaurus["observables"]
-        geometric_zero = any(
-            abs(float(observables["native_source_integral_s_inv_per_cm"]))
-            <= GEOMETRIC_ZERO_SOURCE_INTEGRAL
-            and abs(float(observables["reconstructed_source_integral_s_inv_per_cm"]))
-            <= GEOMETRIC_ZERO_SOURCE_INTEGRAL
-            for observables in (vela_observables, sentaurus_observables)
-        )
-        vela_current = float(vela_observables["anode_current_A_per_um"])
-        sentaurus_current = float(sentaurus_observables["anode_current_A_per_um"])
-        ratio = (
-            None
-            if sentaurus_current == 0.0
-            else abs(vela_current / sentaurus_current)
-        )
-        threshold_version = manifest.get(
-            "branch_threshold_version", BRANCH_THRESHOLD_VERSION
-        )
-        evidence = {
-            "vela_anode_current_A_per_um": vela_current,
-            "sentaurus_anode_current_A_per_um": sentaurus_current,
-            "absolute_vela_over_sentaurus": ratio,
-            "geometric_zero": geometric_zero,
-            "threshold_version": threshold_version,
-        }
-        classification = classify_branch(
-            sentaurus_current,
-            vela_current,
-            geometric_zero=geometric_zero,
-        )
-        for row in (vela, sentaurus):
+        identity = (str(row.get("topology")), float(row.get("target_bias_V", math.nan)))
+        groups.setdefault(identity, []).append(row)
+    return list(groups.values())
+
+
+def _derive_common_exact_branch_evidence(
+    rows: list[dict[str, Any]],
+) -> tuple[str, dict[str, Any]] | None:
+    if len(rows) != 2:
+        return None
+    by_solver = {row.get("solver"): row for row in rows}
+    if len(by_solver) != 2 or set(by_solver) != {"vela", "sentaurus"}:
+        return None
+    vela = by_solver["vela"]
+    sentaurus = by_solver["sentaurus"]
+    if vela.get("topology") != sentaurus.get("topology"):
+        return None
+    vela_target = float(vela.get("target_bias_V", math.nan))
+    sentaurus_target = float(sentaurus.get("target_bias_V", math.nan))
+    if vela_target != sentaurus_target:
+        return None
+    for row in (vela, sentaurus):
+        actual = float(row.get("actual_bias_V", math.nan))
+        if not math.isfinite(actual) or abs(actual - vela_target) > 1.0e-12:
+            return None
+
+    vela_observables = vela["observables"]
+    sentaurus_observables = sentaurus["observables"]
+    geometric_zero = any(
+        abs(float(observables["native_source_integral_s_inv_per_cm"]))
+        <= GEOMETRIC_ZERO_SOURCE_INTEGRAL
+        and abs(float(observables["reconstructed_source_integral_s_inv_per_cm"]))
+        <= GEOMETRIC_ZERO_SOURCE_INTEGRAL
+        for observables in (vela_observables, sentaurus_observables)
+    )
+    vela_current = float(vela_observables["anode_current_A_per_um"])
+    sentaurus_current = float(sentaurus_observables["anode_current_A_per_um"])
+    ratio = (
+        None
+        if sentaurus_current == 0.0
+        else abs(vela_current / sentaurus_current)
+    )
+    evidence = {
+        "vela_anode_current_A_per_um": vela_current,
+        "sentaurus_anode_current_A_per_um": sentaurus_current,
+        "absolute_vela_over_sentaurus": ratio,
+        "geometric_zero": geometric_zero,
+        "threshold_version": BRANCH_THRESHOLD_VERSION,
+    }
+    classification = classify_branch(
+        sentaurus_current,
+        vela_current,
+        geometric_zero=geometric_zero,
+    )
+    return classification, evidence
+
+
+def _refresh_common_exact_branch_evidence(manifest: dict[str, Any]) -> None:
+    manifest.setdefault("branch_threshold_version", BRANCH_THRESHOLD_VERSION)
+    for rows in _accepted_branch_groups(manifest):
+        for row in rows:
+            row["branch_classification"] = "unidentified"
+            row["branch_threshold_version"] = BRANCH_THRESHOLD_VERSION
+            row.pop("branch_ratio_evidence", None)
+        derived = _derive_common_exact_branch_evidence(rows)
+        if derived is None:
+            continue
+        classification, evidence = derived
+        for row in rows:
             row["branch_classification"] = classification
-            row["branch_threshold_version"] = threshold_version
             row["branch_ratio_evidence"] = dict(evidence)
+
+
+def _validate_branch_ratio_evidence_shape(
+    evidence: Any,
+    expected: dict[str, Any],
+) -> None:
+    required = {
+        "vela_anode_current_A_per_um",
+        "sentaurus_anode_current_A_per_um",
+        "absolute_vela_over_sentaurus",
+        "geometric_zero",
+        "threshold_version",
+    }
+    if not isinstance(evidence, dict) or set(evidence) != required:
+        raise ValueError("common exact branch ratio evidence has invalid fields")
+
+    def finite_number(value: Any, name: str) -> None:
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+        ):
+            raise ValueError(f"branch ratio evidence {name} must be a finite number")
+
+    finite_number(
+        evidence["vela_anode_current_A_per_um"],
+        "vela_anode_current_A_per_um",
+    )
+    finite_number(
+        evidence["sentaurus_anode_current_A_per_um"],
+        "sentaurus_anode_current_A_per_um",
+    )
+    if type(evidence["geometric_zero"]) is not bool:
+        raise ValueError("branch ratio evidence geometric_zero must be boolean")
+    if (
+        type(evidence["threshold_version"]) is not str
+        or evidence["threshold_version"] != BRANCH_THRESHOLD_VERSION
+    ):
+        raise ValueError("branch ratio evidence threshold version is noncanonical")
+
+    ratio = evidence["absolute_vela_over_sentaurus"]
+    if expected["absolute_vela_over_sentaurus"] is None:
+        if ratio is not None:
+            raise ValueError("zero reference current requires a null branch ratio")
+    else:
+        finite_number(ratio, "absolute_vela_over_sentaurus")
+
+
+def _validate_serialized_branch_evidence(manifest: dict[str, Any]) -> None:
+    if manifest.get("branch_threshold_version") != BRANCH_THRESHOLD_VERSION:
+        raise ValueError("sweep branch threshold version is noncanonical")
+    for rows in _accepted_branch_groups(manifest):
+        derived = _derive_common_exact_branch_evidence(rows)
+        if derived is None:
+            for row in rows:
+                if row.get("branch_classification") != "unidentified":
+                    raise ValueError("side-only accepted branch must be unidentified")
+                if row.get("branch_threshold_version") != BRANCH_THRESHOLD_VERSION:
+                    raise ValueError("side-only accepted branch threshold is noncanonical")
+                if "branch_ratio_evidence" in row:
+                    raise ValueError("side-only accepted branch must not carry ratio evidence")
+            continue
+        expected_classification, expected_evidence = derived
+        for row in rows:
+            if row.get("branch_classification") != expected_classification:
+                raise ValueError("common exact branch classification does not match currents")
+            if row.get("branch_threshold_version") != BRANCH_THRESHOLD_VERSION:
+                raise ValueError("common exact branch threshold is noncanonical")
+            evidence = row.get("branch_ratio_evidence")
+            _validate_branch_ratio_evidence_shape(evidence, expected_evidence)
+            if evidence != expected_evidence:
+                raise ValueError("common exact branch ratio evidence is incomplete or inconsistent")
 
 
 def record_transition(
@@ -877,6 +969,7 @@ def validate_sweep_manifest(manifest: dict[str, Any], *, package_root: Path | No
                 f"{row['solver']} accepted state path is noncanonical"
             )
 
+    _validate_serialized_branch_evidence(manifest)
     validate_sweep_manifest_v1(manifest)
 
 
