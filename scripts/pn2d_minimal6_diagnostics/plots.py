@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import csv
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -79,22 +80,60 @@ def _source_rows(ledger: list[dict[str, str]]) -> list[dict[str, str]]:
 def _plot_sources(ax: plt.Axes, ledger: list[dict[str, str]]) -> None:
     rows = _source_rows(ledger)
     labels: list[str] = []
-    values: list[float] = []
-    colors: list[str] = []
     palette = {
         "sentaurus_native_avalanche_generation": "tab:green",
         "sentaurus_alpha_current_reconstruction": "tab:purple",
         "vela_alpha_flux_partial_volume_reconstruction": "tab:red",
     }
-    for row in rows:
-        value = _number(row["value_s_inv_per_unit_depth"])
+    available_positions: list[int] = []
+    available_values: list[float] = []
+    available_colors: list[str] = []
+    available_zero_positions: list[int] = []
+    geometric_zero_positions: list[int] = []
+    unavailable_positions: list[int] = []
+    for position, row in enumerate(rows):
         labels.append(f"{row['topology']} {row['bias_V']} V\n{row['source']}")
-        values.append(0.0 if value is None else value)
-        colors.append(palette.get(row["source"], "tab:gray"))
-    ax.bar(range(len(values)), values, color=colors)
-    zero_positions = [index for index, value in enumerate(values) if value == 0.0]
-    if zero_positions:
-        ax.scatter(zero_positions, [0.0] * len(zero_positions), marker="x", color="black", label="geometric zero (not log floored)")
+        status = row.get("status")
+        if status not in {"available", "geometric_zero", "unavailable"}:
+            raise ValueError(f"invalid source-integral status: {status!r}")
+        if status == "available":
+            value = _number(row.get("value_s_inv_per_unit_depth"))
+            if value is None or not math.isfinite(value):
+                raise ValueError("available source integral requires a finite numeric value")
+            available_positions.append(position)
+            available_values.append(value)
+            available_colors.append(palette.get(row["source"], "tab:gray"))
+            if value == 0.0:
+                available_zero_positions.append(position)
+        elif status == "geometric_zero":
+            geometric_zero_positions.append(position)
+        else:
+            unavailable_positions.append(position)
+
+    ax.bar(available_positions, available_values, color=available_colors)
+    if available_zero_positions:
+        ax.scatter(
+            available_zero_positions, [0.0] * len(available_zero_positions),
+            marker="o", facecolors="none", edgecolors="black",
+            label="available zero (not geometric)",
+        )
+    if geometric_zero_positions:
+        ax.scatter(
+            geometric_zero_positions, [0.0] * len(geometric_zero_positions),
+            marker="x", color="black",
+            label="explicit geometric zero (not log floored)",
+        )
+    if unavailable_positions:
+        for position in unavailable_positions:
+            ax.text(
+                position, 0.02, "N/A", ha="center", va="bottom", rotation=90,
+                transform=ax.get_xaxis_transform(),
+            )
+        ax.scatter(
+            [], [], marker="s", facecolors="none", edgecolors="tab:gray",
+            label="unavailable (not plotted)",
+        )
+    if available_zero_positions or geometric_zero_positions or unavailable_positions:
         ax.legend(loc="best")
     ax.set_xticks(range(len(labels)), labels, rotation=90, fontsize=7)
     ax.set_xlabel("native Sentaurus (green), Sentaurus reconstruction (purple), Vela reconstruction (red)")

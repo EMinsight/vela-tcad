@@ -108,6 +108,35 @@ def _base(record: dict, kind: str, **fields) -> dict:
     return row
 
 
+def _source_integral_statuses(record: dict) -> dict[str, str]:
+    """Map producer-owned pair classifications onto the three source anchors."""
+    pair_statuses = {
+        "sentaurus_alpha_current_reconstruction": record[
+            "sentaurus_native_minus_reconstruction"
+        ]["classification"],
+        "vela_alpha_flux_partial_volume_reconstruction": record[
+            "vela_native_minus_reconstruction"
+        ]["classification"],
+    }
+    allowed = {"available", "geometric_zero", "unavailable"}
+    for source, status in pair_statuses.items():
+        if status not in allowed:
+            raise ValueError(
+                f"invalid source-gap classification for {source}: {status!r}"
+            )
+    classifications = tuple(pair_statuses.values())
+    if all(status == "geometric_zero" for status in classifications):
+        native_status = "geometric_zero"
+    elif any(status == "available" for status in classifications):
+        native_status = "available"
+    else:
+        native_status = "unavailable"
+    return {
+        "sentaurus_native_avalanche_generation": native_status,
+        **pair_statuses,
+    }
+
+
 def _validate_export_units(export_dir: Path) -> None:
     manifest = export_dir / "field_manifest.json"
     if not manifest.is_file():
@@ -473,6 +502,7 @@ def _write_artifacts(out_dir: Path, records: list[dict], waterfall_paths: list[d
         writer = csv.DictWriter(handle, fieldnames=fields)
         writer.writeheader()
         for record in records:
+            source_statuses = _source_integral_statuses(record)
             source_families = (
                 (family, SOURCE_VALUE_KEYS[family], SOURCE_FAMILIES[family])
                 for family in SOURCE_VALUE_KEYS
@@ -482,7 +512,13 @@ def _write_artifacts(out_dir: Path, records: list[dict], waterfall_paths: list[d
                     source, source_kind,
                     native=(source == "sentaurus_native_avalanche_generation"),
                 )
-                writer.writerow(_base(record, "source_integral", quantity="avalanche_generation", unit="s^-1 per 1 cm depth", source=source, source_kind=source_kind, value_s_inv_per_unit_depth=record[key], depth_convention=record["depth_convention"]))
+                writer.writerow(_base(
+                    record, "source_integral", quantity="avalanche_generation",
+                    unit="s^-1 per 1 cm depth", source=source,
+                    source_kind=source_kind, value_s_inv_per_unit_depth=record[key],
+                    depth_convention=record["depth_convention"],
+                    status=source_statuses[source],
+                ))
             writer.writerows(_node_state_rows(record))
             writer.writerows(_audit_replay_rows(record))
     with (out_dir / "factor_waterfall.csv").open("w", newline="", encoding="utf-8") as handle:

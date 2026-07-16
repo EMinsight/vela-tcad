@@ -20,7 +20,7 @@ from scripts.pn2d_minimal6_diagnostics.schemas import validate_formula_differenc
 from tests.regression.test_pn2d_minimal6_diagnostic_contracts import schema_document, validate_schema_document
 import scripts.audit_pn2d_minimal6_fixed_state as fixed_audit
 import scripts.diagnose_pn2d_minimal6_formula_difference as formula_cli
-from scripts.pn2d_minimal6_diagnostics.plots import _plot_interactions, render_formula_difference_figures
+from scripts.pn2d_minimal6_diagnostics.plots import _plot_interactions, _plot_sources, render_formula_difference_figures
 
 
 def _prepare_formula_fixture(temp: str) -> tuple[Path, Path]:
@@ -388,6 +388,83 @@ class FormulaDifferenceTest(unittest.TestCase):
                         self.assertAlmostEqual(
                             formula_cli._mapping_scale(triangle, source, carrier), 1.0
                         )
+    def test_source_integral_statuses_are_pair_derived(self):
+        def record(sentaurus: str, vela: str) -> dict:
+            return {
+                "sentaurus_native_minus_reconstruction": {"classification": sentaurus},
+                "vela_native_minus_reconstruction": {"classification": vela},
+            }
+
+        self.assertEqual(
+            formula_cli._source_integral_statuses(record("geometric_zero", "geometric_zero")),
+            {
+                "sentaurus_native_avalanche_generation": "geometric_zero",
+                "sentaurus_alpha_current_reconstruction": "geometric_zero",
+                "vela_alpha_flux_partial_volume_reconstruction": "geometric_zero",
+            },
+        )
+        self.assertEqual(
+            formula_cli._source_integral_statuses(record("available", "unavailable")),
+            {
+                "sentaurus_native_avalanche_generation": "available",
+                "sentaurus_alpha_current_reconstruction": "available",
+                "vela_alpha_flux_partial_volume_reconstruction": "unavailable",
+            },
+        )
+        self.assertEqual(
+            formula_cli._source_integral_statuses(record("unavailable", "geometric_zero")),
+            {
+                "sentaurus_native_avalanche_generation": "unavailable",
+                "sentaurus_alpha_current_reconstruction": "unavailable",
+                "vela_alpha_flux_partial_volume_reconstruction": "geometric_zero",
+            },
+        )
+        with self.assertRaisesRegex(ValueError, "source-gap classification"):
+            formula_cli._source_integral_statuses(record("malformed", "available"))
+
+    def test_source_plot_available_zero_is_not_geometric_zero(self):
+        fig, axis = plt.subplots()
+        self.addCleanup(plt.close, fig)
+        _plot_sources(axis, [{
+            "record_kind": "source_integral", "source": "sentaurus_native_avalanche_generation",
+            "topology": "sketch", "bias_V": "0", "status": "available",
+            "value_s_inv_per_unit_depth": "0",
+        }])
+        self.assertEqual(len(axis.patches), 1)
+        labels = [artist.get_label() for artist in axis.collections]
+        self.assertIn("available zero (not geometric)", labels)
+        self.assertFalse(any("geometric zero" in label for label in labels))
+
+    def test_source_plot_explicit_geometric_zero_and_unavailable_are_distinct(self):
+        fig, axis = plt.subplots()
+        self.addCleanup(plt.close, fig)
+        _plot_sources(axis, [
+            {"record_kind": "source_integral", "source": "sentaurus_native_avalanche_generation",
+             "topology": "sketch", "bias_V": "0", "status": "geometric_zero",
+             "value_s_inv_per_unit_depth": "0"},
+            {"record_kind": "source_integral", "source": "vela_alpha_flux_partial_volume_reconstruction",
+             "topology": "sketch", "bias_V": "-12", "status": "unavailable",
+             "value_s_inv_per_unit_depth": "not-a-number"},
+        ])
+        self.assertEqual(len(axis.patches), 0)
+        labels = [artist.get_label() for artist in axis.collections]
+        self.assertIn("explicit geometric zero (not log floored)", labels)
+        self.assertIn("unavailable (not plotted)", labels)
+        self.assertIn("N/A", [text.get_text() for text in axis.texts])
+
+    def test_source_plot_available_missing_or_malformed_fails_closed(self):
+        for value in ("", "bad", "nan", "inf"):
+            with self.subTest(value=value):
+                fig, axis = plt.subplots()
+                with self.assertRaisesRegex(ValueError, "available source integral"):
+                    _plot_sources(axis, [{
+                        "record_kind": "source_integral", "source": "sentaurus_native_avalanche_generation",
+                        "topology": "sketch", "bias_V": "0", "status": "available",
+                        "value_s_inv_per_unit_depth": value,
+                    }])
+                plt.close(fig)
+
+
     def test_cli_writes_closed_deterministic_exact_identity_artifacts(self):
         with tempfile.TemporaryDirectory() as temp:
             state_root, audit_root = _prepare_formula_fixture(temp)
@@ -452,6 +529,10 @@ class FormulaDifferenceTest(unittest.TestCase):
             self.assertEqual(kinds["vela_alpha_flux_partial_volume_reconstruction"], "derived")
             self.assertTrue(any(row["quantity"] == "eIonIntegral" for row in ledger))
             self.assertTrue(any(row["quantity"] == "ni_eff_relative_residual" for row in ledger))
+
+            self.assertTrue(all(row["status"] in {
+                "available", "geometric_zero", "unavailable"
+            } for row in source_rows))
 
             direction_rows = [row for row in ledger if row["component"] == "direction_rad"]
             self.assertTrue(direction_rows)
@@ -531,7 +612,7 @@ class FormulaDifferenceTest(unittest.TestCase):
                 ("sentaurus_alpha_current_reconstruction", "9"),
                 ("vela_alpha_flux_partial_volume_reconstruction", "10"),
             ):
-                rows.append({"record_kind": "source_integral", "quantity": "avalanche_generation", "component": "", "value": "", "source": source, "topology": "sketch", "bias_V": "-19", "value_s_inv_per_unit_depth": value})
+                rows.append({"record_kind": "source_integral", "quantity": "avalanche_generation", "component": "", "value": "", "source": source, "topology": "sketch", "bias_V": "-19", "status": "available", "value_s_inv_per_unit_depth": value})
             fields = sorted({key for row in rows for key in row})
             with ledger.open("w", newline="", encoding="utf-8") as handle:
                 writer = csv.DictWriter(handle, fieldnames=fields)
@@ -649,6 +730,20 @@ class FormulaDifferenceTest(unittest.TestCase):
                 next(row for row in manifest["figures"] if row["stem"] == "interaction")["unit"],
                 "dex",
             )
+
+    def test_validation_doc_names_one_current_authoritative_phase_a_chain(self):
+        document = (
+            Path(__file__).parents[2]
+            / "docs" / "validation" / "pn2d_minimal6_formula_difference_2026-07-14.md"
+        ).read_text(encoding="utf-8")
+        opening = document.split("## Scope", 1)[0]
+        self.assertIn("minimal6_states_v2_sealed_20260717_000955", opening)
+        self.assertIn("4cc193b9", opening)
+        self.assertNotIn("Remote regeneration and SSH were not used", opening)
+        self.assertNotIn(
+            "Sealed v2 run: `minimal6_states_v2_20260716_104019`", opening
+        )
+
 
     def test_cli_adversarial_file_mutations_fail_before_artifacts(self):
         with tempfile.TemporaryDirectory() as temp:

@@ -1,21 +1,21 @@
 # PN2D minimal6 formula-difference evidence
 
-## Authoritative state recovery
+## Authoritative Phase A state chain (current)
 
-- Source v1 run: `minimal6_states_live_20260713_v2`.
-- Source v1 manifest SHA-256: `b44ad95d5df6d57383ba3d5b292818568e358d67f0fc0424ee72f95b673e8aaa`.
-- Sealed v2 run: `minimal6_states_v2_20260716_104019`.
-- Sealed v2 manifest SHA-256: `f519aea82717d190e33e82bcbc5ed3521a81c1d8f6883c7411ed685d88769ac0`.
-- State identity: `sketch/mirror x 0/-12/-19 V`; all six entries are passed and `outputs_complete=true`.
-- Input source: validated local recovery. Remote regeneration and SSH were not used.
-- Integrity coverage: 354 state-local raw artifacts plus the copied source manifest, for all 355 source members.
+- Regenerated v1 run: `minimal6_states_v2_20260717_000955`.
+- Regenerated v1 manifest SHA-256: `4cc193b9d3ae76ea919d60c6f098902f315e1c0c59de8867b125cbe261769cff`.
+- Recovery-validation SHA-256: `f54737dffc06279a53d14cb6a3b82e7d2aa5265875fe29188190ca9b13879d2c`.
+- Sealed v2 run: `minimal6_states_v2_sealed_20260717_000955`.
+- State identity: `sketch/mirror x 0/-12/-19 V`; all six entries passed and `outputs_complete=true`.
+- Input source: approved remote regeneration followed by six hash-bound local UCRT64 operator replays.
+- Fixed-state audit: `build-release/reference_tcad/pn2d_sentaurus2018_minimal6/reports/minimal6_fixed_state_audit_task5_20260717_000955/`.
 
-The v2 manifest was validated against
-`schemas/vela.pn2d_minimal6_states.v2.schema.json` before it was written.
-Every state preserves relative raw-artifact paths and SHA-256 values. The
-source v1 manifest is copied byte-for-byte as `source_manifest.json`; the
-source directory and its v1 manifest were not rewritten. Both source-manifest
-and raw-member mutation tests fail closed.
+This is the sole current authoritative Phase A chain. The earlier
+`b44ad95d...` local-recovery source and `f519aea...` seal are retained only as
+historical, superseded evidence. The current immutable sibling seal validates
+against `schemas/vela.pn2d_minimal6_states.v2.schema.json`; every state preserves
+relative raw-artifact paths and SHA-256 values, and the source-manifest and
+raw-member mutation tests fail closed.
 
 The installed Sentaurus Device 2018 deck already requests
 `AvalancheGeneration`, `eVelocity`, `hVelocity`, `eIonIntegral`,
@@ -44,7 +44,7 @@ This is a diagnostic evidence package. It does not establish a physical BV curve
 
 The formula-difference CLI emits the fixed PNG/PDF pairs `gradient`, `current_alpha`, `source_waterfall`, `interaction`, and `topology_symmetry`, plus `figure_manifest.json`. The manifest retains units, the diagnostic disclaimer, and a reviewer/date/checklist entry. A visual inspection remains a Phase A gate; an automatically produced file is not evidence of a physical BV curve.
 
-The reports maintain these source labels without substitution: native Sentaurus `ImpactIonization`, the separately labelled Sentaurus `alpha*|J|/q` reconstruction, and the separately labelled Vela `alpha*flux*partial_volume` reconstruction. Geometric zeros are marked as zeros rather than replacing them with log-floor values.
+The reports maintain these source labels without substitution: native Sentaurus `ImpactIonization`, the separately labelled Sentaurus `alpha*|J|/q` reconstruction, and the separately labelled Vela `alpha*flux*partial_volume` reconstruction. Producer-owned pair classifications distinguish explicit geometric zeros from exact available zeros and unavailable values. Geometric zeros are marked without log flooring; unavailable values are shown as `N/A` and are not plotted as numeric zeros.
 
 ## Root-cause implementation map
 
@@ -98,7 +98,7 @@ hybrid error `1.7995489542954602e-12`, and replay provenance.
 
 Two fresh real reports are byte-identical for every deterministic report
 artifact. The reviewed package is
-`build-release/pn2d-minimal6-formula-diff-task5-real-20260717_000955-heatmap-a/`.
+`build-release/pn2d-minimal6-formula-diff-task5-reviewfix-20260717-a/`.
 It validates against `vela.pn2d_minimal6_formula_difference.v1`, reports
 `insufficient_data` because `ni_eff/BGN`, `impact_driving_field`, `alpha_law`,
 and `source_to_node_mapping` remain unavailable, and emits no
@@ -116,9 +116,12 @@ mismatch are `0.0 dex`; all 24 interaction records are retained.
 Manual QA passed all five PNG/PDF pairs: exact state identities, sketch/mirror
 symmetry, signed gradients and carrier currents, SI units, explicit zero
 handling, three distinct native/reconstructed source labels, waterfall
-closure, all 24 readable heatmap cells, and the mandatory disclaimer. The
-manifest is marked `reviewed` by Codex on 2026-07-17. The complete final Task
-1-5 Python gate passes `161/161`; the release build exits `0`; C++ controls
+closure, all 24 readable heatmap cells, and the mandatory disclaimer. All 18
+real source rows are explicitly `available`; independent visual QA confirmed
+that no false geometric-zero or `N/A` marker is present and that the color key,
+labels, and disclaimer are unclipped. The manifest is marked `reviewed` by
+Codex on 2026-07-17. The complete final Task 1-5 Python gate passes `166/166`;
+the release build exits `0`; C++ controls
 pass `511` assertions / `40` cases and `83` assertions / `14` cases.
 
 Phase A is complete with a typed, integrity-valid `insufficient_data` result.
