@@ -49,6 +49,25 @@ def validate_dependency_dag(dependencies: Mapping[str, Iterable[str]]) -> list[s
     return order
 
 
+def _validate_operator_value(value, path: str) -> None:
+    if value is None:
+        return
+    if isinstance(value, bool):
+        raise TypeError(f"{path} must not contain booleans")
+    if isinstance(value, (int, float)):
+        if not math.isfinite(float(value)):
+            raise ValueError(f"{path} must be finite")
+        return
+    if isinstance(value, Mapping):
+        for name, child in value.items():
+            _validate_operator_value(child, f"{path}.{name}")
+        return
+    if isinstance(value, (tuple, list)):
+        for index, child in enumerate(value):
+            _validate_operator_value(child, f"{path}[{index}]")
+        return
+    raise TypeError(f"{path} has unsupported type {type(value).__name__}")
+
 class _DeclaredInputs(Mapping[str, float]):
     def __init__(self, factor: str, allowed: tuple[str, ...], values: Mapping[str, float]):
         self._factor = factor
@@ -82,10 +101,10 @@ class DependencyCounterfactualEngine:
                 raise ValueError(f"{label} values must cover exactly the declared operators")
         if output_factor not in names:
             raise ValueError("output factor is not declared")
-        self.baseline_values = {name: float(value) for name, value in baseline_values.items()}
-        self.replacement_values = {name: float(value) for name, value in replacement_values.items()}
-        if any(not math.isfinite(value) for value in (*self.baseline_values.values(), *self.replacement_values.values())):
-            raise ValueError("counterfactual operator values must be finite")
+        self.baseline_values = dict(baseline_values)
+        self.replacement_values = dict(replacement_values)
+        for name, value in (*self.baseline_values.items(), *self.replacement_values.items()):
+            _validate_operator_value(value, f"operator input {name}")
         self.operators = dict(operators)
         self.output_factor = output_factor
         self.downstream = {}
@@ -96,12 +115,11 @@ class DependencyCounterfactualEngine:
                     affected.add(name)
             self.downstream[changed] = tuple(name for name in self.order if name in affected)
 
-    def _compute(self, name: str, replaced: set[str], cache: dict[str, float]) -> float:
+    def _compute(self, name: str, replaced: set[str], cache: dict):
         raw = self.replacement_values[name] if name in replaced else self.baseline_values[name]
         inputs = _DeclaredInputs(name, self.dependencies[name], cache)
-        value = float(self.operators[name](inputs, raw))
-        if not math.isfinite(value):
-            raise ValueError(f"operator {name} produced a non-finite result")
+        value = self.operators[name](inputs, raw)
+        _validate_operator_value(value, f"operator result {name}")
         return value
 
     def _full(self, replaced: set[str]) -> dict[str, float]:
@@ -176,6 +194,155 @@ class DependencyCounterfactualEngine:
             "native_gap_dex": native_gap,
             "residual_dex": residual,
         }
+def _numeric_tuple(raw, factor: str) -> tuple[float, ...]:
+    if not isinstance(raw, (tuple, list)) or not raw:
+        raise ValueError(f"{factor} requires a nonempty numeric sequence")
+    values = tuple(float(value) for value in raw)
+    if any(not math.isfinite(value) for value in values):
+        raise ValueError(f"{factor} contains a non-finite value")
+    return values
+
+
+def _stage_with(parent: dict, key: str, raw, factor: str) -> dict:
+    result = dict(parent)
+    values = _numeric_tuple(raw, factor)
+    if "density" in result and len(values) != len(result["density"]):
+        raise ValueError(f"{factor} length does not match ni_eff/BGN")
+    result[key] = values
+    return result
+
+
+def _formula_ni(_inputs, raw):
+    return {"density": _numeric_tuple(raw, "ni_eff/BGN")}
+
+
+def _formula_gradient(inputs, raw):
+    return _stage_with(inputs["ni_eff/BGN"], "gradient", raw, "gradient_recovery")
+
+
+def _formula_mobility(inputs, raw):
+    return _stage_with(inputs["gradient_recovery"], "mobility", raw, "mobility")
+
+
+def _formula_current(inputs, raw):
+    stage = dict(inputs["mobility"])
+    if raw is None:
+        stage["flux"] = tuple(
+            mobility * density * gradient
+            for mobility, density, gradient in zip(
+                stage["mobility"], stage["density"], stage["gradient"]
+            )
+        )
+    else:
+        stage["flux"] = _numeric_tuple(raw, "current_semantics")
+        if len(stage["flux"]) != len(stage["density"]):
+            raise ValueError("current_semantics length does not match ni_eff/BGN")
+    return stage
+
+
+def _formula_impact_field(inputs, raw):
+    return _stage_with(inputs["current_semantics"], "impact_field", raw, "impact_driving_field")
+
+
+def _alpha_from_parameters(field: float, parameters) -> float:
+    if not isinstance(parameters, (tuple, list)) or len(parameters) not in (2, 5):
+        raise ValueError("alpha_law parameters require (a,b) or (a_low,b_low,a_high,b_high,switch)")
+    values = tuple(float(value) for value in parameters)
+    if len(values) == 2:
+        a_value, b_value = values
+    else:
+        a_low, b_low, a_high, b_high, switch = values
+        a_value, b_value = (a_low, b_low) if abs(field) < switch else (a_high, b_high)
+    magnitude = abs(float(field))
+    if magnitude <= 0.0:
+        return 0.0
+    return a_value * math.exp(-b_value / magnitude)
+
+
+def _formula_alpha(inputs, raw):
+    stage = dict(inputs["impact_driving_field"])
+    if not isinstance(raw, (tuple, list)) or len(raw) != len(stage["impact_field"]):
+        raise ValueError("alpha_law requires one parameter tuple per contribution")
+    alpha_values = []
+    for field, parameters in zip(stage["impact_field"], raw):
+        if isinstance(parameters, (int, float)) and not isinstance(parameters, bool):
+            alpha = float(parameters)
+            if not math.isfinite(alpha) or alpha < 0.0:
+                raise ValueError("direct alpha_law values must be finite and nonnegative")
+        else:
+            alpha = _alpha_from_parameters(field, parameters)
+        alpha_values.append(alpha)
+    stage["alpha"] = tuple(alpha_values)
+    return stage
+
+
+def _formula_partial_volume(inputs, raw):
+    stage = dict(inputs["alpha_law"])
+    volumes = _numeric_tuple(raw, "partial_volume")
+    if len(volumes) != len(stage["flux"]):
+        raise ValueError("partial_volume length does not match source contributions")
+    stage["local_source"] = tuple(
+        alpha * abs(flux) * volume
+        for alpha, flux, volume in zip(stage["alpha"], stage["flux"], volumes)
+    )
+    return stage
+
+
+def _formula_source_mapping(inputs, raw):
+    stage = inputs["partial_volume"]
+    weights = _numeric_tuple(raw, "source_to_node_mapping")
+    if len(weights) != len(stage["local_source"]):
+        raise ValueError("source_to_node_mapping length does not match source contributions")
+    return sum(source * weight for source, weight in zip(stage["local_source"], weights))
+
+
+FORMULA_OPERATORS = {
+    "ni_eff/BGN": _formula_ni,
+    "gradient_recovery": _formula_gradient,
+    "mobility": _formula_mobility,
+    "current_semantics": _formula_current,
+    "impact_driving_field": _formula_impact_field,
+    "alpha_law": _formula_alpha,
+    "partial_volume": _formula_partial_volume,
+    "source_to_node_mapping": _formula_source_mapping,
+}
+
+
+def make_formula_operator_engine(*, baseline_values, replacement_values):
+    return DependencyCounterfactualEngine(
+        dependencies=FACTOR_DEPENDENCIES,
+        baseline_values=baseline_values,
+        replacement_values=replacement_values,
+        operators=FORMULA_OPERATORS,
+        output_factor="source_to_node_mapping",
+    )
+
+
+def evaluate_formula_counterfactual(*, native: float, baseline_values,
+                                    replacement_values,
+                                    unavailable_reasons=None) -> dict:
+    unavailable_reasons = dict(unavailable_reasons or {})
+    supplied = dict(replacement_values)
+    completed = {
+        factor: supplied.get(factor, baseline_values[factor])
+        for factor in FACTOR_DEPENDENCIES
+    }
+    engine = make_formula_operator_engine(
+        baseline_values=baseline_values,
+        replacement_values=completed,
+    )
+    result = engine.evaluate_paths(native=native)
+    result["factor_availability"] = [
+        ({"factor": factor, "status": "available"}
+         if factor in supplied else
+         {"factor": factor, "status": "unavailable",
+          "reason": unavailable_reasons.get(factor, "required operator input is absent")})
+        for factor in FACTOR_DEPENDENCIES
+    ]
+    result["engine"] = engine
+    return result
+
+
 def evaluate_counterfactual_paths(*, native: float, baseline: float, factors: Mapping[str, float], dependencies: Mapping[str, Iterable[str]]) -> dict:
     if set(factors) != set(dependencies):
         raise ValueError("counterfactual factors and dependencies must name the same operators")
@@ -258,6 +425,13 @@ def score_dominance(states: list[dict]) -> dict:
     if present != required:
         return {"status": "insufficient_data", "reason": "dominance requires both topologies at -12 V and -19 V"}
     for state in eligible:
+        unavailable = [
+            row for row in state.get("factor_availability", [])
+            if row.get("status") != "available"
+        ]
+        if unavailable:
+            names = ", ".join(sorted(str(row.get("factor")) for row in unavailable))
+            return {"status": "insufficient_data", "reason": f"unavailable factors: {names}"}
         if abs(float(state["residual_dex"])) > 0.25 * abs(float(state["native_gap_dex"])):
             return {"status": "insufficient_data", "reason": "residual exceeds 25 percent of source gap"}
     common = set.intersection(*(set(state["symmetric_contributions"]) for state in eligible))
@@ -277,12 +451,17 @@ def validate_field_units(fields: Iterable[Mapping[str, str]], expected: Mapping[
             raise ValueError(f"field {name} lacks required unit {unit}")
 
 
-def validate_source_anchor_kind(source_kind: str, *, native: bool) -> None:
-    native_kind = "sentaurus_native_avalanche_generation"
-    if native and source_kind != native_kind:
+def validate_source_anchor_kind(source_family: str, source_kind: str, *, native: bool) -> None:
+    native_family = "sentaurus_native_avalanche_generation"
+    expected_kind = "sentaurus" if native else "derived"
+    if native and source_family != native_family:
         raise ValueError("only raw ImpactIonization may be labelled native")
-    if not native and source_kind == native_kind:
-        raise ValueError("native source kind cannot be labelled reconstructed")
+    if not native and source_family == native_family:
+        raise ValueError("native source family cannot be labelled reconstructed")
+    if source_kind != expected_kind:
+        raise ValueError(
+            f"source family {source_family} has inconsistent SourceKind {source_kind}"
+        )
 def native_source_anchor(values, *, volume_m3):
     if volume_m3 is None or volume_m3 <= 0.0:
         return {"status": "insufficient_data", "reason": "native generation lacks a physical volume", "value": None}

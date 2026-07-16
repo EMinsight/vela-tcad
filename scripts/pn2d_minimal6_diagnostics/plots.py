@@ -93,7 +93,7 @@ def _plot_interactions(ax: plt.Axes, report: dict[str, Any]) -> None:
         ax.text(0.5, 0.5, "No interaction crossed the 0.3 dex trigger.\nUnavailable is reported explicitly.", ha="center", va="center")
         ax.set_xticks([])
         return
-    labels = [f"{item['factor_a']} / {item['factor_b']}" for item in interactions]
+    labels = [f"{item['first_factor']} / {item['second_factor']}" for item in interactions]
     values = [float(item["interaction_dex"]) for item in interactions]
     ax.bar(range(len(values)), values, color="tab:cyan")
     ax.set_xticks(range(len(labels)), labels, rotation=30, ha="right")

@@ -7,14 +7,17 @@ import sys
 import shutil
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 from scripts.export_pn2d_minimal6_states import collect_member_hashes, validate_member_hashes
 from scripts.pn2d_minimal6_diagnostics.counterfactual import validate_formula_input, evaluate_counterfactual_paths, native_source_anchor, integrate_native_nodal_per_unit_depth, integrate_vela_reconstructed_per_unit_depth, sentaurus_alpha_current_nodal, source_log_gap, validate_dependency_dag, interaction_dex, assert_counterfactual_closure, build_adjacent_interactions, symmetric_contributions, score_dominance, validate_field_units, validate_source_anchor_kind
-from scripts.pn2d_minimal6_diagnostics.counterfactual import DependencyCounterfactualEngine, FACTOR_DEPENDENCIES
-from scripts.diagnose_pn2d_minimal6_formula_difference import _node_state_rows
+from scripts.pn2d_minimal6_diagnostics.counterfactual import DependencyCounterfactualEngine, FACTOR_DEPENDENCIES, make_formula_operator_engine, evaluate_formula_counterfactual
+from scripts.diagnose_pn2d_minimal6_formula_difference import _node_state_rows, validate_audit_binding
 from scripts.pn2d_minimal6_diagnostics.schemas import validate_formula_difference_v1
 from tests.regression.test_pn2d_minimal6_diagnostic_contracts import schema_document, validate_schema_document
 import scripts.audit_pn2d_minimal6_fixed_state as fixed_audit
+import scripts.diagnose_pn2d_minimal6_formula_difference as formula_cli
+from scripts.pn2d_minimal6_diagnostics.plots import render_formula_difference_figures
 
 def _prepare_formula_fixture(temp: str) -> tuple[Path, Path]:
     source = Path(__file__).parents[1] / "fixtures" / "pn2d_minimal6_synthetic"
@@ -33,6 +36,13 @@ def _prepare_formula_fixture(temp: str) -> tuple[Path, Path]:
     }
     for state_index, state in enumerate(manifest["states"]):
         export = state_root / state["export_dir"]
+        bundle = export.parent / "source"
+        bundle.mkdir(exist_ok=True)
+        shutil.copy2(
+            Path(__file__).parents[2] / "reference_tcad" / "pn2d_sentaurus2018_minimal6" / "source" / "models.par",
+            bundle / "models.par",
+        )
+        state["bundle_dir"] = bundle.relative_to(state_root).as_posix()
         fields = export / "fields"
         node_ids = sorted(_read_node_ids(fields / "eDensity_region0.csv"))
         bias_scale = {0.0: 1.0, -12.0: 1.0e4, -19.0: 1.0e7}[float(state["requested_bias_V"])]
@@ -68,19 +78,7 @@ def _prepare_formula_fixture(temp: str) -> tuple[Path, Path]:
 
     report = fixed_audit.build_report(state_root)
     audit_root = Path(temp) / "audit"
-    audit_root.mkdir()
-    fixed_audit.write_csv(audit_root / "node_state.csv", report.node_rows)
-    fixed_audit.write_csv(audit_root / "edge_audit.csv", report.edge_rows)
-    fixed_audit.write_csv(audit_root / "triangle_audit.csv", report.triangle_rows)
-    summary = dict(report.summary)
-    summary["status"] = "PASS"
-    (audit_root / "summary.json").write_text(
-        json.dumps(summary, sort_keys=True, indent=2) + "\n", encoding="utf-8"
-    )
-    (audit_root / "manifest.json").write_text(json.dumps({
-        "schema": "vela.pn2d_minimal6_fixed_state_audit.v1",
-        "row_counts": summary["row_counts"],
-    }, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+    fixed_audit.write_report(report, audit_root)
     return state_root, audit_root
 
 
@@ -147,6 +145,65 @@ class FormulaDifferenceTest(unittest.TestCase):
                 operators=invalid,
                 output_factor="c",
             ).evaluate_paths(native=30.)
+    def test_all_eight_formula_operators_independently_change_source(self):
+        baseline = {
+            "ni_eff/BGN": (1.0, 2.0),
+            "gradient_recovery": (2.0, 3.0),
+            "mobility": (3.0, 4.0),
+            "current_semantics": None,
+            "impact_driving_field": (2.0, 2.0),
+            "alpha_law": ((2.0, 1.0), (2.0, 1.0)),
+            "partial_volume": (1.0, 1.0),
+            "source_to_node_mapping": (1.0, 1.0),
+        }
+        replacements = {
+            "ni_eff/BGN": (2.0, 4.0),
+            "gradient_recovery": (4.0, 6.0),
+            "mobility": (6.0, 8.0),
+            "current_semantics": (20.0, 30.0),
+            "impact_driving_field": (4.0, 4.0),
+            "alpha_law": ((3.0, 1.0), (3.0, 1.0)),
+            "partial_volume": (2.0, 2.0),
+            "source_to_node_mapping": (2.0, 2.0),
+        }
+        engine = make_formula_operator_engine(
+            baseline_values=baseline, replacement_values=replacements
+        )
+        base = engine.evaluate_replacements(set())
+        for factor in FACTOR_DEPENDENCIES:
+            with self.subTest(factor=factor):
+                self.assertNotEqual(engine.evaluate_replacements({factor}), base)
+
+    def test_unavailable_formula_input_stays_in_named_residual(self):
+        baseline = {
+            "ni_eff/BGN": (1.0,), "gradient_recovery": (2.0,),
+            "mobility": (3.0,), "current_semantics": None,
+            "impact_driving_field": (2.0,), "alpha_law": ((2.0, 1.0),),
+            "partial_volume": (1.0,), "source_to_node_mapping": (1.0,),
+        }
+        replacements = {
+            "ni_eff/BGN": (2.0,), "gradient_recovery": (4.0,),
+            "mobility": (6.0,), "current_semantics": (20.0,),
+            "impact_driving_field": (4.0,), "alpha_law": ((3.0, 1.0),),
+            "partial_volume": (2.0,), "source_to_node_mapping": (2.0,),
+        }
+        native = make_formula_operator_engine(
+            baseline_values=baseline, replacement_values=replacements
+        ).evaluate_replacements(set(FACTOR_DEPENDENCIES))
+        missing = dict(replacements)
+        del missing["alpha_law"]
+        result = evaluate_formula_counterfactual(
+            native=native, baseline_values=baseline, replacement_values=missing,
+            unavailable_reasons={"alpha_law": "missing Sentaurus coefficient provenance"},
+        )
+        alpha = next(row for row in result["factor_availability"] if row["factor"] == "alpha_law")
+        self.assertEqual(alpha["status"], "unavailable")
+        self.assertIn("missing Sentaurus", alpha["reason"])
+        self.assertNotEqual(result["residual_dex"], 0.0)
+        for identity in ("forward", "reverse"):
+            closure = sum(row["contribution_dex"] for row in result[identity]["contributions"]) + result["residual_dex"]
+            self.assertLessEqual(abs(result["native_gap_dex"] - closure), 1.0e-10)
+
     def test_interaction_and_dominance_gate_require_complete_matrix(self):
         forward = [{"factor":"gradient_recovery", "contribution_dex":0.8}, {"factor":"mobility", "contribution_dex":0.1}]
         reverse = [{"factor":"mobility", "contribution_dex":0.1}, {"factor":"gradient_recovery", "contribution_dex":0.2}]
@@ -158,7 +215,9 @@ class FormulaDifferenceTest(unittest.TestCase):
         self.assertAlmostEqual(symmetric["gradient_recovery"], 0.5)
         states = [
             {"topology":topology, "bias_V":bias, "native_gap_dex":2., "residual_dex":0.1,
-             "symmetric_contributions":{"gradient_recovery":1.2, "mobility":0.2}}
+             "symmetric_contributions":{"gradient_recovery":1.2, "mobility":0.2},
+             "factor_availability":[{"factor":"gradient_recovery","status":"available"},
+                                    {"factor":"mobility","status":"available"}]}
             for topology in ("sketch", "mirror") for bias in (-12., -19.)
         ]
         score = score_dominance(states)
@@ -166,6 +225,14 @@ class FormulaDifferenceTest(unittest.TestCase):
         self.assertEqual(score["dominant_factor"], "gradient_recovery")
         states[0]["residual_dex"] = 0.6
         self.assertEqual(score_dominance(states)["status"], "insufficient_data")
+        states[0]["residual_dex"] = 0.1
+        states[0]["factor_availability"][0] = {
+            "factor": "gradient_recovery", "status": "unavailable",
+            "reason": "missing provenance",
+        }
+        unavailable = score_dominance(states)
+        self.assertEqual(unavailable["status"], "insufficient_data")
+        self.assertNotIn("dominant_factor", unavailable)
 
     def test_adjacent_interactions_include_forward_and_reverse_path_identities(self):
         forward = [
@@ -198,13 +265,58 @@ class FormulaDifferenceTest(unittest.TestCase):
             member.write_text("mutated\n", encoding="utf-8")
             with self.assertRaises(ValueError):
                 validate_member_hashes(root, hashes)
+    def test_audit_binding_rejects_fabrication_state_mismatch_and_artifact_mutation(self):
+        with tempfile.TemporaryDirectory() as temp:
+            state_root, audit_root = _prepare_formula_fixture(temp)
+            validate_audit_binding(state_root, audit_root)
+
+            fabricated = Path(temp) / "fabricated"
+            shutil.copytree(audit_root, fabricated)
+            fabricated_manifest = json.loads((fabricated / "manifest.json").read_text(encoding="utf-8"))
+            del fabricated_manifest["input_sha256"]
+            (fabricated / "manifest.json").write_text(json.dumps(fabricated_manifest), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "input_sha256"):
+                validate_audit_binding(state_root, fabricated)
+
+            state_manifest_path = state_root / "manifest.json"
+            state_manifest = json.loads(state_manifest_path.read_text(encoding="utf-8"))
+            state_manifest["run_id"] = "unrelated-run"
+            state_manifest_path.write_text(json.dumps(state_manifest), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "state.*hash|run"):
+                validate_audit_binding(state_root, audit_root)
+            state_manifest["run_id"] = "committed_task5_cpp_replay"
+            state_manifest_path.write_text(json.dumps(state_manifest, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+
+            mutated = Path(temp) / "mutated"
+            shutil.copytree(audit_root, mutated)
+            edge_path = mutated / "edge_audit.csv"
+            edge_path.write_bytes(edge_path.read_bytes() + b"\n")
+            with self.assertRaisesRegex(ValueError, "edge_audit.*mutation|artifact"):
+                validate_audit_binding(state_root, mutated)
+
     def test_adversarial_unit_and_source_kind_contracts(self):
         fields = [{"name":"ImpactIonization", "unit":"cm^-3*s^-1"}, {"name":"eAlphaAvalanche", "unit":"cm^-1"}]
         validate_field_units(fields, {"ImpactIonization":"cm^-3*s^-1", "eAlphaAvalanche":"cm^-1"})
         with self.assertRaises(ValueError):
             validate_field_units(fields, {"ImpactIonization":"m^-3*s^-1"})
+        validate_source_anchor_kind(
+            "sentaurus_native_avalanche_generation", "sentaurus", native=True
+        )
+        validate_source_anchor_kind(
+            "sentaurus_alpha_current_reconstruction", "derived", native=False
+        )
         with self.assertRaises(ValueError):
-            validate_source_anchor_kind("sentaurus_alpha_current_reconstruction", native=True)
+            validate_source_anchor_kind(
+                "sentaurus_alpha_current_reconstruction", "derived", native=True
+            )
+        with self.assertRaises(ValueError):
+            validate_source_anchor_kind(
+                "sentaurus_native_avalanche_generation", "derived", native=True
+            )
+        with self.assertRaises(ValueError):
+            validate_source_anchor_kind(
+                "sentaurus_alpha_current_reconstruction", "sentaurus", native=False
+            )
         mesh = {"nodes":[{"id":0,"x":0.,"y":0.},{"id":0,"x":1.,"y":0.},{"id":2,"x":0.,"y":1.}], "triangles":[{"node_ids":[0,2,0]}]}
         with self.assertRaises(ValueError):
             integrate_native_nodal_per_unit_depth(mesh, {0:1., 2:1.})
@@ -294,6 +406,16 @@ class FormulaDifferenceTest(unittest.TestCase):
             self.assertTrue(any(row["quantity"] == "eIonIntegral" for row in ledger))
             self.assertTrue(any(row["quantity"] == "ni_eff_relative_residual" for row in ledger))
 
+            for path in report["waterfall_paths"]:
+                impact_field = next(
+                    row for row in path["factor_availability"]
+                    if row["factor"] == "impact_driving_field"
+                )
+                self.assertEqual(impact_field["status"], "unavailable")
+                self.assertIn("coefficient provenance", impact_field["reason"])
+            self.assertEqual(report["dominance_rules"]["status"], "insufficient_data")
+            self.assertNotIn("dominant_factor", report["dominance_rules"])
+
             residual_by_state = {
                 (row["topology"], row["bias_V"]): row["dex"]
                 for row in report["sentaurus_internal_semantics_residual"]
@@ -329,6 +451,131 @@ class FormulaDifferenceTest(unittest.TestCase):
             ))
             if report["dominance_rules"]["status"] == "insufficient_data":
                 self.assertNotIn("dominant_factor", report["dominance_rules"])
+    def test_triggered_interaction_renders_first_second_factor_contract(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            ledger = root / "quantity_ledger.csv"
+            waterfall = root / "factor_waterfall.csv"
+            report = root / "root_cause_summary.json"
+            ledger.write_text("record_kind\n", encoding="utf-8")
+            waterfall.write_text("path_identity\n", encoding="utf-8")
+            report.write_text(json.dumps({
+                "interactions": [{
+                    "topology": "sketch", "bias_V": -19.0,
+                    "first_factor": "gradient_recovery",
+                    "second_factor": "mobility",
+                    "path_identity": "forward_adjacent",
+                    "baseline": 1.0, "a_only": 10.0, "b_only": 2.0,
+                    "both": 50.0, "interaction_dex": math.log10(2.5),
+                }]
+            }), encoding="utf-8")
+            manifest = render_formula_difference_figures(
+                ledger_path=ledger, waterfall_path=waterfall,
+                report_path=report, out_dir=root, qa_status="reviewed",
+            )
+            self.assertGreater(abs(math.log10(2.5)), 0.3)
+            self.assertTrue((root / "interaction.png").is_file())
+            self.assertTrue((root / "interaction.pdf").is_file())
+            self.assertEqual(
+                next(row for row in manifest["figures"] if row["stem"] == "interaction")["unit"],
+                "dex",
+            )
+
+    def test_cli_adversarial_file_mutations_fail_before_artifacts(self):
+        with tempfile.TemporaryDirectory() as temp:
+            state_root, audit_root = _prepare_formula_fixture(temp)
+            cases = {}
+
+            def missing_field(root, _audit):
+                state = json.loads((root / "manifest.json").read_text(encoding="utf-8"))["states"][0]
+                (root / state["export_dir"] / "fields" / "eVelocity_region0.csv").unlink()
+
+            def wrong_unit(root, _audit):
+                state = json.loads((root / "manifest.json").read_text(encoding="utf-8"))["states"][0]
+                path = root / state["export_dir"] / "field_manifest.json"
+                fields = json.loads(path.read_text(encoding="utf-8"))
+                next(row for row in fields["fields"] if row["name"] == "ImpactIonization")["unit"] = "m^-3*s^-1"
+                path.write_text(json.dumps(fields), encoding="utf-8")
+
+            def reversed_topology(root, _audit):
+                state = json.loads((root / "manifest.json").read_text(encoding="utf-8"))["states"][0]
+                path = root / state["export_dir"] / "mesh.json"
+                mesh = json.loads(path.read_text(encoding="utf-8"))
+                mesh["triangles"][0]["node_ids"].reverse()
+                path.write_text(json.dumps(mesh), encoding="utf-8")
+
+            def duplicate_node(root, _audit):
+                state = json.loads((root / "manifest.json").read_text(encoding="utf-8"))["states"][0]
+                path = root / state["export_dir"] / "mesh.json"
+                mesh = json.loads(path.read_text(encoding="utf-8"))
+                mesh["nodes"][1]["id"] = mesh["nodes"][0]["id"]
+                path.write_text(json.dumps(mesh), encoding="utf-8")
+
+            def state_hash(root, _audit):
+                path = root / "manifest.json"
+                manifest = json.loads(path.read_text(encoding="utf-8"))
+                manifest["run_id"] = "mutated"
+                path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            def audit_hash(_root, audit):
+                path = audit / "edge_audit.csv"
+                path.write_bytes(path.read_bytes() + b"\n")
+
+            cases.update({
+                "missing_field": missing_field,
+                "wrong_unit": wrong_unit,
+                "reversed_topology": reversed_topology,
+                "duplicate_node": duplicate_node,
+                "state_hash": state_hash,
+                "audit_hash": audit_hash,
+            })
+            for name, mutate in cases.items():
+                with self.subTest(name=name):
+                    case_root = Path(temp) / f"state-{name}"
+                    case_audit = Path(temp) / f"audit-{name}"
+                    shutil.copytree(state_root, case_root)
+                    shutil.copytree(audit_root, case_audit)
+                    mutate(case_root, case_audit)
+                    out = Path(temp) / f"out-{name}"
+                    completed = subprocess.run([
+                        sys.executable,
+                        str(Path(__file__).parents[2] / "scripts" / "diagnose_pn2d_minimal6_formula_difference.py"),
+                        "--state-root", str(case_root),
+                        "--audit-root", str(case_audit),
+                        "--out-dir", str(out),
+                    ], capture_output=True, text=True)
+                    self.assertNotEqual(completed.returncode, 0)
+                    self.assertFalse(out.exists())
+
+    def test_cli_rejects_undeclared_dependency_and_false_native_kind_before_artifacts(self):
+        with tempfile.TemporaryDirectory() as temp:
+            state_root, audit_root = _prepare_formula_fixture(temp)
+            argv = [
+                "diagnose_pn2d_minimal6_formula_difference.py",
+                "--state-root", str(state_root),
+                "--audit-root", str(audit_root),
+            ]
+            out_dependency = Path(temp) / "out-dependency"
+            with mock.patch.object(
+                formula_cli, "FACTOR_DEPENDENCIES", {"mobility": ("missing",)}
+            ), mock.patch.object(
+                sys, "argv", argv + ["--out-dir", str(out_dependency)]
+            ):
+                with self.assertRaisesRegex(ValueError, "undeclared"):
+                    formula_cli.main()
+            self.assertFalse(out_dependency.exists())
+
+            out_kind = Path(temp) / "out-kind"
+            false_kinds = dict(formula_cli.SOURCE_FAMILIES)
+            false_kinds["sentaurus_native_avalanche_generation"] = "derived"
+            with mock.patch.object(
+                formula_cli, "SOURCE_FAMILIES", false_kinds
+            ), mock.patch.object(
+                sys, "argv", argv + ["--out-dir", str(out_kind)]
+            ):
+                with self.assertRaisesRegex(ValueError, "native|SourceKind"):
+                    formula_cli.main()
+            self.assertFalse(out_kind.exists())
     def test_rejects_inexact_bias(self):
         states = [{"topology_id":t,"requested_bias_V":b,"actual_bias_V":b,"status":"passed"}
                   for t in ("sketch","mirror") for b in (0.0,-12.0,-19.0)]
