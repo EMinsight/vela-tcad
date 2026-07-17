@@ -32,9 +32,18 @@
     "failed_transitions": {"type": "array", "items": {"$ref": "#/$defs/failedTransition"}},
     "failure_transitions": {"type": "array", "items": {"$ref": "#/$defs/failedTransition"}},
     "checkpoints": {"type": "array", "items": {"$ref": "#/$defs/comparisonCheckpoint"}},
-    "terminal_currents": {"type": "array"}, "maximum_fields": {"type": "array"},
-    "source_integrals": {"type": "array"}, "records": {"type": "array"},
-    "convergence_metadata": {"type": "object", "minProperties": 1},
+    "terminal_currents": {"type": "array", "items": {"$ref": "#/$defs/comparisonCheckpoint"}},
+    "maximum_fields": {"type": "array", "items": {"$ref": "#/$defs/comparisonCheckpoint"}},
+    "source_integrals": {"type": "array", "items": {"$ref": "#/$defs/comparisonCheckpoint"}},
+    "records": {"type": "array", "items": {"$ref": "#/$defs/comparisonCheckpoint"}},
+    "convergence_metadata": {
+      "type": "object", "required": ["vela_accepted", "sentaurus_accepted", "common_exact"],
+      "properties": {
+        "vela_accepted": {"type": "integer", "minimum": 0},
+        "sentaurus_accepted": {"type": "integer", "minimum": 0},
+        "common_exact": {"type": "integer", "minimum": 0}
+      }, "additionalProperties": false
+    },
     "curve_artifact_hashes": {
       "type": "object", "required": ["vela_manifest", "sentaurus_manifest"],
       "properties": {"vela_manifest": {"$ref": "#/$defs/sha256"},
@@ -42,7 +51,11 @@
       "additionalProperties": true
     },
     "deepest_common_bias_V": {"type": "object"}, "missing_tails": {"type": "array"},
-    "topology_sensitivity": {"type": "array"}, "fixed_state_recheck": {"type": "array"},
+    "topology_sensitivity": {"type": "array"},
+    "fixed_state_recheck": {
+      "type": "array", "minItems": 3, "maxItems": 3,
+      "items": {"$ref": "#/$defs/fixedStateRecheck"}
+    },
     "artifact_hashes": {"type": "object"}, "input_artifacts": {"type": "object"},
     "figure_contract": {
       "type": "object", "required": ["schema", "figures"],
@@ -59,11 +72,13 @@
       }, "additionalProperties": false
     },
     "closure": {
-      "type": "object", "required": ["status", "eligible_gaps", "rule"],
+      "type": "object", "required": ["status", "eligible_gaps", "decomposed_gaps", "unidentifiable_gaps", "rule"],
       "properties": {
-        "status": {"const": "closed"},
+        "status": {"enum": ["unidentifiable", "not_applicable"]},
         "eligible_gaps": {"type": "integer", "minimum": 0},
-        "rule": {"type": "string", "minLength": 1}
+        "decomposed_gaps": {"const": 0},
+        "unidentifiable_gaps": {"type": "integer", "minimum": 0},
+        "rule": {"const": "observed positive log gaps are retained without fabricated decomposition"}
       }, "additionalProperties": false
     }
   },
@@ -84,13 +99,14 @@
                    "native_source_integral_s_inv_per_cm", "reconstructed_source_integral_s_inv_per_cm"],
       "properties": {
         "anode_current_A_per_um": {"type": "number"}, "cathode_current_A_per_um": {"type": "number"},
-        "max_field_V_per_m": {"type": "number"},
-        "native_source_integral_s_inv_per_cm": {"type": "number"},
-        "reconstructed_source_integral_s_inv_per_cm": {"type": "number"}
+        "max_field_V_per_m": {"type": "number", "minimum": 0.0},
+        "native_source_integral_s_inv_per_cm": {"type": "number", "minimum": 0.0},
+        "reconstructed_source_integral_s_inv_per_cm": {"type": "number", "minimum": 0.0}
       }, "additionalProperties": false
     },
     "acceptedTransition": {
       "type": "object",
+      "not": {"required": ["quantity_ledger_result"]},
       "required": ["solver", "topology", "target_bias_V", "actual_bias_V", "status", "state_path", "state_sha256", "observables",
                    "branch_classification", "branch_threshold_version", "convergence_metadata"],
       "properties": {
@@ -107,11 +123,11 @@
     },
     "failedTransition": {
       "type": "object",
-      "required": ["solver", "topology", "target_bias_V", "status", "state_path", "state_sha256", "observables",
+      "required": ["solver", "topology", "start_bias_V", "target_bias_V", "status", "state_path", "state_sha256", "observables",
                    "branch_classification", "branch_threshold_version", "convergence_metadata"],
       "properties": {
         "solver": {"enum": ["vela", "sentaurus"]}, "topology": {"enum": ["sketch", "mirror"]},
-        "target_bias_V": {"type": "number"}, "status": {"const": "rejected"},
+        "start_bias_V": {"type": "number"}, "target_bias_V": {"type": "number"}, "status": {"const": "rejected"},
         "observables": {"type": "null"}, "branch_classification": {"const": "unidentified"},
         "branch_threshold_version": {"const": "v1: multiplication=[0.1,10], leakage<=1e-3"},
         "convergence_metadata": {"type": "object", "minProperties": 1}
@@ -141,7 +157,8 @@
       "type": "object", "required": ["classification", "value"],
       "properties": {
         "classification": {"enum": ["available", "zero_denominator", "zero_numerator", "geometric_zero", "unavailable"]},
-        "value": {"type": ["number", "null"]}
+        "value": {"type": ["number", "null"]},
+        "reason": {"const": "contact_current_not_conserved"}
       }, "additionalProperties": false
     },
     "branchRatioEvidence": {
@@ -164,29 +181,83 @@
       "type": "object", "required": ["name", "classification", "value_dex"],
       "properties": {
         "name": {"const": "cross_solver_semantics_residual"},
-        "classification": {"enum": ["available", "unidentifiable"]},
-        "value_dex": {"type": ["number", "null"]}
+        "classification": {"const": "unidentifiable"},
+        "value_dex": {"const": null}
       }, "additionalProperties": false
     },
     "gapRecord": {
       "type": "object",
-      "required": ["quantity", "classification", "log_gap_dex", "named_contributions", "residual", "closure_error_dex"],
+      "required": ["quantity", "classification", "decomposition_status", "log_gap_dex", "named_contributions", "residual", "closure_error_dex"],
       "properties": {
         "quantity": {"enum": ["terminal_current", "maximum_field", "native_source", "reconstructed_source"]},
         "classification": {"enum": ["available", "zero_denominator", "zero_numerator", "geometric_zero", "unavailable"]},
+        "decomposition_status": {"enum": ["unidentifiable", "not_applicable"]},
         "log_gap_dex": {"type": ["number", "null"]},
-        "named_contributions": {"type": "array", "items": {"$ref": "#/$defs/namedContribution"}},
+        "named_contributions": {"type": "array", "maxItems": 0, "items": {"$ref": "#/$defs/namedContribution"}},
         "residual": {"$ref": "#/$defs/gapResidual"},
-        "closure_error_dex": {"type": ["number", "null"]}
+        "closure_error_dex": {"const": null}
       }, "additionalProperties": false
     },
     "gapClosure": {
       "type": "object", "required": ["status", "tolerance_dex", "gaps"],
       "properties": {
-        "status": {"const": "closed"},
+        "status": {"enum": ["unidentifiable", "not_applicable"]},
         "tolerance_dex": {"const": 1e-10},
         "gaps": {"type": "array", "minItems": 4, "maxItems": 4, "items": {"$ref": "#/$defs/gapRecord"}}
       }, "additionalProperties": false
+    },
+    "fixedStateIdentity": {
+      "type": "object",
+      "required": ["solver", "topology", "bias_V", "state_path", "state_sha256", "state_binding_status"],
+      "properties": {
+        "solver": {"enum": ["vela", "sentaurus"]},
+        "topology": {"enum": ["sketch", "mirror"]},
+        "bias_V": {"enum": [0.0, -12.0, -19.0]},
+        "state_path": {"type": "string", "minLength": 1},
+        "state_sha256": {"$ref": "#/$defs/sha256"},
+        "state_binding_status": {"const": "manifest_hash_addressed"}
+      },
+      "additionalProperties": false
+    },
+    "fixedStateRecheck": {
+      "type": "object",
+      "required": [
+        "bias_V", "status", "ranking_status", "reason_code", "reason",
+        "missing_inputs", "fixed_state_status", "fixed_state_dominant_factor",
+        "recheck_basis", "topologies", "self_consistent_states"
+      ],
+      "properties": {
+        "bias_V": {"enum": [0.0, -12.0, -19.0]},
+        "status": {"const": "unidentifiable"},
+        "ranking_status": {"const": "unidentifiable"},
+        "reason_code": {
+          "enum": [
+            "no_common_self_consistent_state",
+            "missing_verified_nonlinear_ledger_input_bundle"
+          ]
+        },
+        "reason": {
+          "enum": [
+            "no common exact self-consistent checkpoints are available at this fixed-state bias",
+            "verified nonlinear ledger-input bundle is unavailable for the hash-addressed self-consistent checkpoints"
+          ]
+        },
+        "missing_inputs": {
+          "type": "array", "minItems": 1, "uniqueItems": true,
+          "items": {"enum": ["common_exact_self_consistent_states", "verified_nonlinear_ledger_input_bundle"]}
+        },
+        "fixed_state_status": {"type": "string", "minLength": 1},
+        "fixed_state_dominant_factor": {"type": ["string", "null"], "minLength": 1},
+        "recheck_basis": {
+          "enum": [
+            "no_common_exact_self_consistent_states",
+            "hash_addressed_self_consistent_states_without_verified_nonlinear_ledger_bundle"
+          ]
+        },
+        "topologies": {"type": "array", "uniqueItems": true, "items": {"enum": ["sketch", "mirror"]}},
+        "self_consistent_states": {"type": "array", "items": {"$ref": "#/$defs/fixedStateIdentity"}}
+      },
+      "additionalProperties": false
     },
     "ledgerClosure": {
       "type": "object", "required": ["status", "tolerance_dex", "closure_error_dex"],
@@ -208,7 +279,7 @@
     },
     "solverConfiguration": {
       "type": "object",
-      "required": ["template", "topology_input_sha256", "deck_sha256", "configuration_sha256"],
+      "required": ["template", "topology_input_sha256", "deck_sha256", "sweep_manifest_sha256", "configuration_sha256"],
       "properties": {
         "template": {"type": "object", "required": ["sha256"], "properties": {"sha256": {"$ref": "#/$defs/sha256"}}},
         "topology_input_sha256": {
@@ -218,7 +289,8 @@
             "mirror": {"type": "object", "minProperties": 1, "additionalProperties": {"$ref": "#/$defs/sha256"}}
           }, "additionalProperties": false
         },
-        "deck_sha256": {"type": "array", "items": {"$ref": "#/$defs/sha256"}},
+        "deck_sha256": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/sha256"}},
+        "sweep_manifest_sha256": {"$ref": "#/$defs/sha256"},
         "configuration_sha256": {"$ref": "#/$defs/sha256"}
       }, "additionalProperties": false
     },

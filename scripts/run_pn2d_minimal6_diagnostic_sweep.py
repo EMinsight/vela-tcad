@@ -410,12 +410,13 @@ def _derive_common_exact_branch_evidence(
 
     vela_observables = vela["observables"]
     sentaurus_observables = sentaurus["observables"]
-    geometric_zero = any(
-        abs(float(observables["native_source_integral_s_inv_per_cm"]))
-        <= GEOMETRIC_ZERO_SOURCE_INTEGRAL
-        and abs(float(observables["reconstructed_source_integral_s_inv_per_cm"]))
-        <= GEOMETRIC_ZERO_SOURCE_INTEGRAL
+    geometric_zero = all(
+        abs(float(observables[field])) <= GEOMETRIC_ZERO_SOURCE_INTEGRAL
         for observables in (vela_observables, sentaurus_observables)
+        for field in (
+            "native_source_integral_s_inv_per_cm",
+            "reconstructed_source_integral_s_inv_per_cm",
+        )
     )
     vela_current = float(vela_observables["anode_current_A_per_um"])
     sentaurus_current = float(sentaurus_observables["anode_current_A_per_um"])

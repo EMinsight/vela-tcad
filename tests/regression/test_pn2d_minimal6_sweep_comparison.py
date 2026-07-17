@@ -1,12 +1,13 @@
 import csv
 import hashlib
 import json
+import os
 import tempfile
 import unittest
 from unittest import mock
 from pathlib import Path
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, PngImagePlugin
 
 import scripts.compare_pn2d_minimal6_diagnostic_sweeps as comparison_module
 
@@ -14,9 +15,12 @@ from scripts.compare_pn2d_minimal6_diagnostic_sweeps import (
     compare_sweeps,
     ratio_record,
     verify_comparison_artifacts,
-    write_comparison_package,
+    write_comparison_package as _write_comparison_package,
 )
-from scripts.pn2d_minimal6_diagnostics.schemas import validate_bv_comparison_v1
+from scripts.pn2d_minimal6_diagnostics.schemas import (
+    validate_bv_comparison_v1,
+    validate_sweep_manifest_v1,
+)
 from scripts.run_pn2d_minimal6_diagnostic_sweep import BRANCH_THRESHOLD_VERSION
 
 
@@ -72,10 +76,33 @@ def failed_transition(solver, topology, start_bias, target_bias, reason):
 
 
 def manifest(solver, accepted, failures=()):
+    deepest = min(
+        [0, *(int(float(row["target_bias_V"])) for row in accepted),
+         *(int(float(row["target_bias_V"])) for row in failures)]
+    )
+    targets = [float(-index) for index in range(abs(deepest) + 1)]
+    deck_row = {
+        "deck": f"decks/{solver}.deck",
+        "deck_sha256": digest(f"{solver}-deck"),
+    }
+    deck_rows = [deck_row]
+    if failures:
+        deck_rows = []
+        for index, row in enumerate(failures):
+            label = (
+                f"{solver}-{row['topology']}-{float(row['start_bias_V'])}-"
+                f"{float(row['target_bias_V'])}-deck"
+            )
+            deck_rows.append({
+                "solver": solver, "topology": row["topology"],
+                "start_bias_V": row["start_bias_V"], "target_bias_V": row["target_bias_V"],
+                "deck": f"decks/{solver}-failure-{index}.deck",
+                "deck_sha256": digest(label), "status": "rejected",
+            })
     return {
         "schema": "vela.pn2d_minimal6_sweep_manifest.v1",
         "diagnostic_disclaimer": "minimal6 diagnostic sweep; not a physical BV curve",
-        "template": {"sha256": digest(f"{solver}-template")},
+        "template": {"path": "template.json", "sha256": digest(f"{solver}-template")},
         "topology_input_sha256": {
             "sketch": {"mesh.json": digest(f"{solver}-sketch-mesh")},
             "mirror": {"mesh.json": digest(f"{solver}-mirror-mesh")},
@@ -83,13 +110,169 @@ def manifest(solver, accepted, failures=()):
         "accepted_checkpoints": accepted,
         "failed_transitions": list(failures),
         "failed_transition": list(failures)[0] if failures else None,
-        "segments": [], "sentaurus_segments": [], "targets_V": [0.0, -1.0, -2.0],
+        "segments": deck_rows if solver == "vela" else [],
+        "sentaurus_segments": deck_rows if solver == "sentaurus" else [],
+        "targets_V": targets,
         "interpolation": "forbidden",
         "branch_threshold_version": BRANCH_THRESHOLD_VERSION,
     }
 
 
+def phase_a_report():
+    states = [
+        {
+            "topology_id": topology, "requested_bias_V": bias,
+            "actual_bias_V": bias, "status": "passed",
+        }
+        for topology in ("sketch", "mirror") for bias in (0.0, -12.0, -19.0)
+    ]
+    paths = []
+    residuals = []
+    for state in states:
+        topology, bias = state["topology_id"], state["requested_bias_V"]
+        paths.append({
+            "topology": topology, "bias_V": bias,
+            "dependency_order": ["mobility"],
+            "forward": {"order": ["mobility"], "contributions": []},
+            "reverse": {"order": ["mobility"], "contributions": []},
+            "interactions": [], "native_gap_dex": 0.0, "residual_dex": 0.0,
+            "status": "insufficient_data",
+        })
+        residuals.append({
+            "topology": topology, "bias_V": bias,
+            "name": "sentaurus_internal_semantics_residual",
+            "classification": "available", "dex": 0.0,
+        })
+    return {
+        "schema": "vela.pn2d_minimal6_formula_difference.v1",
+        "diagnostic_disclaimer": "minimal6 diagnostic sweep; not a physical BV curve",
+        "input_provenance": {"state_manifest": "fixture/manifest.json"},
+        "audit_provenance": {"audit_root": "fixture/audit"},
+        "state_matrix": states,
+        "row_counts": {"node": 36, "edge": 54, "triangle": 24},
+        "waterfall_paths": paths, "interactions": [],
+        "dominance_rules": {"status": "insufficient_data"},
+        "sentaurus_internal_semantics_residual": residuals,
+        "vela_parameter_agreement": [],
+        "artifact_hashes": {"state_manifest_sha256": digest("phase-a-state-manifest")},
+        "records": [],
+    }
+
+
+def _write_bytes(path, payload):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(payload)
+
+
+def _payload_for_hash(expected, labels):
+    for label in labels:
+        payload = label.encode("utf-8")
+        if hashlib.sha256(payload).hexdigest() == expected:
+            return payload
+    raise AssertionError(f"fixture has no payload for declared hash {expected}")
+
+
+def materialize_bound_manifest(root, value, solver):
+    root.mkdir(parents=True, exist_ok=True)
+    template = value["template"]
+    _write_bytes(
+        root / template["path"],
+        _payload_for_hash(template["sha256"], [f"{solver}-template"]),
+    )
+    for topology, entries in value["topology_input_sha256"].items():
+        for name, expected in entries.items():
+            _write_bytes(
+                root / "inputs" / topology / name,
+                _payload_for_hash(expected, [f"{solver}-{topology}-mesh"]),
+            )
+    deck_key = "segments" if solver == "vela" else "sentaurus_segments"
+    for row in value[deck_key]:
+        identity_label = (
+            f"{solver}-{row.get('topology')}-{float(row.get('start_bias_V'))}-"
+            f"{float(row.get('target_bias_V'))}-deck"
+            if "target_bias_V" in row and "start_bias_V" in row
+            else f"{solver}-deck"
+        )
+        _write_bytes(
+            root / row["deck"],
+            _payload_for_hash(row["deck_sha256"], [identity_label]),
+        )
+    for row in value["accepted_checkpoints"]:
+        _write_bytes(
+            root / row["state_path"],
+            _payload_for_hash(
+                row["state_sha256"],
+                [f"{row['solver']}-{row['topology']}-{float(row['target_bias_V'])}"],
+            ),
+        )
+    manifest_path = root / "sweep_manifest.json"
+    manifest_path.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
+    return manifest_path
+
+
+def bound_input_artifacts(root, vela, sentaurus, fixed):
+    root.mkdir(parents=True, exist_ok=True)
+    vela_path = materialize_bound_manifest(root / "vela", vela, "vela")
+    sentaurus_path = materialize_bound_manifest(
+        root / "sentaurus", sentaurus, "sentaurus"
+    )
+    fixed_path = root / "fixed_state_report.json"
+    fixed_path.write_text(json.dumps(fixed, indent=2) + "\n", encoding="utf-8")
+    return {
+        "vela_manifest": vela_path,
+        "sentaurus_manifest": sentaurus_path,
+        "fixed_state_report": fixed_path,
+    }
+
+
+def write_comparison_package(
+    out_dir, vela, sentaurus, *, fixed_state_report, input_artifacts=None,
+):
+    fixed = fixed_state_report or phase_a_report()
+    artifacts = input_artifacts
+    if artifacts is None:
+        artifacts = bound_input_artifacts(
+            Path(out_dir) / "_input_evidence", vela, sentaurus, fixed,
+        )
+    return _write_comparison_package(
+        Path(out_dir),
+        vela,
+        sentaurus,
+        fixed_state_report=fixed,
+        input_artifacts=artifacts,
+    )
+
+
 class SweepComparisonTest(unittest.TestCase):
+    def test_comparison_prevalidates_both_manifests_and_rejects_noncanonical_targets(self):
+        vela = manifest("vela", [
+            checkpoint("vela", "sketch", -1.0, -1.0, 1.0, 2.0, 3.0, 4.0),
+        ])
+        sentaurus = manifest("sentaurus", [
+            checkpoint("sentaurus", "sketch", -1.0, -1.0, 1.0, 2.0, 3.0, 4.0),
+        ])
+        with mock.patch.object(
+            comparison_module,
+            "validate_sweep_manifest_v1",
+            create=True,
+            side_effect=validate_sweep_manifest_v1,
+        ) as validator:
+            compare_sweeps(vela, sentaurus, fixed_state_report={})
+        self.assertEqual(
+            [call.args[0] for call in validator.call_args_list],
+            [vela, sentaurus],
+        )
+
+        malformed_prefix = json.loads(json.dumps(vela))
+        malformed_prefix["targets_V"] = [0.0, -2.0]
+        with self.assertRaisesRegex(ValueError, "exact integer prefix"):
+            compare_sweeps(malformed_prefix, sentaurus, fixed_state_report={})
+
+        missing_target = json.loads(json.dumps(vela))
+        missing_target["targets_V"] = [0.0]
+        with self.assertRaisesRegex(ValueError, "accepted checkpoint target"):
+            compare_sweeps(missing_target, sentaurus, fixed_state_report={})
+
     def test_ratio_record_aligns_terminal_current_sign_and_one_volt_growth(self):
         vela = manifest("vela", [
             checkpoint("vela", "sketch", -1.0, -2.0, 2.0, 4.0, 5.0, 6.0),
@@ -116,7 +299,7 @@ class SweepComparisonTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "typed branch classification"):
             validate_bv_comparison_v1(tampered)
         sentaurus["branch_threshold_version"] = "v2"
-        with self.assertRaisesRegex(ValueError, "same non-empty branch threshold version"):
+        with self.assertRaisesRegex(ValueError, "noncanonical branch threshold version"):
             compare_sweeps(vela, sentaurus, fixed_state_report={})
 
     def test_comparison_uses_only_exact_common_biases_and_preserves_missing_tail(self):
@@ -176,16 +359,19 @@ class SweepComparisonTest(unittest.TestCase):
                 self.assertEqual(next(csv.DictReader(handle))["classification"], "side_only")
             payload = json.loads((root / "sweep_comparison.json").read_text(encoding="utf-8"))
             self.assertTrue(payload["artifact_hashes"])
-            self.assertEqual(payload["closure"]["status"], "closed")
+            self.assertEqual(payload["closure"]["status"], "not_applicable")
 
     def test_package_records_and_verifies_input_and_generated_artifact_hashes(self):
         vela = manifest("vela", [])
         sentaurus = manifest("sentaurus", [checkpoint("sentaurus", "sketch", -1.0, -1.0, 1.0, 2.0, 3.0, 4.0)])
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            input_path = root / "vela_manifest.json"
-            input_path.write_text(json.dumps(vela), encoding="utf-8")
-            write_comparison_package(root, vela, sentaurus, fixed_state_report={}, input_artifacts={"vela_manifest": input_path})
+            fixed = phase_a_report()
+            artifacts = bound_input_artifacts(root / "inputs", vela, sentaurus, fixed)
+            write_comparison_package(
+                root, vela, sentaurus, fixed_state_report=fixed,
+                input_artifacts=artifacts,
+            )
             report_path = root / "sweep_comparison.json"
             self.assertTrue(verify_comparison_artifacts(report_path))
             (root / "sweep_comparison.csv").write_text("tampered\n", encoding="utf-8")
@@ -236,31 +422,38 @@ class SweepComparisonRedBatchOneTest(unittest.TestCase):
             checkpoint("vela", "sketch", -1.0, -2.0, 2.0, 4.0, 0.0, 0.0)
         ])
         zero_row = compare_sweeps(zero_vela, sentaurus, fixed_state_report={})["checkpoints"][0]
-        self.assertEqual(zero_row["branch_classification"], "unidentified")
-        self.assertTrue(zero_row["branch_ratio_evidence"]["geometric_zero"])
-        self.assertEqual(zero_row["terminal_current_ratio"]["classification"], "geometric_zero")
-        self.assertIsNone(zero_row["terminal_current_ratio"]["value"])
+        self.assertEqual(zero_row["branch_classification"], "multiplication_like")
+        self.assertFalse(zero_row["branch_ratio_evidence"]["geometric_zero"])
+        self.assertEqual(zero_row["terminal_current_ratio"]["classification"], "available")
+        self.assertEqual(zero_row["terminal_current_ratio"]["value"], 2.0)
 
-    def test_bias_identity_uses_tolerance_but_never_interpolates_targets(self):
+    def test_bias_identity_uses_actual_tolerance_but_requires_exact_target_membership(self):
         vela_row = checkpoint("vela", "sketch", -1.0, -1.0, 1.0, 2.0, 3.0, 4.0)
         vela_row["actual_bias_V"] = -1.0 + 1.0e-12
         sentaurus_row = checkpoint("sentaurus", "sketch", -1.0, -1.0, 1.0, 2.0, 3.0, 4.0)
         self.assertEqual(
-            len(compare_sweeps(manifest("vela", [vela_row]), manifest("sentaurus", [sentaurus_row]), fixed_state_report={})["checkpoints"]),
+            len(compare_sweeps(
+                manifest("vela", [vela_row]),
+                manifest("sentaurus", [sentaurus_row]),
+                fixed_state_report={},
+            )["checkpoints"]),
             1,
         )
         vela_row["actual_bias_V"] = -1.0 + 1.1e-12
-        with self.assertRaisesRegex(ValueError, "exact target bias"):
-            compare_sweeps(manifest("vela", [vela_row]), manifest("sentaurus", [sentaurus_row]), fixed_state_report={})
+        with self.assertRaisesRegex(ValueError, "not an exact checkpoint"):
+            compare_sweeps(
+                manifest("vela", [vela_row]),
+                manifest("sentaurus", [sentaurus_row]),
+                fixed_state_report={},
+            )
 
         near_target = checkpoint("vela", "sketch", -1.0 + 5.0e-13, -1.0, 1.0, 2.0, 3.0, 4.0)
-        report = compare_sweeps(
-            manifest("vela", [near_target]),
-            manifest("sentaurus", [sentaurus_row]),
-            fixed_state_report={},
-        )
-        self.assertEqual(report["checkpoints"], [])
-        self.assertEqual(report["deepest_common_bias_V"]["classification"], "unavailable")
+        with self.assertRaisesRegex(ValueError, "target bias"):
+            compare_sweeps(
+                manifest("vela", [near_target]),
+                manifest("sentaurus", [sentaurus_row]),
+                fixed_state_report={},
+            )
 
     def test_ratio_record_rejects_boolean_inputs(self):
         for numerator, denominator in ((True, 1.0), (1.0, False)):
@@ -270,7 +463,7 @@ class SweepComparisonRedBatchOneTest(unittest.TestCase):
 
 
 class SweepComparisonRedBatchTwoTest(unittest.TestCase):
-    def test_each_eligible_sweep_log_gap_has_named_residual_closure(self):
+    def test_each_eligible_sweep_log_gap_is_retained_without_decomposition(self):
         vela = manifest("vela", [
             checkpoint("vela", "sketch", -1.0, -2.0, 2.0, 4.0, 5.0, 6.0)
         ])
@@ -278,19 +471,18 @@ class SweepComparisonRedBatchTwoTest(unittest.TestCase):
             checkpoint("sentaurus", "sketch", -1.0, -1.0, 1.0, 2.0, 2.5, 3.0)
         ])
         closure = compare_sweeps(vela, sentaurus, fixed_state_report={})["checkpoints"][0]["gap_closure"]
-        self.assertEqual(closure["status"], "closed")
+        self.assertEqual(closure["status"], "unidentifiable")
         self.assertEqual(closure["tolerance_dex"], 1.0e-10)
         self.assertEqual(
             {gap["quantity"] for gap in closure["gaps"]},
             {"terminal_current", "maximum_field", "native_source", "reconstructed_source"},
         )
         for gap in closure["gaps"]:
-            contribution_sum = sum(item["contribution_dex"] for item in gap["named_contributions"])
-            reconstructed = contribution_sum + gap["residual"]["value_dex"]
-            self.assertLessEqual(abs(gap["log_gap_dex"] - reconstructed), 1.0e-10)
-            self.assertLessEqual(abs(gap["closure_error_dex"]), 1.0e-10)
-            self.assertEqual(gap["residual"]["name"], "cross_solver_semantics_residual")
-
+            self.assertEqual(gap["decomposition_status"], "unidentifiable")
+            self.assertEqual(gap["named_contributions"], [])
+            self.assertEqual(gap["residual"]["classification"], "unidentifiable")
+            self.assertIsNone(gap["residual"]["value_dex"])
+            self.assertIsNone(gap["closure_error_dex"])
     def test_fixed_state_recheck_binds_exact_self_consistent_states_but_is_honestly_unidentifiable_without_raw_ledger(self):
         biases = (0.0, -12.0, -19.0)
         vela_rows = [
@@ -303,7 +495,7 @@ class SweepComparisonRedBatchTwoTest(unittest.TestCase):
             for topology in ("sketch", "mirror")
             for bias in biases
         ]
-        fixed = {"root_cause_status": "available", "dominant_factor": "gradient_recovery"}
+        fixed = phase_a_report()
         rechecks = compare_sweeps(
             manifest("vela", vela_rows),
             manifest("sentaurus", sentaurus_rows),
@@ -311,9 +503,22 @@ class SweepComparisonRedBatchTwoTest(unittest.TestCase):
         )["fixed_state_recheck"]
         self.assertEqual([row["bias_V"] for row in rechecks], [0.0, -12.0, -19.0])
         for row in rechecks:
+            self.assertEqual(set(row), {
+                "bias_V", "status", "ranking_status", "reason_code", "reason",
+                "missing_inputs", "fixed_state_status", "fixed_state_dominant_factor",
+                "recheck_basis", "topologies", "self_consistent_states",
+            })
             self.assertEqual(row["status"], "unidentifiable")
-            self.assertEqual(row["recheck_basis"], "self_consistent_exact_checkpoints")
-            self.assertIn("raw quantity-ledger inputs are unavailable", row["reason"])
+            self.assertEqual(row["ranking_status"], "unidentifiable")
+            self.assertEqual(row["reason_code"], "missing_verified_nonlinear_ledger_input_bundle")
+            self.assertEqual(row["missing_inputs"], ["verified_nonlinear_ledger_input_bundle"])
+            self.assertEqual(row["fixed_state_status"], "insufficient_data")
+            self.assertIsNone(row["fixed_state_dominant_factor"])
+            self.assertEqual(
+                row["recheck_basis"],
+                "hash_addressed_self_consistent_states_without_verified_nonlinear_ledger_bundle",
+            )
+            self.assertNotIn("dominant_factor", row)
             self.assertEqual(len(row["self_consistent_states"]), 4)
             self.assertEqual(
                 {(state["solver"], state["topology"]) for state in row["self_consistent_states"]},
@@ -337,23 +542,27 @@ class SweepComparisonRedBatchTwoTest(unittest.TestCase):
 
 
 class SweepComparisonRedBatchTwoAdditionalTest(unittest.TestCase):
-    def test_zero_terminal_current_is_unidentified_with_typed_sign_and_ratio(self):
+    def test_zero_or_nonconserved_terminal_current_has_typed_unavailable_claims(self):
         sentaurus = manifest("sentaurus", [
             checkpoint("sentaurus", "sketch", -1.0, -1.0, 1.0, 2.0, 3.0, 4.0)
         ])
-        for vela_current, ratio_classification in ((0.0, "zero_numerator"), (-2.0, "zero_denominator")):
-            with self.subTest(vela_current=vela_current):
-                sentaurus_row = sentaurus["accepted_checkpoints"][0]
-                sentaurus_row["observables"]["anode_current_A_per_um"] = 0.0 if ratio_classification == "zero_denominator" else -1.0
-                vela = manifest("vela", [
-                    checkpoint("vela", "sketch", -1.0, vela_current, -vela_current, 4.0, 5.0, 6.0)
-                ])
-                row = compare_sweeps(vela, sentaurus, fixed_state_report={})["checkpoints"][0]
-                self.assertEqual(row["branch_classification"], "unidentified")
-                self.assertEqual(row["terminal_current_ratio"]["classification"], ratio_classification)
-                self.assertEqual(row["terminal_current_sign_alignment"]["classification"], "zero_current")
-                self.assertIsNone(row["terminal_current_sign_alignment"]["value"])
+        vela_zero = manifest("vela", [
+            checkpoint("vela", "sketch", -1.0, 0.0, 0.0, 4.0, 5.0, 6.0)
+        ])
+        zero_row = compare_sweeps(vela_zero, sentaurus, fixed_state_report={})["checkpoints"][0]
+        self.assertEqual(zero_row["branch_classification"], "unidentified")
+        self.assertEqual(zero_row["terminal_current_ratio"]["classification"], "zero_numerator")
+        self.assertEqual(zero_row["terminal_current_sign_alignment"]["classification"], "zero_current")
 
+        sentaurus["accepted_checkpoints"][0]["observables"]["anode_current_A_per_um"] = 0.0
+        vela = manifest("vela", [
+            checkpoint("vela", "sketch", -1.0, -2.0, 2.0, 4.0, 5.0, 6.0)
+        ])
+        gated_row = compare_sweeps(vela, sentaurus, fixed_state_report={})["checkpoints"][0]
+        unavailable = {"classification": "unavailable", "value": None, "reason": "contact_current_not_conserved"}
+        self.assertEqual(gated_row["branch_classification"], "unidentified")
+        self.assertEqual(gated_row["terminal_current_ratio"], unavailable)
+        self.assertEqual(gated_row["terminal_current_sign_alignment"], unavailable)
     def test_one_volt_growth_requires_two_exact_nonzero_nongeometric_rows(self):
         sentaurus_rows = [
             checkpoint("sentaurus", "sketch", -1.0, -1.0, 1.0, 2.0, 3.0, 4.0),
@@ -376,10 +585,10 @@ class SweepComparisonRedBatchTwoAdditionalTest(unittest.TestCase):
         geometric_growth = compare_sweeps(
             manifest("vela", geometric_rows), manifest("sentaurus", sentaurus_rows), fixed_state_report={}
         )["checkpoints"][0]["vela_one_volt_current_growth"]
-        self.assertEqual(geometric_growth["classification"], "geometric_zero")
-        self.assertIsNone(geometric_growth["value"])
+        self.assertEqual(geometric_growth["classification"], "available")
+        self.assertEqual(geometric_growth["value"], 2.0)
 
-    def test_supplied_self_consistent_ledger_results_validate_ranking_status(self):
+    def test_embedded_self_consistent_ledger_summary_is_rejected_as_unverified(self):
         bias = -12.0
         vela_rows = []
         sentaurus_rows = []
@@ -388,26 +597,16 @@ class SweepComparisonRedBatchTwoAdditionalTest(unittest.TestCase):
                 row = checkpoint(solver, topology, bias, current, -current, 4.0, 5.0, 6.0)
                 row["quantity_ledger_result"] = {
                     "state_sha256": row["state_sha256"],
-                    "status": "available",
-                    "dominant_factor": "gradient_recovery",
+                    "status": "available", "dominant_factor": "gradient_recovery",
                     "ranking": ["gradient_recovery", "mobility"],
                     "closure": {"status": "closed", "tolerance_dex": 1.0e-10, "closure_error_dex": 0.0},
                 }
                 rows.append(row)
-        fixed = {"root_cause_status": "available", "dominant_factor": "gradient_recovery"}
-        recheck = compare_sweeps(
-            manifest("vela", vela_rows), manifest("sentaurus", sentaurus_rows), fixed_state_report=fixed
-        )["fixed_state_recheck"][1]
-        self.assertEqual(recheck["status"], "available")
-        self.assertEqual(recheck["ranking_status"], "remains_dominant")
-        self.assertEqual(recheck["dominant_factor"], "gradient_recovery")
-
-        vela_rows[0]["quantity_ledger_result"]["state_sha256"] = digest("wrong-state")
-        with self.assertRaisesRegex(ValueError, "ledger result state hash"):
+        with self.assertRaisesRegex(ValueError, "unverified embedded scientific summary"):
             compare_sweeps(
-                manifest("vela", vela_rows), manifest("sentaurus", sentaurus_rows), fixed_state_report=fixed
+                manifest("vela", vela_rows), manifest("sentaurus", sentaurus_rows),
+                fixed_state_report=phase_a_report(),
             )
-
     def test_failure_transition_requires_branch_convergence_and_reason_evidence(self):
         failure = failed_transition("vela", "sketch", 0.0, -1.0, "solver rejected endpoint")
         sentaurus = manifest("sentaurus", [])
@@ -588,7 +787,9 @@ class SweepComparisonRedBatchThreeBBranchGapTest(unittest.TestCase):
         mutations = (
             lambda value: value["checkpoints"][0]["gap_closure"]["gaps"].pop(),
             lambda value: value["checkpoints"][0]["gap_closure"]["gaps"][-1].update(quantity="terminal_current"),
-            lambda value: value["checkpoints"][0]["gap_closure"]["gaps"][0]["named_contributions"][0].update(contribution_dex=7.0),
+            lambda value: value["checkpoints"][0]["gap_closure"]["gaps"][0].update(
+                named_contributions=[{"name": "fabricated", "contribution_dex": 7.0}]
+            ),
             lambda value: value["checkpoints"][0]["gap_closure"]["gaps"][0]["residual"].update(name="unnamed"),
             lambda value: value["checkpoints"][0]["gap_closure"]["gaps"][0].update(closure_error_dex=1.0e-5),
             lambda value: value["checkpoints"][0]["terminal_current_ratio"].update(classification="zero_numerator", value=0.0),
@@ -602,52 +803,24 @@ class SweepComparisonRedBatchThreeBBranchGapTest(unittest.TestCase):
                     validate_bv_comparison_v1(tampered)
 
 class SweepComparisonRedBatchThreeBLedgerInputTest(unittest.TestCase):
-    def test_quantity_ledger_result_rejects_inconsistent_ranking_closure_status_and_hash(self):
-        bias = -12.0
-        vela_row = checkpoint("vela", "sketch", bias, -2.0, 2.0, 4.0, 5.0, 6.0)
-        sentaurus_row = checkpoint("sentaurus", "sketch", bias, -1.0, 1.0, 2.0, 2.5, 3.0)
-        for row in (vela_row, sentaurus_row):
-            row["quantity_ledger_result"] = {
-                "state_sha256": row["state_sha256"],
-                "status": "available",
-                "dominant_factor": "gradient_recovery",
-                "ranking": ["gradient_recovery", "mobility"],
-                "closure": {
-                    "status": "closed",
-                    "tolerance_dex": 1.0e-10,
-                    "closure_error_dex": 0.0,
-                },
-            }
-        fixed = {"root_cause_status": "available", "dominant_factor": "gradient_recovery"}
-        vela_manifest = manifest("vela", [vela_row])
-        sentaurus_manifest = manifest("sentaurus", [sentaurus_row])
-        report = compare_sweeps(vela_manifest, sentaurus_manifest, fixed_state_report=fixed)
-        self.assertEqual(report["fixed_state_recheck"][1]["ranking_status"], "remains_dominant")
-        self.assertIsNone(validate_bv_comparison_v1(report))
-
-        mutations = (
-            lambda result: result.update(dominant_factor="mobility"),
-            lambda result: result["closure"].update(closure_error_dex="not-numeric"),
-            lambda result: result["closure"].update(closure_error_dex=1.0e-5),
-            lambda result: result.update(status="unavailable"),
-            lambda result: result.update(state_sha256=digest("wrong-state")),
-        )
-        for mutate in mutations:
-            with self.subTest(mutate=mutate):
-                damaged_vela = json.loads(json.dumps(vela_manifest))
-                mutate(damaged_vela["accepted_checkpoints"][0]["quantity_ledger_result"])
-                with self.assertRaises(ValueError):
-                    compare_sweeps(damaged_vela, sentaurus_manifest, fixed_state_report=fixed)
-
-        tampered_report = json.loads(json.dumps(report))
-        tampered_report["accepted_transitions"]["vela"][0]["quantity_ledger_result"]["dominant_factor"] = "mobility"
-        with self.assertRaises(ValueError):
-            validate_bv_comparison_v1(tampered_report)
-
+    def test_any_embedded_quantity_ledger_result_is_rejected_before_comparison(self):
+        vela_row = checkpoint("vela", "sketch", -12.0, -2.0, 2.0, 4.0, 5.0, 6.0)
+        sentaurus_row = checkpoint("sentaurus", "sketch", -12.0, -1.0, 1.0, 2.0, 2.5, 3.0)
+        vela_row["quantity_ledger_result"] = {
+            "state_sha256": vela_row["state_sha256"],
+            "status": "available", "dominant_factor": "gradient_recovery",
+            "ranking": ["gradient_recovery"],
+            "closure": {"status": "closed", "tolerance_dex": 1.0e-10, "closure_error_dex": 0.0},
+        }
+        with self.assertRaisesRegex(ValueError, "unverified embedded scientific summary"):
+            compare_sweeps(
+                manifest("vela", [vela_row]), manifest("sentaurus", [sentaurus_row]),
+                fixed_state_report=phase_a_report(),
+            )
     def test_package_preflights_canonical_json_input_equality(self):
         vela = manifest("vela", [])
         sentaurus = manifest("sentaurus", [])
-        fixed = {"root_cause_status": "insufficient_data"}
+        fixed = phase_a_report()
         expected = {
             "vela_manifest": vela,
             "sentaurus_manifest": sentaurus,
@@ -681,11 +854,7 @@ class SweepComparisonRedBatchThreeBLedgerInputTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            paths = {}
-            for name, payload in expected.items():
-                path = root / f"{name}.json"
-                path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-                paths[name] = path
+            paths = bound_input_artifacts(root / "inputs", vela, sentaurus, fixed)
             result = write_comparison_package(
                 root / "package",
                 vela,
@@ -695,6 +864,147 @@ class SweepComparisonRedBatchThreeBLedgerInputTest(unittest.TestCase):
             )
             self.assertEqual(set(result["input_artifacts"]), set(expected))
             self.assertTrue(verify_comparison_artifacts(root / "package" / "sweep_comparison.json"))
+
+    def test_package_and_preflight_reject_invalid_nonempty_phase_a_report(self):
+        vela = manifest("vela", [])
+        sentaurus = manifest("sentaurus", [])
+        invalid = phase_a_report()
+        del invalid["state_matrix"]
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            direct_out = root / "direct"
+            with self.assertRaises(ValueError):
+                _write_comparison_package(
+                    direct_out, vela, sentaurus, fixed_state_report=invalid,
+                )
+            self.assertFalse(direct_out.exists())
+
+            fixed_path = root / "fixed_state_report.json"
+            fixed_path.write_text(json.dumps(invalid, indent=2) + "\n", encoding="utf-8")
+            preflight_out = root / "preflight"
+            with self.assertRaises(ValueError):
+                _write_comparison_package(
+                    preflight_out,
+                    vela,
+                    sentaurus,
+                    fixed_state_report=invalid,
+                    input_artifacts={"fixed_state_report": fixed_path},
+                )
+            self.assertFalse(preflight_out.exists())
+
+class SweepComparisonReviewBatchTwoTest(unittest.TestCase):
+    def test_rejected_transition_must_match_one_canonical_segment_and_first_failure(self):
+        failure = failed_transition("vela", "sketch", 0.0, -1.0, "solver rejected endpoint")
+        sentaurus = manifest("sentaurus", [])
+        for mutate in (
+            lambda value: value["failed_transitions"][0].update(start_bias_V=123.0),
+            lambda value: value["failed_transitions"][0].update(target_bias_V=-0.5),
+        ):
+            damaged = manifest("vela", [], [failure])
+            mutate(damaged)
+            damaged["failed_transition"] = damaged["failed_transitions"][0]
+            with self.subTest(failure=damaged["failed_transition"]), self.assertRaises(ValueError):
+                compare_sweeps(damaged, sentaurus, fixed_state_report={})
+
+        first = failed_transition("vela", "sketch", 0.0, -1.0, "first")
+        second = failed_transition("vela", "mirror", 0.0, -1.0, "second")
+        damaged = manifest("vela", [], [first, second])
+        damaged["failed_transition"] = damaged["failed_transitions"][1]
+        with self.assertRaises(ValueError):
+            compare_sweeps(damaged, sentaurus, fixed_state_report={})
+
+    def test_topology_native_source_ratio_uses_quantity_specific_geometric_zero(self):
+        tiny = 1.0e-286
+        vela = manifest("vela", [
+            checkpoint("vela", "sketch", -1.0, -2.0, 2.0, 4.0, tiny, 6.0),
+            checkpoint("vela", "mirror", -1.0, -1.0, 1.0, 2.0, tiny, 3.0),
+        ])
+        report = compare_sweeps(vela, manifest("sentaurus", []), fixed_state_report={})
+        sensitivity = next(row for row in report["topology_sensitivity"] if row["solver"] == "vela")
+        self.assertEqual(
+            sensitivity["native_source_sketch_over_mirror"],
+            {"classification": "geometric_zero", "value": None},
+        )
+        validate_bv_comparison_v1(report)
+    def test_source_geometric_zero_is_per_quantity_and_does_not_gate_current_field_or_growth(self):
+        tiny = 1.0e-286
+        vela = manifest("vela", [
+            checkpoint("vela", "sketch", -1.0, -2.0, 2.0, 4.0, tiny, 6.0),
+            checkpoint("vela", "sketch", -2.0, -8.0, 8.0, 8.0, tiny, tiny),
+        ])
+        sentaurus = manifest("sentaurus", [
+            checkpoint("sentaurus", "sketch", -1.0, -1.0, 1.0, 2.0, tiny, 3.0),
+            checkpoint("sentaurus", "sketch", -2.0, -4.0, 4.0, 4.0, tiny, tiny),
+        ])
+        report = compare_sweeps(vela, sentaurus, fixed_state_report={})
+        row = next(item for item in report["checkpoints"] if item["bias_V"] == -1.0)
+        self.assertEqual(row["terminal_current_ratio"], {"classification": "available", "value": 2.0})
+        self.assertEqual(row["maximum_field_ratio"], {"classification": "available", "value": 2.0})
+        self.assertEqual(row["native_source_ratio"], {"classification": "geometric_zero", "value": None})
+        self.assertEqual(row["reconstructed_source_ratio"], {"classification": "available", "value": 2.0})
+        self.assertFalse(row["branch_ratio_evidence"]["geometric_zero"])
+        self.assertEqual(row["branch_classification"], "multiplication_like")
+        self.assertEqual(row["vela_one_volt_current_growth"], {"classification": "available", "value": 4.0})
+        self.assertEqual(row["sentaurus_one_volt_current_growth"], {"classification": "available", "value": 4.0})
+
+    def test_nonconserved_contacts_gate_only_current_claims(self):
+        vela = manifest("vela", [
+            checkpoint("vela", "sketch", -1.0, -2.0, 0.0, 4.0, 5.0, 6.0),
+            checkpoint("vela", "sketch", -2.0, -8.0, 8.0, 8.0, 10.0, 12.0),
+            checkpoint("vela", "mirror", -1.0, -1.0, 1.0, 2.0, 2.5, 3.0),
+        ])
+        sentaurus = manifest("sentaurus", [
+            checkpoint("sentaurus", "sketch", -1.0, -1.0, 1.0, 2.0, 2.5, 3.0),
+            checkpoint("sentaurus", "sketch", -2.0, -4.0, 4.0, 4.0, 5.0, 6.0),
+            checkpoint("sentaurus", "mirror", -1.0, -1.0, 1.0, 2.0, 2.5, 3.0),
+        ])
+        report = compare_sweeps(vela, sentaurus, fixed_state_report={})
+        row = next(item for item in report["checkpoints"] if item["topology"] == "sketch" and item["bias_V"] == -1.0)
+        unavailable = {"classification": "unavailable", "value": None, "reason": "contact_current_not_conserved"}
+        self.assertEqual(row["contact_current_conservation"]["vela"]["classification"], "not_conserved")
+        self.assertEqual(row["branch_classification"], "unidentified")
+        self.assertEqual(row["terminal_current_ratio"], unavailable)
+        self.assertEqual(row["terminal_current_sign_alignment"], unavailable)
+        self.assertEqual(row["vela_one_volt_current_growth"], unavailable)
+        self.assertEqual(row["maximum_field_ratio"]["classification"], "available")
+        self.assertEqual(row["native_source_ratio"]["classification"], "available")
+        vela_topology = next(item for item in report["topology_sensitivity"] if item["solver"] == "vela")
+        self.assertEqual(vela_topology["terminal_current_sketch_over_mirror"], unavailable)
+        self.assertEqual(vela_topology["maximum_field_sketch_over_mirror"]["classification"], "available")
+        self.assertEqual(vela_topology["native_source_sketch_over_mirror"]["classification"], "available")
+        validate_bv_comparison_v1(report)
+
+    def test_observed_gaps_are_unidentifiable_not_tautologically_closed(self):
+        vela = manifest("vela", [checkpoint("vela", "sketch", -1.0, -2.0, 2.0, 4.0, 5.0, 6.0)])
+        sentaurus = manifest("sentaurus", [checkpoint("sentaurus", "sketch", -1.0, -1.0, 1.0, 2.0, 2.5, 3.0)])
+        report = compare_sweeps(vela, sentaurus, fixed_state_report={})
+        closure = report["checkpoints"][0]["gap_closure"]
+        self.assertEqual(closure["status"], "unidentifiable")
+        for gap in closure["gaps"]:
+            self.assertEqual(gap["decomposition_status"], "unidentifiable")
+            self.assertEqual(gap["named_contributions"], [])
+            self.assertEqual(gap["residual"]["classification"], "unidentifiable")
+            self.assertIsNone(gap["residual"]["value_dex"])
+            self.assertIsNone(gap["closure_error_dex"])
+        self.assertEqual(report["closure"], {
+            "status": "unidentifiable", "eligible_gaps": 4,
+            "decomposed_gaps": 0, "unidentifiable_gaps": 4,
+            "rule": "observed positive log gaps are retained without fabricated decomposition",
+        })
+        validate_bv_comparison_v1(report)
+        for mutate in (
+            lambda value: value["checkpoints"][0]["gap_closure"]["gaps"][0].update(
+                named_contributions=[{"name": "terminal_current_difference", "contribution_dex": 0.3010299956639812}]
+            ),
+            lambda value: value["checkpoints"][0]["gap_closure"]["gaps"][0]["residual"].update(
+                classification="available", value_dex=0.0
+            ),
+            lambda value: value["closure"].update(unidentifiable_gaps=3),
+        ):
+            damaged = json.loads(json.dumps(report))
+            mutate(damaged)
+            with self.assertRaises(ValueError):
+                validate_bv_comparison_v1(damaged)
 
 class SweepComparisonRedBatchThreeCFigureContractTest(unittest.TestCase):
     FIGURE_NAMES = {
@@ -791,17 +1101,23 @@ class SweepComparisonRedBatchThreeCFigureContractTest(unittest.TestCase):
 
             attacked_name = "terminal_current.png"
             attacked_path = root / attacked_name
+            with Image.open(attacked_path) as original:
+                original_info = dict(original.info)
+            pnginfo = PngImagePlugin.PngInfo()
+            for key, value in original_info.items():
+                if isinstance(value, str):
+                    pnginfo.add_text(key, value)
             replacement = Image.new("RGB", (900, 504), "white")
             draw = ImageDraw.Draw(replacement)
             draw.line((0, 0, 899, 503), fill="black", width=5)
-            replacement.save(attacked_path, format="PNG")
+            replacement.save(attacked_path, format="PNG", pnginfo=pnginfo)
             attacked_hash = hashlib.sha256(attacked_path.read_bytes()).hexdigest()
             report_path = root / "sweep_comparison.json"
             payload = json.loads(report_path.read_text(encoding="utf-8"))
             payload["artifact_hashes"][attacked_name] = attacked_hash
             payload["figure_contract"]["figures"][attacked_name]["sha256"] = attacked_hash
             report_path.write_text(json.dumps(payload, sort_keys=True, indent=2) + "\n", encoding="utf-8")
-            with self.assertRaisesRegex(ValueError, "metadata"):
+            with self.assertRaises(ValueError):
                 verify_comparison_artifacts(report_path)
 
     def test_all_figures_mark_every_failure_and_sources_keep_both_identities(self):
@@ -818,7 +1134,7 @@ class SweepComparisonRedBatchThreeCFigureContractTest(unittest.TestCase):
         ) as marked:
             root = Path(temp)
             result = write_comparison_package(root, vela, sentaurus, fixed_state_report={})
-            self.assertEqual(marked.call_count, 5)
+            self.assertEqual(marked.call_count, 10)
             expected_markers = [
                 {
                     "solver": row["solver"],
@@ -888,8 +1204,12 @@ class SweepComparisonRedBatchThreeCFigureContractTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             first = Path(temp) / "first"
             second = Path(temp) / "second"
-            first_report = write_comparison_package(first, vela, sentaurus, fixed_state_report={})
-            second_report = write_comparison_package(second, vela, sentaurus, fixed_state_report={})
+            fixed = phase_a_report()
+            artifacts = bound_input_artifacts(Path(temp) / "shared-inputs", vela, sentaurus, fixed)
+            first_report = _write_comparison_package(
+                first, vela, sentaurus, fixed_state_report=fixed, input_artifacts=artifacts)
+            second_report = _write_comparison_package(
+                second, vela, sentaurus, fixed_state_report=fixed, input_artifacts=artifacts)
             self.assertEqual(first_report, second_report)
             self.assertEqual(first_report["artifact_hashes"], second_report["artifact_hashes"])
             self.assertNotIn("sweep_comparison.json", first_report["artifact_hashes"])
@@ -919,5 +1239,330 @@ class SweepComparisonRedBatchThreeCFigureContractTest(unittest.TestCase):
                     mutate(tampered)
                     with self.assertRaises(ValueError):
                         validate_bv_comparison_v1(tampered)
+class FixedStateIntegrityReviewTest(unittest.TestCase):
+    def test_runtime_validator_recomputes_typed_fixed_state_rows_and_state_identities(self):
+        biases = (0.0, -12.0, -19.0)
+        vela_rows = [
+            checkpoint("vela", topology, bias, -2.0, 2.0, 4.0, 5.0, 6.0)
+            for topology in ("sketch", "mirror") for bias in biases
+        ]
+        sentaurus_rows = [
+            checkpoint("sentaurus", topology, bias, -1.0, 1.0, 2.0, 2.5, 3.0)
+            for topology in ("sketch", "mirror") for bias in biases
+        ]
+        report = compare_sweeps(
+            manifest("vela", vela_rows),
+            manifest("sentaurus", sentaurus_rows),
+            fixed_state_report=phase_a_report(),
+        )
+        validate_bv_comparison_v1(report)
+        mutations = (
+            lambda value: value["fixed_state_recheck"][0].update(status="available"),
+            lambda value: value["fixed_state_recheck"][0].update(
+                ranking_status="remains_dominant"
+            ),
+            lambda value: value["fixed_state_recheck"][0]["self_consistent_states"][0].update(
+                state_sha256=digest("forged-state")
+            ),
+            lambda value: value["fixed_state_recheck"][0].update(missing_inputs=[]),
+            lambda value: value["fixed_state_recheck"][0].update(
+                reason="forged scientific conclusion"
+            ),
+        )
+        for mutate in mutations:
+            with self.subTest(mutate=mutate):
+                tampered = json.loads(json.dumps(report))
+                mutate(tampered)
+                with self.assertRaises(ValueError):
+                    validate_bv_comparison_v1(tampered)
+
+
+class PublishedInputBindingReviewTest(unittest.TestCase):
+    def _baseline(self):
+        vela = manifest("vela", [
+            checkpoint("vela", "sketch", -1.0, -2.0, 2.0, 4.0, 5.0, 6.0)
+        ])
+        sentaurus = manifest("sentaurus", [
+            checkpoint("sentaurus", "sketch", -1.0, -1.0, 1.0, 2.0, 2.5, 3.0)
+        ])
+        return vela, sentaurus, phase_a_report()
+
+    def test_published_package_requires_exact_three_input_artifact_keys(self):
+        vela, sentaurus, fixed = self._baseline()
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            complete = bound_input_artifacts(root / "inputs", vela, sentaurus, fixed)
+            variants = (
+                {key: path for key, path in complete.items() if key != "fixed_state_report"},
+                {**complete, "unexpected": complete["fixed_state_report"]},
+            )
+            for index, artifacts in enumerate(variants):
+                out = root / f"out-{index}"
+                with self.subTest(keys=set(artifacts)), self.assertRaises(ValueError):
+                    _write_comparison_package(
+                        out,
+                        vela,
+                        sentaurus,
+                        fixed_state_report=fixed,
+                        input_artifacts=artifacts,
+                    )
+                self.assertFalse(out.exists())
+
+    def test_configuration_rejects_empty_malformed_and_duplicate_deck_rows(self):
+        vela, sentaurus, fixed = self._baseline()
+        mutations = (
+            lambda value: value.update(segments=[]),
+            lambda value: value.update(segments=[None]),
+            lambda value: value.update(segments=[value["segments"][0], dict(value["segments"][0])]),
+        )
+        for mutate in mutations:
+            damaged = json.loads(json.dumps(vela))
+            mutate(damaged)
+            with self.subTest(segments=damaged["segments"]), self.assertRaises(ValueError):
+                compare_sweeps(damaged, sentaurus, fixed_state_report=fixed)
+
+    def test_published_package_rechecks_every_live_input_byte(self):
+        mutations = (
+            ("vela-template", lambda paths, vela, sentaurus: Path(paths["vela_manifest"]).parent / vela["template"]["path"]),
+            ("vela-sketch-input", lambda paths, vela, sentaurus: Path(paths["vela_manifest"]).parent / "inputs" / "sketch" / "mesh.json"),
+            ("sentaurus-mirror-input", lambda paths, vela, sentaurus: Path(paths["sentaurus_manifest"]).parent / "inputs" / "mirror" / "mesh.json"),
+            ("vela-deck", lambda paths, vela, sentaurus: Path(paths["vela_manifest"]).parent / vela["segments"][0]["deck"]),
+            ("sentaurus-deck", lambda paths, vela, sentaurus: Path(paths["sentaurus_manifest"]).parent / sentaurus["sentaurus_segments"][0]["deck"]),
+            ("accepted-state", lambda paths, vela, sentaurus: Path(paths["vela_manifest"]).parent / vela["accepted_checkpoints"][0]["state_path"]),
+        )
+        for label, locate in mutations:
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as temp:
+                vela, sentaurus, fixed = self._baseline()
+                root = Path(temp)
+                paths = bound_input_artifacts(root / "inputs", vela, sentaurus, fixed)
+                locate(paths, vela, sentaurus).write_bytes(b"tampered-live-byte")
+                out = root / "out"
+                with self.assertRaises(ValueError):
+                    _write_comparison_package(
+                        out,
+                        vela,
+                        sentaurus,
+                        fixed_state_report=fixed,
+                        input_artifacts=paths,
+                    )
+                self.assertFalse(out.exists())
+
+    def test_published_state_path_rejects_relative_traversal_outside_manifest_root(self):
+        vela, sentaurus, fixed = self._baseline()
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            paths = bound_input_artifacts(root / "inputs", vela, sentaurus, fixed)
+            outside = Path(paths["vela_manifest"]).parent.parent / "outside-state.json"
+            outside.write_bytes(b"outside-state")
+            vela["accepted_checkpoints"][0]["state_path"] = "../outside-state.json"
+            vela["accepted_checkpoints"][0]["state_sha256"] = hashlib.sha256(
+                outside.read_bytes()
+            ).hexdigest()
+            Path(paths["vela_manifest"]).write_text(
+                json.dumps(vela, indent=2) + "\n", encoding="utf-8"
+            )
+            with self.assertRaises(ValueError):
+                _write_comparison_package(
+                    root / "out", vela, sentaurus, fixed_state_report=fixed,
+                    input_artifacts=paths,
+                )
+
+    def test_full_canonical_targets_invoke_existing_strict_task6_validator(self):
+        vela, sentaurus, fixed = self._baseline()
+        vela["targets_V"] = [float(-index) for index in range(21)]
+        sentaurus["targets_V"] = [float(-index) for index in range(21)]
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            paths = bound_input_artifacts(root / "inputs", vela, sentaurus, fixed)
+            with mock.patch.object(
+                comparison_module, "validate_sweep_manifest", create=True,
+            ) as strict:
+                _write_comparison_package(
+                    root / "out", vela, sentaurus, fixed_state_report=fixed,
+                    input_artifacts=paths,
+                )
+            self.assertEqual(strict.call_count, 4)
+            self.assertEqual(
+                [call.kwargs["package_root"] for call in strict.call_args_list],
+                [
+                    Path(paths["vela_manifest"]).parent,
+                    Path(paths["sentaurus_manifest"]).parent,
+                ] * 2,
+            )
+
+    def test_solver_configuration_binds_full_canonical_manifest_hash(self):
+        vela, sentaurus, fixed = self._baseline()
+        report = compare_sweeps(vela, sentaurus, fixed_state_report=fixed)
+        for solver, value in (("vela", vela), ("sentaurus", sentaurus)):
+            self.assertEqual(
+                report["solver_configurations"][solver]["sweep_manifest_sha256"],
+                canonical_digest(value),
+            )
+
+
+class RuntimeAliasIntegrityReviewTest(unittest.TestCase):
+    def test_runtime_recomputes_checkpoint_aliases_and_convergence_counts(self):
+        vela = manifest("vela", [
+            checkpoint("vela", "sketch", -1.0, -2.0, 2.0, 4.0, 5.0, 6.0)
+        ])
+        sentaurus = manifest("sentaurus", [
+            checkpoint("sentaurus", "sketch", -1.0, -1.0, 1.0, 2.0, 2.5, 3.0)
+        ])
+        report = compare_sweeps(vela, sentaurus, fixed_state_report=phase_a_report())
+        for name in ("records", "terminal_currents", "maximum_fields", "source_integrals"):
+            with self.subTest(alias=name):
+                tampered = json.loads(json.dumps(report))
+                tampered[name] = []
+                with self.assertRaises(ValueError):
+                    validate_bv_comparison_v1(tampered)
+        for field in ("vela_accepted", "sentaurus_accepted", "common_exact"):
+            with self.subTest(convergence=field):
+                tampered = json.loads(json.dumps(report))
+                tampered["convergence_metadata"][field] += 1
+                with self.assertRaises(ValueError):
+                    validate_bv_comparison_v1(tampered)
+
+
+class StandaloneVerifierIntegrityReviewTest(unittest.TestCase):
+    def _package(self, root):
+        vela = manifest("vela", [
+            checkpoint("vela", "sketch", -1.0, -2.0, 2.0, 4.0, 5.0, 6.0)
+        ])
+        sentaurus = manifest("sentaurus", [
+            checkpoint("sentaurus", "sketch", -1.0, -1.0, 1.0, 2.0, 2.5, 3.0)
+        ])
+        write_comparison_package(
+            root, vela, sentaurus, fixed_state_report=phase_a_report()
+        )
+        path = root / "sweep_comparison.json"
+        return path, json.loads(path.read_text(encoding="utf-8"))
+
+    @staticmethod
+    def _write(path, report):
+        path.write_text(json.dumps(report, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+
+    def test_verifier_requires_exact_report_filename(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            path, report = self._package(root)
+            renamed = root / "renamed-comparison.json"
+            self._write(renamed, report)
+            with self.assertRaises(ValueError):
+                verify_comparison_artifacts(renamed)
+            self.assertTrue(path.is_file())
+
+    def test_verifier_rejects_extra_missing_traversal_and_absolute_artifact_keys(self):
+        mutations = []
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            path, baseline = self._package(root)
+            extra = root / "extra.bin"
+            extra.write_bytes(b"extra")
+            escape = root.parent / "batch5-escape.bin"
+            escape.write_bytes(b"escape")
+            absolute = root / "absolute.bin"
+            absolute.write_bytes(b"absolute")
+            mutations.extend((
+                lambda value: value["artifact_hashes"].update(
+                    {"extra.bin": hashlib.sha256(extra.read_bytes()).hexdigest()}
+                ),
+                lambda value: value["artifact_hashes"].pop("sweep_comparison.csv"),
+                lambda value: value["artifact_hashes"].update(
+                    {"../batch5-escape.bin": hashlib.sha256(escape.read_bytes()).hexdigest()}
+                ),
+                lambda value: value["artifact_hashes"].update(
+                    {str(absolute.resolve()): hashlib.sha256(absolute.read_bytes()).hexdigest()}
+                ),
+            ))
+            try:
+                for mutate in mutations:
+                    tampered = json.loads(json.dumps(baseline))
+                    mutate(tampered)
+                    self._write(path, tampered)
+                    with self.subTest(mutate=mutate), self.assertRaises(ValueError):
+                        verify_comparison_artifacts(path)
+            finally:
+                escape.unlink(missing_ok=True)
+
+    def test_verifier_requires_exact_absolute_input_records_and_hashes(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            path, baseline = self._package(root)
+            variants = []
+            relative = json.loads(json.dumps(baseline))
+            original = Path(relative["input_artifacts"]["vela_manifest"]["path"])
+            relative_copy = Path.cwd() / "relative-vela-manifest-batch5.json"
+            relative_copy.write_bytes(original.read_bytes())
+            self.addCleanup(relative_copy.unlink, missing_ok=True)
+            relative["input_artifacts"]["vela_manifest"]["path"] = relative_copy.name
+            variants.append(relative)
+            bad_hash = json.loads(json.dumps(baseline))
+            bad_hash["input_artifacts"]["vela_manifest"]["sha256"] = digest("forged")
+            variants.append(bad_hash)
+            missing = json.loads(json.dumps(baseline))
+            missing["input_artifacts"].pop("fixed_state_report")
+            missing["artifact_hashes"].pop("input:fixed_state_report")
+            variants.append(missing)
+            extra = json.loads(json.dumps(baseline))
+            extra["input_artifacts"]["extra"] = dict(
+                extra["input_artifacts"]["fixed_state_report"]
+            )
+            extra["artifact_hashes"]["input:extra"] = extra["input_artifacts"]["extra"]["sha256"]
+            variants.append(extra)
+            for tampered in variants:
+                self._write(path, tampered)
+                with self.subTest(keys=set(tampered["input_artifacts"])), self.assertRaises(ValueError):
+                    verify_comparison_artifacts(path)
+
+    def test_verifier_rederives_semantics_from_inputs_after_synchronized_report_rewrite(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            path, report = self._package(root)
+            report.update(
+                comparison_status="stopped_with_evidence",
+                validation_failure={
+                    "code": "no_exact_common_checkpoint",
+                    "message": "no accepted identity-verified exact checkpoint is common to both solvers",
+                },
+                deepest_common_bias_V={
+                    "classification": "unavailable", "value": None,
+                    "reason": "no accepted exact common checkpoint",
+                },
+                checkpoints=[], records=[], terminal_currents=[],
+                maximum_fields=[], source_integrals=[], missing_tails=[],
+                side_only_checkpoints=[],
+                convergence_metadata={
+                    "vela_accepted": 1, "sentaurus_accepted": 1, "common_exact": 0,
+                },
+                closure={
+                    "status": "not_applicable", "eligible_gaps": 0,
+                    "decomposed_gaps": 0, "unidentifiable_gaps": 0,
+                    "rule": "observed positive log gaps are retained without fabricated decomposition",
+                },
+            )
+            self._write(path, report)
+            with self.assertRaises(ValueError):
+                verify_comparison_artifacts(path)
+
+    def test_verifier_rejects_rebound_manifest_path_and_hash_with_stale_semantics(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            path, report = self._package(root)
+            record = report["input_artifacts"]["vela_manifest"]
+            source = Path(record["path"])
+            manifest_value = json.loads(source.read_text(encoding="utf-8"))
+            manifest_value["template"]["path"] = str(
+                (source.parent / manifest_value["template"]["path"]).resolve()
+            )
+            rebound = root / "rebound-vela-manifest.json"
+            rebound.write_text(json.dumps(manifest_value, indent=2) + "\n", encoding="utf-8")
+            rebound_sha = hashlib.sha256(rebound.read_bytes()).hexdigest()
+            record.update(path=str(rebound.resolve()), sha256=rebound_sha)
+            report["artifact_hashes"]["input:vela_manifest"] = rebound_sha
+            self._write(path, report)
+            with self.assertRaises(ValueError):
+                verify_comparison_artifacts(path)
+
+
 if __name__ == "__main__":
     unittest.main()

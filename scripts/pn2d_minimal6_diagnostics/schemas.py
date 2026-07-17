@@ -16,6 +16,11 @@ _OBSERVABLES = {
     "native_source_integral_s_inv_per_cm",
     "reconstructed_source_integral_s_inv_per_cm",
 }
+_NONNEGATIVE_OBSERVABLES = {
+    "max_field_V_per_m",
+    "native_source_integral_s_inv_per_cm",
+    "reconstructed_source_integral_s_inv_per_cm",
+}
 _EXPECTED_STATES = {
     (topology, bias)
     for topology in ("sketch", "mirror")
@@ -121,7 +126,9 @@ def _observables(value, name: str) -> Mapping:
         extra = sorted(set(values) - _OBSERVABLES)
         raise ValueError(f"{name} has invalid named observables; missing={missing}, extra={extra}")
     for key, item in values.items():
-        _number(item, f"{name}.{key}")
+        number = _number(item, f"{name}.{key}")
+        if key in _NONNEGATIVE_OBSERVABLES and number < 0.0:
+            raise ValueError(f"{name}.{key} must be nonnegative")
     return values
 
 
@@ -143,7 +150,10 @@ def _canonical_sha(value) -> str:
 
 def _solver_configuration(value, name: str) -> None:
     config = _require_mapping(value, name)
-    if set(config) != {"template", "topology_input_sha256", "deck_sha256", "configuration_sha256"}:
+    if set(config) != {
+        "template", "topology_input_sha256", "deck_sha256",
+        "sweep_manifest_sha256", "configuration_sha256",
+    }:
         raise ValueError(f"{name} has invalid configuration provenance fields")
     template = _require_mapping(config["template"], f"{name}.template", nonempty=True)
     _sha(template.get("sha256"), f"{name}.template.sha256")
@@ -156,11 +166,15 @@ def _solver_configuration(value, name: str) -> None:
             if not isinstance(key, str) or not key:
                 raise ValueError(f"{name}.{topology} has an invalid input name")
             _sha(digest, f"{name}.{topology}.{key}")
-    for index, digest in enumerate(_require_list(config["deck_sha256"], f"{name}.deck_sha256")):
+    decks = _require_list(config["deck_sha256"], f"{name}.deck_sha256")
+    if not decks:
+        raise ValueError(f"{name}.deck_sha256 must be nonempty")
+    for index, digest in enumerate(decks):
         _sha(digest, f"{name}.deck_sha256[{index}]")
+    _sha(config["sweep_manifest_sha256"], f"{name}.sweep_manifest_sha256")
     supplied = config["configuration_sha256"]
     _sha(supplied, f"{name}.configuration_sha256")
-    canonical = {key: config[key] for key in ("template", "topology_input_sha256", "deck_sha256")}
+    canonical = {key: config[key] for key in ("template", "topology_input_sha256", "deck_sha256", "sweep_manifest_sha256")}
     if supplied != _canonical_sha(canonical):
         raise ValueError(f"{name}.configuration_sha256 does not match configuration content")
 
@@ -191,17 +205,38 @@ def _contact_conservation(value, name: str) -> None:
         raise ValueError(f"{name} conservation classification is inconsistent")
 
 
-def _geometric_zero_pair(*rows: Mapping) -> bool:
-    return any(
-        abs(_number(row["observables"]["native_source_integral_s_inv_per_cm"], "native_source"))
+def _source_geometric_zero_pair(
+    numerator: Mapping, denominator: Mapping, observable: str,
+) -> bool:
+    return all(
+        abs(_number(row["observables"][observable], observable))
         <= _GEOMETRIC_ZERO_SOURCE_INTEGRAL
-        and abs(_number(row["observables"]["reconstructed_source_integral_s_inv_per_cm"], "reconstructed_source"))
-        <= _GEOMETRIC_ZERO_SOURCE_INTEGRAL
-        for row in rows
+        for row in (numerator, denominator)
     )
 
 
-def _expected_ratio(numerator: float, denominator: float, *, geometric_zero: bool, absolute: bool) -> dict:
+def _branch_geometric_zero_pair(*rows: Mapping) -> bool:
+    return all(
+        abs(_number(row["observables"][observable], observable))
+        <= _GEOMETRIC_ZERO_SOURCE_INTEGRAL
+        for row in rows
+        for observable in (
+            "native_source_integral_s_inv_per_cm",
+            "reconstructed_source_integral_s_inv_per_cm",
+        )
+    )
+
+
+def _contact_unavailable() -> dict:
+    return {
+        "classification": "unavailable", "value": None,
+        "reason": "contact_current_not_conserved",
+    }
+
+
+def _expected_ratio(
+    numerator: float, denominator: float, *, geometric_zero: bool, absolute: bool,
+) -> dict:
     if geometric_zero:
         return {"classification": "geometric_zero", "value": None}
     left, right = (abs(numerator), abs(denominator)) if absolute else (numerator, denominator)
@@ -214,17 +249,8 @@ def _expected_ratio(numerator: float, denominator: float, *, geometric_zero: boo
 
 def _validate_ratio_record(value, expected: dict, name: str) -> None:
     ratio = _require_mapping(value, name)
-    if set(ratio) != {"classification", "value"}:
-        raise ValueError(f"{name} has invalid ratio fields")
-    if ratio.get("classification") != expected["classification"]:
-        raise ValueError(f"{name} classification does not match nested observables")
-    actual_value = ratio.get("value")
-    expected_value = expected["value"]
-    if expected_value is None:
-        if actual_value is not None:
-            raise ValueError(f"{name} unavailable ratio must have null value")
-    elif _number(actual_value, f"{name}.value") != expected_value:
-        raise ValueError(f"{name} value does not match nested observables")
+    if set(ratio) != set(expected) or ratio != expected:
+        raise ValueError(f"{name} does not match independently recomputed ratio evidence")
 
 
 def _validate_checkpoint_branch_and_gaps(row: Mapping, name: str, version: str) -> int:
@@ -234,7 +260,12 @@ def _validate_checkpoint_branch_and_gaps(row: Mapping, name: str, version: str) 
     sentaurus_observables = _require_mapping(sentaurus["observables"], f"{name}.sentaurus.observables")
     vela_current = _number(vela_observables["anode_current_A_per_um"], f"{name}.vela.anode_current")
     sentaurus_current = _number(sentaurus_observables["anode_current_A_per_um"], f"{name}.sentaurus.anode_current")
-    geometric_zero = _geometric_zero_pair(vela, sentaurus)
+    geometric_zero = _branch_geometric_zero_pair(vela, sentaurus)
+    conservation = _require_mapping(row["contact_current_conservation"], f"{name}.contact_current_conservation")
+    contacts_conserved = all(
+        conservation[solver]["classification"] == "conserved"
+        for solver in ("vela", "sentaurus")
+    )
     absolute_ratio = None if sentaurus_current == 0.0 else abs(vela_current / sentaurus_current)
     expected_evidence = {
         "vela_anode_current_A_per_um": vela_current,
@@ -246,7 +277,7 @@ def _validate_checkpoint_branch_and_gaps(row: Mapping, name: str, version: str) 
     evidence = _require_mapping(row.get("branch_ratio_evidence"), f"{name}.branch_ratio_evidence")
     if set(evidence) != set(expected_evidence) or evidence != expected_evidence:
         raise ValueError(f"{name} branch ratio evidence does not match nested observables")
-    if geometric_zero or sentaurus_current == 0.0 or vela_current == 0.0:
+    if not contacts_conserved or geometric_zero or sentaurus_current == 0.0 or vela_current == 0.0:
         expected_branch = "unidentified"
     elif 0.1 <= absolute_ratio <= 10.0:
         expected_branch = "multiplication_like"
@@ -259,18 +290,38 @@ def _validate_checkpoint_branch_and_gaps(row: Mapping, name: str, version: str) 
 
     expected_ratios = {}
     for quantity, (field, observable, absolute) in _GAP_QUANTITIES.items():
-        expected = _expected_ratio(
-            _number(vela_observables[observable], f"{name}.vela.{observable}"),
-            _number(sentaurus_observables[observable], f"{name}.sentaurus.{observable}"),
-            geometric_zero=geometric_zero,
-            absolute=absolute,
-        )
+        if quantity == "terminal_current" and not contacts_conserved:
+            expected = _contact_unavailable()
+        else:
+            source_geometric_zero = (
+                _source_geometric_zero_pair(vela, sentaurus, observable)
+                if quantity in {"native_source", "reconstructed_source"}
+                else False
+            )
+            expected = _expected_ratio(
+                _number(vela_observables[observable], f"{name}.vela.{observable}"),
+                _number(sentaurus_observables[observable], f"{name}.sentaurus.{observable}"),
+                geometric_zero=source_geometric_zero,
+                absolute=absolute,
+            )
         _validate_ratio_record(row.get(field), expected, f"{name}.{field}")
         expected_ratios[quantity] = expected
 
+    if not contacts_conserved:
+        expected_sign = _contact_unavailable()
+    elif vela_current == 0.0 or sentaurus_current == 0.0:
+        expected_sign = {"classification": "zero_current", "value": None}
+    else:
+        expected_sign = {
+            "classification": "available",
+            "value": "aligned" if math.copysign(1.0, vela_current) == math.copysign(1.0, sentaurus_current) else "opposed",
+        }
+    if row.get("terminal_current_sign_alignment") != expected_sign:
+        raise ValueError(f"{name} terminal-current sign alignment is inconsistent")
+
     closure = _require_mapping(row.get("gap_closure"), f"{name}.gap_closure")
-    if set(closure) != {"status", "tolerance_dex", "gaps"} or closure.get("status") != "closed":
-        raise ValueError(f"{name}.gap_closure has invalid closure fields")
+    if set(closure) != {"status", "tolerance_dex", "gaps"}:
+        raise ValueError(f"{name}.gap_closure has invalid fields")
     if _number(closure.get("tolerance_dex"), f"{name}.gap_closure.tolerance_dex") != _GAP_TOLERANCE_DEX:
         raise ValueError(f"{name}.gap_closure has noncanonical tolerance")
     gaps = _require_list(closure.get("gaps"), f"{name}.gap_closure.gaps")
@@ -288,52 +339,35 @@ def _validate_checkpoint_branch_and_gaps(row: Mapping, name: str, version: str) 
     for quantity, expected_ratio in expected_ratios.items():
         gap = by_quantity[quantity]
         expected_fields = {
-            "quantity", "classification", "log_gap_dex", "named_contributions",
-            "residual", "closure_error_dex",
+            "quantity", "classification", "decomposition_status", "log_gap_dex",
+            "named_contributions", "residual", "closure_error_dex",
         }
         if set(gap) != expected_fields or gap.get("classification") != expected_ratio["classification"]:
             raise ValueError(f"{name}.{quantity} gap classification/fields are inconsistent")
         ratio_value = expected_ratio["value"]
         is_eligible = expected_ratio["classification"] == "available" and ratio_value > 0.0
-        if not is_eligible:
-            residual = _require_mapping(gap.get("residual"), f"{name}.{quantity}.residual")
-            expected_residual = {
-                "name": "cross_solver_semantics_residual",
-                "classification": "unidentifiable",
-                "value_dex": None,
-            }
-            if (gap.get("log_gap_dex") is not None or gap.get("named_contributions") != []
-                    or residual != expected_residual or gap.get("closure_error_dex") is not None):
-                raise ValueError(f"{name}.{quantity} ineligible gap carries fabricated closure")
-            continue
-        eligible += 1
-        expected_log_gap = math.log10(abs(ratio_value))
-        log_gap = _number(gap.get("log_gap_dex"), f"{name}.{quantity}.log_gap_dex")
-        if log_gap != expected_log_gap:
-            raise ValueError(f"{name}.{quantity} log gap does not match the serialized ratio")
-        contributions = _require_list(gap.get("named_contributions"), f"{name}.{quantity}.named_contributions")
-        names, contribution_sum = set(), 0.0
-        if not contributions:
-            raise ValueError(f"{name}.{quantity} eligible gap lacks named contributions")
-        for contribution_index, contribution_value in enumerate(contributions):
-            contribution = _require_mapping(contribution_value, f"{name}.{quantity}.named_contributions[{contribution_index}]")
-            if set(contribution) != {"name", "contribution_dex"}:
-                raise ValueError(f"{name}.{quantity} contribution has invalid fields")
-            contribution_name = contribution.get("name")
-            if not isinstance(contribution_name, str) or not contribution_name or contribution_name in names:
-                raise ValueError(f"{name}.{quantity} contribution names must be unique and non-empty")
-            names.add(contribution_name)
-            contribution_sum += _number(contribution.get("contribution_dex"), f"{name}.{quantity}.contribution_dex")
+        expected_decomposition = "unidentifiable" if is_eligible else "not_applicable"
+        if gap.get("decomposition_status") != expected_decomposition:
+            raise ValueError(f"{name}.{quantity} has inconsistent decomposition status")
+        expected_log_gap = math.log10(abs(ratio_value)) if is_eligible else None
+        if is_eligible:
+            eligible += 1
+            if _number(gap.get("log_gap_dex"), f"{name}.{quantity}.log_gap_dex") != expected_log_gap:
+                raise ValueError(f"{name}.{quantity} log gap does not match the serialized ratio")
+        elif gap.get("log_gap_dex") is not None:
+            raise ValueError(f"{name}.{quantity} ineligible gap carries a log gap")
         residual = _require_mapping(gap.get("residual"), f"{name}.{quantity}.residual")
-        if set(residual) != {"name", "classification", "value_dex"}:
-            raise ValueError(f"{name}.{quantity} residual has invalid fields")
-        if residual.get("name") != "cross_solver_semantics_residual" or residual.get("classification") != "available":
-            raise ValueError(f"{name}.{quantity} residual must be named and available")
-        residual_value = _number(residual.get("value_dex"), f"{name}.{quantity}.residual.value_dex")
-        recomputed_error = log_gap - (contribution_sum + residual_value)
-        closure_error = _number(gap.get("closure_error_dex"), f"{name}.{quantity}.closure_error_dex")
-        if closure_error != recomputed_error or abs(recomputed_error) > _GAP_TOLERANCE_DEX:
-            raise ValueError(f"{name}.{quantity} gap closure exceeds tolerance or was tampered")
+        expected_residual = {
+            "name": "cross_solver_semantics_residual",
+            "classification": "unidentifiable",
+            "value_dex": None,
+        }
+        if (gap.get("named_contributions") != [] or residual != expected_residual
+                or gap.get("closure_error_dex") is not None):
+            raise ValueError(f"{name}.{quantity} carries fabricated decomposition closure")
+    expected_status = "unidentifiable" if eligible else "not_applicable"
+    if closure.get("status") != expected_status:
+        raise ValueError(f"{name}.gap_closure status does not match eligible gaps")
     return eligible
 
 
@@ -376,31 +410,6 @@ def _interaction_record(value, name: str, *, expected_identity=None, require_ide
     return identity, row["first_factor"], row["second_factor"], row["path_identity"]
 
 
-def _quantity_ledger_result(value, state_sha256: str, name: str) -> None:
-    result = _require_mapping(value, name)
-    expected_fields = {"state_sha256", "status", "dominant_factor", "ranking", "closure"}
-    if set(result) != expected_fields:
-        raise ValueError(f"{name} has invalid ledger-result fields")
-    _sha(result.get("state_sha256"), f"{name}.state_sha256")
-    if result["state_sha256"] != state_sha256:
-        raise ValueError(f"{name} state hash does not match its checkpoint")
-    if result.get("status") != "available":
-        raise ValueError(f"{name} status is inconsistent")
-    ranking = _require_list(result.get("ranking"), f"{name}.ranking")
-    if (not ranking or any(not isinstance(factor, str) or not factor for factor in ranking)
-            or len(ranking) != len(set(ranking))):
-        raise ValueError(f"{name}.ranking must be non-empty, named, and unique")
-    if result.get("dominant_factor") != ranking[0]:
-        raise ValueError(f"{name}.dominant_factor must equal ranking[0]")
-    closure = _require_mapping(result.get("closure"), f"{name}.closure")
-    if set(closure) != {"status", "tolerance_dex", "closure_error_dex"} or closure.get("status") != "closed":
-        raise ValueError(f"{name}.closure has invalid fields or status")
-    tolerance = _number(closure.get("tolerance_dex"), f"{name}.closure.tolerance_dex")
-    error = _number(closure.get("closure_error_dex"), f"{name}.closure.closure_error_dex")
-    if tolerance != _GAP_TOLERANCE_DEX or abs(error) > tolerance:
-        raise ValueError(f"{name}.closure error exceeds its canonical tolerance")
-
-
 def _accepted_transition(row, name: str, *, strict_package: bool) -> tuple[str, str, float]:
     row = _require_mapping(row, name)
     solver = row.get("solver")
@@ -420,10 +429,8 @@ def _accepted_transition(row, name: str, *, strict_package: bool) -> tuple[str, 
             raise ValueError(f"{name} lacks a state path")
         _sha(row.get("state_sha256"), f"{name}.state_sha256")
     if "quantity_ledger_result" in row:
-        _quantity_ledger_result(
-            row["quantity_ledger_result"], row.get("state_sha256"),
-            f"{name}.quantity_ledger_result",
-        )
+        raise ValueError(
+            f"{name} contains unverified embedded scientific summary: quantity_ledger_result")
     return str(solver), str(topology), target
 
 
@@ -572,6 +579,105 @@ def validate_formula_difference_v1(report: dict) -> None:
     _require_list(report["records"], "records")
 
 
+def _row_contact_conserved(row: Mapping) -> bool:
+    observables = _require_mapping(row["observables"], "accepted observables")
+    anode = _number(observables["anode_current_A_per_um"], "anode current")
+    cathode = _number(observables["cathode_current_A_per_um"], "cathode current")
+    tolerance = max(
+        _CONTACT_TOLERANCE_FLOOR_A_PER_UM,
+        max(abs(anode), abs(cathode)) * _CONTACT_TOLERANCE_RELATIVE,
+    )
+    return abs(anode + cathode) <= tolerance
+
+
+def _expected_one_volt_growth(index: Mapping, topology: str, bias: float) -> dict:
+    current = index.get((topology, bias))
+    next_row = index.get((topology, bias - 1.0))
+    if current is None or next_row is None:
+        return {
+            "classification": "unavailable", "value": None,
+            "reason": "next exact one-volt checkpoint unavailable",
+        }
+    if not _row_contact_conserved(current) or not _row_contact_conserved(next_row):
+        return _contact_unavailable()
+    current_value = _number(current["observables"]["anode_current_A_per_um"], "current")
+    next_value = _number(next_row["observables"]["anode_current_A_per_um"], "next current")
+    if current_value == 0.0 or next_value == 0.0:
+        return {"classification": "zero_current", "value": None}
+    return _expected_ratio(abs(next_value), abs(current_value), geometric_zero=False, absolute=False)
+
+
+def _validate_fixed_state_rechecks(value, checkpoints: list[Mapping]) -> None:
+    rows = _require_list(value, "fixed_state_recheck")
+    biases = (0.0, -12.0, -19.0)
+    if len(rows) != len(biases):
+        raise ValueError("fixed_state_recheck must contain exactly the canonical three biases")
+    common = {
+        (row["topology"], float(row["bias_V"])): row
+        for row in checkpoints
+    }
+    row_fields = {
+        "bias_V", "status", "ranking_status", "reason_code", "reason",
+        "missing_inputs", "fixed_state_status", "fixed_state_dominant_factor",
+        "recheck_basis", "topologies", "self_consistent_states",
+    }
+    for index, (row_value, bias) in enumerate(zip(rows, biases)):
+        name = f"fixed_state_recheck[{index}]"
+        row = _require_mapping(row_value, name)
+        if set(row) != row_fields:
+            raise ValueError(f"{name} has invalid fixed-state fields")
+        if _number(row.get("bias_V"), f"{name}.bias_V") != bias:
+            raise ValueError(f"{name} has a noncanonical fixed-state bias")
+        if row.get("status") != "unidentifiable" or row.get("ranking_status") != "unidentifiable":
+            raise ValueError(f"{name} may not claim an identifiable fixed-state ranking")
+        if not isinstance(row.get("reason"), str) or not row["reason"]:
+            raise ValueError(f"{name}.reason must be a non-empty string")
+        if not isinstance(row.get("fixed_state_status"), str) or not row["fixed_state_status"]:
+            raise ValueError(f"{name}.fixed_state_status must be a non-empty string")
+        fixed_dominant = row.get("fixed_state_dominant_factor")
+        if fixed_dominant is not None and (not isinstance(fixed_dominant, str) or not fixed_dominant):
+            raise ValueError(f"{name}.fixed_state_dominant_factor must be null or non-empty")
+        topologies = [
+            topology for topology in ("sketch", "mirror")
+            if (topology, bias) in common
+        ]
+        expected_states = []
+        for topology in topologies:
+            checkpoint = common[(topology, bias)]
+            for solver in ("vela", "sentaurus"):
+                accepted = checkpoint[solver]
+                expected_states.append({
+                    "solver": solver,
+                    "topology": topology,
+                    "bias_V": bias,
+                    "state_path": accepted["state_path"],
+                    "state_sha256": accepted["state_sha256"],
+                    "state_binding_status": "manifest_hash_addressed",
+                })
+        if row.get("topologies") != topologies or row.get("self_consistent_states") != expected_states:
+            raise ValueError(f"{name} state identities do not match exact common checkpoints")
+        if expected_states:
+            expected_semantics = {
+                "reason_code": "missing_verified_nonlinear_ledger_input_bundle",
+                "reason": "verified nonlinear ledger-input bundle is unavailable for the hash-addressed self-consistent checkpoints",
+                "missing_inputs": ["verified_nonlinear_ledger_input_bundle"],
+                "recheck_basis": "hash_addressed_self_consistent_states_without_verified_nonlinear_ledger_bundle",
+            }
+        else:
+            expected_semantics = {
+                "reason_code": "no_common_self_consistent_state",
+                "reason": "no common exact self-consistent checkpoints are available at this fixed-state bias",
+                "missing_inputs": [
+                    "common_exact_self_consistent_states",
+                    "verified_nonlinear_ledger_input_bundle",
+                ],
+                "recheck_basis": "no_common_exact_self_consistent_states",
+            }
+        for field, expected in expected_semantics.items():
+            if row.get(field) != expected:
+                raise ValueError(f"{name}.{field} is inconsistent with available evidence")
+
+
 def validate_bv_comparison_v1(report: dict) -> None:
     fields = {
         "solver_configurations", "accepted_transitions", "failed_transitions",
@@ -596,6 +702,7 @@ def validate_bv_comparison_v1(report: dict) -> None:
     accepted = _require_mapping(report["accepted_transitions"], "accepted_transitions")
     if set(accepted) != {"vela", "sentaurus"}:
         raise ValueError("accepted_transitions must be keyed by both solvers")
+    accepted_indices = {"vela": {}, "sentaurus": {}}
     for solver in ("vela", "sentaurus"):
         seen = set()
         for index, row in enumerate(_require_list(accepted[solver], f"accepted_transitions.{solver}")):
@@ -605,6 +712,7 @@ def validate_bv_comparison_v1(report: dict) -> None:
             if row["branch_threshold_version"] != version:
                 raise ValueError("accepted transition branch threshold version mismatch")
             seen.add(identity[1:])
+            accepted_indices[solver][identity[1:]] = row
     for index, row in enumerate(_require_list(report["failed_transitions"], "failed_transitions")):
         _failed_transition(row, f"failed_transitions[{index}]", strict_package=False)
         if row["branch_threshold_version"] != version:
@@ -645,23 +753,96 @@ def validate_bv_comparison_v1(report: dict) -> None:
         eligible_gaps += _validate_checkpoint_branch_and_gaps(
             row, f"checkpoints[{index}]", version
         )
+        for solver in ("vela", "sentaurus"):
+            expected_growth = _expected_one_volt_growth(
+                accepted_indices[solver], identity[0], identity[1]
+            )
+            actual_growth = row.get(f"{solver}_one_volt_current_growth")
+            if actual_growth != expected_growth:
+                raise ValueError(f"checkpoints[{index}] {solver} one-volt growth is inconsistent")
+    _validate_fixed_state_rechecks(report["fixed_state_recheck"], checkpoints)
+    topology_rows = _require_list(report["topology_sensitivity"], "topology_sensitivity")
+    expected_topology_ids = {
+        (solver, bias)
+        for solver in ("vela", "sentaurus")
+        for topology, bias in accepted_indices[solver]
+        if topology == "sketch" and ("mirror", bias) in accepted_indices[solver]
+    }
+    seen_topology_ids = set()
+    for index, topology_row in enumerate(topology_rows):
+        topology_row = _require_mapping(topology_row, f"topology_sensitivity[{index}]")
+        identity = (topology_row.get("solver"), topology_row.get("bias_V"))
+        if identity not in expected_topology_ids or identity in seen_topology_ids:
+            raise ValueError("topology sensitivity identity is missing, duplicate, or unexpected")
+        seen_topology_ids.add(identity)
+        solver, bias = identity
+        sketch = accepted_indices[solver][("sketch", bias)]
+        mirror = accepted_indices[solver][("mirror", bias)]
+        current_expected = (
+            _expected_ratio(
+                _number(sketch["observables"]["anode_current_A_per_um"], "sketch current"),
+                _number(mirror["observables"]["anode_current_A_per_um"], "mirror current"),
+                geometric_zero=False, absolute=True,
+            )
+            if _row_contact_conserved(sketch) and _row_contact_conserved(mirror)
+            else _contact_unavailable()
+        )
+        _validate_ratio_record(
+            topology_row.get("terminal_current_sketch_over_mirror"), current_expected,
+            f"topology_sensitivity[{index}].terminal_current_sketch_over_mirror",
+        )
+        field_observable = "max_field_V_per_m"
+        field_expected = _expected_ratio(
+            _number(sketch["observables"][field_observable], f"sketch {field_observable}"),
+            _number(mirror["observables"][field_observable], f"mirror {field_observable}"),
+            geometric_zero=False, absolute=False,
+        )
+        _validate_ratio_record(
+            topology_row.get("maximum_field_sketch_over_mirror"), field_expected,
+            f"topology_sensitivity[{index}].maximum_field_sketch_over_mirror",
+        )
+        source_observable = "native_source_integral_s_inv_per_cm"
+        source_expected = _expected_ratio(
+            _number(sketch["observables"][source_observable], f"sketch {source_observable}"),
+            _number(mirror["observables"][source_observable], f"mirror {source_observable}"),
+            geometric_zero=_source_geometric_zero_pair(sketch, mirror, source_observable),
+            absolute=False,
+        )
+        _validate_ratio_record(
+            topology_row.get("native_source_sketch_over_mirror"), source_expected,
+            f"topology_sensitivity[{index}].native_source_sketch_over_mirror",
+        )
+    if seen_topology_ids != expected_topology_ids:
+        raise ValueError("topology sensitivity does not cover every exact topology pair")
     if report["artifact_hashes"] or "figure_contract" in report:
         _validate_figure_contract(report)
     for name in ("terminal_currents", "maximum_fields", "source_integrals", "records"):
-        _require_list(report[name], name)
-    _require_mapping(report["convergence_metadata"], "convergence_metadata", nonempty=True)
+        alias = _require_list(report[name], name)
+        if alias != checkpoints:
+            raise ValueError(f"{name} must be an exact alias of checkpoints")
+    convergence = _require_mapping(
+        report["convergence_metadata"], "convergence_metadata", nonempty=True
+    )
+    expected_convergence = {
+        "vela_accepted": len(accepted_indices["vela"]),
+        "sentaurus_accepted": len(accepted_indices["sentaurus"]),
+        "common_exact": len(checkpoints),
+    }
+    if convergence != expected_convergence:
+        raise ValueError("convergence_metadata does not match recomputed exact counts")
     hashes = _require_mapping(report["curve_artifact_hashes"], "curve_artifact_hashes")
     for solver in ("vela_manifest", "sentaurus_manifest"):
         _sha(hashes.get(solver), f"curve_artifact_hashes.{solver}")
     top_closure = _require_mapping(report["closure"], "closure")
-    if set(top_closure) != {"status", "eligible_gaps", "rule"} or top_closure.get("status") != "closed":
-        raise ValueError("comparison closure has invalid fields or status")
-    if (isinstance(top_closure.get("eligible_gaps"), bool)
-            or not isinstance(top_closure.get("eligible_gaps"), int)
-            or top_closure["eligible_gaps"] != eligible_gaps):
-        raise ValueError("comparison eligible gap count does not match recomputed gaps")
-    if not isinstance(top_closure.get("rule"), str) or not top_closure["rule"]:
-        raise ValueError("comparison closure lacks its named eligibility rule")
+    expected_top_closure = {
+        "status": "unidentifiable" if eligible_gaps else "not_applicable",
+        "eligible_gaps": eligible_gaps,
+        "decomposed_gaps": 0,
+        "unidentifiable_gaps": eligible_gaps,
+        "rule": "observed positive log gaps are retained without fabricated decomposition",
+    }
+    if top_closure != expected_top_closure:
+        raise ValueError("comparison closure counts/status do not match recomputed gaps")
 
 
 def validate_sweep_manifest_v1(report: dict) -> None:
@@ -686,8 +867,8 @@ def validate_sweep_manifest_v1(report: dict) -> None:
             raise ValueError("topology_input_sha256 has an invalid topology")
         for name, value in _require_mapping(hashes, f"topology_input_sha256.{topology}", nonempty=True).items():
             _sha(value, f"topology_input_sha256.{topology}.{name}")
-    _require_list(report["segments"], "segments")
-    _require_list(report["sentaurus_segments"], "sentaurus_segments")
+    segments = _require_list(report["segments"], "segments")
+    sentaurus_segments = _require_list(report["sentaurus_segments"], "sentaurus_segments")
     version = report["branch_threshold_version"]
     if version != _BRANCH_THRESHOLD_VERSION:
         raise ValueError("missing or noncanonical branch threshold version")
@@ -695,20 +876,60 @@ def validate_sweep_manifest_v1(report: dict) -> None:
     seen = set()
     for index, row in enumerate(accepted_rows):
         identity = _accepted_transition(row, f"accepted_checkpoints[{index}]", strict_package=True)
+        if identity[2] not in targets:
+            raise ValueError("accepted checkpoint target bias must belong exactly to targets_V")
         if identity in seen:
             raise ValueError("duplicate accepted exact checkpoint")
         seen.add(identity)
         if row["branch_threshold_version"] != version:
             raise ValueError("accepted checkpoint branch threshold version mismatch")
     failures = _require_list(report["failed_transitions"], "failed_transitions")
+    seen_failures = set()
     for index, row in enumerate(failures):
-        _failed_transition(row, f"failed_transitions[{index}]", strict_package=True)
+        solver, topology, target = _failed_transition(
+            row, f"failed_transitions[{index}]", strict_package=True
+        )
+        if target not in targets:
+            raise ValueError("failed transition target bias must belong exactly to targets_V")
+        start = _number(row.get("start_bias_V"), f"failed_transitions[{index}].start_bias_V")
+        expected_start = 0.0 if solver == "sentaurus" and target == 0.0 else target + 1.0
+        if not _within_bias_tolerance(start, expected_start):
+            raise ValueError("failed transition must preserve its canonical one-volt start bias")
+        identity = (solver, topology, start, target)
+        if identity in seen_failures:
+            raise ValueError("duplicate failed canonical transition")
+        seen_failures.add(identity)
+        candidates = segments if solver == "vela" else sentaurus_segments
+        matches = []
+        for segment in candidates:
+            if not isinstance(segment, Mapping):
+                continue
+            if segment.get("solver") != solver or segment.get("topology") != topology:
+                continue
+            try:
+                segment_target = float(segment.get("target_bias_V"))
+            except (TypeError, ValueError):
+                continue
+            if not _within_bias_tolerance(segment_target, target):
+                continue
+            if solver == "vela":
+                try:
+                    segment_start = float(segment.get("start_bias_V"))
+                except (TypeError, ValueError):
+                    continue
+                if not _within_bias_tolerance(segment_start, start):
+                    continue
+            matches.append(segment)
+        if len(matches) != 1:
+            raise ValueError("failed transition must match exactly one canonical sweep segment")
         if row["branch_threshold_version"] != version:
             raise ValueError("failed transition branch threshold version mismatch")
     first = report["failed_transition"]
-    if first is not None:
+    if failures:
+        if first != failures[0]:
+            raise ValueError("failed_transition must equal failed_transitions[0]")
         _failed_transition(first, "failed_transition", strict_package=True)
         if first["branch_threshold_version"] != version:
             raise ValueError("failed transition branch threshold version mismatch")
-        if first not in failures:
-            raise ValueError("failed_transition must be preserved in failed_transitions")
+    elif first is not None:
+        raise ValueError("failed_transition must be null when failed_transitions is empty")

@@ -43,6 +43,7 @@ def solver_configuration(solver):
             "mirror": {"mesh.json": secondary},
         },
         "deck_sha256": [primary],
+        "sweep_manifest_sha256": secondary,
     }
     return {**config, "configuration_sha256": canonical_sha(config)}
 
@@ -66,18 +67,16 @@ def closed_gap(quantity):
     return {
         "quantity": quantity,
         "classification": "available",
+        "decomposition_status": "unidentifiable",
         "log_gap_dex": 0.0,
-        "named_contributions": [
-            {"name": f"{quantity}_difference", "contribution_dex": 0.0}
-        ],
+        "named_contributions": [],
         "residual": {
             "name": "cross_solver_semantics_residual",
-            "classification": "available",
-            "value_dex": 0.0,
+            "classification": "unidentifiable",
+            "value_dex": None,
         },
-        "closure_error_dex": 0.0,
+        "closure_error_dex": None,
     }
-
 
 def validate_schema_document(instance, schema, *, root=None, path="$"):
     """Validate the Draft 2020-12 subset used by the three tracked schemas."""
@@ -244,6 +243,28 @@ def transition(solver, topology="sketch", bias=-1.0, branch_classification="mult
     }
 
 
+def fixed_state_rechecks():
+    return [
+        {
+            "bias_V": bias,
+            "status": "unidentifiable",
+            "ranking_status": "unidentifiable",
+            "reason_code": "no_common_self_consistent_state",
+            "reason": "no common exact self-consistent checkpoints are available at this fixed-state bias",
+            "missing_inputs": [
+                "common_exact_self_consistent_states",
+                "verified_nonlinear_ledger_input_bundle",
+            ],
+            "fixed_state_status": "unavailable",
+            "fixed_state_dominant_factor": None,
+            "recheck_basis": "no_common_exact_self_consistent_states",
+            "topologies": [],
+            "self_consistent_states": [],
+        }
+        for bias in (0.0, -12.0, -19.0)
+    ]
+
+
 def comparison_report():
     vela = transition("vela", branch_classification="unidentified")
     sentaurus = transition("sentaurus", branch_classification="unidentified")
@@ -260,6 +281,7 @@ def comparison_report():
             "threshold_version": THRESHOLD,
         },
         "terminal_current_ratio": {"classification": "available", "value": 1.0},
+        "terminal_current_sign_alignment": {"classification": "available", "value": "aligned"},
         "maximum_field_ratio": {"classification": "available", "value": 1.0},
         "native_source_ratio": {"classification": "available", "value": 1.0},
         "reconstructed_source_ratio": {"classification": "available", "value": 1.0},
@@ -272,7 +294,7 @@ def comparison_report():
             "reason": "next exact one-volt checkpoint unavailable",
         },
         "gap_closure": {
-            "status": "closed",
+            "status": "unidentifiable",
             "tolerance_dex": 1.0e-10,
             "gaps": [
                 closed_gap(quantity)
@@ -314,12 +336,13 @@ def comparison_report():
                                  "common_exact": 1},
         "curve_artifact_hashes": {"vela_manifest": SHA_A, "sentaurus_manifest": SHA_B},
         "deepest_common_bias_V": {"classification": "available", "value": -1.0},
-        "missing_tails": [], "topology_sensitivity": [], "fixed_state_recheck": [],
+        "missing_tails": [], "topology_sensitivity": [],
+        "fixed_state_recheck": fixed_state_rechecks(),
         "artifact_hashes": {name: SHA_A for name in names}, "input_artifacts": {},
         "figure_contract": {"schema": "vela.pn2d_minimal6_figure_contract.v1", "figures": figures}, "closure": {
-            "status": "closed",
-            "eligible_gaps": 4,
-            "rule": "each eligible gap records named contributions and a typed residual; non-common points are side-only",
+            "status": "unidentifiable", "eligible_gaps": 4,
+            "decomposed_gaps": 0, "unidentifiable_gaps": 4,
+            "rule": "observed positive log gaps are retained without fabricated decomposition",
         },
     }
 
@@ -346,6 +369,141 @@ def record(*, bias=-2.0, support_id="2", value=1.0):
 
 
 class DiagnosticContractsTest(unittest.TestCase):
+    def test_comparison_schema_types_every_checkpoint_alias_and_exact_convergence_keys(self):
+        schema = schema_document("vela.pn2d_minimal6_bv_comparison.v1")
+        report = comparison_report()
+        validate_schema_document(report, schema)
+        for name in ("records", "terminal_currents", "maximum_fields", "source_integrals"):
+            invalid = copy.deepcopy(report)
+            invalid[name] = [{}]
+            with self.subTest(alias=name), self.assertRaises(ValueError):
+                validate_schema_document(invalid, schema)
+        invalid = copy.deepcopy(report)
+        invalid["convergence_metadata"]["unexpected"] = 1
+        with self.assertRaises(ValueError):
+            validate_schema_document(invalid, schema)
+
+    def test_comparison_schema_types_fixed_state_rows_and_state_identities(self):
+        schema = schema_document("vela.pn2d_minimal6_bv_comparison.v1")
+        report = comparison_report()
+        validate_schema_document(report, schema)
+        mutations = (
+            lambda value: value["fixed_state_recheck"][0].update(status="available"),
+            lambda value: value["fixed_state_recheck"][0].update(
+                ranking_status="remains_dominant"
+            ),
+            lambda value: value["fixed_state_recheck"][0].update(missing_inputs=[]),
+            lambda value: value["fixed_state_recheck"][0].update(
+                reason="forged scientific conclusion"
+            ),
+        )
+        for mutate in mutations:
+            invalid = copy.deepcopy(report)
+            mutate(invalid)
+            with self.assertRaises(ValueError):
+                validate_schema_document(invalid, schema)
+
+        typed = copy.deepcopy(report)
+        typed["fixed_state_recheck"][0].update(
+            reason_code="missing_verified_nonlinear_ledger_input_bundle",
+            reason="verified nonlinear ledger-input bundle is unavailable for the hash-addressed self-consistent checkpoints",
+            missing_inputs=["verified_nonlinear_ledger_input_bundle"],
+            recheck_basis="hash_addressed_self_consistent_states_without_verified_nonlinear_ledger_bundle",
+            topologies=["sketch"],
+            self_consistent_states=[
+                {
+                    "solver": "vela",
+                    "topology": "sketch",
+                    "bias_V": 0.0,
+                    "state_path": "states/vela/sketch/00.json",
+                    "state_sha256": SHA_A,
+                    "state_binding_status": "manifest_hash_addressed",
+                }
+            ],
+        )
+        validate_schema_document(typed, schema)
+        del typed["fixed_state_recheck"][0]["self_consistent_states"][0]["state_sha256"]
+        with self.assertRaises(ValueError):
+            validate_schema_document(typed, schema)
+
+    def test_comparison_schema_forbids_tautological_gap_decomposition(self):
+        report = comparison_report()
+        for gap in report["checkpoints"][0]["gap_closure"]["gaps"]:
+            gap["decomposition_status"] = "unidentifiable"
+            gap["named_contributions"] = []
+            gap["residual"] = {
+                "name": "cross_solver_semantics_residual",
+                "classification": "unidentifiable",
+                "value_dex": None,
+            }
+            gap["closure_error_dex"] = None
+        report["checkpoints"][0]["gap_closure"]["status"] = "unidentifiable"
+        report["closure"] = {
+            "status": "unidentifiable", "eligible_gaps": 4,
+            "decomposed_gaps": 0, "unidentifiable_gaps": 4,
+            "rule": "observed positive log gaps are retained without fabricated decomposition",
+        }
+        schema = schema_document("vela.pn2d_minimal6_bv_comparison.v1")
+        validate_schema_document(report, schema)
+
+        mutations = (
+            lambda value: value["checkpoints"][0]["gap_closure"]["gaps"][0].update(
+                named_contributions=[{"name": "terminal_current_difference", "contribution_dex": 0.0}]
+            ),
+            lambda value: value["checkpoints"][0]["gap_closure"]["gaps"][0]["residual"].update(
+                classification="available", value_dex=0.0
+            ),
+            lambda value: value["closure"].update(decomposed_gaps=1),
+        )
+        for mutate in mutations:
+            invalid = copy.deepcopy(report)
+            mutate(invalid)
+            with self.assertRaises(ValueError):
+                validate_schema_document(invalid, schema)
+    def test_observable_physical_domains_match_runtime_and_json_schemas(self):
+        comparison_schema = schema_document("vela.pn2d_minimal6_bv_comparison.v1")
+        sweep_schema = schema_document("vela.pn2d_minimal6_sweep_manifest.v1")
+
+        signed_comparison = comparison_report()
+        signed_sweep = sweep_manifest()
+        self.assertLess(
+            signed_comparison["accepted_transitions"]["vela"][0]["observables"][
+                "anode_current_A_per_um"
+            ],
+            0.0,
+        )
+        self.assertIsNone(schemas.validate_bv_comparison_v1(signed_comparison))
+        self.assertIsNone(schemas.validate_sweep_manifest_v1(signed_sweep))
+        validate_schema_document(signed_comparison, comparison_schema)
+        validate_schema_document(signed_sweep, sweep_schema)
+
+        nonnegative_quantities = (
+            "max_field_V_per_m",
+            "native_source_integral_s_inv_per_cm",
+            "reconstructed_source_integral_s_inv_per_cm",
+        )
+        for quantity in nonnegative_quantities:
+            with self.subTest(contract="sweep-runtime", quantity=quantity):
+                invalid = copy.deepcopy(signed_sweep)
+                invalid["accepted_checkpoints"][0]["observables"][quantity] = -1.0
+                with self.assertRaisesRegex(ValueError, "nonnegative"):
+                    schemas.validate_sweep_manifest_v1(invalid)
+            with self.subTest(contract="comparison-runtime", quantity=quantity):
+                invalid = copy.deepcopy(signed_comparison)
+                invalid["accepted_transitions"]["vela"][0]["observables"][quantity] = -1.0
+                with self.assertRaisesRegex(ValueError, "nonnegative"):
+                    schemas.validate_bv_comparison_v1(invalid)
+            with self.subTest(contract="sweep-schema", quantity=quantity):
+                invalid = copy.deepcopy(signed_sweep)
+                invalid["accepted_checkpoints"][0]["observables"][quantity] = -1.0
+                with self.assertRaisesRegex(ValueError, "below minimum"):
+                    validate_schema_document(invalid, sweep_schema)
+            with self.subTest(contract="comparison-schema", quantity=quantity):
+                invalid = copy.deepcopy(signed_comparison)
+                invalid["accepted_transitions"]["vela"][0]["observables"][quantity] = -1.0
+                with self.assertRaisesRegex(ValueError, "below minimum"):
+                    validate_schema_document(invalid, comparison_schema)
+
     def test_converts_all_supported_si_quantities(self):
         conversions = (
             ("V/cm", "V/m", 1.0e2), ("A/cm^2", "A/m^2", 1.0e4),
@@ -483,6 +641,7 @@ class DiagnosticContractsTest(unittest.TestCase):
                 row = report["accepted_transitions"]["vela"][0]
                 validator = schemas.validate_bv_comparison_v1
             else:
+                report["targets_V"] = [float(-index) for index in range(21)]
                 row = report["accepted_checkpoints"][0]
                 validator = schemas.validate_sweep_manifest_v1
             row["target_bias_V"] = target
@@ -631,22 +790,24 @@ class DiagnosticContractsTest(unittest.TestCase):
             "convergence_metadata": {"exit_code": 1, "reason": "Newton failure"},
         }
         golden = sweep_manifest()
+        golden["segments"] = [{
+            "solver": "vela", "topology": "mirror", "start_bias_V": 0.0,
+            "target_bias_V": -1.0,
+        }]
         golden["failed_transition"] = copy.deepcopy(failure)
         golden["failed_transitions"] = [copy.deepcopy(failure)]
         mutations = []
         invalid = copy.deepcopy(golden)
         invalid["accepted_checkpoints"][0]["branch_threshold_version"] = "contradictory"
-        mutations.append(("accepted", invalid))
+        mutations.append(("accepted", invalid, "branch threshold version mismatch"))
         invalid = copy.deepcopy(golden)
         invalid["failed_transitions"][0]["branch_threshold_version"] = "contradictory"
-        mutations.append(("failed-list", invalid))
+        mutations.append(("failed-list", invalid, "branch threshold version mismatch"))
         invalid = copy.deepcopy(golden)
         invalid["failed_transition"]["branch_threshold_version"] = "contradictory"
-        mutations.append(("failed-singular", invalid))
-        for location, invalid in mutations:
-            with self.subTest(location=location), self.assertRaisesRegex(
-                ValueError, "branch threshold version mismatch"
-            ):
+        mutations.append(("failed-singular", invalid, "failed_transition must equal"))
+        for location, invalid, message in mutations:
+            with self.subTest(location=location), self.assertRaisesRegex(ValueError, message):
                 schemas.validate_sweep_manifest_v1(invalid)
 
     def test_figure_schema_requires_semantic_metadata_series_and_markers(self):

@@ -45,9 +45,9 @@
                    "native_source_integral_s_inv_per_cm", "reconstructed_source_integral_s_inv_per_cm"],
       "properties": {
         "anode_current_A_per_um": {"type": "number"}, "cathode_current_A_per_um": {"type": "number"},
-        "max_field_V_per_m": {"type": "number"},
-        "native_source_integral_s_inv_per_cm": {"type": "number"},
-        "reconstructed_source_integral_s_inv_per_cm": {"type": "number"}
+        "max_field_V_per_m": {"type": "number", "minimum": 0.0},
+        "native_source_integral_s_inv_per_cm": {"type": "number", "minimum": 0.0},
+        "reconstructed_source_integral_s_inv_per_cm": {"type": "number", "minimum": 0.0}
       }, "additionalProperties": false
     },
     "acceptedCheckpoint": {

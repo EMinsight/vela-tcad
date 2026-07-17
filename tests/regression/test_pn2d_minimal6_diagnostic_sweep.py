@@ -27,6 +27,7 @@ from scripts.run_pn2d_minimal6_diagnostic_sweep import (
     read_sentaurus_endpoint,
     initialise_package,
     _required_field_region,
+    _refresh_common_exact_branch_evidence,
     write_sentaurus_decks,
     main,
 )
@@ -567,12 +568,19 @@ class DiagnosticSweepTest(unittest.TestCase):
             self.assertNotIn("branch_ratio_evidence", vela_other_bias)
             vela = accepted("vela", -1.0, 5.0, 3.0, 4.0)
             for row in (sentaurus, vela):
-                self.assertEqual(row["branch_classification"], "unidentified")
-                self.assertTrue(row["branch_ratio_evidence"]["geometric_zero"])
+                self.assertEqual(row["branch_classification"], "multiplication_like")
+                self.assertFalse(row["branch_ratio_evidence"]["geometric_zero"])
                 self.assertEqual(
                     row["branch_ratio_evidence"]["absolute_vela_over_sentaurus"],
                     5.0,
                 )
+
+            vela["observables"]["native_source_integral_s_inv_per_cm"] = 1.0e-286
+            vela["observables"]["reconstructed_source_integral_s_inv_per_cm"] = 1.0e-286
+            _refresh_common_exact_branch_evidence(manifest)
+            for row in (sentaurus, vela):
+                self.assertEqual(row["branch_classification"], "unidentified")
+                self.assertTrue(row["branch_ratio_evidence"]["geometric_zero"])
 
     def test_input_copy_is_separate_from_authoritative_state_root(self):
         with tempfile.TemporaryDirectory() as temp:
