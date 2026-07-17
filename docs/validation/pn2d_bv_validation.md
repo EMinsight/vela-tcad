@@ -1454,4 +1454,78 @@ relative to transport. The diagnostic integrated-source export also required a
 separate `1e-8` area conversion; that reporting correction does not change the
 nonlinear solution.
 
-The result remains a diagnostic sweep, not a physical BV curve.
+
+## PN2D Minimal6 Tasks 5-8 fresh re-execution (2026-07-17)
+
+This section supersedes the run identities and numerical claims in the older
+Task 8 execution sections above while retaining them as history. The result is
+complete diagnostic evidence with an inconclusive physical conclusion. No
+production physics formula, convergence threshold, topology, doping, or solver
+default was changed.
+
+Phase A was regenerated under
+`build-release/pn2d-minimal6-formula-diff-task8-20260717-a/`. The fixed-state
+CLI correctly rejected an attempt to bind the v1 audit directly to the sealed
+v2 sibling; the successful replay instead used its exact regenerated v1 source
+root `minimal6_states_v2_20260717_000955`, to which the audit manifest is
+hash-bound. The sibling `minimal6_states_v2_sealed_20260717_000955` was
+validated separately as the immutable six-state v2 archive. The fresh formula
+report is schema-valid and byte-identical to the final Task 5 report:
+`root_cause_summary.json` SHA-256
+`3229cf3c504215db88e1600ea50636bdf363d96e7aad553e871eac031c292493`
+and `figure_manifest.json` SHA-256
+`4776c0a91cf42b53213e835257c4142e14fd595bc5f5ac14ce47b4eefcf08d35`.
+It retains six states, 24 interactions, zero forward/reverse waterfall closure
+mismatch, no dominant factor, and typed `insufficient_data`.
+
+Fresh nonlinear roots and immutable identities are:
+
+- Vela: `build-release/pn2d-minimal6-task8-vela-fresh-20260717-a/`, 40/40
+  accepted exact `-1..-20 V` checkpoints and no failure; manifest SHA-256
+  `aae5f478a8a99c140ee7fab65943b6246653839eb7632d51325ef1c655ed20a1`.
+- Sentaurus: `build-release/pn2d-minimal6-task8-sentaurus-fresh-20260717-a/`,
+  42/42 accepted exact `0..-20 V` checkpoints and no failure; manifest SHA-256
+  `3bc6edc003c23f8af25fed36fca86a481ccc502d45de3de8d8a58eace993ea90`.
+  The authorized O-2018.06-SP2 regeneration ran under remote identity
+  `/home/tcad/codex_pn2d_minimal6_task8_20260717_a`; its local provenance JSON
+  SHA-256 is `aaedac8c7d01c91ee0043fb164e8eaaf6ee5d0b25e8e9a98879fd1a750bed3d0`.
+- Comparison: `build-release/pn2d-minimal6-comparison-task8-fresh-20260717-a/`;
+  standalone verification passed and the JSON SHA-256 is
+  `2d8b2d86f119964950ff6a620e252a9509bac9edd82cd0140a5df1bcb2d56ea0`.
+
+The comparison contains all 40 exact common sketch/mirror checkpoints from
+`-1` through `-20 V`, with interpolation forbidden. Maximum-field ratios are
+available at all 40 points and remain in `1.001245..1.014334`. Native and
+reconstructed source ratios are available at all 40 points and remain near
+`1.11e-9..1.06e-8`. Terminal-current ratios are available at 36 points and
+range from `2231.69` to `8336.74`; Vela contact residuals at `-3 V` and `-4 V`
+for both topologies exceed the declared `1e-18 A/um` floor, so those four
+current comparisons are typed unavailable while field/source comparisons
+remain valid.
+
+All 40 branch classifications are `unidentified`: every usable current ratio
+is above the multiplication-like interval `[0.1, 10]` and above the
+leakage-like threshold `1e-3`. Therefore reaching `-20 V` is not multiplication
+branch recovery and is not a breakdown-voltage result. The fixed nonlinear
+recheck is typed `unidentifiable`: `0 V` has no common Vela checkpoint, while
+`-12 V` and `-19 V` have four hash-addressed self-consistent states each but
+no verified nonlinear ledger-input bundle. The sweep gap report retains 156
+eligible finite log10-ratio gaps without a fabricated decomposition.
+
+Fresh verification evidence:
+
+| verification | result |
+|---|---|
+| 10 listed Minimal6 Python modules | `270` tests in `239.585 s`, PASS |
+| C++ build targets, runner and importer | PASS |
+| `test_fixed_state_operator_audit` | `4` cases / `67` assertions, PASS |
+| `test_impact_ionization` | `40` cases / `511` assertions, PASS |
+| `test_cell_reconstructed_avalanche` | `14` cases / `83` assertions, PASS |
+| sealed state, strict manifests, comparison and artifact hashes | PASS |
+
+The complete executable/source/deck/raw-input/state/report/figure hash audit is
+`build-release/pn2d-minimal6-task8-hash-audit-20260717.json`, SHA-256
+`73650d0625fb7a49af6581c70b48afcd6e50b0536857ea8bad738dd441cf512f`.
+Every generated artifact remains under ignored `build-release/` roots.
+
+> minimal6 diagnostic sweep; not a physical BV curve

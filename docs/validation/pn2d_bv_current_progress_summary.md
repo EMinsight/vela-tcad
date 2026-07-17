@@ -193,3 +193,33 @@ continuity-transport path rather than Poisson electrostatics or the
 Van Overstraeten alpha formula. Full numbers, unit derivation and the proposed
 test-driven correction are recorded in
 `docs/validation/pn2d_minimal6_task8_physics_error_analysis_2026-07-15.md`.
+
+## 2026-07-17 Minimal6 Tasks 5-8 fresh-run supersession
+
+The current evidence supersedes the 2026-07-15 run identities. Phase A remains
+schema-valid `insufficient_data` with six states, 24 interactions, no dominant
+factor, and zero waterfall closure mismatch. The fresh fixed report SHA-256 is
+`3229cf3c504215db88e1600ea50636bdf363d96e7aad553e871eac031c292493`.
+
+Fresh Vela and Sentaurus attempts both complete their declared exact grids:
+Vela accepts 40/40 points at `-1..-20 V`; the authorized remote Sentaurus
+O-2018.06-SP2 regeneration accepts 42/42 points at `0..-20 V`. Their strict
+manifest SHA-256 values are respectively
+`aae5f478a8a99c140ee7fab65943b6246653839eb7632d51325ef1c655ed20a1` and
+`3bc6edc003c23f8af25fed36fca86a481ccc502d45de3de8d8a58eace993ea90`.
+
+The verified comparison contains 40 exact common checkpoints and no
+interpolation. All 40 branch results are `unidentified`, not
+`multiplication_like`: usable Vela/Sentaurus current ratios are
+`2231.69..8336.74`, while maximum-field ratios are `1.001245..1.014334`.
+Native/reconstructed source ratios are about `1.11e-9..1.06e-8`. Thus the
+fresh sweeps confirm close maximum-field magnitudes but large transport/source mismatch;
+they do not establish breakdown or branch recovery. The next work is the
+requested reverse inference of quasi-Fermi-gradient, electric-field and
+current-density semantics.
+
+The full Python gate passes `270/270`; C++ controls pass `67`, `511`, and `83`
+assertions. The all-input/artifact hash audit passes with SHA-256
+`73650d0625fb7a49af6581c70b48afcd6e50b0536857ea8bad738dd441cf512f`.
+
+> minimal6 diagnostic sweep; not a physical BV curve

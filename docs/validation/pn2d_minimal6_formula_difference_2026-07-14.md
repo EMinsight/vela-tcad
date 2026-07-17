@@ -176,3 +176,37 @@ The independent nonlinear evidence is retained separately:
 All of these curves retain the mandatory statement:
 
 > minimal6 diagnostic sweep; not a physical BV curve
+
+## Task 8 fresh evidence and nonlinear recheck (2026-07-17)
+
+The fresh Task 8 fixed-state package is
+`build-release/pn2d-minimal6-formula-diff-task8-20260717-a/`. It is
+schema-valid and deterministic: `root_cause_summary.json`,
+`quantity_ledger.csv`, `factor_waterfall.csv`, `root_cause_summary.md`, and
+`figure_manifest.json` are byte-identical to the final Task 5 package. The
+report SHA-256 is
+`3229cf3c504215db88e1600ea50636bdf363d96e7aad553e871eac031c292493`;
+the figure-manifest SHA-256 is
+`4776c0a91cf42b53213e835257c4142e14fd595bc5f5ac14ce47b4eefcf08d35`.
+It retains six states, 24 interactions, no dominant factor, and typed
+`insufficient_data`; both forward and reverse waterfall closure mismatch are
+`0.0 dex`.
+
+The fresh nonlinear comparison is
+`build-release/pn2d-minimal6-comparison-task8-fresh-20260717-a/`, JSON SHA-256
+`2d8b2d86f119964950ff6a620e252a9509bac9edd82cd0140a5df1bcb2d56ea0`.
+It binds 40 exact common `-1..-20 V` checkpoints. The fixed-state recheck at
+`0 V` is `unidentifiable` because no common Vela checkpoint exists. At
+`-12 V` and `-19 V`, four hash-addressed nonlinear states exist per bias, but
+the verified nonlinear ledger-input bundle required to rerun the Task 4
+counterfactual chain is absent; both rankings therefore remain typed
+`unidentifiable`. No embedded checkpoint summary is trusted as a substitute.
+
+All 156 eligible sweep log gaps are retained as observations with
+`decomposition_status=unidentifiable`, empty named contributions, and null
+closure error; no tautological decomposition is claimed. All 40 branch rows
+are `unidentified`, and no multiplication branch or physical BV is inferred.
+The full hash audit SHA-256 is
+`73650d0625fb7a49af6581c70b48afcd6e50b0536857ea8bad738dd441cf512f`.
+
+> minimal6 diagnostic sweep; not a physical BV curve
