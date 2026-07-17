@@ -150,7 +150,7 @@ def _render(
             "anode_current_A_per_um",
             "Terminal current at accepted exact checkpoints",
             "A/um",
-            False,
+            True,
             "terminal_current",
         ),
         (

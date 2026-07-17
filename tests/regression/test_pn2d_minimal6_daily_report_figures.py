@@ -7,6 +7,7 @@ from pathlib import Path
 from PIL import Image
 
 import scripts.compare_pn2d_minimal6_diagnostic_sweeps as comparison_module
+import scripts.render_pn2d_minimal6_daily_report_figures as renderer_module
 from tests.regression.test_pn2d_minimal6_sweep_comparison import (
     checkpoint,
     manifest,
@@ -101,6 +102,28 @@ class DailyReportFigureTest(unittest.TestCase):
                     (root / "first" / name).read_bytes(),
                     (root / "second" / name).read_bytes(),
                 )
+
+    def test_terminal_current_is_rendered_as_an_absolute_value(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = self.comparison_package(root / "source")
+
+            with mock.patch.object(
+                renderer_module,
+                "_finite_values",
+                wraps=renderer_module._finite_values,
+            ) as finite_values:
+                render_daily_report_figures(source, root / "daily")
+
+            terminal_calls = [
+                call
+                for call in finite_values.call_args_list
+                if call.args[1] == "anode_current_A_per_um"
+            ]
+            self.assertEqual(len(terminal_calls), 4)
+            self.assertTrue(
+                all(call.kwargs["absolute"] for call in terminal_calls)
+            )
 
 
 if __name__ == "__main__":
