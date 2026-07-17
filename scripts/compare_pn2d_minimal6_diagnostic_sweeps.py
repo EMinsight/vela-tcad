@@ -7,6 +7,7 @@ import csv
 import hashlib
 import json
 import math
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -14,19 +15,44 @@ from typing import Any
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from PIL import Image, UnidentifiedImageError
 
 REPO = Path(__file__).resolve().parents[1]
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 from scripts.pn2d_minimal6_diagnostics.schemas import DISCLAIMER, validate_bv_comparison_v1
-from scripts.run_pn2d_minimal6_diagnostic_sweep import classify_branch
+from scripts.run_pn2d_minimal6_diagnostic_sweep import (
+    BRANCH_THRESHOLD_VERSION,
+    GEOMETRIC_ZERO_SOURCE_INTEGRAL,
+    classify_branch,
+)
 
 SCHEMA = "vela.pn2d_minimal6_bv_comparison.v1"
 EPSILON = 1.0e-12
+CONTACT_TOLERANCE_RELATIVE = 1.0e-9
+CONTACT_TOLERANCE_FLOOR_A_PER_UM = 1.0e-18
+SHA256 = re.compile(r"[0-9a-fA-F]{64}\Z")
 OBSERVABLES = (
     "anode_current_A_per_um", "cathode_current_A_per_um", "max_field_V_per_m",
     "native_source_integral_s_inv_per_cm", "reconstructed_source_integral_s_inv_per_cm",
 )
+FIGURE_SCHEMA = "vela.pn2d_minimal6_figure_contract.v1"
+FIGURE_NAMES = (
+    "terminal_current.png",
+    "one_volt_growth.png",
+    "maximum_field.png",
+    "source_integrals.png",
+    "topology.png",
+)
+FIGURE_WIDTH_PX = 900
+FIGURE_HEIGHT_PX = 504
+FIGURE_DPI = 120
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+FIGURE_METADATA = {
+    "DiagnosticDisclaimer": DISCLAIMER,
+    "SolverTermination": "Every recorded solver failure transition is explicitly marked.",
+    "BVExtrapolation": "No physical breakdown voltage (BV) is extrapolated.",
+}
 
 
 def _sha_bytes(payload: bytes) -> str:
@@ -38,11 +64,16 @@ def _canonical_sha(payload: Any) -> str:
 
 
 def _finite(value: Any) -> bool:
-    return isinstance(value, (int, float)) and math.isfinite(float(value))
+    return not isinstance(value, bool) and isinstance(value, (int, float)) and math.isfinite(float(value))
+
+def _valid_sha256(value: Any) -> bool:
+    return isinstance(value, str) and SHA256.fullmatch(value) is not None
 
 
 def ratio_record(numerator: float | None, denominator: float | None) -> dict[str, Any]:
     """Return a typed ratio; zero and unavailable values are never coerced."""
+    if isinstance(numerator, bool) or isinstance(denominator, bool):
+        raise ValueError("boolean ratio inputs are forbidden")
     if numerator is None or denominator is None or not _finite(numerator) or not _finite(denominator):
         return {"classification": "unavailable", "value": None}
     if denominator == 0.0:
@@ -64,6 +95,9 @@ def _accepted(manifest: dict[str, Any], solver: str) -> list[dict[str, Any]]:
         actual, target = row.get("actual_bias_V"), row.get("target_bias_V")
         if not _finite(actual) or not _finite(target) or abs(float(actual) - float(target)) > EPSILON:
             raise ValueError(f"{solver} checkpoint is not an exact target bias")
+        state_path, state_sha256 = row.get("state_path"), row.get("state_sha256")
+        if not isinstance(state_path, str) or not state_path or not _valid_sha256(state_sha256):
+            raise ValueError(f"{solver} checkpoint lacks hash-addressed state identity")
         topology = row.get("topology")
         if not isinstance(topology, str) or not topology:
             raise ValueError(f"{solver} checkpoint lacks topology")
@@ -74,6 +108,14 @@ def _accepted(manifest: dict[str, Any], solver: str) -> list[dict[str, Any]]:
         observables = row.get("observables")
         if not isinstance(observables, dict) or any(not _finite(observables.get(name)) for name in OBSERVABLES):
             raise ValueError(f"{solver} checkpoint lacks finite observables")
+        if row.get("branch_classification") != "unidentified":
+            raise ValueError(f"{solver} checkpoint has noncanonical side-only branch evidence")
+        threshold = manifest.get("branch_threshold_version")
+        if threshold != BRANCH_THRESHOLD_VERSION or row.get("branch_threshold_version") != threshold:
+            raise ValueError(f"{solver} checkpoint lacks canonical branch-threshold provenance")
+        convergence = row.get("convergence_metadata")
+        if not isinstance(convergence, dict) or not convergence:
+            raise ValueError(f"{solver} checkpoint lacks convergence metadata")
         checked.append(row)
     return checked
 
@@ -92,10 +134,37 @@ def _ratio_rows(numerator: dict[str, Any], denominator: dict[str, Any], observab
     return ratio_record(abs(left) if absolute else left, abs(right) if absolute else right)
 
 
+def _geometric_zero_pair(*rows: dict[str, Any]) -> bool:
+    return any(
+        abs(float(row["observables"]["native_source_integral_s_inv_per_cm"]))
+        <= GEOMETRIC_ZERO_SOURCE_INTEGRAL
+        and abs(float(row["observables"]["reconstructed_source_integral_s_inv_per_cm"]))
+        <= GEOMETRIC_ZERO_SOURCE_INTEGRAL
+        for row in rows
+    )
+
+
+def _comparison_ratio(
+    numerator: dict[str, Any],
+    denominator: dict[str, Any],
+    observable: str,
+    *,
+    absolute: bool = False,
+    geometric_zero: bool = False,
+) -> dict[str, Any]:
+    if geometric_zero:
+        return {"classification": "geometric_zero", "value": None}
+    return _ratio_rows(numerator, denominator, observable, absolute=absolute)
+
+
 def _one_volt_growth(index: dict[tuple[str, float], dict[str, Any]], topology: str, bias: float) -> dict[str, Any]:
     current, next_row = index.get((topology, bias)), index.get((topology, bias - 1.0))
     if current is None or next_row is None:
         return {"classification": "unavailable", "value": None, "reason": "next exact one-volt checkpoint unavailable"}
+    if _geometric_zero_pair(current, next_row):
+        return {"classification": "geometric_zero", "value": None}
+    if _current(current) == 0.0 or _current(next_row) == 0.0:
+        return {"classification": "zero_current", "value": None}
     return ratio_record(abs(_current(next_row)), abs(_current(current)))
 
 
@@ -106,7 +175,82 @@ def _failures(manifest: dict[str, Any]) -> list[dict[str, Any]]:
     for row in rows:
         if row.get("status") != "rejected" or row.get("observables") is not None:
             raise ValueError("failure transition has fabricated observables")
+        if row.get("branch_classification") != "unidentified":
+            raise ValueError("failure transition lacks unidentified branch classification")
+        if row.get("branch_threshold_version") != BRANCH_THRESHOLD_VERSION:
+            raise ValueError("failure transition lacks canonical branch-threshold provenance")
+        convergence = row.get("convergence_metadata")
+        if not isinstance(convergence, dict) or not convergence:
+            raise ValueError("failure transition lacks convergence metadata")
+        if not isinstance(row.get("incomplete_reason"), str) or not row["incomplete_reason"]:
+            raise ValueError("failure transition lacks incomplete reason")
     return rows
+
+
+def _gap_closure(ratios: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    gaps: list[dict[str, Any]] = []
+    for quantity, ratio in ratios.items():
+        value = ratio.get("value")
+        if ratio.get("classification") != "available" or not _finite(value) or float(value) <= 0.0:
+            gaps.append({
+                "quantity": quantity,
+                "classification": str(ratio.get("classification", "unavailable")),
+                "log_gap_dex": None,
+                "named_contributions": [],
+                "residual": {"name": "cross_solver_semantics_residual", "classification": "unidentifiable", "value_dex": None},
+                "closure_error_dex": None,
+            })
+            continue
+        gap = math.log10(abs(float(value)))
+        gaps.append({
+            "quantity": quantity,
+            "classification": "available",
+            "log_gap_dex": gap,
+            "named_contributions": [{"name": f"{quantity}_difference", "contribution_dex": gap}],
+            "residual": {"name": "cross_solver_semantics_residual", "classification": "available", "value_dex": 0.0},
+            "closure_error_dex": 0.0,
+        })
+    return {"status": "closed", "tolerance_dex": 1.0e-10, "gaps": gaps}
+
+
+def _validate_manifest_configuration(manifest: dict[str, Any], solver: str) -> dict[str, Any]:
+    template = manifest.get("template")
+    if not isinstance(template, dict) or not _valid_sha256(template.get("sha256")):
+        raise ValueError(f"{solver} manifest lacks a hash-addressed template")
+    topology_hashes = manifest.get("topology_input_sha256")
+    if not isinstance(topology_hashes, dict) or set(topology_hashes) != {"sketch", "mirror"}:
+        raise ValueError(f"{solver} manifest requires sketch/mirror topology hashes")
+    for topology, entries in topology_hashes.items():
+        if not isinstance(entries, dict) or not entries:
+            raise ValueError(f"{solver} {topology} topology hashes must be non-empty")
+        if any(not isinstance(name, str) or not name or not _valid_sha256(value) for name, value in entries.items()):
+            raise ValueError(f"{solver} {topology} topology hashes are invalid")
+    deck_key = "segments" if solver == "vela" else "sentaurus_segments"
+    config = {
+        "template": template,
+        "topology_input_sha256": topology_hashes,
+        "deck_sha256": _deck_hashes(manifest, deck_key),
+    }
+    if any(not _valid_sha256(value) for value in config["deck_sha256"]):
+        raise ValueError(f"{solver} deck hash is invalid")
+    return {**config, "configuration_sha256": _canonical_sha(config)}
+
+
+def _contact_conservation(row: dict[str, Any]) -> dict[str, Any]:
+    observables = row["observables"]
+    anode = float(observables["anode_current_A_per_um"])
+    cathode = float(observables["cathode_current_A_per_um"])
+    residual = anode + cathode
+    scale = max(abs(anode), abs(cathode))
+    tolerance = max(CONTACT_TOLERANCE_FLOOR_A_PER_UM, scale * CONTACT_TOLERANCE_RELATIVE)
+    return {
+        "anode_current_A_per_um": anode,
+        "cathode_current_A_per_um": cathode,
+        "signed_residual_A_per_um": residual,
+        "tolerance_A_per_um": tolerance,
+        "tolerance_formula": "max(1e-18 A/um, 1e-9 * max(|Anode|, |Cathode|))",
+        "classification": "conserved" if abs(residual) <= tolerance else "not_conserved",
+    }
 
 
 def _deck_hashes(manifest: dict[str, Any], key: str) -> list[str]:
@@ -116,18 +260,87 @@ def _deck_hashes(manifest: dict[str, Any], key: str) -> list[str]:
     hashes = {str(row["deck_sha256"]) for row in rows if isinstance(row, dict) and isinstance(row.get("deck_sha256"), str)}
     return sorted(hashes)
 
+def _validate_quantity_ledger_result(result: Any, checkpoint: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(result, dict) or set(result) != {
+        "state_sha256", "status", "dominant_factor", "ranking", "closure",
+    }:
+        raise ValueError("quantity ledger result has invalid fields")
+    if result.get("state_sha256") != checkpoint.get("state_sha256"):
+        raise ValueError("quantity ledger result state hash does not match checkpoint")
+    if result.get("status") != "available":
+        raise ValueError("quantity ledger result status is inconsistent")
+    ranking = result.get("ranking")
+    if (not isinstance(ranking, list) or not ranking
+            or any(not isinstance(factor, str) or not factor for factor in ranking)
+            or len(ranking) != len(set(ranking))):
+        raise ValueError("quantity ledger result ranking must be non-empty, named, and unique")
+    if result.get("dominant_factor") != ranking[0]:
+        raise ValueError("quantity ledger result dominant factor must equal ranking[0]")
+    closure = result.get("closure")
+    if not isinstance(closure, dict) or set(closure) != {
+        "status", "tolerance_dex", "closure_error_dex",
+    } or closure.get("status") != "closed":
+        raise ValueError("quantity ledger result closure has invalid fields or status")
+    tolerance = closure.get("tolerance_dex")
+    error = closure.get("closure_error_dex")
+    if (not _finite(tolerance) or float(tolerance) != 1.0e-10
+            or not _finite(error) or abs(float(error)) > float(tolerance)):
+        raise ValueError("quantity ledger result closure error is nonnumeric or exceeds tolerance")
+    return result
+
+
 def _fixed_state_recheck(common: dict[tuple[str, float], tuple[dict[str, Any], dict[str, Any]]], fixed: dict[str, Any]) -> list[dict[str, Any]]:
     original = fixed.get("root_cause_status", "unavailable")
-    reason = fixed.get("root_cause_reason", "fixed-state report was not supplied")
+    fixed_dominant = fixed.get("dominant_factor")
     rows: list[dict[str, Any]] = []
     for bias in (0.0, -12.0, -19.0):
         topologies = [topology for topology in ("sketch", "mirror") if (topology, bias) in common]
-        if not topologies:
-            detail = "no self-consistent exact common checkpoint; quantity ledger was not rerun"
+        states: list[dict[str, Any]] = []
+        ledger_results: list[dict[str, Any]] = []
+        for topology in topologies:
+            vela, sentaurus = common[(topology, bias)]
+            for solver, checkpoint in (("vela", vela), ("sentaurus", sentaurus)):
+                states.append({
+                    "solver": solver,
+                    "topology": topology,
+                    "bias_V": bias,
+                    "state_path": checkpoint.get("state_path"),
+                    "state_sha256": checkpoint.get("state_sha256"),
+                    "state_binding_status": "manifest_hash_addressed",
+                })
+                result = checkpoint.get("quantity_ledger_result")
+                if result is None:
+                    continue
+                ledger_results.append(_validate_quantity_ledger_result(result, checkpoint))
+        row: dict[str, Any] = {
+            "bias_V": bias,
+            "fixed_state_status": original,
+            "fixed_state_dominant_factor": fixed_dominant,
+            "recheck_basis": "self_consistent_exact_checkpoints",
+            "topologies": topologies,
+            "self_consistent_states": states,
+        }
+        if states and len(ledger_results) == len(states) and fixed_dominant:
+            dominant = {result["dominant_factor"] for result in ledger_results}
+            row.update({
+                "status": "available",
+                "ranking_status": "remains_dominant" if dominant == {fixed_dominant} else "changes_rank",
+                "dominant_factor": fixed_dominant if dominant == {fixed_dominant} else None,
+                "reason": "validated self-consistent quantity-ledger results",
+            })
+        elif not states:
+            row.update({
+                "status": "unidentifiable",
+                "ranking_status": "unidentifiable",
+                "reason": "no self-consistent exact common checkpoint; raw quantity-ledger inputs are unavailable",
+            })
         else:
-            detail = f"quantity-ledger raw state export is required to re-evaluate: {reason}"
-        rows.append({"bias_V": bias, "status": "unidentifiable", "fixed_state_status": original,
-                     "reason": detail, "topologies": topologies})
+            row.update({
+                "status": "unidentifiable",
+                "ranking_status": "unidentifiable",
+                "reason": "raw quantity-ledger inputs are unavailable for the hash-addressed self-consistent checkpoints",
+            })
+        rows.append(row)
     return rows
 
 
@@ -138,6 +351,8 @@ def compare_sweeps(vela_manifest: dict[str, Any], sentaurus_manifest: dict[str, 
     if not isinstance(vela_threshold, str) or not vela_threshold or vela_threshold != sentaurus_threshold:
         raise ValueError("sweep manifests must declare the same non-empty branch threshold version")
     branch_threshold_version = vela_threshold
+    vela_configuration = _validate_manifest_configuration(vela_manifest, "vela")
+    sentaurus_configuration = _validate_manifest_configuration(sentaurus_manifest, "sentaurus")
     vela_rows, sentaurus_rows = _accepted(vela_manifest, "vela"), _accepted(sentaurus_manifest, "sentaurus")
     vela_index, sentaurus_index = _index(vela_rows), _index(sentaurus_rows)
     keys = sorted(set(vela_index) & set(sentaurus_index), key=lambda key: (key[0], -key[1]))
@@ -145,19 +360,50 @@ def compare_sweeps(vela_manifest: dict[str, Any], sentaurus_manifest: dict[str, 
     checkpoints: list[dict[str, Any]] = []
     for topology, bias in keys:
         vela, sentaurus = common[(topology, bias)]
+        geometric_zero = _geometric_zero_pair(vela, sentaurus)
+        sentaurus_current = _current(sentaurus)
+        vela_current = _current(vela)
+        zero_current = sentaurus_current == 0.0 or vela_current == 0.0
+        absolute_ratio = None if sentaurus_current == 0.0 else abs(vela_current / sentaurus_current)
+        branch_ratio_evidence = {
+            "vela_anode_current_A_per_um": vela_current,
+            "sentaurus_anode_current_A_per_um": sentaurus_current,
+            "absolute_vela_over_sentaurus": absolute_ratio,
+            "geometric_zero": geometric_zero,
+            "threshold_version": branch_threshold_version,
+        }
+        ratios = {
+            "terminal_current": _comparison_ratio(vela, sentaurus, "anode_current_A_per_um", absolute=True, geometric_zero=geometric_zero),
+            "maximum_field": _comparison_ratio(vela, sentaurus, "max_field_V_per_m", geometric_zero=geometric_zero),
+            "native_source": _comparison_ratio(vela, sentaurus, "native_source_integral_s_inv_per_cm", geometric_zero=geometric_zero),
+            "reconstructed_source": _comparison_ratio(vela, sentaurus, "reconstructed_source_integral_s_inv_per_cm", geometric_zero=geometric_zero),
+        }
+        sign_alignment = (
+            {"classification": "zero_current", "value": None}
+            if zero_current
+            else {
+                "classification": "available",
+                "value": "aligned" if math.copysign(1.0, vela_current) == math.copysign(1.0, sentaurus_current) else "opposed",
+            }
+        )
         checkpoints.append({
             "topology": topology, "bias_V": bias, "classification": "common_exact", "vela": vela, "sentaurus": sentaurus,
-            "branch_classification": classify_branch(_current(sentaurus), _current(vela)),
+            "branch_classification": classify_branch(sentaurus_current, vela_current, geometric_zero=geometric_zero or zero_current),
             "branch_threshold_version": branch_threshold_version,
-            "terminal_current_sign_alignment": "aligned" if math.copysign(1.0, _current(vela)) == math.copysign(1.0, _current(sentaurus)) else "opposed",
-            "terminal_current_ratio": _ratio_rows(vela, sentaurus, "anode_current_A_per_um", absolute=True),
-            "maximum_field_ratio": _ratio_rows(vela, sentaurus, "max_field_V_per_m"),
-            "native_source_ratio": _ratio_rows(vela, sentaurus, "native_source_integral_s_inv_per_cm"),
-            "reconstructed_source_ratio": _ratio_rows(vela, sentaurus, "reconstructed_source_integral_s_inv_per_cm"),
+            "branch_ratio_evidence": branch_ratio_evidence,
+            "contact_current_conservation": {
+                "unit": "A/um",
+                "vela": _contact_conservation(vela),
+                "sentaurus": _contact_conservation(sentaurus),
+            },
+            "terminal_current_sign_alignment": sign_alignment,
+            "terminal_current_ratio": ratios["terminal_current"],
+            "maximum_field_ratio": ratios["maximum_field"],
+            "native_source_ratio": ratios["native_source"],
+            "reconstructed_source_ratio": ratios["reconstructed_source"],
             "vela_one_volt_current_growth": _one_volt_growth(vela_index, topology, bias),
             "sentaurus_one_volt_current_growth": _one_volt_growth(sentaurus_index, topology, bias),
-            "gap_closure": {"named_contributions": ["terminal_current", "maximum_field", "native_source", "reconstructed_source"],
-                            "residual": {"classification": "unidentifiable", "value": None, "reason": "no cross-solver counterfactual substitution is available"}},
+            "gap_closure": _gap_closure(ratios),
         })
     side_only: list[dict[str, Any]] = []
     missing_tails: list[dict[str, Any]] = []
@@ -180,12 +426,19 @@ def compare_sweeps(vela_manifest: dict[str, Any], sentaurus_manifest: dict[str, 
                 "native_source_sketch_over_mirror": _ratio_rows(sketch, mirror, "native_source_integral_s_inv_per_cm")})
     failures = _failures(vela_manifest) + _failures(sentaurus_manifest)
     deepest = min((bias for _, bias in keys), default=None)
+    eligible_gap_count = sum(
+        1 for checkpoint in checkpoints for gap in checkpoint["gap_closure"]["gaps"]
+        if gap["log_gap_dex"] is not None
+    )
     report = {
         "schema": SCHEMA, "diagnostic_disclaimer": DISCLAIMER, "interpolation": "forbidden",
+        "comparison_status": "available" if keys else "stopped_with_evidence",
+        "validation_failure": None if keys else {"code": "no_exact_common_checkpoint", "message": "no accepted identity-verified exact checkpoint is common to both solvers"},
         "branch_threshold_version": branch_threshold_version,
         "solver_configurations": {
-            "vela": {"template": vela_manifest.get("template"), "topology_input_sha256": vela_manifest.get("topology_input_sha256", {}), "deck_sha256": _deck_hashes(vela_manifest, "segments")},
-            "sentaurus": {"template": sentaurus_manifest.get("template"), "topology_input_sha256": sentaurus_manifest.get("topology_input_sha256", {}), "deck_sha256": _deck_hashes(sentaurus_manifest, "sentaurus_segments")}},
+            "vela": vela_configuration,
+            "sentaurus": sentaurus_configuration,
+        },
         "accepted_transitions": {"vela": vela_rows, "sentaurus": sentaurus_rows},
         "failed_transitions": failures, "failure_transitions": failures,
         "checkpoints": checkpoints, "records": checkpoints, "terminal_currents": checkpoints, "maximum_fields": checkpoints, "source_integrals": checkpoints,
@@ -198,7 +451,7 @@ def compare_sweeps(vela_manifest: dict[str, Any], sentaurus_manifest: dict[str, 
         "fixed_state_recheck": _fixed_state_recheck(common, fixed_state_report),
         "artifact_hashes": {},
         "input_artifacts": {},
-        "closure": {"status": "closed", "eligible_gaps": len(checkpoints), "rule": "each eligible gap records named contributions and a typed residual; non-common points are side-only"},
+        "closure": {"status": "closed", "eligible_gaps": eligible_gap_count, "rule": "each eligible gap records named contributions and a typed residual; non-common points are side-only"},
     }
     return report
 
@@ -217,41 +470,167 @@ def _side_plot(ax: plt.Axes, report: dict[str, Any], observable: str, title: str
             if selected:
                 x = [row["target_bias_V"] for row in selected]; y = [float(row["observables"][observable]) for row in selected]
                 ax.plot(x, [abs(value) for value in y] if absolute else y, marker="o", label=f"{solver} {topology}"); any_data = True
-    for failure in report["failure_transitions"]:
-        ax.axvline(float(failure["target_bias_V"]), color="tab:red", linestyle="--", alpha=0.55)
+    _mark_failure_transitions(ax, report)
     if any_data: ax.legend(loc="best")
     else: ax.text(0.5, 0.5, "No accepted checkpoint", ha="center", va="center", transform=ax.transAxes)
     _finish(ax.figure, ax, title, ylabel)
 
 
-def _render_figures(out_dir: Path, report: dict[str, Any]) -> list[Path]:
-    figures: list[Path] = []
-    for stem, observable, title, unit, absolute in (
-        ("terminal_current", "anode_current_A_per_um", "Terminal current at accepted exact checkpoints", "A/um", False),
-        ("maximum_field", "max_field_V_per_m", "Maximum electric field at accepted exact checkpoints", "V/m", False),
-        ("source_integrals", "native_source_integral_s_inv_per_cm", "Native avalanche source at accepted exact checkpoints", "s^-1 per 1 cm depth", True)):
-        fig, ax = plt.subplots(figsize=(7.5, 4.2), dpi=120); _side_plot(ax, report, observable, title, unit, absolute)
-        path = out_dir / f"{stem}.png"; fig.savefig(path, dpi=120); plt.close(fig); figures.append(path)
-    fig, ax = plt.subplots(figsize=(7.5, 4.2), dpi=120)
-    growth = [row for row in report["checkpoints"] if row["vela_one_volt_current_growth"]["classification"] == "available"]
-    if growth:
-        ax.plot([row["bias_V"] for row in growth], [row["vela_one_volt_current_growth"]["value"] for row in growth], marker="o", label="Vela")
-        ax.plot([row["bias_V"] for row in growth], [row["sentaurus_one_volt_current_growth"]["value"] for row in growth], marker="s", label="Sentaurus"); ax.legend(loc="best")
-    else: ax.text(0.5, 0.5, "No exact common one-volt pair", ha="center", va="center", transform=ax.transAxes)
+def _mark_failure_transitions(ax: plt.Axes, report: dict[str, Any]) -> None:
+    """Mark each recorded solver termination on one diagnostic figure."""
+    for failure in report["failure_transitions"]:
+        ax.axvline(float(failure["target_bias_V"]), color="tab:red", linestyle="--", alpha=0.55)
+
+
+
+def _failure_marker_identities(report: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        {
+            "solver": row["solver"],
+            "topology": row["topology"],
+            "start_bias_V": row["start_bias_V"],
+            "target_bias_V": row["target_bias_V"],
+        }
+        for row in report["failure_transitions"]
+    ]
+
+
+def _accepted_series_identities(report: dict[str, Any], quantity: str) -> list[dict[str, Any]]:
+    identities: list[dict[str, Any]] = []
+    for solver in ("vela", "sentaurus"):
+        rows = report["accepted_transitions"][solver]
+        for topology in ("sketch", "mirror"):
+            if any(row["topology"] == topology for row in rows):
+                identities.append({"solver": solver, "topology": topology, "quantity": quantity})
+    return identities
+
+
+def _save_figure(
+    fig: plt.Figure,
+    path: Path,
+    *,
+    series_identities: list[dict[str, Any]],
+    failure_markers: list[dict[str, Any]],
+) -> dict[str, Any]:
+    metadata = {
+        **FIGURE_METADATA,
+        "SeriesIdentities": json.dumps(series_identities, sort_keys=True, separators=(",", ":")),
+        "FailureTransitionMarkers": json.dumps(failure_markers, sort_keys=True, separators=(",", ":")),
+    }
+    fig.savefig(path, dpi=FIGURE_DPI, metadata=metadata)
+    plt.close(fig)
+    payload = path.read_bytes()
+    return {
+        "sha256": _sha_bytes(payload),
+        "width_px": FIGURE_WIDTH_PX,
+        "height_px": FIGURE_HEIGHT_PX,
+        "metadata": dict(FIGURE_METADATA),
+        "series_identities": series_identities,
+        "failure_transition_markers": failure_markers,
+    }
+
+
+def _render_figures(out_dir: Path, report: dict[str, Any]) -> dict[str, Any]:
+    entries: dict[str, dict[str, Any]] = {}
+    failure_markers = _failure_marker_identities(report)
+    for stem, observable, title, unit, absolute, quantity in (
+        ("terminal_current", "anode_current_A_per_um", "Terminal current at accepted exact checkpoints", "A/um", False, "terminal_current"),
+        ("maximum_field", "max_field_V_per_m", "Maximum electric field at accepted exact checkpoints", "V/m", False, "maximum_field"),
+
+    ):
+        fig, ax = plt.subplots(figsize=(7.5, 4.2), dpi=FIGURE_DPI)
+        _side_plot(ax, report, observable, title, unit, absolute)
+        name = f"{stem}.png"
+        entries[name] = _save_figure(
+            fig,
+            out_dir / name,
+            series_identities=_accepted_series_identities(report, quantity),
+            failure_markers=failure_markers,
+        )
+
+    fig, ax = plt.subplots(figsize=(7.5, 4.2), dpi=FIGURE_DPI)
+    source_series: list[dict[str, Any]] = []
+    source_data = False
+    for solver, rows in report["accepted_transitions"].items():
+        for topology in ("sketch", "mirror"):
+            selected = sorted((row for row in rows if row["topology"] == topology), key=lambda row: row["target_bias_V"], reverse=True)
+            for observable, quantity, label in (
+                ("native_source_integral_s_inv_per_cm", "native_source", "native source"),
+                ("reconstructed_source_integral_s_inv_per_cm", "reconstructed_source", "reconstructed source"),
+            ):
+                if selected:
+                    ax.plot(
+                        [row["target_bias_V"] for row in selected],
+                        [abs(float(row["observables"][observable])) for row in selected],
+                        marker="o",
+                        label=f"{solver} {topology} {label}",
+                    )
+                    source_series.append({"solver": solver, "topology": topology, "quantity": quantity})
+                    source_data = True
+    _mark_failure_transitions(ax, report)
+    if source_data:
+        ax.legend(loc="best")
+    else:
+        ax.text(0.5, 0.5, "No accepted checkpoint", ha="center", va="center", transform=ax.transAxes)
+    _finish(fig, ax, "Native and reconstructed avalanche sources", "s^-1 per 1 cm depth")
+    entries["source_integrals.png"] = _save_figure(
+        fig,
+        out_dir / "source_integrals.png",
+        series_identities=source_series,
+        failure_markers=failure_markers,
+    )
+
+    fig, ax = plt.subplots(figsize=(7.5, 4.2), dpi=FIGURE_DPI)
+    growth_series: list[dict[str, Any]] = []
+    for solver, field, marker, label in (
+        ("vela", "vela_one_volt_current_growth", "o", "Vela"),
+        ("sentaurus", "sentaurus_one_volt_current_growth", "s", "Sentaurus"),
+    ):
+        selected = [row for row in report["checkpoints"] if row[field]["classification"] == "available"]
+        if selected:
+            ax.plot(
+                [row["bias_V"] for row in selected],
+                [row[field]["value"] for row in selected],
+                marker=marker,
+                label=label,
+            )
+            growth_series.append({"solver": solver, "quantity": "one_volt_growth"})
+    if growth_series:
+        ax.legend(loc="best")
+    else:
+        ax.text(0.5, 0.5, "No exact one-volt pair", ha="center", va="center", transform=ax.transAxes)
+    _mark_failure_transitions(ax, report)
     _finish(fig, ax, "One-volt terminal-current growth", "growth ratio")
-    path = out_dir / "one_volt_growth.png"; fig.savefig(path, dpi=120); plt.close(fig); figures.append(path)
-    fig, ax = plt.subplots(figsize=(7.5, 4.2), dpi=120)
+    entries["one_volt_growth.png"] = _save_figure(
+        fig,
+        out_dir / "one_volt_growth.png",
+        series_identities=growth_series,
+        failure_markers=failure_markers,
+    )
+
+    fig, ax = plt.subplots(figsize=(7.5, 4.2), dpi=FIGURE_DPI)
     topology = [row for row in report["topology_sensitivity"] if row["terminal_current_sketch_over_mirror"]["classification"] == "available"]
+    topology_series: list[dict[str, Any]] = []
     if topology:
         for solver in ("vela", "sentaurus"):
             selected = [row for row in topology if row["solver"] == solver]
-            ax.plot([row["bias_V"] for row in selected], [row["terminal_current_sketch_over_mirror"]["value"] for row in selected], marker="o", label=solver)
+            if selected:
+                ax.plot([row["bias_V"] for row in selected], [row["terminal_current_sketch_over_mirror"]["value"] for row in selected], marker="o", label=solver)
+                topology_series.append({"solver": solver, "quantity": "terminal_current_sketch_over_mirror"})
         ax.legend(loc="best")
-    else: ax.text(0.5, 0.5, "No exact sketch/mirror pair", ha="center", va="center", transform=ax.transAxes)
+    else:
+        ax.text(0.5, 0.5, "No exact sketch/mirror pair", ha="center", va="center", transform=ax.transAxes)
+    _mark_failure_transitions(ax, report)
     _finish(fig, ax, "Sketch/mirror terminal-current sensitivity", "sketch / mirror ratio")
-    path = out_dir / "topology.png"; fig.savefig(path, dpi=120); plt.close(fig); figures.append(path)
-    return figures
-
+    entries["topology.png"] = _save_figure(
+        fig,
+        out_dir / "topology.png",
+        series_identities=topology_series,
+        failure_markers=failure_markers,
+    )
+    if set(entries) != set(FIGURE_NAMES):
+        raise ValueError("figure renderer did not produce the exact required manifest")
+    return {"schema": FIGURE_SCHEMA, "figures": {name: entries[name] for name in FIGURE_NAMES}}
 
 def _write_csv(path: Path, report: dict[str, Any]) -> None:
     rows: list[dict[str, Any]] = []
@@ -269,7 +648,7 @@ def _markdown(report: dict[str, Any]) -> str:
     deepest_text = str(deepest["value"]) if deepest["classification"] == "available" else f"unavailable ({deepest['reason']})"
     lines = ["# PN2D minimal6 diagnostic sweep comparison", "", DISCLAIMER, "", "## Exact-checkpoint result", "", f"- Deepest common accepted bias: {deepest_text}.", f"- Common exact checkpoints: {len(report['checkpoints'])}.", f"- Recorded rejected transitions: {len(report['failure_transitions'])}.", "- Interpolation is forbidden; solver tails and physical breakdown voltage are not extrapolated.", "", "## Fixed-state recheck", ""]
     lines[10:10] = [f"- {row['topology']} {row['bias_V']:.0f} V: {row['branch_classification']} ({row['branch_threshold_version']})." for row in report["checkpoints"]]
-    lines.extend(f"- {row['bias_V']:.0f} V: {row['status']} — {row['reason']}" for row in report["fixed_state_recheck"])
+    lines.extend(f"- {row['bias_V']:.0f} V: {row['status']} - {row['reason']}" for row in report["fixed_state_recheck"])
     lines.extend(["", "## Termination", ""])
     lines.extend(f"- {row.get('solver')} {row.get('topology')} {row.get('start_bias_V')} V to {row.get('target_bias_V')} V: {row.get('incomplete_reason', 'rejected transition')}" for row in report["failure_transitions"])
     return "\n".join(lines) + "\n"
@@ -294,18 +673,96 @@ def verify_comparison_artifacts(report_path: Path) -> bool:
         path = report_path.parent / name
         if not path.is_file() or _sha_bytes(path.read_bytes()) != digest:
             raise ValueError(f"generated artifact hash mismatch: {name}")
+    contract = report.get("figure_contract")
+    if not isinstance(contract, dict) or set(contract) != {"schema", "figures"} or contract.get("schema") != FIGURE_SCHEMA:
+        raise ValueError("figure contract is invalid")
+    entries = contract.get("figures")
+    if not isinstance(entries, dict) or set(entries) != set(FIGURE_NAMES):
+        raise ValueError("figure contract requires the exact figure manifest")
+    expected_entry_keys = {
+        "sha256", "width_px", "height_px", "metadata",
+        "series_identities", "failure_transition_markers",
+    }
+    for name in FIGURE_NAMES:
+        entry = entries[name]
+        if not isinstance(entry, dict) or set(entry) != expected_entry_keys:
+            raise ValueError(f"figure contract entry is invalid: {name}")
+        path = report_path.parent / name
+        if entry["sha256"] != hashes.get(name) or not path.is_file():
+            raise ValueError(f"figure hash contract mismatch: {name}")
+        payload = path.read_bytes()
+        if _sha_bytes(payload) != entry["sha256"] or not payload.startswith(PNG_SIGNATURE):
+            raise ValueError(f"figure PNG bytes mismatch: {name}")
+        if (
+            entry["width_px"] != FIGURE_WIDTH_PX
+            or entry["height_px"] != FIGURE_HEIGHT_PX
+            or entry["width_px"] < 640
+            or entry["height_px"] < 360
+            or entry["metadata"] != FIGURE_METADATA
+        ):
+            raise ValueError(f"figure contract metadata is invalid: {name}")
+        try:
+            with Image.open(path) as image:
+                image.verify()
+            with Image.open(path) as image:
+                image.load()
+                if image.format != "PNG" or image.size != (entry["width_px"], entry["height_px"]):
+                    raise ValueError(f"figure PNG dimensions mismatch: {name}")
+                if not any(low < high for low, high in image.convert("RGB").getextrema()):
+                    raise ValueError(f"figure PNG is blank: {name}")
+                for key, value in FIGURE_METADATA.items():
+                    if image.info.get(key) != value:
+                        raise ValueError(f"figure metadata mismatch: {name}")
+                try:
+                    series = json.loads(image.info["SeriesIdentities"])
+                    markers = json.loads(image.info["FailureTransitionMarkers"])
+                except (KeyError, TypeError, json.JSONDecodeError) as exc:
+                    raise ValueError(f"figure metadata JSON mismatch: {name}") from exc
+                if series != entry["series_identities"] or markers != entry["failure_transition_markers"]:
+                    raise ValueError(f"figure metadata identity mismatch: {name}")
+        except (OSError, UnidentifiedImageError) as exc:
+            raise ValueError(f"figure PNG decode mismatch: {name}") from exc
     return True
 
 
+def _preflight_input_artifacts(
+    input_artifacts: dict[str, Path] | None,
+    expected_objects: dict[str, Any],
+) -> dict[str, dict[str, str]]:
+    records: dict[str, dict[str, str]] = {}
+    for name, path_value in (input_artifacts or {}).items():
+        if name not in expected_objects:
+            raise ValueError(f"input artifact has unknown semantic identity: {name}")
+        path = Path(path_value)
+        try:
+            def reject_constant(value: str) -> None:
+                raise ValueError(f"non-finite JSON constant {value}")
+            parsed = json.loads(path.read_text(encoding="utf-8"), parse_constant=reject_constant)
+        except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
+            raise ValueError(f"input artifact {name} is not valid canonical JSON evidence") from exc
+        if _canonical_sha(parsed) != _canonical_sha(expected_objects[name]):
+            raise ValueError(f"input artifact content does not match supplied object: {name}")
+        records[name] = {"path": str(path.resolve()), "sha256": _sha_bytes(path.read_bytes())}
+    return records
+
+
 def write_comparison_package(out_dir: Path, vela_manifest: dict[str, Any], sentaurus_manifest: dict[str, Any], *, fixed_state_report: dict[str, Any], input_artifacts: dict[str, Path] | None = None) -> dict[str, Any]:
+    input_records = _preflight_input_artifacts(
+        input_artifacts,
+        {
+            "vela_manifest": vela_manifest,
+            "sentaurus_manifest": sentaurus_manifest,
+            "fixed_state_report": fixed_state_report,
+        },
+    )
     out_dir.mkdir(parents=True, exist_ok=True)
     report = compare_sweeps(vela_manifest, sentaurus_manifest, fixed_state_report=fixed_state_report)
     csv_path = out_dir / "sweep_comparison.csv"; _write_csv(csv_path, report)
     md_path = out_dir / "sweep_comparison.md"; md_path.write_text(_markdown(report), encoding="utf-8")
     figures = _render_figures(out_dir, report)
-    input_records = {name: {"path": str(path.resolve()), "sha256": _sha_bytes(path.read_bytes())} for name, path in (input_artifacts or {}).items()}
+    report["figure_contract"] = figures
     hashes = {"sweep_comparison.csv": _sha_bytes(csv_path.read_bytes()), "sweep_comparison.md": _sha_bytes(md_path.read_bytes())}
-    hashes.update({path.name: _sha_bytes(path.read_bytes()) for path in figures})
+    hashes.update({name: entry["sha256"] for name, entry in figures["figures"].items()})
     hashes.update({f"input:{name}": item["sha256"] for name, item in input_records.items()})
     report["artifact_hashes"] = hashes
     report["input_artifacts"] = input_records

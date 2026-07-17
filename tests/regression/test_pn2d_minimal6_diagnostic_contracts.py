@@ -1,5 +1,6 @@
 import copy
 import csv
+import hashlib
 import json
 import math
 import tempfile
@@ -17,6 +18,65 @@ from scripts.pn2d_minimal6_diagnostics.units import convert_value
 DISCLAIMER = "minimal6 diagnostic sweep; not a physical BV curve"
 SHA_A, SHA_B = "a" * 64, "b" * 64
 THRESHOLD = "v1: multiplication=[0.1,10], leakage<=1e-3"
+CONTACT_TOLERANCE_FORMULA = "max(1e-18 A/um, 1e-9 * max(|Anode|, |Cathode|))"
+
+
+def canonical_sha(value):
+    payload = json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def schema_root():
+    for parent in Path(__file__).resolve().parents:
+        candidate = parent / "schemas" / "vela.pn2d_minimal6_bv_comparison.v1.schema.json"
+        if candidate.is_file():
+            return parent / "schemas"
+    raise FileNotFoundError("repository schemas directory is unavailable")
+
+
+def solver_configuration(solver):
+    primary, secondary = (SHA_A, SHA_B) if solver == "vela" else (SHA_B, SHA_A)
+    config = {
+        "template": {"path": f"fixture/{solver}/template.json", "sha256": primary},
+        "topology_input_sha256": {
+            "sketch": {"mesh.json": primary},
+            "mirror": {"mesh.json": secondary},
+        },
+        "deck_sha256": [primary],
+    }
+    return {**config, "configuration_sha256": canonical_sha(config)}
+
+
+def contact_conservation(row):
+    anode = row["observables"]["anode_current_A_per_um"]
+    cathode = row["observables"]["cathode_current_A_per_um"]
+    residual = anode + cathode
+    tolerance = max(1.0e-18, 1.0e-9 * max(abs(anode), abs(cathode)))
+    return {
+        "anode_current_A_per_um": anode,
+        "cathode_current_A_per_um": cathode,
+        "signed_residual_A_per_um": residual,
+        "tolerance_A_per_um": tolerance,
+        "tolerance_formula": CONTACT_TOLERANCE_FORMULA,
+        "classification": "conserved" if abs(residual) <= tolerance else "not_conserved",
+    }
+
+
+def closed_gap(quantity):
+    return {
+        "quantity": quantity,
+        "classification": "available",
+        "log_gap_dex": 0.0,
+        "named_contributions": [
+            {"name": f"{quantity}_difference", "contribution_dex": 0.0}
+        ],
+        "residual": {
+            "name": "cross_solver_semantics_residual",
+            "classification": "available",
+            "value_dex": 0.0,
+        },
+        "closure_error_dex": 0.0,
+    }
 
 
 def validate_schema_document(instance, schema, *, root=None, path="$"):
@@ -123,7 +183,7 @@ def validate_schema_document(instance, schema, *, root=None, path="$"):
 
 
 def schema_document(name):
-    path = Path(__file__).parents[2] / "schemas" / f"{name}.schema.json"
+    path = schema_root() / f"{name}.schema.json"
     return json.loads(path.read_text(encoding="utf-8"))
 
 
@@ -164,7 +224,7 @@ def formula_report():
     }
 
 
-def transition(solver, topology="sketch", bias=-1.0):
+def transition(solver, topology="sketch", bias=-1.0, branch_classification="multiplication_like"):
     return {
         "solver": solver, "topology": topology, "start_bias_V": bias + 1.0,
         "target_bias_V": bias, "actual_bias_V": bias, "exit_code": 0,
@@ -177,7 +237,7 @@ def transition(solver, topology="sketch", bias=-1.0):
             "native_source_integral_s_inv_per_cm": 3.0,
             "reconstructed_source_integral_s_inv_per_cm": 2.5,
         },
-        "branch_classification": "multiplication_like",
+        "branch_classification": branch_classification,
         "branch_threshold_version": THRESHOLD,
         "convergence_metadata": {"iterations": 4, "residual_norm": 1.0e-10},
         "stdout": "", "stderr": "",
@@ -185,18 +245,66 @@ def transition(solver, topology="sketch", bias=-1.0):
 
 
 def comparison_report():
-    vela, sentaurus = transition("vela"), transition("sentaurus")
+    vela = transition("vela", branch_classification="unidentified")
+    sentaurus = transition("sentaurus", branch_classification="unidentified")
     checkpoint = {
         "topology": "sketch", "bias_V": -1.0, "classification": "common_exact",
         "vela": copy.deepcopy(vela), "sentaurus": copy.deepcopy(sentaurus),
         "branch_classification": "multiplication_like",
         "branch_threshold_version": THRESHOLD,
+        "branch_ratio_evidence": {
+            "vela_anode_current_A_per_um": -1.0e-8,
+            "sentaurus_anode_current_A_per_um": -1.0e-8,
+            "absolute_vela_over_sentaurus": 1.0,
+            "geometric_zero": False,
+            "threshold_version": THRESHOLD,
+        },
+        "terminal_current_ratio": {"classification": "available", "value": 1.0},
+        "maximum_field_ratio": {"classification": "available", "value": 1.0},
+        "native_source_ratio": {"classification": "available", "value": 1.0},
+        "reconstructed_source_ratio": {"classification": "available", "value": 1.0},
+        "vela_one_volt_current_growth": {
+            "classification": "unavailable", "value": None,
+            "reason": "next exact one-volt checkpoint unavailable",
+        },
+        "sentaurus_one_volt_current_growth": {
+            "classification": "unavailable", "value": None,
+            "reason": "next exact one-volt checkpoint unavailable",
+        },
+        "gap_closure": {
+            "status": "closed",
+            "tolerance_dex": 1.0e-10,
+            "gaps": [
+                closed_gap(quantity)
+                for quantity in (
+                    "terminal_current", "maximum_field",
+                    "native_source", "reconstructed_source",
+                )
+            ],
+        },
+        "contact_current_conservation": {
+            "unit": "A/um",
+            "vela": contact_conservation(vela),
+            "sentaurus": contact_conservation(sentaurus),
+        },
     }
+    metadata = {"DiagnosticDisclaimer": DISCLAIMER, "SolverTermination": "Every recorded solver failure transition is explicitly marked.", "BVExtrapolation": "No physical breakdown voltage (BV) is extrapolated."}
+    names = ("terminal_current.png", "one_volt_growth.png", "maximum_field.png", "source_integrals.png", "topology.png")
+    series = {
+        "terminal_current.png": [{"solver": solver, "topology": "sketch", "quantity": "terminal_current"} for solver in ("vela", "sentaurus")],
+        "maximum_field.png": [{"solver": solver, "topology": "sketch", "quantity": "maximum_field"} for solver in ("vela", "sentaurus")],
+        "source_integrals.png": [{"solver": solver, "topology": "sketch", "quantity": quantity} for solver in ("vela", "sentaurus") for quantity in ("native_source", "reconstructed_source")],
+        "one_volt_growth.png": [], "topology.png": [],
+    }
+    figures = {name: {"sha256": SHA_A, "width_px": 900, "height_px": 504, "metadata": metadata, "series_identities": series[name], "failure_transition_markers": []} for name in names}
     return {
         "schema": "vela.pn2d_minimal6_bv_comparison.v1",
         "diagnostic_disclaimer": DISCLAIMER, "interpolation": "forbidden",
         "branch_threshold_version": THRESHOLD,
-        "solver_configurations": {"vela": {}, "sentaurus": {}},
+        "solver_configurations": {
+            "vela": solver_configuration("vela"),
+            "sentaurus": solver_configuration("sentaurus"),
+        },
         "accepted_transitions": {"vela": [vela], "sentaurus": [sentaurus]},
         "failed_transitions": [], "failure_transitions": [],
         "checkpoints": [checkpoint], "records": [checkpoint],
@@ -207,7 +315,12 @@ def comparison_report():
         "curve_artifact_hashes": {"vela_manifest": SHA_A, "sentaurus_manifest": SHA_B},
         "deepest_common_bias_V": {"classification": "available", "value": -1.0},
         "missing_tails": [], "topology_sensitivity": [], "fixed_state_recheck": [],
-        "artifact_hashes": {}, "input_artifacts": {}, "closure": {"status": "closed"},
+        "artifact_hashes": {name: SHA_A for name in names}, "input_artifacts": {},
+        "figure_contract": {"schema": "vela.pn2d_minimal6_figure_contract.v1", "figures": figures}, "closure": {
+            "status": "closed",
+            "eligible_gaps": 4,
+            "rule": "each eligible gap records named contributions and a typed residual; non-common points are side-only",
+        },
     }
 
 
@@ -313,7 +426,7 @@ class DiagnosticContractsTest(unittest.TestCase):
             with self.assertRaises(ValueError): ledger.write_csv(root / "nan.csv")
 
     def test_all_three_schema_files_declare_their_contracts(self):
-        root = Path(__file__).parents[2] / "schemas"
+        root = schema_root()
         names = ("vela.pn2d_minimal6_formula_difference.v1",
                  "vela.pn2d_minimal6_bv_comparison.v1",
                  "vela.pn2d_minimal6_sweep_manifest.v1")
@@ -460,6 +573,9 @@ class DiagnosticContractsTest(unittest.TestCase):
         golden = comparison_report()
         golden["failed_transitions"] = [failure]
         golden["failure_transitions"] = [copy.deepcopy(failure)]
+        marker = {key: failure[key] for key in ("solver", "topology", "start_bias_V", "target_bias_V")}
+        for figure in golden["figure_contract"]["figures"].values():
+            figure["failure_transition_markers"] = [copy.deepcopy(marker)]
         self.assertIsNone(schemas.validate_bv_comparison_v1(golden))
         for collection, index, field in (
             ("accepted_transitions", 0, "branch_classification"),
@@ -533,6 +649,26 @@ class DiagnosticContractsTest(unittest.TestCase):
             ):
                 schemas.validate_sweep_manifest_v1(invalid)
 
+    def test_figure_schema_requires_semantic_metadata_series_and_markers(self):
+        comparison = comparison_report()
+        schema = schema_document("vela.pn2d_minimal6_bv_comparison.v1")
+        mutations = (
+            lambda value: value["figure_contract"]["figures"]["terminal_current.png"]["metadata"].update(
+                DiagnosticDisclaimer="not the diagnostic disclaimer"
+            ),
+            lambda value: value["figure_contract"]["figures"]["terminal_current.png"].update(
+                series_identities=[{"solver": "vela"}]
+            ),
+            lambda value: value["figure_contract"]["figures"]["terminal_current.png"].update(
+                failure_transition_markers=[{"solver": "vela"}]
+            ),
+        )
+        for mutate in mutations:
+            with self.subTest(mutate=mutate):
+                invalid = copy.deepcopy(comparison)
+                mutate(invalid)
+                with self.assertRaises(ValueError):
+                    validate_schema_document(invalid, schema)
     def test_schema_documents_execute_against_golden_and_invalid_fixtures(self):
         formula = formula_report()
         formula_schema = schema_document("vela.pn2d_minimal6_formula_difference.v1")
@@ -586,6 +722,7 @@ class DiagnosticContractsTest(unittest.TestCase):
         failed = {
             "solver": "vela", "topology": "mirror", "start_bias_V": 0.0,
             "target_bias_V": -1.0, "status": "rejected", "observables": None,
+            "state_path": None, "state_sha256": None,
             "branch_classification": "unidentified", "branch_threshold_version": THRESHOLD,
             "convergence_metadata": {"exit_code": 1},
         }
