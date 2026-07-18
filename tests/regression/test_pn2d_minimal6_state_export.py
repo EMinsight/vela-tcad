@@ -930,6 +930,164 @@ class PN2DMinimal6StateExportTest(unittest.TestCase):
             saved = json.loads(Path(manifest["manifest_path"]).read_text(encoding="utf-8"))
         self.assertEqual(saved["sentaurus_version"], "O-2018.06-SP2")
         self.assertEqual({state["sentaurus_version"] for state in saved["states"]}, {"O-2018.06-SP2"})
+    def test_declared_matrix_rejects_invalid_declarations_and_coverage(self) -> None:
+        expected = (("sketch", -1.0),)
+        states = [{
+            "topology_id": "sketch", "requested_bias_V": -1.0,
+            "actual_bias_V": -1.0, "status": "passed",
+        }]
+        for declaration, message in (
+            ((), "must not be empty"),
+            ((("sketch", math.nan),), "non-finite"),
+            ((("sketch", -1.0), ("sketch", -1.0)), "duplicate"),
+            ((("unknown", -1.0),), "invalid topology"),
+        ):
+            with self.subTest(declaration=declaration):
+                with self.assertRaisesRegex(ValueError, message):
+                    export.validate_state_matrix(states, declaration)
+        with self.assertRaisesRegex(ValueError, "exact declared state matrix mismatch"):
+            export.validate_state_matrix([], expected)
+        extra = states + [{
+            "topology_id": "mirror", "requested_bias_V": -1.0,
+            "actual_bias_V": -1.0, "status": "passed",
+        }]
+        with self.assertRaisesRegex(ValueError, "exact declared state matrix mismatch"):
+            export.validate_state_matrix(extra, expected)
+
+    def test_recovered_new_format_normalizes_caller_order_and_requires_versions(self) -> None:
+        caller_expected = tuple(
+            (topology, float(-bias))
+            for topology in ("sketch", "mirror")
+            for bias in (1, 2)
+        )
+        recorded_expected = tuple(sorted(caller_expected))
+
+        def manifest(version: object = " O-2018.06-SP2 ", state_version: object = "O-2018.06-SP2") -> dict[str, object]:
+            return {
+                "outputs_complete": True,
+                "expected_matrix": [[topology, bias] for topology, bias in recorded_expected],
+                "sentaurus_version": version,
+                "states": [{
+                    "topology_id": topology,
+                    "requested_bias_V": bias,
+                    "actual_bias_V": bias,
+                    "status": "passed",
+                    "sentaurus_version": state_version,
+                } for topology, bias in caller_expected],
+            }
+
+        def validate(candidate: dict[str, object]) -> dict[str, object]:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                path = root / "manifest.json"
+                path.write_text(json.dumps(candidate), encoding="utf-8")
+                return export.validate_recovered_archive(
+                    root, export._sha256(path), caller_expected
+                )
+
+        normalized = validate(manifest())
+        self.assertEqual(normalized["sentaurus_version"], "O-2018.06-SP2")
+        self.assertTrue(all(
+            state["sentaurus_version"] == "O-2018.06-SP2"
+            for state in normalized["states"]
+        ))
+        for version, state_version, message in (
+            (None, "O-2018.06-SP2", "missing sentaurus_version"),
+            ("   ", "   ", "missing sentaurus_version"),
+            ("O-2018.06-SP2", None, "mixed Sentaurus versions"),
+            ("O-2018.06-SP2", "O-2019.03", "mixed Sentaurus versions"),
+        ):
+            with self.subTest(version=version, state_version=state_version):
+                with self.assertRaisesRegex(ValueError, message):
+                    validate(manifest(version, state_version))
+
+    def test_run_exports_binds_the_persisted_prepared_matrix(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest = export.prepare_exports(
+                topology_ids=("sketch", "mirror"), biases=(0.0, -12.0, -19.0),
+                run_id="minimal6_states_persisted_binding", output_dir=Path(tmp),
+                ssh_target="sentaurus",
+            )
+            manifest["expected_matrix"] = [["sketch", 0.0]]
+            manifest["states"] = [manifest["states"][0]]
+
+            def executor(state: dict[str, object]) -> dict[str, object]:
+                neutral = Path(str(state["export_dir"]))
+                write_neutral_state(neutral)
+                return {
+                    "actual_bias_V": 0.0,
+                    "export_dir": str(neutral),
+                    "sentaurus_version": "O-2018.06-SP2",
+                }
+
+            with self.assertRaisesRegex(ValueError, "prepared manifest differs from persisted"):
+                export.run_exports(manifest, executor=executor)
+
+    def test_run_exports_normalizes_and_rejects_version_values(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest = export.prepare_exports(
+                topology_ids=("sketch",), biases=(0.0,),
+                run_id="minimal6_states_version_normalization", output_dir=Path(tmp),
+                ssh_target="sentaurus",
+            )
+
+            def padded_executor(state: dict[str, object]) -> dict[str, object]:
+                neutral = Path(str(state["export_dir"]))
+                write_neutral_state(neutral)
+                return {
+                    "actual_bias_V": 0.0,
+                    "export_dir": str(neutral),
+                    "sentaurus_version": " O-2018.06-SP2 ",
+                }
+
+            export.run_exports(manifest, executor=padded_executor)
+            self.assertEqual(manifest["sentaurus_version"], "O-2018.06-SP2")
+            self.assertEqual(manifest["states"][0]["sentaurus_version"], "O-2018.06-SP2")
+        for version, message in (
+            (None, "missing sentaurus_version"),
+            ("   ", "missing sentaurus_version"),
+        ):
+            with self.subTest(version=version), tempfile.TemporaryDirectory() as tmp:
+                manifest = export.prepare_exports(
+                    topology_ids=("sketch",), biases=(0.0,),
+                    run_id="minimal6_states_bad_version", output_dir=Path(tmp),
+                    ssh_target="sentaurus",
+                )
+
+                def executor(state: dict[str, object]) -> dict[str, object]:
+                    neutral = Path(str(state["export_dir"]))
+                    write_neutral_state(neutral)
+                    return {
+                        "actual_bias_V": 0.0,
+                        "export_dir": str(neutral),
+                        "sentaurus_version": version,
+                    }
+
+                with self.assertRaisesRegex(ValueError, message):
+                    export.run_exports(manifest, executor=executor)
+
+    def test_run_exports_rejects_mixed_versions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest = export.prepare_exports(
+                topology_ids=("sketch",), biases=(0.0, -1.0),
+                run_id="minimal6_states_mixed_versions", output_dir=Path(tmp),
+                ssh_target="sentaurus",
+            )
+
+            def executor(state: dict[str, object]) -> dict[str, object]:
+                neutral = Path(str(state["export_dir"]))
+                write_neutral_state(neutral)
+                return {
+                    "actual_bias_V": float(state["requested_bias_V"]),
+                    "export_dir": str(neutral),
+                    "sentaurus_version": (
+                        "O-2018.06-SP2" if state["requested_bias_V"] == 0.0
+                        else "O-2019.03"
+                    ),
+                }
+
+            with self.assertRaisesRegex(ValueError, "mixed Sentaurus versions"):
+                export.run_exports(manifest, executor=executor)
     def test_member_hashes_fail_closed_after_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

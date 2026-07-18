@@ -305,10 +305,9 @@ def _manifest_expected_matrix(manifest: dict[str, object]) -> tuple[tuple[str, f
     return canonical
 
 
-def _prepared_manifest_expected_matrix(
+def _prepared_state_declarations(
     manifest: dict[str, object],
 ) -> tuple[tuple[str, float], ...]:
-    expected = _manifest_expected_matrix(manifest)
     prepared: list[tuple[str, float]] = []
     states = manifest.get("states")
     if not isinstance(states, list):
@@ -329,18 +328,45 @@ def _prepared_manifest_expected_matrix(
         if key in prepared:
             raise ValueError(f"prepared manifest has duplicate state {topology} at {requested:g} V")
         prepared.append(key)
+    return tuple(prepared)
+
+
+def _prepared_manifest_expected_matrix(
+    manifest: dict[str, object],
+) -> tuple[tuple[str, float], ...]:
+    expected = _manifest_expected_matrix(manifest)
+    prepared = _prepared_state_declarations(manifest)
     if set(prepared) != set(expected) or len(prepared) != len(expected):
         raise ValueError("prepared manifest states do not match expected_matrix")
     return expected
 
 
+def _normalize_sentaurus_version(value: object, *, label: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{label} is missing sentaurus_version")
+    return value.strip()
+
+
 def _validate_sentaurus_version_provenance(manifest: dict[str, object]) -> None:
-    version = manifest.get("sentaurus_version")
-    if not isinstance(version, str) or not version:
-        raise ValueError("completed manifest is missing sentaurus_version")
-    for state in manifest.get("states", []):
-        if not isinstance(state, dict) or state.get("sentaurus_version") != version:
+    version = _normalize_sentaurus_version(
+        manifest.get("sentaurus_version"), label="completed manifest"
+    )
+    manifest["sentaurus_version"] = version
+    states = manifest.get("states")
+    if not isinstance(states, list):
+        raise ValueError("completed manifest states must be a list")
+    for state in states:
+        if not isinstance(state, dict):
             raise ValueError("completed manifest has mixed Sentaurus versions")
+        try:
+            state_version = _normalize_sentaurus_version(
+                state.get("sentaurus_version"), label="completed state"
+            )
+        except ValueError as error:
+            raise ValueError("completed manifest has mixed Sentaurus versions") from error
+        if state_version != version:
+            raise ValueError("completed manifest has mixed Sentaurus versions")
+        state["sentaurus_version"] = state_version
 
 
 def validate_recovered_archive(
@@ -358,12 +384,15 @@ def validate_recovered_archive(
         raise ValueError("recovered archive outputs are incomplete")
     if "expected_matrix" in manifest:
         recorded = _manifest_expected_matrix(manifest)
-        if expected_matrix is not None and recorded != _normalize_expected_matrix(expected_matrix):
+        if expected_matrix is not None and recorded != tuple(sorted(
+            _normalize_expected_matrix(expected_matrix)
+        )):
             raise ValueError("recovered archive expected_matrix does not match caller declaration")
         expected_matrix = recorded
-    validate_state_matrix(manifest.get("states", []), expected_matrix)
-    if "sentaurus_version" in manifest:
         _validate_sentaurus_version_provenance(manifest)
+    elif "sentaurus_version" in manifest:
+        _validate_sentaurus_version_provenance(manifest)
+    validate_state_matrix(manifest.get("states", []), expected_matrix)
     return manifest
 
 
@@ -1321,9 +1350,20 @@ def run_exports(
     manifest: dict[str, object],
     *, executor: Callable[[dict[str, object]], dict[str, object] | None],
 ) -> None:
+    manifest_path = Path(str(manifest["manifest_path"]))
+    try:
+        persisted_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError("cannot read persisted prepared manifest") from error
     expected_matrix = _prepared_manifest_expected_matrix(manifest)
     expected_document = _expected_matrix_document(expected_matrix)
-    manifest_path = Path(str(manifest["manifest_path"]))
+    persisted_expected = _prepared_manifest_expected_matrix(persisted_manifest)
+    if (
+        expected_matrix != persisted_expected
+        or _prepared_state_declarations(manifest)
+        != _prepared_state_declarations(persisted_manifest)
+    ):
+        raise ValueError("prepared manifest differs from persisted preparation contract")
     manifest["outputs_complete"] = False
     write_manifest(manifest_path, manifest)
     for state in manifest["states"]:
@@ -1343,10 +1383,14 @@ def run_exports(
             export_dir = Path(str(result.get("export_dir", state["export_dir"])))
             if not export_dir.is_dir():
                 raise ValueError(f"missing neutral export directory: {export_dir}")
-            version = result.get("sentaurus_version")
-            if not isinstance(version, str) or not version:
-                raise ValueError("executor result is missing sentaurus_version")
+            version = _normalize_sentaurus_version(
+                result.get("sentaurus_version"), label="executor result"
+            )
             recorded_version = manifest.get("sentaurus_version")
+            if recorded_version is not None:
+                recorded_version = _normalize_sentaurus_version(
+                    recorded_version, label="prepared manifest"
+                )
             if recorded_version is not None and recorded_version != version:
                 raise ValueError(
                     f"mixed Sentaurus versions: {recorded_version!r} and {version!r}"
