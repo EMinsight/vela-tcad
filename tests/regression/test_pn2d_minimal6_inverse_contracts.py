@@ -167,7 +167,11 @@ class InverseContractsTest(unittest.TestCase):
             with self.subTest(value=value):
                 report = self.make_valid_report()
                 report["payload"]["candidate_metrics"] = [
-                    {"candidate": "triangle_gradient", "median_abs_error": value}
+                    {
+                        "candidate": "triangle_gradient",
+                        "classification": Identifiability.REJECTED.value,
+                        "median_abs_error": value,
+                    }
                 ]
-                with self.assertRaises(ValueError):
+                with self.assertRaisesRegex(ValueError, "non-finite inverse metric"):
                     validate_inverse_report_v1(report)
