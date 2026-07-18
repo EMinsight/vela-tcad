@@ -128,6 +128,8 @@ def validate_inverse_report_v1(report: dict[str, Any]) -> dict[str, Any]:
         if row.get("classification") not in allowed:
             raise ValueError("unknown inverse classification")
     for row in payload["candidate_metrics"]:
+        if row.get("classification") not in allowed:
+            raise ValueError("unknown inverse classification")
         for name in ("median_abs_error", "p95_abs_error", "median_angle_deg"):
             value = row.get(name)
             if value is not None and not math.isfinite(float(value)):
