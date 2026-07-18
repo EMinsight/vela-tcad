@@ -54,11 +54,9 @@ def write_root(root: Path, solver: str, fields: dict[str, tuple[int, str]],
             values: list[object] = [7, 1.0, 2.0]
             header = ["canonical_node_id", "x_um", "y_um"]
             for name, (components, _) in fields.items():
-                if name == omit_field:
-                    continue
                 for component in range(components):
                     header.append(f"{name}_component{component}")
-                    values.append(float(abs(bias) + component + 1))
+                    values.append("" if name == omit_field else float(abs(bias) + component + 1))
             state_path = root / relative
             write_csv(state_path, header, values)
             digest = sha256(state_path)
@@ -116,6 +114,10 @@ class PN2DMinimal6InverseInputsTest(unittest.TestCase):
             mobility = next(item for item in observations if item.quantity == "eMobility")
             self.assertEqual(electric.value_si, electric.raw_value * 100.0)
             self.assertEqual(mobility.value_si, mobility.raw_value * 1.0e-4)
+            coordinate = next(item for item in observations if item.solver == "vela" and item.quantity == "coordinate" and item.component == "x")
+            self.assertEqual((coordinate.raw_value, coordinate.raw_unit), (1.0, "um"))
+            self.assertEqual((coordinate.value_si, coordinate.unit_si), (1.0e-6, "m"))
+            self.assertEqual(coordinate.conversion, "um_to_m")
             output = Path(tmp) / "out" / "input_manifest.json"
             inverse_inputs.write_input_manifest(bundle, output)
             self.assertTrue(output.is_file())
