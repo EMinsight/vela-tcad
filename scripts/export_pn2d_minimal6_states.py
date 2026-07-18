@@ -11,6 +11,7 @@ import math
 import os
 import re
 import shutil
+import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -254,7 +255,98 @@ def validate_source_recovery(
     return validation, validation_path, expected_validation_hash
 
 
-def validate_recovered_archive(root: Path, expected_manifest_sha256: str) -> dict[str, object]:
+def _legacy_expected_matrix() -> tuple[tuple[str, float], ...]:
+    return tuple(
+        (topology, bias)
+        for topology in REQUIRED_TOPOLOGIES
+        for bias in REQUIRED_BIASES
+    )
+
+
+def _normalize_expected_matrix(
+    expected_matrix: Sequence[Sequence[object]], *, label: str = "expected matrix"
+) -> tuple[tuple[str, float], ...]:
+    matrix: list[tuple[str, float]] = []
+    for entry in expected_matrix:
+        if isinstance(entry, (str, bytes)) or not isinstance(entry, Sequence) or len(entry) != 2:
+            raise ValueError(f"{label} entry must be a topology/bias pair")
+        topology = entry[0]
+        if not isinstance(topology, str) or topology not in REQUIRED_TOPOLOGIES:
+            raise ValueError(f"{label} contains invalid topology: {topology!r}")
+        try:
+            bias = float(entry[1])
+        except (TypeError, ValueError) as error:
+            raise ValueError(f"{label} contains an invalid bias") from error
+        if not math.isfinite(bias):
+            raise ValueError(f"{label} contains a non-finite bias")
+        key = (topology, bias)
+        if key in matrix:
+            raise ValueError(f"{label} contains duplicate state {topology} at {bias:g} V")
+        matrix.append(key)
+    if not matrix:
+        raise ValueError(f"{label} must not be empty")
+    return tuple(matrix)
+
+
+def _expected_matrix_document(
+    expected_matrix: Sequence[Sequence[object]],
+) -> list[list[object]]:
+    return [[topology, bias] for topology, bias in expected_matrix]
+
+
+def _manifest_expected_matrix(manifest: dict[str, object]) -> tuple[tuple[str, float], ...]:
+    raw = manifest.get("expected_matrix")
+    if not isinstance(raw, list):
+        raise ValueError("prepared manifest is missing expected_matrix")
+    expected = _normalize_expected_matrix(raw, label="manifest expected_matrix")
+    canonical = tuple(sorted(expected))
+    if raw != _expected_matrix_document(canonical):
+        raise ValueError("manifest expected_matrix is not canonical")
+    return canonical
+
+
+def _prepared_manifest_expected_matrix(
+    manifest: dict[str, object],
+) -> tuple[tuple[str, float], ...]:
+    expected = _manifest_expected_matrix(manifest)
+    prepared: list[tuple[str, float]] = []
+    states = manifest.get("states")
+    if not isinstance(states, list):
+        raise ValueError("prepared manifest states must be a list")
+    for state in states:
+        if not isinstance(state, dict):
+            raise ValueError("prepared manifest state must be an object")
+        topology = state.get("topology_id")
+        if not isinstance(topology, str) or topology not in REQUIRED_TOPOLOGIES:
+            raise ValueError(f"prepared state has invalid topology: {topology!r}")
+        try:
+            requested = float(state.get("requested_bias_V"))
+        except (TypeError, ValueError) as error:
+            raise ValueError("prepared state has invalid requested bias") from error
+        if not math.isfinite(requested):
+            raise ValueError("prepared state has non-finite requested bias")
+        key = (topology, requested)
+        if key in prepared:
+            raise ValueError(f"prepared manifest has duplicate state {topology} at {requested:g} V")
+        prepared.append(key)
+    if set(prepared) != set(expected) or len(prepared) != len(expected):
+        raise ValueError("prepared manifest states do not match expected_matrix")
+    return expected
+
+
+def _validate_sentaurus_version_provenance(manifest: dict[str, object]) -> None:
+    version = manifest.get("sentaurus_version")
+    if not isinstance(version, str) or not version:
+        raise ValueError("completed manifest is missing sentaurus_version")
+    for state in manifest.get("states", []):
+        if not isinstance(state, dict) or state.get("sentaurus_version") != version:
+            raise ValueError("completed manifest has mixed Sentaurus versions")
+
+
+def validate_recovered_archive(
+    root: Path, expected_manifest_sha256: str,
+    expected_matrix: Sequence[Sequence[object]] | None = None,
+) -> dict[str, object]:
     root = Path(root)
     manifest_path = root / "manifest.json"
     if not manifest_path.is_file():
@@ -264,7 +356,14 @@ def validate_recovered_archive(root: Path, expected_manifest_sha256: str) -> dic
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     if manifest.get("outputs_complete") is not True:
         raise ValueError("recovered archive outputs are incomplete")
-    validate_state_matrix(manifest.get("states", []))
+    if "expected_matrix" in manifest:
+        recorded = _manifest_expected_matrix(manifest)
+        if expected_matrix is not None and recorded != _normalize_expected_matrix(expected_matrix):
+            raise ValueError("recovered archive expected_matrix does not match caller declaration")
+        expected_matrix = recorded
+    validate_state_matrix(manifest.get("states", []), expected_matrix)
+    if "sentaurus_version" in manifest:
+        _validate_sentaurus_version_provenance(manifest)
     return manifest
 
 
@@ -277,6 +376,8 @@ def _bias_tag(bias_V: float) -> str:
 def validate_final_bias(requested_bias_V: float, actual_bias_V: float) -> float:
     requested = float(requested_bias_V)
     actual = float(actual_bias_V)
+    if not math.isfinite(requested):
+        raise ValueError(f"requested Anode contact voltage is not finite: {requested_bias_V}")
     if not math.isfinite(actual):
         raise ValueError(f"final Anode contact voltage is not finite: {actual_bias_V}")
     if abs(actual - requested) > BIAS_TOLERANCE_V:
@@ -287,8 +388,14 @@ def validate_final_bias(requested_bias_V: float, actual_bias_V: float) -> float:
     return actual
 
 
-def validate_state_matrix(states: Sequence[dict[str, object]]) -> list[tuple[str, float]]:
-    required = {(topology, bias) for topology in REQUIRED_TOPOLOGIES for bias in REQUIRED_BIASES}
+def validate_state_matrix(
+    states: Sequence[dict[str, object]],
+    expected_matrix: Sequence[Sequence[object]] | None = None,
+) -> list[tuple[str, float]]:
+    required = (
+        _normalize_expected_matrix(expected_matrix)
+        if expected_matrix is not None else _legacy_expected_matrix()
+    )
     matrix: list[tuple[str, float]] = []
     for state in states:
         topology = str(state.get("topology_id", ""))
@@ -305,10 +412,14 @@ def validate_state_matrix(states: Sequence[dict[str, object]]) -> list[tuple[str
         matrix.append(key)
         if actual != actual:  # Defensive; validate_final_bias already rejects NaN.
             raise ValueError("unreachable non-finite bias")
-    if set(matrix) != required or len(matrix) != len(required):
-        missing = sorted(required - set(matrix))
-        extra = sorted(set(matrix) - required)
-        raise ValueError(f"exact six-state matrix mismatch; missing={missing}, extra={extra}")
+    if set(matrix) != set(required) or len(matrix) != len(required):
+        missing = sorted(set(required) - set(matrix))
+        extra = sorted(set(matrix) - set(required))
+        if expected_matrix is None:
+            raise ValueError(f"exact six-state matrix mismatch; missing={missing}, extra={extra}")
+        raise ValueError(
+            f"exact declared state matrix mismatch; missing={missing}, extra={extra}"
+        )
     return matrix
 
 
@@ -1033,11 +1144,21 @@ def _validated_requested_matrix(
     topology_ids: Sequence[str], biases: Sequence[float]
 ) -> tuple[tuple[str, ...], tuple[float, ...]]:
     topologies = tuple(topology_ids)
-    bias_values = tuple(float(value) for value in biases)
-    if topologies != REQUIRED_TOPOLOGIES:
-        raise ValueError(f"topologies must be exactly {REQUIRED_TOPOLOGIES}")
-    if bias_values != REQUIRED_BIASES:
-        raise ValueError(f"biases must be exactly {REQUIRED_BIASES}; nearest substitutes are forbidden")
+    if not topologies or any(
+        not isinstance(topology, str) or topology not in REQUIRED_TOPOLOGIES
+        for topology in topologies
+    ):
+        raise ValueError(f"topologies must be nonempty members of {REQUIRED_TOPOLOGIES}")
+    if len(topologies) != len(set(topologies)):
+        raise ValueError("topologies must not contain duplicates")
+    try:
+        bias_values = tuple(float(value) for value in biases)
+    except (TypeError, ValueError) as error:
+        raise ValueError("biases must be numeric") from error
+    if not bias_values or not all(math.isfinite(bias) for bias in bias_values):
+        raise ValueError("biases must be nonempty and finite")
+    if len(bias_values) != len(set(bias_values)):
+        raise ValueError("biases must not contain duplicates")
     return topologies, bias_values
 
 
@@ -1107,6 +1228,9 @@ def prepare_exports(
                 "returned_files": returned_files,
                 "status": "prepared",
             })
+    expected_matrix = tuple(sorted(
+        (topology, bias) for topology in topologies for bias in bias_values
+    ))
     manifest: dict[str, object] = {
         "schema": SCHEMA,
         "run_id": run_id,
@@ -1114,6 +1238,8 @@ def prepare_exports(
         "remote_root": remote_root,
         "importer": str(Path(importer).resolve()),
         "bias_tolerance_V": BIAS_TOLERANCE_V,
+        "expected_matrix": _expected_matrix_document(expected_matrix),
+        "sentaurus_version": None,
         "outputs_complete": False,
         "states": states,
         "manifest_path": str(run_root / "manifest.json"),
@@ -1176,9 +1302,18 @@ def _live_executor(
         str(importer), "--tdr", str(final_tdr), "--export-dir", str(neutral),
         "--compensated-doping-policy", "reported",
     ])
+    version = subprocess.run(
+        [ssh_bin, ssh_target, "sdevice -version"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    if not version:
+        raise ValueError("remote Sentaurus version command produced no output")
     return {
         "actual_bias_V": _parse_final_anode_bias(artifacts / str(state["current_plt_name"])),
         "export_dir": str(neutral),
+        "sentaurus_version": version,
     }
 
 
@@ -1186,6 +1321,8 @@ def run_exports(
     manifest: dict[str, object],
     *, executor: Callable[[dict[str, object]], dict[str, object] | None],
 ) -> None:
+    expected_matrix = _prepared_manifest_expected_matrix(manifest)
+    expected_document = _expected_matrix_document(expected_matrix)
     manifest_path = Path(str(manifest["manifest_path"]))
     manifest["outputs_complete"] = False
     write_manifest(manifest_path, manifest)
@@ -1206,18 +1343,34 @@ def run_exports(
             export_dir = Path(str(result.get("export_dir", state["export_dir"])))
             if not export_dir.is_dir():
                 raise ValueError(f"missing neutral export directory: {export_dir}")
+            version = result.get("sentaurus_version")
+            if not isinstance(version, str) or not version:
+                raise ValueError("executor result is missing sentaurus_version")
+            recorded_version = manifest.get("sentaurus_version")
+            if recorded_version is not None and recorded_version != version:
+                raise ValueError(
+                    f"mixed Sentaurus versions: {recorded_version!r} and {version!r}"
+                )
+            manifest["sentaurus_version"] = version
+            state["sentaurus_version"] = version
             state["state_csv"] = str(write_state_csv(export_dir))
             state["field_manifest"] = str(export_dir / "field_manifest.json")
             state["member_sha256"] = collect_member_hashes(export_dir)
             state["status"] = "passed"
+            if manifest.get("expected_matrix") != expected_document:
+                raise ValueError("manifest expected_matrix changed after preparation")
             write_manifest(manifest_path, manifest)
         except Exception as error:
+            manifest["expected_matrix"] = expected_document
             state["status"] = "failed"
             state["error"] = str(error)
             manifest["error"] = str(error)
             write_manifest(manifest_path, manifest)
             raise
-    validate_state_matrix(manifest["states"])
+    validate_state_matrix(manifest["states"], expected_matrix)
+    if manifest.get("expected_matrix") != expected_document:
+        raise ValueError("manifest expected_matrix changed after preparation")
+    _validate_sentaurus_version_provenance(manifest)
     manifest["outputs_complete"] = True
     manifest.pop("error", None)
     write_manifest(manifest_path, manifest)

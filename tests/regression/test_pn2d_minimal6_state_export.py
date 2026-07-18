@@ -579,6 +579,38 @@ class PN2DMinimal6StateExportTest(unittest.TestCase):
             {(t, v) for t in ("sketch", "mirror") for v in (0.0, -12.0, -19.0)},
         )
 
+
+    def test_declared_forty_state_matrix_is_exact_and_bias_checked(self) -> None:
+        expected = tuple(
+            (topology, float(-bias))
+            for topology in ("sketch", "mirror")
+            for bias in range(1, 21)
+        )
+        states = [
+            {
+                "topology_id": topology,
+                "requested_bias_V": bias,
+                "actual_bias_V": bias,
+                "status": "passed",
+            }
+            for topology, bias in expected
+        ]
+        self.assertEqual(export.validate_state_matrix(states, expected), list(expected))
+
+        states[-1]["actual_bias_V"] += 2.0e-12
+        with self.assertRaisesRegex(ValueError, "does not match requested"):
+            export.validate_state_matrix(states, expected)
+
+    def test_omitted_expected_matrix_retains_exact_legacy_six_states(self) -> None:
+        states = [
+            {"topology_id": topology, "requested_bias_V": bias, "actual_bias_V": bias,
+             "status": "passed"}
+            for topology in ("sketch", "mirror")
+            for bias in (0.0, -12.0, -19.0)
+        ]
+        states.pop()
+        with self.assertRaisesRegex(ValueError, "exact six-state matrix mismatch"):
+            export.validate_state_matrix(states)
     def test_nearest_bias_is_rejected_at_stricter_than_one_picovolt(self) -> None:
         states = [
             {"topology_id": topology, "requested_bias_V": bias,
@@ -832,7 +864,11 @@ class PN2DMinimal6StateExportTest(unittest.TestCase):
                     raise RuntimeError("mock convergence failure")
                 neutral = Path(str(state["export_dir"]))
                 write_neutral_state(neutral)
-                return {"actual_bias_V": key[1], "export_dir": str(neutral)}
+                return {
+                    "actual_bias_V": key[1],
+                    "export_dir": str(neutral),
+                    "sentaurus_version": "O-2018.06-SP2",
+                }
 
             with self.assertRaisesRegex(RuntimeError, "mock convergence failure"):
                 export.run_exports(manifest, executor=executor)
@@ -858,6 +894,7 @@ class PN2DMinimal6StateExportTest(unittest.TestCase):
                 return {
                     "actual_bias_V": float(state["requested_bias_V"]),
                     "export_dir": str(neutral),
+                    "sentaurus_version": "O-2018.06-SP2",
                 }
 
             export.run_exports(manifest, executor=executor)
@@ -869,6 +906,30 @@ class PN2DMinimal6StateExportTest(unittest.TestCase):
         self.assertTrue(all(path.name == "state.csv" for path in state_paths))
         self.assertTrue(all("member_sha256" in state for state in saved["states"]))
 
+
+    def test_mocked_executor_records_one_consistent_sentaurus_version(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest = export.prepare_exports(
+                topology_ids=("sketch", "mirror"),
+                biases=(0.0, -12.0, -19.0),
+                run_id="minimal6_states_version",
+                output_dir=Path(tmp),
+                ssh_target="sentaurus",
+            )
+
+            def executor(state: dict[str, object]) -> dict[str, object]:
+                neutral = Path(str(state["export_dir"]))
+                write_neutral_state(neutral)
+                return {
+                    "actual_bias_V": float(state["requested_bias_V"]),
+                    "export_dir": str(neutral),
+                    "sentaurus_version": "O-2018.06-SP2",
+                }
+
+            export.run_exports(manifest, executor=executor)
+            saved = json.loads(Path(manifest["manifest_path"]).read_text(encoding="utf-8"))
+        self.assertEqual(saved["sentaurus_version"], "O-2018.06-SP2")
+        self.assertEqual({state["sentaurus_version"] for state in saved["states"]}, {"O-2018.06-SP2"})
     def test_member_hashes_fail_closed_after_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
