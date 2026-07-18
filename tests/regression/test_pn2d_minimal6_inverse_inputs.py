@@ -91,6 +91,33 @@ def rewrite_seal(root: Path) -> None:
     (root / "seal.json").write_text(json.dumps({"manifest_sha256": sha256(path)}) + "\n", encoding="utf-8")
 
 
+def rewrite_manifest(root: Path, manifest: dict[str, object]) -> None:
+    path = root / "manifest.json"
+    path.write_text(json.dumps(manifest, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+    rewrite_seal(root)
+
+
+def rebind_state(root: Path, state_index: int = 0) -> None:
+    path = root / "manifest.json"
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    state = manifest["states"][state_index]
+    digest = sha256(root / state["state_path"])
+    state["state_sha256"] = digest
+    manifest["member_sha256"][state["state_path"]] = digest
+    rewrite_manifest(root, manifest)
+
+
+def replace_csv_value(root: Path, header: str, value: str, state_index: int = 0) -> None:
+    manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+    target = root / manifest["states"][state_index]["state_path"]
+    with target.open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.reader(handle))
+    rows[1][rows[0].index(header)] = value
+    with target.open("w", newline="", encoding="utf-8") as handle:
+        csv.writer(handle).writerows(rows)
+    rebind_state(root, state_index)
+
+
 def make_fixture(root: Path, *, omit_field: str | None = None) -> tuple[Path, Path, Path]:
     vela, sentaurus, supplemental = root / "vela-root", root / "sentaurus-root", root / "supplemental-root"
     write_root(vela, "vela", REQUIRED)
@@ -118,6 +145,18 @@ class PN2DMinimal6InverseInputsTest(unittest.TestCase):
             self.assertEqual((coordinate.raw_value, coordinate.raw_unit), (1.0, "um"))
             self.assertEqual((coordinate.value_si, coordinate.unit_si), (1.0e-6, "m"))
             self.assertEqual(coordinate.conversion, "um_to_m")
+            keys = [item.key for item in observations]
+            self.assertEqual(len(keys), len(set(keys)))
+            coordinates = [item for item in observations if item.quantity == "coordinate"]
+            self.assertEqual(len(coordinates), 160)
+            self.assertEqual({item.solver for item in coordinates}, {"vela", "sentaurus"})
+            for solver in ("vela", "sentaurus"):
+                item = next(item for item in coordinates if item.solver == solver and item.component == "x")
+                self.assertEqual((item.raw_value, item.raw_unit, item.value_si, item.unit_si),
+                                 (1.0, "um", 1.0e-6, "m"))
+            supplemental_rows = [item for item in observations
+                                 if Path(item.source_path).is_relative_to(supplemental)]
+            self.assertEqual({item.quantity for item in supplemental_rows}, set(SUPPLEMENTAL))
             output = Path(tmp) / "out" / "input_manifest.json"
             inverse_inputs.write_input_manifest(bundle, output)
             self.assertTrue(output.is_file())
@@ -188,6 +227,97 @@ class PN2DMinimal6InverseInputsTest(unittest.TestCase):
             self.assertTrue(all(item.raw_value is None and item.value_si is None for item in mobility))
             self.assertTrue(all(item.status is inverse_inputs.SampleStatus.MISSING_FIELD for item in mobility))
 
+    def test_rejects_absolute_state_path_escape(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            vela, sentaurus, supplemental = make_fixture(Path(tmp))
+            path = vela / "manifest.json"
+            manifest = json.loads(path.read_text(encoding="utf-8"))
+            relative = manifest["states"][0]["state_path"]
+            manifest["states"][0]["state_path"] = str((vela / relative).resolve())
+            rewrite_manifest(vela, manifest)
+            with self.assertRaisesRegex(ValueError, "vela state escapes root"):
+                inverse_inputs.load_input_bundle(vela, sentaurus, supplemental)
+
+    def test_rejects_supplemental_bias_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            vela, sentaurus, supplemental = make_fixture(Path(tmp))
+            path = supplemental / "manifest.json"
+            manifest = json.loads(path.read_text(encoding="utf-8"))
+            manifest["states"][0]["actual_bias_V"] = manifest["states"][0]["requested_bias_V"] + 1.0e-4
+            rewrite_manifest(supplemental, manifest)
+            with self.assertRaisesRegex(ValueError, "supplemental exact bias mismatch"):
+                inverse_inputs.load_input_bundle(vela, sentaurus, supplemental)
+
+    def test_rejects_field_component_count_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            vela, sentaurus, supplemental = make_fixture(Path(tmp))
+            path = sentaurus / "manifest.json"
+            manifest = json.loads(path.read_text(encoding="utf-8"))
+            field = next(item for item in manifest["fields"] if item["name"] == "ElectricField")
+            field["components"] = 1
+            rewrite_manifest(sentaurus, manifest)
+            with self.assertRaisesRegex(ValueError, "sentaurus field component mismatch"):
+                inverse_inputs.load_input_bundle(vela, sentaurus, supplemental)
+
+    def test_rejects_missing_component_header_with_valid_hashes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            vela, sentaurus, supplemental = make_fixture(Path(tmp))
+            manifest = json.loads((supplemental / "manifest.json").read_text(encoding="utf-8"))
+            target = supplemental / manifest["states"][0]["state_path"]
+            with target.open(newline="", encoding="utf-8") as handle:
+                rows = list(csv.reader(handle))
+            index = rows[0].index("eMobility_component0")
+            for row in rows:
+                del row[index]
+            with target.open("w", newline="", encoding="utf-8") as handle:
+                csv.writer(handle).writerows(rows)
+            rebind_state(supplemental)
+            with self.assertRaisesRegex(ValueError, "supplemental field component header mismatch"):
+                inverse_inputs.load_input_bundle(vela, sentaurus, supplemental)
+
+    def test_rejects_nonnumeric_and_nonfinite_coordinates_with_valid_hashes(self) -> None:
+        for value, message in (("not-a-number", "non-numeric field value for x_um"),
+                               ("nan", "coordinate mismatch"), ("inf", "coordinate mismatch")):
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as tmp:
+                vela, sentaurus, supplemental = make_fixture(Path(tmp))
+                replace_csv_value(vela, "x_um", value)
+                with self.assertRaisesRegex(ValueError, message):
+                    inverse_inputs.load_input_bundle(vela, sentaurus, supplemental)
+
+    def test_same_member_relative_path_across_roots_is_namespaced(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            vela, sentaurus, supplemental = make_fixture(Path(tmp))
+            roots = (("vela", vela), ("sentaurus", sentaurus), ("supplemental", supplemental))
+            for solver, root in roots:
+                relative = "shared/member.dat"
+                target = root / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(solver, encoding="utf-8")
+                manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+                manifest["member_sha256"][relative] = sha256(target)
+                rewrite_manifest(root, manifest)
+            bundle = inverse_inputs.load_input_bundle(vela, sentaurus, supplemental)
+            hashes = dict(bundle.input_hashes)
+            self.assertEqual({key for key in hashes if key.endswith(":shared/member.dat")},
+                             {"vela:shared/member.dat", "sentaurus:shared/member.dat",
+                              "supplemental:shared/member.dat"})
+            self.assertEqual(len({hashes[f"{solver}:shared/member.dat"] for solver, _ in roots}), 3)
+
+    def test_same_tracked_source_path_with_different_hashes_keeps_solver_attribution(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            vela, sentaurus, supplemental = make_fixture(Path(tmp))
+            roots = (("vela", vela, "1" * 64), ("sentaurus", sentaurus, "2" * 64),
+                     ("supplemental", supplemental, "3" * 64))
+            for solver, root, digest in roots:
+                manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+                manifest["provenance"]["tracked_source_sha256"] = {"tracked/source.cpp": digest}
+                rewrite_manifest(root, manifest)
+            bundle = inverse_inputs.load_input_bundle(vela, sentaurus, supplemental)
+            self.assertEqual(set(bundle.tracked_source_hashes), {
+                ("vela:tracked/source.cpp", "1" * 64),
+                ("sentaurus:tracked/source.cpp", "2" * 64),
+                ("supplemental:tracked/source.cpp", "3" * 64),
+            })
 
 if __name__ == "__main__":
     unittest.main()

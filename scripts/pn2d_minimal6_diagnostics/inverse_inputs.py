@@ -233,7 +233,8 @@ def _validate_headers(states: dict[tuple[str, float], _State], fields: dict[str,
             raise ValueError(f"{label} field component header mismatch")
 
 
-def _observations(states: dict[tuple[str, float], _State], fields: dict[str, tuple[int, str]], *, solver: str) -> tuple[Observation, ...]:
+def _observations(states: dict[tuple[str, float], _State], fields: dict[str, tuple[int, str]], *, solver: str,
+                  include_coordinates: bool = True) -> tuple[Observation, ...]:
     observations: list[Observation] = []
     for key in sorted(states):
         state = states[key]
@@ -241,7 +242,8 @@ def _observations(states: dict[tuple[str, float], _State], fields: dict[str, tup
             node_id = row["canonical_node_id"]
             if not node_id.isdecimal() or str(int(node_id)) != node_id:
                 raise ValueError("canonical node identifier mismatch")
-            for component, raw_value in (("x", _value(row, "x_um")), ("y", _value(row, "y_um"))):
+            coordinate_values = (("x", _value(row, "x_um")), ("y", _value(row, "y_um"))) if include_coordinates else ()
+            for component, raw_value in coordinate_values:
                 if raw_value is None or not math.isfinite(raw_value):
                     raise ValueError("coordinate mismatch")
                 observations.append(Observation(
@@ -299,7 +301,11 @@ def load_input_bundle(vela_root: str | Path, sentaurus_root: str | Path, supplem
     common = tuple(sorted(_EXPECTED_KEYS))
     observations = (_observations(vela_states, REQUIRED_SENTARUS_FIELDS, solver="vela")
                     + _observations(sentaurus_states, REQUIRED_SENTARUS_FIELDS, solver="sentaurus")
-                    + _observations(supplemental_states, SUPPLEMENTAL_FIELDS, solver="sentaurus"))
+                    + _observations(supplemental_states, SUPPLEMENTAL_FIELDS, solver="sentaurus",
+                                    include_coordinates=False))
+    observation_keys = [observation.key for observation in observations]
+    if len(observation_keys) != len(set(observation_keys)):
+        raise ValueError("duplicate observation key")
     return InputBundle(common, DISCOVERY_KEYS, tuple(key for key in common if key not in DISCOVERY_KEYS), observations,
                        tuple(sorted(set(vela_fields + sentaurus_fields + supplemental_fields))), tuple(sorted(executable)),
                        tuple(sorted(sources)), tuple(sorted(
