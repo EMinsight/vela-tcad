@@ -1288,6 +1288,32 @@ def _parse_final_anode_bias(plt_path: Path) -> float:
     return float(rows[-1][datasets.index("Anode OuterVoltage")])
 
 
+_SENTAURUS_RELEASE_TOKEN = re.compile(
+    r"[A-Z]_[0-9]{4}\.[0-9]{2}(?:-SP[0-9]+(?:-[0-9]+)?)?"
+)
+_REMOTE_SENTAURUS_RELEASE_COMMAND = (
+    'resolved=$(readlink -f "$(command -v sdevice)") && '
+    'basename "$(dirname "$(dirname "$resolved")")"'
+)
+
+
+def _probe_remote_sentaurus_release(*, ssh_bin: str, ssh_target: str) -> str:
+    completed = subprocess.run(
+        [ssh_bin, ssh_target, _REMOTE_SENTAURUS_RELEASE_COMMAND],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    stdout = completed.stdout
+    release = stdout.strip() if isinstance(stdout, str) else ""
+    if _SENTAURUS_RELEASE_TOKEN.fullmatch(release) is None:
+        raise ValueError(
+            "remote Sentaurus release probe did not produce a valid "
+            "Sentaurus release token"
+        )
+    return release
+
+
 def _live_executor(
     state: dict[str, object], *, ssh_bin: str, scp_bin: str,
     ssh_target: str, importer: Path,
@@ -1331,14 +1357,7 @@ def _live_executor(
         str(importer), "--tdr", str(final_tdr), "--export-dir", str(neutral),
         "--compensated-doping-policy", "reported",
     ])
-    version = subprocess.run(
-        [ssh_bin, ssh_target, "sdevice -version"],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
-    if not version:
-        raise ValueError("remote Sentaurus version command produced no output")
+    version = _probe_remote_sentaurus_release(ssh_bin=ssh_bin, ssh_target=ssh_target)
     return {
         "actual_bias_V": _parse_final_anode_bias(artifacts / str(state["current_plt_name"])),
         "export_dir": str(neutral),

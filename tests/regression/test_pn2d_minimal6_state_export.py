@@ -6,6 +6,7 @@ import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 REPO = Path(__file__).resolve().parents[2]
@@ -741,6 +742,43 @@ class PN2DMinimal6StateExportTest(unittest.TestCase):
         self.assertEqual(state.get("stdout_name"), stdout_name)
         self.assertEqual(state["log_name"], f"{plot_stem}_des.log")
         self.assertFalse(any(set(name) & set("*?[]") for name in returned))
+
+    def test_remote_release_probe_uses_resolved_sdevice_install_path(self) -> None:
+        command = (
+            'resolved=$(readlink -f "$(command -v sdevice)") && '
+            'basename "$(dirname "$(dirname "$resolved")")"'
+        )
+        with patch.object(export.subprocess, "run") as run:
+            run.return_value.stdout = "O_2018.06-SP2\n"
+
+            release = export._probe_remote_sentaurus_release(
+                ssh_bin="ssh-test", ssh_target="sentaurus"
+            )
+
+        self.assertEqual(release, "O_2018.06-SP2")
+        run.assert_called_once_with(
+            ["ssh-test", "sentaurus", command],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    def test_remote_release_probe_rejects_empty_or_malformed_output(self) -> None:
+        for stdout in (
+            "",
+            "\n",
+            "O-2018.06-SP2\n",
+            "/opt/synopsys/O_2018.06-SP2/bin/sdevice\n",
+            "O_2018.06-SP2\nunexpected\n",
+        ):
+            with self.subTest(stdout=stdout), patch.object(
+                export.subprocess, "run"
+            ) as run:
+                run.return_value.stdout = stdout
+                with self.assertRaisesRegex(ValueError, "valid Sentaurus release token"):
+                    export._probe_remote_sentaurus_release(
+                        ssh_bin="ssh-test", ssh_target="sentaurus"
+                    )
 
     def test_sdevice_failure_recovers_exact_remote_stdout_with_argv_arrays(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
