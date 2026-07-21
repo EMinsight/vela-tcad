@@ -1289,7 +1289,7 @@ def _parse_final_anode_bias(plt_path: Path) -> float:
 
 
 _SENTAURUS_RELEASE_TOKEN = re.compile(
-    r"[A-Z]_[0-9]{4}\.[0-9]{2}(?:-SP[0-9]+(?:-[0-9]+)?)?"
+    r"[A-Z][_-][0-9]{4}\.[0-9]{2}(?:-SP[0-9]+(?:-[0-9]+)?)?"
 )
 _REMOTE_SENTAURUS_RELEASE_COMMAND = (
     'resolved=$(readlink -f "$(command -v sdevice)") && '
@@ -1311,7 +1311,7 @@ def _probe_remote_sentaurus_release(*, ssh_bin: str, ssh_target: str) -> str:
             "remote Sentaurus release probe did not produce a valid "
             "Sentaurus release token"
         )
-    return release
+    return release[0] + "-" + release[2:]
 
 
 def _live_executor(

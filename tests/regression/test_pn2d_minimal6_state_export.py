@@ -755,7 +755,7 @@ class PN2DMinimal6StateExportTest(unittest.TestCase):
                 ssh_bin="ssh-test", ssh_target="sentaurus"
             )
 
-        self.assertEqual(release, "O_2018.06-SP2")
+        self.assertEqual(release, "O-2018.06-SP2")
         run.assert_called_once_with(
             ["ssh-test", "sentaurus", command],
             check=True,
@@ -763,11 +763,21 @@ class PN2DMinimal6StateExportTest(unittest.TestCase):
             text=True,
         )
 
+    def test_remote_release_probe_preserves_canonical_hyphen_token(self) -> None:
+        with patch.object(export.subprocess, "run") as run:
+            run.return_value.stdout = "O-2018.06-SP2\n"
+
+            release = export._probe_remote_sentaurus_release(
+                ssh_bin="ssh-test", ssh_target="sentaurus"
+            )
+
+        self.assertEqual(release, "O-2018.06-SP2")
+
     def test_remote_release_probe_rejects_empty_or_malformed_output(self) -> None:
         for stdout in (
             "",
             "\n",
-            "O-2018.06-SP2\n",
+            "O/2018.06-SP2\n",
             "/opt/synopsys/O_2018.06-SP2/bin/sdevice\n",
             "O_2018.06-SP2\nunexpected\n",
         ):
