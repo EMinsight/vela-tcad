@@ -293,8 +293,8 @@ def reconstruct_generation_supports(
     """Integrate and map native, cell, and Vela partial-volume source layers."""
 
     depth = _finite_scalar(depth_m, "out-of-plane depth")
-    if depth <= 0.0:
-        raise ValueError("out-of-plane depth must be positive")
+    if depth != 0.01:
+        raise ValueError("one-centimetre out-of-plane depth must be exactly 0.01 m")
     cell_ids = tuple(triangles)
     if set(cell_ids) != set(candidate_cell_generation_m3_s):
         raise ValueError("candidate cell generation and triangles must have identical support")
@@ -615,8 +615,10 @@ def evaluate_avalanche_candidates(
     depth = _finite_scalar(depth_m, "out-of-plane depth")
     if generation_limit < 0.0 or current_limit < 0.0:
         raise ValueError("floors must be non-negative")
-    if charge <= 0.0 or depth <= 0.0:
-        raise ValueError("q and out-of-plane depth must be positive")
+    if charge <= 0.0:
+        raise ValueError("q must be positive")
+    if depth != 0.01:
+        raise ValueError("one-centimetre out-of-plane depth must be exactly 0.01 m")
     # Validate both carriers before touching observations.
     for carrier in ("electron", "hole"):
         _avalanche_parameters(parameters, carrier)
@@ -645,9 +647,13 @@ def evaluate_avalanche_candidates(
     for row in observations:
         if row.support_kind is not SupportKind.NODE or row.quantity not in relevant:
             continue
-        if row.key in seen:
+        normalized_key = (
+            row.solver, row.topology, float(row.bias_V), row.support_kind.value,
+            str(row.support_id), row.quantity, row.component,
+        )
+        if normalized_key in seen:
             raise ValueError("duplicate avalanche observation key")
-        seen.add(row.key)
+        seen.add(normalized_key)
         state = row.solver, row.topology, float(row.bias_V)
         groups.setdefault(state, []).append(row)
 
@@ -687,6 +693,10 @@ def evaluate_avalanche_candidates(
         cells, edges = _topology(mesh, state[1])
         if any(node not in coordinates for nodes in cells.values() for node in nodes):
             raise ValueError("avalanche topology references an unknown node")
+        total_triangle_area_m2 = sum(
+            _triangle_area(tuple(coordinates[node] for node in cells[cell_id]))
+            for cell_id in sorted(cells, key=_stable_key)
+        )
 
         node_fields = {}
         node_field_status = {}
@@ -925,7 +935,7 @@ def evaluate_avalanche_candidates(
                 integrated_error = generation_error(
                     supports.candidate_integrated_per_m_s,
                     supports.native_integrated_per_m_s,
-                    floor=generation_limit,
+                    floor=generation_limit * total_triangle_area_m2,
                 )
             summary = summarize_generation_errors(
                 tuple(sample.error for sample in samples),

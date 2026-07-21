@@ -335,6 +335,85 @@ class InverseAvalancheTest(unittest.TestCase):
         self.assertTrue(all(record.status is SampleStatus.MISSING_FIELD
                             for record in qf.exclusions))
 
+    def test_integrated_generation_floor_scales_with_mesh_area(self):
+        scale = 0.1
+        observations = tuple(
+            replace(
+                row,
+                raw_value=row.raw_value * scale,
+                value_si=row.value_si * scale,
+            )
+            if row.quantity in {
+                "coordinate", "eQuasiFermiPotential", "hQuasiFermiPotential"
+            }
+            else row
+            for row in self.make_avalanche_observations(
+                states=(("sketch", -12.0),)
+            )
+        )
+        results = evaluate_avalanche_candidates(
+            observations,
+            self.mesh(),
+            parameters=self.parameters(),
+            generation_floor=1.0,
+            current_floor=1.0e-30,
+            q=1.0,
+        )
+        electric = next(
+            item for item in results
+            if item.candidate == "electric_field_magnitude"
+        )
+        generation = 10.0 * math.exp(-4.0) * 15.0
+        self.assertAlmostEqual(
+            electric.supports.native_integrated_per_m_s,
+            0.005 * generation,
+        )
+        self.assertIs(
+            electric.summary.integrated_error.status,
+            SampleStatus.VALID,
+        )
+        self.assertIs(
+            electric.summary.classification,
+            Identifiability.IDENTIFIED,
+        )
+
+    def test_one_centimetre_depth_contract_rejects_caller_variation(self):
+        with self.assertRaisesRegex(ValueError, "one-centimetre"):
+            evaluate_avalanche_candidates(
+                self.make_avalanche_observations(
+                    states=(("sketch", -12.0),)
+                ),
+                self.mesh(),
+                parameters=self.parameters(),
+                generation_floor=1.0e-30,
+                current_floor=1.0e-30,
+                q=1.0,
+                depth_m=0.02,
+            )
+
+    def test_duplicate_support_ids_are_rejected_after_string_normalization(self):
+        observations = self.make_avalanche_observations(
+            states=(("sketch", -12.0),)
+        )
+        duplicate = replace(
+            next(
+                row for row in observations
+                if row.support_id == "1"
+                and row.quantity == "coordinate"
+                and row.component == "x"
+            ),
+            support_id=1,
+        )
+        with self.assertRaisesRegex(ValueError, "duplicate"):
+            evaluate_avalanche_candidates(
+                observations + (duplicate,),
+                self.mesh(),
+                parameters=self.parameters(),
+                generation_floor=1.0e-30,
+                current_floor=1.0e-30,
+                q=1.0,
+            )
+
     @staticmethod
     def mesh():
         return {
