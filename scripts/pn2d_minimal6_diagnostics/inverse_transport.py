@@ -428,7 +428,7 @@ def _sg_current(carrier, density0, density1, dpsi, thermal_voltage, mobility, le
     if carrier == "electron":
         difference = _bernoulli(u) * density1 - _bernoulli(-u) * density0
     else:
-        difference = _bernoulli(-u) * density1 - _bernoulli(u) * density0
+        difference = _bernoulli(-u) * density0 - _bernoulli(u) * density1
     result = q * mobility * thermal_voltage * difference / length
     if not math.isfinite(result):
         raise ValueError("SG current must be finite")
@@ -476,14 +476,27 @@ def _sample(
     reference_transform,
     reference_floor,
     invalid_status=None,
+    reference_invalid_status=None,
 ):
-    error = (
-        TransportVectorError(invalid_status, invalid_status, None, None)
-        if invalid_status is not None
-        else _transport_vector_error(
+    if invalid_status is not None:
+        error = TransportVectorError(
+            invalid_status, invalid_status, None, None
+        )
+    elif reference_invalid_status is not None:
+        direction_status = (
+            SampleStatus.DIRECTION_UNDEFINED
+            if reference_invalid_status in {
+                SampleStatus.BELOW_FLOOR, SampleStatus.GEOMETRIC_ZERO
+            }
+            else reference_invalid_status
+        )
+        error = TransportVectorError(
+            reference_invalid_status, direction_status, None, None
+        )
+    else:
+        error = _transport_vector_error(
             candidate_value, reference_value, reference_floor=reference_floor
         )
-    )
     return TransportCandidateSample(
         candidate, state[0], state[1], state[2], carrier, split, support_kind,
         support_id, candidate_value, reference_value, unit, frame, orientation,
@@ -690,16 +703,18 @@ def evaluate_transport_candidates(
                         else:
                             gradient = edge_gradient_values.get(support_id)
                             transform = "cell_qf_gradient_to_edge_area_weighted"
-                    statuses = (
+                    candidate_statuses = (
                         tuple(qf_status[node] for node in nodes)
                         + tuple(density_status[node] for node in nodes)
                         + tuple(mobility_status[node] for node in nodes)
-                        + tuple(current_status[node] for node in nodes)
                     )
-                    invalid = _first_invalid(statuses)
+                    invalid = _first_invalid(candidate_statuses)
+                    reference_invalid = _first_invalid(
+                        current_status[node] for node in nodes
+                    )
                     density_value = None if _first_invalid(density_status[node] for node in nodes) else _average(density[node] for node in nodes)
                     mobility_value = None if _first_invalid(mobility_status[node] for node in nodes) else _average(mobility[node] for node in nodes)
-                    reference = None if _first_invalid(current_status[node] for node in nodes) else _average_vectors(current[node] for node in nodes)
+                    reference = None if any(current[node] is None for node in nodes) else _average_vectors(current[node] for node in nodes)
                     if (
                         candidate == "signed_edge_qf_difference_current"
                         and reference is not None
@@ -717,14 +732,12 @@ def evaluate_transport_candidates(
                             missing.append("density")
                         if _first_invalid(mobility_status[node] for node in nodes):
                             missing.append("mobility")
-                        if _first_invalid(current_status[node] for node in nodes):
-                            missing.append("current")
                         if gradient is None:
                             missing.append("qf_gradient")
                         observable = observable_value = observable_unit = None
                         if (
-                            missing == ["mobility"] and reference is not None
-                            and density_value is not None
+                            missing == ["mobility"] and reference_invalid is None
+                            and reference is not None and density_value is not None
                         ):
                             denominator = _carrier_sign(carrier) * charge * density_value
                             observable_value = (
@@ -750,7 +763,7 @@ def evaluate_transport_candidates(
                         else "node_current_to_edge_average_then_signed_projection"
                         if candidate == "signed_edge_qf_difference_current"
                         else "node_current_to_edge_average_preserving_vector",
-                        current_limit, invalid,
+                        current_limit, invalid, reference_invalid,
                     ))
                 results.append(_result(
                     candidate, carrier, state, split, support, "A/m^2",
@@ -799,20 +812,21 @@ def evaluate_transport_candidates(
                     for edge_id in sorted(edges, key=_stable_key):
                         start_node, end_node = edges[edge_id]
                         nodes = (start_node, end_node)
-                        statuses = (
+                        candidate_statuses = (
                             tuple(psi_status[node] for node in nodes)
                             + tuple(density_status[node] for node in nodes)
                             + tuple(mobility_status[node] for node in nodes)
-                            + tuple(current_status[node] for node in nodes)
                         )
-                        invalid = _first_invalid(statuses)
+                        invalid = _first_invalid(candidate_statuses)
+                        reference_invalid = _first_invalid(
+                            current_status[node] for node in nodes
+                        )
                         start, end = coordinates[start_node], coordinates[end_node]
-                        reference = None
+                        reference = None if any(current[node] is None for node in nodes) else _average_vectors(current[node] for node in nodes)
                         candidate_value = None
-                        if _first_invalid(current_status[node] for node in nodes) is None:
-                            native = _average_vectors(current[node] for node in nodes)
+                        if reference is not None:
                             reference = reconstruct_edge_vector(
-                                project_vector_to_edge(native, start, end), start, end
+                                project_vector_to_edge(reference, start, end), start, end
                             )
                         if invalid is None:
                             length = math.dist(start, end)
@@ -850,7 +864,6 @@ def evaluate_transport_candidates(
                                 ("potential", tuple(psi_status[node] for node in nodes)),
                                 ("density", tuple(density_status[node] for node in nodes)),
                                 ("mobility", tuple(mobility_status[node] for node in nodes)),
-                                ("current", tuple(current_status[node] for node in nodes)),
                             ):
                                 if _first_invalid(status_group):
                                     missing.append(name)
@@ -868,7 +881,7 @@ def evaluate_transport_candidates(
                             edge_id, candidate_value, reference, "A/m^2", frame,
                             f"{native_orientation};edge=start_to_end", transform,
                             "node_current_to_edge_average_then_signed_projection",
-                            current_limit, invalid,
+                            current_limit, invalid, reference_invalid,
                         ))
                     results.append(_result(
                         candidate, carrier, state, split, SupportKind.EDGE, "A/m^2",

@@ -188,7 +188,84 @@ class InverseTransportTest(unittest.TestCase):
             ),
         )
 
-    def test_flat_qf_produces_zero_reconstructed_qf_current(self):
+    def test_zero_field_sg_diffusion_signs_follow_both_carrier_qf_definitions(self):
+        rows = []
+        thermal_voltage = 0.5
+        for row in self.make_affine_observations(solver="sentaurus", mobility=True):
+            node_density = 3.0 if str(row.support_id) == "1" else 1.0
+            if row.quantity == "ElectrostaticPotential":
+                row = replace(row, raw_value=0.0, value_si=0.0)
+            elif row.quantity in {"eDensity", "hDensity"}:
+                row = replace(row, raw_value=node_density, value_si=node_density)
+            elif row.quantity in {"eQuasiFermiPotential", "hQuasiFermiPotential"}:
+                qf = -thermal_voltage * math.log(node_density)
+                row = replace(row, raw_value=qf, value_si=qf)
+            elif row.quantity in {"eCurrentDensity", "hCurrentDensity"}:
+                current_x = 1.0 if row.quantity == "eCurrentDensity" else -1.0
+                current_value = (
+                    current_x if row.component == "component0" else 0.0
+                )
+                row = replace(row, raw_value=current_value, value_si=current_value)
+            rows.append(row)
+
+        results = evaluate_transport_candidates(
+            rows, self.mesh(), density_floor=1.0e-30, current_floor=1.0e-30,
+            thermal_voltage_V=thermal_voltage, q=1.0,
+        )
+        sg = {
+            item.carrier: next(
+                sample for sample in item.samples if sample.support_id == "edge-01"
+            )
+            for item in results if item.candidate == "signed_edge_sg_density_current"
+        }
+        self.assertEqual(sg["electron"].candidate_value, (1.0, 0.0))
+        self.assertEqual(sg["hole"].candidate_value, (-1.0, 0.0))
+
+    def test_candidates_remain_computable_when_current_reference_is_below_floor(self):
+        rows = [
+            replace(row, raw_value=0.0, value_si=0.0)
+            if row.quantity in {"eCurrentDensity", "hCurrentDensity"} else row
+            for row in self.make_affine_observations(solver="sentaurus", mobility=True)
+        ]
+        results = evaluate_transport_candidates(
+            rows, self.mesh(), density_floor=1.0e-30, current_floor=1.0e-12,
+            thermal_voltage_V=0.025, q=1.0,
+        )
+        inverse = [
+            item for item in results
+            if item.candidate == "current_inverted_qf_gradient"
+        ]
+        self.assertTrue(inverse)
+        self.assertTrue(all(
+            sample.candidate_value is None
+            for item in inverse for sample in item.samples
+        ))
+        self.assertTrue(all(
+            sample.error.magnitude_status is SampleStatus.BELOW_FLOOR
+            for item in inverse for sample in item.samples
+        ))
+        independently_computable = [
+            item for item in results if item.candidate != "current_inverted_qf_gradient"
+        ]
+        self.assertTrue(independently_computable)
+        self.assertTrue(all(
+            sample.candidate_value is not None
+            for item in independently_computable for sample in item.samples
+        ))
+        self.assertTrue(any(
+            sample.candidate_value != (0.0, 0.0)
+            for item in independently_computable for sample in item.samples
+        ))
+        self.assertTrue(all(
+            sample.error.magnitude_status is SampleStatus.BELOW_FLOOR
+            and sample.error.direction_status is SampleStatus.DIRECTION_UNDEFINED
+            for item in independently_computable for sample in item.samples
+        ))
+        self.assertTrue(all(item.valid_count == 0 for item in independently_computable))
+        self.assertTrue(all(item.classification is Identifiability.INSUFFICIENT_DATA
+                            for item in independently_computable))
+
+    def test_flat_qf_produces_explicit_zero_reconstructed_qf_current(self):
         rows = []
         for row in self.make_affine_observations(solver="sentaurus", mobility=True):
             if row.quantity in {"eQuasiFermiPotential", "hQuasiFermiPotential"}:
@@ -200,12 +277,23 @@ class InverseTransportTest(unittest.TestCase):
             rows, self.mesh(), density_floor=1.0e-30, current_floor=1.0e-30,
             q=1.0,
         )
-        qf_results = [item for item in results if "qf_" in item.candidate]
-        self.assertTrue(qf_results)
+        qf_candidates = {
+            "triangle_qf_gradient_current",
+            "node_area_weighted_qf_gradient_current",
+            "edge_area_weighted_qf_gradient_current",
+            "signed_edge_qf_difference_current",
+        }
+        samples = [
+            sample for item in results if item.candidate in qf_candidates
+            for sample in item.samples
+        ]
+        self.assertTrue(samples)
+        self.assertTrue(all(sample.candidate_value == (0.0, 0.0)
+                            for sample in samples))
         self.assertTrue(all(
-            sample.candidate_value == (0.0, 0.0)
-            for item in qf_results for sample in item.samples
-            if sample.candidate_value is not None
+            sample.error.magnitude_status is SampleStatus.BELOW_FLOOR
+            and sample.error.direction_status is SampleStatus.DIRECTION_UNDEFINED
+            for sample in samples
         ))
 
     def test_missing_mobility_is_typed_confounded_with_mu_times_gradient_observable(self):
