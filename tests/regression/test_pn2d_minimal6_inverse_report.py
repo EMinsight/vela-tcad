@@ -7,6 +7,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from PIL import Image
+
 from scripts.diagnose_pn2d_minimal6_physics_inverse_audit import build_report_package
 from scripts.pn2d_minimal6_diagnostics.inverse_inputs import (
     canonical_observations, load_input_bundle,
@@ -177,16 +179,29 @@ class PN2DMinimal6InverseReportTest(unittest.TestCase):
                 cases.append((label, target))
             (cases[0][1] / "candidate_metrics.csv").write_bytes(
                 (cases[0][1] / "candidate_metrics.csv").read_bytes() + b"mutation")
+            with self.assertRaises(ValueError):
+                verify_report(cases[0][1])
+
             classification_path = cases[1][1] / "candidate_classifications.json"
             classification_path.write_bytes(classification_path.read_bytes() + b" ")
+            with self.assertRaises(ValueError):
+                verify_report(cases[1][1])
+
             png_path = cases[2][1] / "figures" / "potential_field.png"
-            png = bytearray(png_path.read_bytes()); png[-20] ^= 1; png_path.write_bytes(png)
+            with Image.open(png_path) as source:
+                png = source.convert("RGB")
+            original = png.getpixel((0, 0))
+            png.putpixel((0, 0), (original[0] ^ 1, original[1], original[2]))
+            png.save(png_path, format="PNG", optimize=False, compress_level=9,
+                     dpi=(120, 120))
+            with self.assertRaises(ValueError):
+                verify_report(cases[2][1])
+
             report_manifest = json.loads((cases[3][1] / "report_manifest.json").read_text())
             raw_path = Path(report_manifest["inputs"][0]["path"])
             raw_path.write_bytes(raw_path.read_bytes() + b"mutation")
-            for label, target in cases:
-                with self.subTest(label=label), self.assertRaises(ValueError):
-                    verify_report(target)
+            with self.assertRaises(ValueError):
+                verify_report(cases[3][1])
 
     def test_verifier_rejects_self_consistent_semantic_tampering_after_rehash(self):
         with tempfile.TemporaryDirectory() as tmp:
