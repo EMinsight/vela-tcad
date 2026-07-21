@@ -240,7 +240,9 @@ class InverseAvalancheTest(unittest.TestCase):
         kwargs = dict(
             mesh=self.mesh(),
             parameters=self.parameters(),
-            generation_floor=1.0e-30,
+            # This generation-domain floor exceeds alpha but remains below
+            # local and integrated G; it must not mask alpha inversion.
+            generation_floor=1.0,
             current_floor=1.0e-30,
             reference_densities_m3={"electron": 2.0, "hole": 2.0},
             q=1.0,

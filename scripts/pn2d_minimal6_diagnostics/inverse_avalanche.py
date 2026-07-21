@@ -740,7 +740,7 @@ def evaluate_avalanche_candidates(
                         reference_driver[node],
                         reference_driver_status[node],
                     ) = _invert_piecewise_alpha(
-                        native_alpha[node], parameters, carrier, generation_limit
+                        native_alpha[node], parameters, carrier, 0.0
                     )
                 else:
                     reference_driver[node] = None
