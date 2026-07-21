@@ -43,6 +43,10 @@ class InverseFieldsTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "degenerate triangle"):
             triangle_gradient(((0.0, 0.0), (1.0, 0.0), (2.0, 0.0)), (0.0, 1.0, 2.0))
 
+
+        with self.assertRaisesRegex(ValueError, "nonfinite triangle geometry"):
+            triangle_gradient(((0.0, 0.0), (1.0e308, 0.0), (0.0, 1.0e308)),
+                              (0.0, 1.0, 0.0))
     def test_area_weighted_recovery_preserves_support_identity(self):
         coordinates = {
             "0": (0.0, 0.0),

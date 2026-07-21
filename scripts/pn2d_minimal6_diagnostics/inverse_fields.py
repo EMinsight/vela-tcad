@@ -132,6 +132,8 @@ def triangle_gradient(points, values) -> Vector:
     if not all(math.isfinite(value) for value in (f0, f1, f2)):
         raise ValueError("triangle values must be finite")
     det = (x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0)
+    if not math.isfinite(det):
+        raise ValueError("nonfinite triangle geometry")
     if abs(det) <= 1e-300:
         raise ValueError("degenerate triangle")
     gx = ((f1 - f0) * (y2 - y0) - (f2 - f0) * (y1 - y0)) / det
