@@ -19,6 +19,7 @@ try:
         SampleStatus,
         SupportKind,
     )
+    from .inverse_inputs import DISCOVERY_KEYS
 except ImportError:
     from scripts.pn2d_minimal6_diagnostics.counterfactual import (  # type: ignore
         DependencyCounterfactualEngine,
@@ -30,6 +31,7 @@ except ImportError:
         SampleStatus,
         SupportKind,
     )
+    from scripts.pn2d_minimal6_diagnostics.inverse_inputs import DISCOVERY_KEYS  # type: ignore
 
 
 INVERSE_DEPENDENCIES: dict[str, tuple[str, ...]] = {
@@ -48,6 +50,7 @@ _STATE_LAYERS = ("potential", "carrier_state", "quasi_fermi_state")
 _COMPATIBILITY_FIELDS = (
     "support_kind", "support_id", "unit_si", "carrier", "topology", "bias_V"
 )
+_CONTEXT_FIELDS = ("topology", "bias_V", "carrier", "support_kind", "support_id")
 _FORBIDDEN_FIT_DIMENSIONS = {
     "bias", "bias_V", "node", "edge", "cell", "support", "support_id",
     "carrier", "topology",
@@ -96,10 +99,6 @@ def _normalize_operand(factor: str, record: object, *, positive: bool = True) ->
     declared_factor = _field(record, "factor")
     if declared_factor != factor:
         raise ValueError(f"operand factor mismatch for {factor}")
-    missing = [name for name in _COMPATIBILITY_FIELDS
-               if _field(record, name, object()) is object()]
-    # The object-sentinel expression above cannot retain identity across calls;
-    # perform the explicit presence check below instead.
     missing = []
     for name in _COMPATIBILITY_FIELDS:
         if isinstance(record, Mapping):
@@ -152,6 +151,22 @@ def _validate_operand_sets(baseline_values, replacement_values, *, positive=True
     return baseline, replacement
 
 
+def _validate_global_context(records: Mapping[str, Mapping[str, object]], label: str) -> None:
+    for field in _CONTEXT_FIELDS:
+        values = [(name, row[field]) for name, row in records.items()
+                  if row[field] is not None]
+        if not values:
+            continue
+        expected = values[0][1]
+        mismatched = [(name, value) for name, value in values[1:]
+                      if value != expected]
+        if mismatched:
+            details = ", ".join(f"{name}={value!r}" for name, value in mismatched)
+            raise ValueError(
+                f"global {label} {field} mismatch: expected {expected!r}; {details}"
+            )
+
+
 def _chain_operators() -> dict[str, Callable]:
     operators: dict[str, Callable] = {}
     for factor, parents in INVERSE_DEPENDENCIES.items():
@@ -196,6 +211,11 @@ def run_replacement_matrix(
     baseline, replacement = _validate_operand_sets(
         baseline_values, replacement_values
     )
+    _validate_global_context(baseline, "replacement matrix")
+    _validate_global_context(replacement, "replacement matrix")
+    if direct_target is None:
+        raise ValueError("direct_target is required for independent replacement closure")
+    target = _finite_number(direct_target, "direct_target", positive=True)
     for factor in INVERSE_DEPENDENCIES:
         for operand_set in (baseline, replacement):
             status = operand_set[factor]["status"]
@@ -260,8 +280,6 @@ def run_replacement_matrix(
         })
         current = value
 
-    target = (full_replacement if direct_target is None else
-              _finite_number(direct_target, "direct target", positive=True))
     forward_gap = math.log10(full_replacement / baseline_output)
     reverse_gap = math.log10(baseline_output / full_replacement)
     closure = {
@@ -309,6 +327,216 @@ def run_replacement_matrix(
     }
 
 
+def _candidate_split(record: object) -> str:
+    explicit = _field(record, "split")
+    if explicit in ("discovery", "holdout"):
+        return str(explicit)
+    key = (str(_field(record, "topology")), float(_field(record, "bias_V")))
+    return "discovery" if key in DISCOVERY_KEYS else "holdout"
+
+
+def _signed_vector_prediction(candidate, reference, status: SampleStatus) -> float | None:
+    if status is not SampleStatus.VALID or candidate is None or reference is None:
+        return None
+    try:
+        candidate_magnitude = math.hypot(float(candidate[0]), float(candidate[1]))
+        reference_magnitude = math.hypot(float(reference[0]), float(reference[1]))
+    except (TypeError, ValueError, IndexError):
+        return None
+    if (not math.isfinite(candidate_magnitude)
+            or not math.isfinite(reference_magnitude)
+            or candidate_magnitude <= 0.0 or reference_magnitude <= 0.0):
+        return None
+    return math.log10(candidate_magnitude / reference_magnitude)
+
+
+def _signed_scalar_prediction(candidate, reference, status: SampleStatus) -> float | None:
+    if status is not SampleStatus.VALID or candidate is None or reference is None:
+        return None
+    try:
+        candidate_value, reference_value = float(candidate), float(reference)
+    except (TypeError, ValueError):
+        return None
+    if (not math.isfinite(candidate_value) or not math.isfinite(reference_value)
+            or candidate_value <= 0.0 or reference_value <= 0.0):
+        return None
+    return math.log10(candidate_value / reference_value)
+
+
+def _formula_evidence(sample: object, *, factor: str, metric: str,
+                      status: SampleStatus, error: float | None,
+                      prediction_dex: float | None,
+                      carrier: str | None = None,
+                      support_kind: object | None = None,
+                      support_id: object | None = None,
+                      candidate: str | None = None,
+                      split: str | None = None) -> dict:
+    return {
+        "record_kind": "formula_candidate",
+        "candidate": candidate or str(_field(sample, "candidate")),
+        "solver": str(_field(sample, "solver")),
+        "factor": factor,
+        "split": split or _candidate_split(sample),
+        "topology": str(_field(sample, "topology")),
+        "bias_V": float(_field(sample, "bias_V")),
+        "support_kind": support_kind if support_kind is not None else _field(sample, "support_kind"),
+        "support_id": support_id if support_id is not None else _field(sample, "support_id"),
+        "carrier": carrier if carrier is not None else _field(sample, "carrier"),
+        "metric": metric,
+        "error": error,
+        "prediction_dex": prediction_dex,
+        "status": status,
+    }
+
+
+def _flatten_field_sample(sample: object) -> list[dict]:
+    error = _field(sample, "error")
+    magnitude_status = _status(_field(error, "magnitude_status"))
+    direction_status = _status(_field(error, "direction_status"))
+    prediction = _signed_vector_prediction(
+        _field(sample, "candidate_value"), _field(sample, "reference_value"),
+        magnitude_status,
+    )
+    return [
+        _formula_evidence(
+            sample, factor="gradient_recovery", metric="field_magnitude_relative",
+            status=magnitude_status, error=_field(error, "relative_magnitude_error"),
+            prediction_dex=prediction,
+        ),
+        _formula_evidence(
+            sample, factor="gradient_recovery", metric="field_direction_deg",
+            status=direction_status, error=_field(error, "angle_deg"),
+            prediction_dex=prediction,
+        ),
+    ]
+
+
+def _flatten_transport_sample(sample: object) -> list[dict]:
+    error = _field(sample, "error")
+    magnitude_status = _status(_field(error, "magnitude_status"))
+    direction_status = _status(_field(error, "direction_status"))
+    prediction = _signed_vector_prediction(
+        _field(sample, "candidate_value"), _field(sample, "reference_value"),
+        magnitude_status,
+    )
+    carrier = str(_field(sample, "carrier"))
+    return [
+        _formula_evidence(
+            sample, factor="current_semantics", metric="transport_abs_dex",
+            status=magnitude_status, error=_field(error, "abs_log10_error"),
+            prediction_dex=prediction, carrier=carrier,
+        ),
+        _formula_evidence(
+            sample, factor="current_semantics", metric="transport_direction_deg",
+            status=direction_status, error=_field(error, "angle_deg"),
+            prediction_dex=prediction, carrier=carrier,
+        ),
+    ]
+
+
+def _flatten_transport_confounding(record: object, result: object) -> dict:
+    missing_inputs = tuple(str(value) for value in (_field(record, "missing_inputs", ()) or ()))
+    missing = ("mobility",) if "mobility" in missing_inputs else ()
+    row = _formula_evidence(
+        record, factor="current_semantics", metric="transport_abs_dex",
+        status=_status(_field(record, "status")), error=None,
+        prediction_dex=None, carrier=str(_field(record, "carrier")),
+        candidate=str(_field(record, "candidate")), split=_candidate_split(result),
+    )
+    row["solver"] = str(_field(result, "solver"))
+    row["missing_independent_factors"] = missing
+    return row
+
+
+def _flatten_avalanche_sample(sample: object) -> list[dict]:
+    error = _field(sample, "error")
+    status = _status(_field(error, "status"))
+    prediction = _signed_scalar_prediction(
+        _field(sample, "candidate_generation_m3_s"),
+        _field(sample, "reference_generation_m3_s"), status,
+    )
+    return [_formula_evidence(
+        sample, factor="impact_driving_field", metric="local_generation_abs_dex",
+        status=status, error=_field(error, "abs_log10_error"),
+        prediction_dex=prediction,
+    )]
+
+
+def _flatten_avalanche_integrated(result: object) -> dict:
+    summary = _field(result, "summary")
+    error = _field(summary, "integrated_error")
+    status = _status(_field(error, "status"))
+    supports = _field(result, "supports")
+    prediction = None
+    if supports is not None:
+        prediction = _signed_scalar_prediction(
+            _field(supports, "candidate_integrated_per_m_s"),
+            _field(supports, "native_integrated_per_m_s"), status,
+        )
+    return _formula_evidence(
+        result, factor="impact_driving_field",
+        metric="integrated_generation_abs_dex", status=status,
+        error=_field(error, "abs_log10_error"), prediction_dex=prediction,
+        support_kind=SupportKind.INTEGRATED, support_id="integrated",
+        split=_candidate_split(result),
+    )
+
+
+def _flatten_error_record(record: object) -> list[dict] | None:
+    name = type(record).__name__
+    if name == "VectorErrorResult":
+        return [
+            {"status": _field(record, "magnitude_status"),
+             "error": _field(record, "relative_magnitude_error")},
+            {"status": _field(record, "direction_status"),
+             "error": _field(record, "angle_deg")},
+        ]
+    if name == "TransportVectorError":
+        return [
+            {"status": _field(record, "magnitude_status"),
+             "error": _field(record, "abs_log10_error")},
+            {"status": _field(record, "direction_status"),
+             "error": _field(record, "angle_deg")},
+        ]
+    if name == "GenerationError":
+        return [{"status": _field(record, "status"),
+                 "error": _field(record, "abs_log10_error")}]
+    return None
+
+
+def _flatten_evidence(records: Iterable[object]) -> list[object]:
+    flattened: list[object] = []
+    for record in records:
+        if isinstance(record, Mapping) or isinstance(record, (int, float)):
+            flattened.append(record)
+            continue
+        name = type(record).__name__
+        errors = _flatten_error_record(record)
+        if errors is not None:
+            flattened.extend(errors)
+        elif name == "FieldCandidateSample":
+            flattened.extend(_flatten_field_sample(record))
+        elif name == "TransportCandidateSample":
+            flattened.extend(_flatten_transport_sample(record))
+        elif name == "AvalancheCandidateSample":
+            flattened.extend(_flatten_avalanche_sample(record))
+        elif name == "FieldCandidateResult":
+            for sample in _field(record, "samples", ()):
+                flattened.extend(_flatten_field_sample(sample))
+        elif name == "TransportCandidateResult":
+            for sample in _field(record, "samples", ()):
+                flattened.extend(_flatten_transport_sample(sample))
+            for confounding in _field(record, "confoundings", ()):
+                flattened.append(_flatten_transport_confounding(confounding, record))
+        elif name == "AvalancheCandidateResult":
+            for sample in _field(record, "samples", ()):
+                flattened.extend(_flatten_avalanche_sample(sample))
+            flattened.append(_flatten_avalanche_integrated(record))
+        else:
+            flattened.append(record)
+    return flattened
+
+
 def _percentile(sorted_values: list[float], percentile: float) -> float:
     if len(sorted_values) == 1:
         return sorted_values[0]
@@ -326,7 +554,7 @@ def metric_summary(records: Iterable[object], *, value_field: str = "error") -> 
     values: list[float] = []
     statuses: Counter[str] = Counter()
     total = 0
-    for record in records:
+    for record in _flatten_evidence(records):
         total += 1
         if isinstance(record, (int, float)) and not isinstance(record, bool):
             status = SampleStatus.VALID
@@ -415,19 +643,19 @@ def _base_classification(candidate: str, records: Iterable[object], *,
     rows, _ = _candidate_rows(candidate, records)
     if minimum_valid_samples < 1:
         raise ValueError("minimum_valid_samples must be positive")
-    valid = _valid_rows(rows)
-    discovery = [row for row in valid if _field(row, "split") == "discovery"]
-    holdout = [row for row in valid if _field(row, "split") == "holdout"]
-    if (len(discovery) < minimum_valid_samples
-            or len(holdout) < minimum_valid_samples):
-        return Identifiability.INSUFFICIENT_DATA
-
     missing_factors = {
         str(factor) for row in rows
         for factor in (_field(row, "missing_independent_factors", ()) or ())
     }
     if missing_factors:
         return Identifiability.CONFOUNDED
+
+    valid = _valid_rows(rows)
+    discovery = [row for row in valid if _field(row, "split") == "discovery"]
+    holdout = [row for row in valid if _field(row, "split") == "holdout"]
+    if (len(discovery) < minimum_valid_samples
+            or len(holdout) < minimum_valid_samples):
+        return Identifiability.INSUFFICIENT_DATA
     if _fit_leakage(rows):
         return Identifiability.REJECTED
 
@@ -456,6 +684,7 @@ def _sample_identity(row: object) -> tuple:
         support = support.value
     return (
         str(_field(row, "factor")), str(_field(row, "metric")),
+        str(_field(row, "solver")), str(_field(row, "split")),
         str(_field(row, "topology")), float(_field(row, "bias_V")),
         str(support), str(_field(row, "support_id")),
         str(_field(row, "carrier")), str(_field(row, "component", "")),
@@ -495,7 +724,7 @@ def classify_candidate(
     minimum_valid_samples: int = 1,
 ) -> Identifiability:
     """Classify one formula candidate using combined and holdout evidence."""
-    materialized = list(records)
+    materialized = _flatten_evidence(records)
     thresholds = thresholds or AcceptanceThresholds()
     base = _base_classification(
         candidate, materialized, thresholds=thresholds,
@@ -554,7 +783,7 @@ def rank_candidates(
     Holdout evidence affects the classification gate, never the ranking score.
     Localization controls are omitted before candidate names are collected.
     """
-    materialized = [row for row in records
+    materialized = [row for row in _flatten_evidence(records)
                     if _field(row, "record_kind", "formula_candidate") == "formula_candidate"]
     if not materialized:
         return []
@@ -583,16 +812,9 @@ def rank_candidates(
             "combined_metrics": _summaries_by_metric(rows),
             "holdout_metrics": _summaries_by_metric(holdout),
         })
-    class_order = {
-        Identifiability.IDENTIFIED: 0,
-        Identifiability.CONSISTENT_NONUNIQUE: 0,
-        Identifiability.CONFOUNDED: 1,
-        Identifiability.INSUFFICIENT_DATA: 2,
-        Identifiability.REJECTED: 3,
-    }
-    return sorted(ranked, key=lambda row: (
-        class_order[row["classification"]], row["discovery_score"], row["candidate"]
-    ))
+    return sorted(
+        ranked, key=lambda row: (row["discovery_score"], row["candidate"])
+    )
 
 
 def run_state_localization_control(
@@ -605,6 +827,7 @@ def run_state_localization_control(
     if set(baseline_state) != set(_STATE_LAYERS) or set(replacement_state) != set(_STATE_LAYERS):
         raise ValueError("whole-state control requires potential, carrier, and quasi-Fermi state")
     baseline, replacement = {}, {}
+    unavailable: tuple[str, SampleStatus] | None = None
     for layer in _STATE_LAYERS:
         baseline[layer] = _normalize_operand(layer, baseline_state[layer], positive=False)
         replacement[layer] = _normalize_operand(layer, replacement_state[layer], positive=False)
@@ -612,17 +835,23 @@ def run_state_localization_control(
             if baseline[layer][field] != replacement[layer][field]:
                 raise ValueError(f"{layer} {field} mismatch in localization control")
         for values in (baseline, replacement):
-            if values[layer]["status"] is not SampleStatus.VALID:
-                return {
-                    "record_kind": "localization_control",
-                    "candidate": "whole_state_sentaurus_replay",
-                    "classification": "localization_control",
-                    "status": values[layer]["status"].value,
-                    "unavailable_layer": layer,
-                    "eligible_for_candidate_ranking": False,
-                    "eligible_for_formula_classification": False,
-                    "layers_replaced": list(_STATE_LAYERS),
-                }
+            status = values[layer]["status"]
+            if status is not SampleStatus.VALID and unavailable is None:
+                unavailable = layer, status
+    _validate_global_context(baseline, "localization control")
+    _validate_global_context(replacement, "localization control")
+    if unavailable is not None:
+        layer, status = unavailable
+        return {
+            "record_kind": "localization_control",
+            "candidate": "whole_state_sentaurus_replay",
+            "classification": "localization_control",
+            "status": status.value,
+            "unavailable_layer": layer,
+            "eligible_for_candidate_ranking": False,
+            "eligible_for_formula_classification": False,
+            "layers_replaced": list(_STATE_LAYERS),
+        }
     baseline_output = _finite_number(
         evaluate({name: baseline[name]["value"] for name in _STATE_LAYERS}),
         "localization baseline output", positive=False,
