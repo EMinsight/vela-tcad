@@ -96,6 +96,18 @@ def _finite_vector(value, label: str) -> Vector:
     return _finite_point(value, label)
 
 
+def _edge_geometry(start: Point, end: Point) -> tuple[float, float, float]:
+    dx, dy = end[0] - start[0], end[1] - start[1]
+    if not math.isfinite(dx) or not math.isfinite(dy):
+        raise ValueError("edge has nonfinite geometry")
+    length = math.hypot(dx, dy)
+    if not math.isfinite(length):
+        raise ValueError("edge has nonfinite geometry")
+    if length == 0.0:
+        raise ValueError("edge has zero length")
+    return dx, dy, length
+
+
 def _triangle_area(points: Sequence[Point]) -> float:
     if len(points) != 3:
         raise ValueError("triangle needs exactly three points")
@@ -188,8 +200,7 @@ def cell_to_edge_vectors(cell_vectors, cells, edges, coordinates):
         if any(node not in coordinate_map for node in edge):
             raise ValueError("edge coordinate is missing")
         start, end = (_finite_point(coordinate_map[node], "edge coordinate") for node in edge)
-        if math.hypot(end[0] - start[0], end[1] - start[1]) == 0.0:
-            raise ValueError("edge has zero length")
+        _edge_geometry(start, end)
         adjacent = tuple(cell_id for cell_id in sorted(normalized_cells, key=_stable_key)
                          if edge[0] in normalized_cells[cell_id] and edge[1] in normalized_cells[cell_id])
         if not adjacent:
@@ -208,9 +219,7 @@ def edge_scalar_difference(start_value, end_value, start, end) -> float:
         raise ValueError("edge scalar values must be finite")
     x0, y0 = _finite_point(start, "edge start")
     x1, y1 = _finite_point(end, "edge end")
-    length = math.hypot(x1 - x0, y1 - y0)
-    if length == 0.0:
-        raise ValueError("edge has zero length")
+    _, _, length = _edge_geometry((x0, y0), (x1, y1))
     result = (second - first) / length
     if not math.isfinite(result):
         raise ValueError("nonfinite edge scalar difference")
@@ -257,14 +266,29 @@ def vector_error(candidate, reference, *, reference_floor: float) -> VectorError
         return VectorErrorResult(SampleStatus.BELOW_FLOOR,
                                  SampleStatus.DIRECTION_UNDEFINED, None, None)
     relative_error = abs(candidate_magnitude - reference_magnitude) / reference_magnitude
+    if not math.isfinite(relative_error):
+        return VectorErrorResult(SampleStatus.NONFINITE, SampleStatus.NONFINITE,
+                                 None, None)
     if candidate_magnitude == 0.0:
         return VectorErrorResult(SampleStatus.VALID, SampleStatus.DIRECTION_UNDEFINED,
                                  relative_error, None)
-    cosine = ((candidate_vector[0] * reference_vector[0]
-               + candidate_vector[1] * reference_vector[1])
-              / (candidate_magnitude * reference_magnitude))
+    candidate_unit = (candidate_vector[0] / candidate_magnitude,
+                      candidate_vector[1] / candidate_magnitude)
+    reference_unit = (reference_vector[0] / reference_magnitude,
+                      reference_vector[1] / reference_magnitude)
+    if not all(math.isfinite(value) for value in candidate_unit + reference_unit):
+        return VectorErrorResult(SampleStatus.VALID, SampleStatus.NONFINITE,
+                                 relative_error, None)
+    cosine = (candidate_unit[0] * reference_unit[0]
+              + candidate_unit[1] * reference_unit[1])
+    if not math.isfinite(cosine):
+        return VectorErrorResult(SampleStatus.VALID, SampleStatus.NONFINITE,
+                                 relative_error, None)
     cosine = max(-1.0, min(1.0, cosine))
     angle = math.degrees(math.acos(cosine))
+    if not math.isfinite(angle):
+        return VectorErrorResult(SampleStatus.VALID, SampleStatus.NONFINITE,
+                                 relative_error, None)
     return VectorErrorResult(SampleStatus.VALID, SampleStatus.VALID,
                              relative_error, angle)
 
@@ -285,7 +309,11 @@ def _topology(mesh, topology):
 
 
 def _usable(observation: Observation | None, expected_unit: str) -> tuple[float | None, SampleStatus]:
-    if observation is None or observation.status is SampleStatus.MISSING_FIELD or observation.value_si is None:
+    if observation is None:
+        return None, SampleStatus.MISSING_FIELD
+    if observation.status is not SampleStatus.VALID:
+        return None, observation.status
+    if observation.value_si is None:
         return None, SampleStatus.MISSING_FIELD
     if observation.unit_si != expected_unit:
         return None, SampleStatus.INVALID_UNIT
@@ -356,9 +384,16 @@ def evaluate_field_candidates(
     nodal electric fields are explicitly averaged to cell/edge support before
     comparison; no cross-support comparison is implicit.
     """
-    limits = AcceptanceThresholds() if thresholds is None else thresholds
-    if not isinstance(limits, AcceptanceThresholds):
+    canonical_limits = AcceptanceThresholds()
+    if thresholds is None:
+        limits = canonical_limits
+    elif not isinstance(thresholds, AcceptanceThresholds):
         raise ValueError("thresholds must use the fixed inverse-audit contract")
+    elif (thresholds.field_median_relative != canonical_limits.field_median_relative
+          or thresholds.field_median_angle_deg != canonical_limits.field_median_angle_deg):
+        raise ValueError("field thresholds are immutable at 2 percent and 1 degree")
+    else:
+        limits = thresholds
     rows = tuple(observations)
     relevant = [row for row in rows if row.support_kind is SupportKind.NODE
                 and row.quantity in {"coordinate", "ElectrostaticPotential", "ElectricField"}]
@@ -397,8 +432,7 @@ def evaluate_field_candidates(
             if not any(edge[0] in nodes and edge[1] in nodes for nodes in normalized_cells.values()):
                 raise ValueError("edge has no adjacent cell")
             start, end = coordinates[edge[0]], coordinates[edge[1]]
-            if math.hypot(end[0] - start[0], end[1] - start[1]) == 0.0:
-                raise ValueError("edge has zero length")
+            _edge_geometry(start, end)
 
         potentials, potential_status = {}, {}
         fields, field_status = {}, {}
@@ -489,8 +523,7 @@ def evaluate_field_candidates(
             signed_vector = projected_reference = None
             if scalar_invalid is None:
                 start, end = coordinates[start_id], coordinates[end_id]
-                dx, dy = end[0] - start[0], end[1] - start[1]
-                length = math.hypot(dx, dy)
+                dx, dy, length = _edge_geometry(start, end)
                 tangent = dx / length, dy / length
                 signed = -edge_scalar_difference(potentials[start_id], potentials[end_id], start, end)
                 reference_projection = reference[0] * tangent[0] + reference[1] * tangent[1]
