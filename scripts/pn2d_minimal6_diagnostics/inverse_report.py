@@ -268,6 +268,24 @@ def _semantic_replay(rows: tuple[Observation, ...], replacement: dict) -> dict:
         }
     else:
         replay["generation"] = {"status": "insufficient_data"}
+    generation_rows = [
+        _finite(index.get(("sentaurus", *state, current, "ImpactIonization", "component0")))
+        for current in nodes[:3]
+    ]
+    triangle = replay["triangle_gradient"]
+    if (triangle["status"] == "valid" and len(generation_rows) == 3
+            and all(value is not None for value in generation_rows)):
+        (x0, y0), (x1, y1), (x2, y2) = triangle["points_m"]
+        area_m2 = 0.5 * abs((x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0))
+        depth_m = 0.01
+        replay["generation_support_integral"] = {
+            "status": "valid", "support_kind": "triangle_from_raw_nodes",
+            "support_ids": nodes[:3], "native_generation_m3_s_inv": generation_rows,
+            "area_m2": area_m2, "depth_m": depth_m,
+            "integral_s_inv": statistics.mean(generation_rows) * area_m2 * depth_m,
+        }
+    else:
+        replay["generation_support_integral"] = {"status": "insufficient_data"}
     replay["replacement_closure"] = replacement["closure"]
     return replay
 
@@ -285,11 +303,14 @@ def _series(rows: tuple[Observation, ...], quantity: str, *, magnitude: bool = F
                 grouped = {}
                 for row in selected:
                     grouped.setdefault((row.topology, row.support_id), {})[row.component] = row.value_si
-                values.append(statistics.mean(math.hypot(value.get("component0", 0.0),
-                                                         value.get("component1", 0.0))
-                                              for value in grouped.values()) if grouped else 0.0)
+                complete = [value for value in grouped.values()
+                            if value.get("component0") is not None
+                            and value.get("component1") is not None]
+                values.append(statistics.mean(math.hypot(float(value["component0"]),
+                                                         float(value["component1"]))
+                                              for value in complete) if complete else None)
             else:
-                values.append(statistics.mean(abs(float(row.value_si)) for row in selected) if selected else 0.0)
+                values.append(statistics.mean(abs(float(row.value_si)) for row in selected) if selected else None)
         output.append({"label": solver.capitalize(), "values": values})
     return biases, output
 
@@ -313,7 +334,7 @@ def _qf_series(rows: tuple[Observation, ...]) -> tuple[list[float], list[dict]]:
                 if None not in (density, mobility, jx, jy) and density > 0 and mobility > 0:
                     gradient = current_inverted_qf_gradient(carrier, density, mobility, (jx, jy))
                     samples.append(math.hypot(*gradient))
-            values.append(statistics.mean(samples) if samples else 0.0)
+            values.append(statistics.mean(samples) if samples else None)
         result.append({"label": f"{carrier.capitalize()} effective gradient", "values": values})
     return biases, result
 
@@ -436,7 +457,7 @@ def _report_markdown(report: dict, figures: dict) -> str:
         "## Methodology", "",
         "The audit validates hash-bound inputs, writes canonical support tables, evaluates direct paired candidates without local scaling, reconstructs selected triangle, current-inverted, alpha, and generation identities, and runs a declared seven-stage multiplicative replacement closure control. Classification is descriptive or diagnostic unless independent factors, discovery, holdout, symmetry, direction, and magnitude gates establish identifiability. No result in this report is inferential or causal.", "",
         "## Limitations, uncertainty, and robustness", "",
-        "Aggregate node means can conceal local direction and support errors. The current-inverted quasi-Fermi result is confounded by cross-solver mobility availability. Alpha inversion can be branch-ambiguous, and alpha agreement does not uniquely determine the driver. The replacement decomposition is an arithmetic robustness fixture rather than fitted physical attribution. Byte-identical dual runs, raw-input hashes, artifact hashes, decoded PNG pixel hashes, fixed thresholds, split membership, and independent semantic replay address reproducibility but do not create evidence absent from the inputs.", "",
+        "Aggregate node means can conceal local direction and support errors. The current-inverted quasi-Fermi result is confounded by cross-solver mobility availability. Alpha inversion can be branch-ambiguous, and alpha agreement does not uniquely determine the driver. The replacement decomposition is an arithmetic robustness fixture rather than fitted physical attribution. Byte-identical dual runs within the same Python and rendering-library versions, raw-input hashes, artifact hashes, decoded PNG pixel hashes, fixed thresholds, split membership, and independent semantic replay address reproducibility but do not create evidence absent from the inputs.", "",
         "## Recommended next steps", "",
         "- Promote a formula to a production-change task only when its local support, direction, discovery, holdout, mirror, and replacement gates all pass.",
         "- Obtain independently comparable Vela and Sentaurus mobility on the same support before resolving the quasi-Fermi-gradient confounding.",
@@ -448,6 +469,27 @@ def _report_markdown(report: dict, figures: dict) -> str:
     ))
     return "\n".join(lines)
 
+
+
+def _raw_input_ledger(bundle: InputBundle, input_roots: dict[str, str]) -> list[dict]:
+    rows = []
+    for logical, digest in bundle.input_hashes:
+        solver, relative = logical.split(":", 1)
+        input_key = ("supplemental_sentaurus_root" if solver == "supplemental"
+                     else f"{solver}_root")
+        rows.append({
+            "logical_id": logical, "solver": solver, "relative_path": relative,
+            "path": str((Path(input_roots[input_key]) / relative).resolve()),
+            "sha256": digest,
+        })
+    for solver, root_key in (("vela", "vela_root"), ("sentaurus", "sentaurus_root"),
+                             ("supplemental", "supplemental_sentaurus_root")):
+        for relative in ("manifest.json", "seal.json"):
+            path = (Path(input_roots[root_key]) / relative).resolve()
+            rows.append({"logical_id": f"{solver}:{relative}", "solver": solver,
+                         "relative_path": relative, "path": str(path),
+                         "sha256": sha256(path)})
+    return sorted(rows, key=lambda item: item["logical_id"])
 
 def build_analysis_artifacts(bundle: InputBundle, out_dir: str | Path, *, phase_base: str,
                              input_roots: dict[str, str], sentaurus_version: str) -> dict:
@@ -484,6 +526,7 @@ def build_analysis_artifacts(bundle: InputBundle, out_dir: str | Path, *, phase_
     for row in rows:
         status_counts[row.status.value] += 1
     input_manifest_hash = sha256(root / "input_manifest.json")
+    raw_inputs = _raw_input_ledger(bundle, input_roots)
     report = {
         "schema": "vela.pn2d_minimal6_physics_inverse_audit.v1",
         "diagnostic_only": True,
@@ -498,9 +541,13 @@ def build_analysis_artifacts(bundle: InputBundle, out_dir: str | Path, *, phase_
             "candidate_metrics": metrics,
             "classifications": classifications,
             "replacement_closure": [replacement["closure"]],
-            "localization_control": {"semantic_replay": _semantic_replay(rows, replacement),
-                                     "classification": "localization_control",
-                                     "excluded_from_ranking": True},
+            "localization_control": {
+                "semantic_replay": _semantic_replay(rows, replacement),
+                "input_provenance": {"input_roots": dict(input_roots),
+                                     "raw_inputs": raw_inputs},
+                "classification": "localization_control",
+                "excluded_from_ranking": True,
+            },
             "sentaurus_version": sentaurus_version,
             "production_cpp_changed": False,
         },
@@ -522,14 +569,8 @@ def write_report_manifest(out_dir: str | Path, bundle: InputBundle, input_roots:
         relative = path.relative_to(root).as_posix()
         if relative not in excluded:
             artifacts[relative] = sha256(path)
-    inputs = []
-    for logical, digest in bundle.input_hashes:
-        solver, relative = logical.split(":", 1)
-        input_key = "supplemental_sentaurus_root" if solver == "supplemental" else f"{solver}_root"
-        inputs.append({
-            "logical_id": logical, "solver": solver, "relative_path": relative,
-            "path": str((Path(input_roots[input_key]) / relative).resolve()), "sha256": digest,
-        })
+    inputs = _raw_input_ledger(bundle, input_roots)
+
     manifest = {
         "schema": "vela.pn2d_minimal6_inverse_report_manifest.v1",
         "exclusions": sorted(excluded), "inputs": inputs, "artifacts": artifacts,
