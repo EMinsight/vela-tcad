@@ -6,6 +6,12 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import sys
+
+
+REPO = Path(__file__).resolve().parents[1]
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
 
 from scripts.pn2d_minimal6_diagnostics.inverse_inputs import load_input_bundle
 from scripts.pn2d_minimal6_diagnostics.inverse_report import (
