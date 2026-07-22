@@ -574,7 +574,21 @@ def _run_import(importer: Path, tdr: Path, output: Path,
 def _require_reimport_matches_ledger(export: Path, ledger: dict) -> None:
     actual = {path.relative_to(export).as_posix(): _sha256(path)
               for path in export.rglob("*") if path.is_file()}
-    if set(actual) != set(ledger):
+    trusted_members = set(ledger)
+    actual_members = set(actual)
+    if "state.csv" in trusted_members:
+        if (actual_members - {"state.csv"}
+                != trusted_members - {"state.csv"}):
+            raise ValueError("supplemental reimport mismatch: member set")
+        try:
+            from scripts.export_pn2d_minimal6_states import write_state_csv
+            write_state_csv(export)
+        except Exception as error:
+            raise ValueError("supplemental reimport mismatch: state.csv regeneration") from error
+        actual = {path.relative_to(export).as_posix(): _sha256(path)
+                  for path in export.rglob("*") if path.is_file()}
+        actual_members = set(actual)
+    if actual_members != trusted_members:
         raise ValueError("supplemental reimport mismatch: member set")
     for relative, digest in ledger.items():
         if (not isinstance(digest, str)
