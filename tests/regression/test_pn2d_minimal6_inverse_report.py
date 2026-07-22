@@ -195,6 +195,21 @@ class PN2DMinimal6InverseReportTest(unittest.TestCase):
             self.assertIn("triangle_minus_grad_psi", candidates)
             self.assertIn("triangle_qf_gradient_current", candidates)
             self.assertIn("electric_field_magnitude", candidates)
+            self.assertNotIn("potential_field_direct", candidates)
+            self.assertNotIn("current_density_direct", candidates)
+            self.assertNotIn("alpha_generation_direct", candidates)
+            inverted_rows = [
+                row for row in payload["candidate_metrics"]
+                if row["candidate"] == "current_inverted_qf_gradient"
+            ]
+            self.assertEqual(
+                {row["split"] for row in inverted_rows},
+                {"discovery", "holdout", "combined"},
+            )
+            self.assertEqual(
+                {row["classification"] for row in inverted_rows},
+                {"confounded"},
+            )
             triangle = payload["localization_control"]["semantic_replay"]["triangle_gradient"]
             self.assertEqual(triangle["status"], "valid")
             self.assertEqual(triangle.get("support_ids"), ["0", "4", "5"])
@@ -295,7 +310,12 @@ class PN2DMinimal6InverseReportTest(unittest.TestCase):
                 "vela_root": str(roots[0].resolve()), "sentaurus_root": str(roots[1].resolve()),
                 "supplemental_sentaurus_root": str(roots[2].resolve()),
             })
-            self.assertEqual(len(provenance["raw_inputs"]), 129)
+            self.assertEqual(len(provenance["raw_inputs"]), 169)
+            deck_inputs = [
+                item for item in provenance["raw_inputs"]
+                if item["logical_id"].startswith("vela:source/decks/")
+            ]
+            self.assertEqual(len(deck_inputs), 40)
             self.assertTrue({"vela:manifest.json", "vela:seal.json",
                              "sentaurus:manifest.json", "sentaurus:seal.json",
                              "supplemental:manifest.json", "supplemental:seal.json"}
@@ -319,7 +339,7 @@ class PN2DMinimal6InverseReportTest(unittest.TestCase):
             self.assertTrue(all(value is None for value in electron["values"]))
             self.assertNotIn(0.0, electron["values"])
 
-    def test_composite_candidate_requires_every_declared_quantity_in_every_split(self):
+    def test_direct_composites_are_excluded_from_authoritative_candidates(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             complete_roots = make_three_node_fixture(root / "complete-inputs")
@@ -332,11 +352,17 @@ class PN2DMinimal6InverseReportTest(unittest.TestCase):
             complete_report = json.loads(
                 (complete / "physics_inverse_audit.json").read_text(encoding="utf-8")
             )["payload"]
-            complete_status = next(
-                row for row in complete_report["classifications"]
-                if row["candidate"] == "potential_field_direct"
-            )
-            self.assertEqual(complete_status["classification"], "identified")
+            direct = {
+                "potential_field_direct",
+                "current_density_direct",
+                "alpha_generation_direct",
+            }
+            self.assertTrue(direct.isdisjoint(
+                row["candidate"] for row in complete_report["classifications"]
+            ))
+            self.assertTrue(direct.isdisjoint(
+                row["candidate"] for row in complete_report["candidate_metrics"]
+            ))
 
             partial_roots = make_three_node_fixture(root / "partial-inputs")
             blank_root_field(partial_roots[0], "ElectricField")
@@ -349,32 +375,24 @@ class PN2DMinimal6InverseReportTest(unittest.TestCase):
             partial_report = json.loads(
                 (partial / "physics_inverse_audit.json").read_text(encoding="utf-8")
             )["payload"]
-            classification = next(
-                row for row in partial_report["classifications"]
-                if row["candidate"] == "potential_field_direct"
-            )
-            self.assertEqual(classification["classification"], "insufficient_data")
-            self.assertIn("declared quantities", classification["reason"])
-            metrics = [
-                row for row in partial_report["candidate_metrics"]
-                if row["candidate"] == "potential_field_direct"
-            ]
-            self.assertEqual([row["split"] for row in metrics],
-                             ["discovery", "holdout", "combined"])
-            self.assertTrue(all(row["classification"] == "insufficient_data"
-                                for row in metrics))
+            self.assertTrue(direct.isdisjoint(
+                row["candidate"] for row in partial_report["classifications"]
+            ))
+            self.assertTrue(direct.isdisjoint(
+                row["candidate"] for row in partial_report["candidate_metrics"]
+            ))
 
-    def test_discovery_numerical_rejection_propagates_to_final_and_verifier(self):
+    def test_discovery_outlier_does_not_replace_combined_and_holdout_gate(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             roots = make_three_node_fixture(root / "inputs")
             scale_root_fields_at_state(
                 roots[0], topology="sketch", bias_V=-1.0,
-                fields=("ElectricField",), factor=1.0e6,
+                fields=("ElectricField",), factor=1.0e-6,
             )
             scale_root_fields_at_state(
                 roots[0], topology="mirror", bias_V=-1.0,
-                fields=("ElectricField",), factor=1.0e6,
+                fields=("ElectricField",), factor=1.0e-6,
             )
             out = root / "report"
             build_report_package(
@@ -386,37 +404,22 @@ class PN2DMinimal6InverseReportTest(unittest.TestCase):
             report = json.loads(report_path.read_text(encoding="utf-8"))
             payload = report["payload"]
             metrics = {
-                row["split"]: row["classification"]
+                row["split"]: row
                 for row in payload["candidate_metrics"]
-                if row["candidate"] == "potential_field_direct"
+                if row["candidate"] == "triangle_minus_grad_psi"
+                and row["quantity"] == "field_magnitude_relative"
             }
-            self.assertEqual(metrics, {
-                "discovery": "rejected", "holdout": "identified",
-                "combined": "identified",
-            })
+            self.assertGreater(metrics["discovery"]["p95_abs_error"], 1.0e5)
+            self.assertLess(metrics["holdout"]["p95_abs_error"], 1.0e-10)
+            self.assertEqual(
+                {row["classification"] for row in metrics.values()},
+                {"identified"},
+            )
             classification = next(
                 row for row in payload["classifications"]
-                if row["candidate"] == "potential_field_direct"
+                if row["candidate"] == "triangle_minus_grad_psi"
             )
-            self.assertEqual(classification["classification"], "rejected")
-
-            classification["classification"] = "identified"
-            classification["reason"] = (
-                "discovery, holdout, and combined numerical gates passed without local fitting"
-            )
-            write_json(report_path, report)
-            classifications_path = out / "candidate_classifications.json"
-            classifications = json.loads(classifications_path.read_text(encoding="utf-8"))
-            persisted = next(
-                row for row in classifications["classifications"]
-                if row["candidate"] == "potential_field_direct"
-            )
-            persisted.update(classification)
-            write_json(classifications_path, classifications)
-            refresh_integrity(out)
-
-            with self.assertRaisesRegex(ValueError, "classification reconstruction mismatch"):
-                verify_report(out)
+            self.assertEqual(classification["classification"], "identified")
 
     def test_verifier_rejects_partial_composite_promoted_to_identified(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -432,13 +435,20 @@ class PN2DMinimal6InverseReportTest(unittest.TestCase):
 
             report_path = out / "physics_inverse_audit.json"
             report = json.loads(report_path.read_text(encoding="utf-8"))
-            for row in report["payload"]["candidate_metrics"]:
-                if row["candidate"] == "potential_field_direct":
-                    row["classification"] = "identified"
-            for row in report["payload"]["classifications"]:
-                if row["candidate"] == "potential_field_direct":
-                    row["classification"] = "identified"
-                    row["reason"] = "combined and holdout numerical gates passed without local fitting"
+            source_metric = report["payload"]["candidate_metrics"][0]
+            forged_metric = dict(
+                source_metric,
+                candidate="potential_field_direct",
+                classification="identified",
+            )
+            forged_classification = dict(
+                report["payload"]["classifications"][0],
+                candidate="potential_field_direct",
+                classification="identified",
+                reason="forged direct composite",
+            )
+            report["payload"]["candidate_metrics"].append(forged_metric)
+            report["payload"]["classifications"].append(forged_classification)
             write_json(report_path, report)
 
             metrics_path = out / "candidate_metrics.csv"
@@ -446,18 +456,24 @@ class PN2DMinimal6InverseReportTest(unittest.TestCase):
                 metric_rows = list(csv.reader(handle))
             candidate_column = metric_rows[0].index("candidate")
             classification_column = metric_rows[0].index("classification")
-            for row in metric_rows[1:]:
-                if row[candidate_column] == "potential_field_direct":
-                    row[classification_column] = "identified"
+            split_column = metric_rows[0].index("split")
+            quantity_column = metric_rows[0].index("quantity")
+            source_csv = next(
+                row for row in metric_rows[1:]
+                if row[candidate_column] == source_metric["candidate"]
+                and row[split_column] == source_metric["split"]
+                and row[quantity_column] == source_metric["quantity"]
+            )
+            forged_csv = list(source_csv)
+            forged_csv[candidate_column] = "potential_field_direct"
+            forged_csv[classification_column] = "identified"
+            metric_rows.append(forged_csv)
             with metrics_path.open("w", newline="", encoding="utf-8") as handle:
                 csv.writer(handle, lineterminator="\n").writerows(metric_rows)
 
             classifications_path = out / "candidate_classifications.json"
             classifications = json.loads(classifications_path.read_text(encoding="utf-8"))
-            for row in classifications["classifications"]:
-                if row["candidate"] == "potential_field_direct":
-                    row["classification"] = "identified"
-                    row["reason"] = "combined and holdout numerical gates passed without local fitting"
+            classifications["classifications"].append(forged_classification)
             write_json(classifications_path, classifications)
             refresh_integrity(out)
 
@@ -504,7 +520,11 @@ class PN2DMinimal6InverseReportTest(unittest.TestCase):
             root = Path(tmp)
             pristine, _ = self.build(root, "pristine")
             cases = {}
-            for label in ("observation", "candidate", "persisted_status"):
+            for label in (
+                "observation", "candidate", "candidate_deleted", "median",
+                "p95", "angle", "classification", "replacement",
+                "persisted_status",
+            ):
                 target = root / label
                 shutil.copytree(pristine, target)
                 cases[label] = target
@@ -528,6 +548,115 @@ class PN2DMinimal6InverseReportTest(unittest.TestCase):
             report["payload"]["candidate_metrics"][0]["valid_count"] = 999
             write_json(report_path, report)
             refresh_integrity(cases["candidate"])
+
+            report_path = cases["persisted_status"] / "physics_inverse_audit.json"
+            for label, field in (
+                ("median", "median_abs_error"),
+                ("p95", "p95_abs_error"),
+                ("angle", "median_angle_deg"),
+            ):
+                report_path = cases[label] / "physics_inverse_audit.json"
+                report = json.loads(report_path.read_text())
+                row = next(
+                    item for item in report["payload"]["candidate_metrics"]
+                    if item[field] is not None
+                )
+                row[field] = float(row[field]) + 0.25
+                write_json(report_path, report)
+                csv_path = cases[label] / "candidate_metrics.csv"
+                with csv_path.open(newline="", encoding="utf-8") as handle:
+                    csv_rows = list(csv.DictReader(handle))
+                    columns = tuple(csv_rows[0])
+                csv_row = next(
+                    item for item in csv_rows
+                    if item["candidate"] == row["candidate"]
+                    and item["quantity"] == row["quantity"]
+                    and item["split"] == row["split"]
+                )
+                csv_row[field] = format(row[field], ".17g")
+                with csv_path.open("w", newline="", encoding="utf-8") as handle:
+                    writer = csv.DictWriter(handle, fieldnames=columns,
+                                            lineterminator="\n")
+                    writer.writeheader()
+                    writer.writerows(csv_rows)
+                refresh_integrity(cases[label])
+
+            target = cases["candidate_deleted"]
+            report_path = target / "physics_inverse_audit.json"
+            report = json.loads(report_path.read_text())
+            deleted = report["payload"]["classifications"][-1]["candidate"]
+            report["payload"]["candidate_metrics"] = [
+                row for row in report["payload"]["candidate_metrics"]
+                if row["candidate"] != deleted
+            ]
+            report["payload"]["classifications"] = [
+                row for row in report["payload"]["classifications"]
+                if row["candidate"] != deleted
+            ]
+            write_json(report_path, report)
+            metrics_path = target / "candidate_metrics.csv"
+            with metrics_path.open(newline="", encoding="utf-8") as handle:
+                metric_rows = list(csv.DictReader(handle))
+                metric_columns = tuple(metric_rows[0])
+            with metrics_path.open("w", newline="", encoding="utf-8") as handle:
+                writer = csv.DictWriter(handle, fieldnames=metric_columns,
+                                        lineterminator="\n")
+                writer.writeheader()
+                writer.writerows(row for row in metric_rows
+                                 if row["candidate"] != deleted)
+            classifications_path = target / "candidate_classifications.json"
+            classifications = json.loads(classifications_path.read_text())
+            classifications["classifications"] = [
+                row for row in classifications["classifications"]
+                if row["candidate"] != deleted
+            ]
+            write_json(classifications_path, classifications)
+            refresh_integrity(target)
+            target = cases["classification"]
+            report_path = target / "physics_inverse_audit.json"
+            report = json.loads(report_path.read_text())
+            classified = report["payload"]["classifications"][0]["candidate"]
+            old_classification = report["payload"]["classifications"][0]["classification"]
+            new_classification = (
+                "rejected" if old_classification != "rejected" else "identified"
+            )
+            for row in report["payload"]["classifications"]:
+                if row["candidate"] == classified:
+                    row["classification"] = new_classification
+            for row in report["payload"]["candidate_metrics"]:
+                if row["candidate"] == classified:
+                    row["classification"] = new_classification
+            write_json(report_path, report)
+            metrics_path = target / "candidate_metrics.csv"
+            with metrics_path.open(newline="", encoding="utf-8") as handle:
+                metric_rows = list(csv.DictReader(handle))
+                metric_columns = tuple(metric_rows[0])
+            for row in metric_rows:
+                if row["candidate"] == classified:
+                    row["classification"] = new_classification
+            with metrics_path.open("w", newline="", encoding="utf-8") as handle:
+                writer = csv.DictWriter(handle, fieldnames=metric_columns,
+                                        lineterminator="\n")
+                writer.writeheader()
+                writer.writerows(metric_rows)
+            classifications_path = target / "candidate_classifications.json"
+            classifications = json.loads(classifications_path.read_text())
+            for row in classifications["classifications"]:
+                if row["candidate"] == classified:
+                    row["classification"] = new_classification
+            write_json(classifications_path, classifications)
+            refresh_integrity(target)
+
+
+            target = cases["replacement"]
+            report_path = target / "physics_inverse_audit.json"
+            report = json.loads(report_path.read_text())
+            observed = report["payload"]["replacement_closure"][0][
+                "observed_prediction_dex"
+            ]
+            observed["gradient_recovery"] = float(observed["gradient_recovery"]) + 1.0
+            write_json(report_path, report)
+            refresh_integrity(target)
 
             report_path = cases["persisted_status"] / "physics_inverse_audit.json"
             report = json.loads(report_path.read_text())
@@ -559,6 +688,22 @@ class PN2DMinimal6InverseReportTest(unittest.TestCase):
             self.assertEqual(rows[0]["sequence"], "unavailable")
             self.assertEqual(rows[0]["factor"], "mobility")
             self.assertEqual(rows[0]["value"], "")
+
+            markdown = (out / "physics_inverse_audit.md").read_text(
+                encoding="utf-8"
+            ).lower()
+            self.assertIn("unavailable", markdown)
+            self.assertNotIn("exact arithmetic fixture", markdown)
+            self.assertNotIn("synthetic", markdown)
+            figure_manifest = json.loads(
+                (out / "figure_manifest.json").read_text(encoding="utf-8")
+            )
+            replacement_figure = next(
+                item for item in figure_manifest["figures"]
+                if item["name"] == "replacement_matrix"
+            )["chart_contract"]
+            self.assertIn("unavailable", replacement_figure["takeaway"].lower())
+            self.assertIn("unavailable_factor", replacement_figure["fields"])
 
     def test_verifier_has_no_shared_scientific_helper_imports(self):
         source = (

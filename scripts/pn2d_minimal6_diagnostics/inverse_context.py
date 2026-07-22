@@ -12,6 +12,16 @@ from typing import Mapping
 
 TOPOLOGIES = ("sketch", "mirror")
 HEADER_RELATIVE = "source/tracked/include/vela/physics/ImpactIonizationModel.h"
+DECK_PREFIX = "source/decks/"
+_PARAMETER_OVERRIDE_KEYS = frozenset({
+    "A_scale", "B_scale", "electron_A_m_inv", "electron_B_V_m",
+    "hole_A_m_inv", "hole_B_V_m", "electron_a_low_m_inv",
+    "electron_a_high_m_inv", "electron_b_low_V_m", "electron_b_high_V_m",
+    "hole_a_low_m_inv", "hole_a_high_m_inv", "hole_b_low_V_m",
+    "hole_b_high_V_m", "switch_field_V_m", "phonon_energy_eV",
+    "reference_temperature_K", "temperature_K",
+})
+
 MESH_RELATIVE = "source/topologies/{topology}/mesh.json"
 _NUMBER = r"([0-9.eE+-]+)"
 _BOLTZMANN_EV_PER_K = 8.617333262145e-5
@@ -152,6 +162,50 @@ def _load_parameters(path: Path) -> tuple[dict[str, object], float]:
     return parameters, _BOLTZMANN_EV_PER_K * temperature
 
 
+def _impact_entries(value: object) -> list[object]:
+    entries: list[object] = []
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if key == "impact_ionization":
+                entries.append(child)
+            else:
+                entries.extend(_impact_entries(child))
+    elif isinstance(value, list):
+        for child in value:
+            entries.extend(_impact_entries(child))
+    return entries
+
+
+def _load_deck_effective_config(path: Path, relative: str) -> dict[str, str]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError(f"sealed Vela deck {relative} is not valid JSON") from error
+    entries = _impact_entries(payload)
+    if len(entries) != 1:
+        raise ValueError(
+            f"sealed Vela deck {relative} must declare one impact_ionization config"
+        )
+    raw = entries[0]
+    if isinstance(raw, str):
+        model, parameter_set = raw, "default"
+    elif isinstance(raw, dict):
+        overrides = sorted(_PARAMETER_OVERRIDE_KEYS.intersection(raw))
+        if overrides:
+            raise ValueError(
+                f"sealed Vela deck parameter override {overrides[0]} is unsupported"
+            )
+        model = raw.get("model")
+        parameter_set = raw.get("parameter_set", "default")
+    else:
+        raise ValueError(f"sealed Vela deck {relative} impact_ionization is invalid")
+    if model != "van_overstraeten":
+        raise ValueError(f"sealed Vela deck {relative} model is not van_overstraeten")
+    if parameter_set != "default":
+        raise ValueError(f"sealed Vela deck {relative} parameter_set override is unsupported")
+    return {"model": model, "parameter_set": parameter_set}
+
+
 def load_sealed_vela_context(
     root: str | Path, member_hashes: Mapping[str, str],
 ) -> DiagnosticContext:
@@ -167,11 +221,36 @@ def load_sealed_vela_context(
         }
     header_path = _sealed_path(base, member_hashes, HEADER_RELATIVE)
     parameters, thermal_voltage = _load_parameters(header_path)
+    deck_sources = []
+    effective_configs = set()
+    deck_relatives = sorted(
+        relative for relative in member_hashes
+        if relative.startswith(DECK_PREFIX) and relative.endswith(".json")
+    )
+    if not deck_relatives:
+        raise ValueError("Vela sealed context lacks hash-bound simulation decks")
+    for relative in deck_relatives:
+        path = _sealed_path(base, member_hashes, relative)
+        effective = _load_deck_effective_config(path, relative)
+        effective_configs.add((effective["model"], effective["parameter_set"]))
+        deck_sources.append({
+            "logical_id": f"vela:{relative}",
+            "sha256": member_hashes[relative],
+            "effective_config": effective,
+        })
+    if len(effective_configs) != 1:
+        raise ValueError("sealed Vela decks have inconsistent effective impact config")
+    model, parameter_set = next(iter(effective_configs))
+
     provenance = {
         "parameter_identity": "sealed_vela_production_defaults",
         "parameter_source": f"vela:{HEADER_RELATIVE}",
         "parameter_sha256": member_hashes[HEADER_RELATIVE],
         "mesh_sources": mesh_provenance,
+        "deck_sources": deck_sources,
+        "effective_impact_ionization_config": {
+            "model": model, "parameter_set": parameter_set,
+        },
     }
     return DiagnosticContext(
         mesh, parameters, thermal_voltage, provenance,

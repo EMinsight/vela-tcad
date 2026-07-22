@@ -208,6 +208,12 @@ def _candidate_metrics(bundle: InputBundle, rows: tuple[Observation, ...], limit
                 "one or more discovery, holdout, or combined gates failed"
             ),
         })
+    # Direct cross-solver composites remain localization-only controls.  Only
+    # typed physical evaluator results are authoritative/promotable candidates.
+    result.clear()
+    classifications.clear()
+    candidate_classification.clear()
+
     for ranked in rank_candidates(candidate_results, thresholds=limits):
         candidate = ranked["candidate"]
         if candidate in candidate_classification:
@@ -415,6 +421,18 @@ def _figure_specs(rows: tuple[Observation, ...], replacement: dict) -> dict[str,
     alpha_bias, alpha = _series(rows, "eAlphaAvalanche")
     _, generation = _series(rows, "ImpactIonization")
     replacement_values = [row["incremental_dex"] for row in replacement["forward"]]
+    replacement_available = replacement.get("closure") is not None
+    unavailable_factor = replacement.get("unavailable_factor")
+    replacement_subtitle = (
+        "Declared seven-factor dependency order; incremental change in dex"
+        if replacement_available else
+        f"Unavailable: missing independent evidence for {unavailable_factor}"
+    )
+    replacement_takeaway = (
+        "The decomposition is available as diagnostic arithmetic, not causal attribution."
+        if replacement_available else
+        f"Replacement closure is unavailable because {unavailable_factor} evidence is missing."
+    )
     common = "40 exact topology-bias states; node means; discovery and holdout retained"
     return {
         "potential_field": {
@@ -467,20 +485,29 @@ def _figure_specs(rows: tuple[Observation, ...], replacement: dict) -> dict[str,
         },
         "replacement_matrix": {
             "title": "Staged replacement contributions",
-            "subtitle": "Declared seven-factor dependency order; incremental change in dex; exact arithmetic fixture for closure QA",
+            "subtitle": replacement_subtitle,
             "panels": [{"title": "Forward staged increments", "kind": "bar",
-                        "labels": list(INVERSE_DEPENDENCIES), "values": replacement_values,
+                        "labels": list(INVERSE_DEPENDENCIES) if replacement_available else [], "values": replacement_values,
                         "x_label": "Incremental change (dex)", "y_label": "Replacement factor"}],
             "chart_contract": _chart_contract("Which declared stage contributes each arithmetic replacement increment?",
-                "The decomposition validates closure mechanics; it is not a causal estimate from the supplied fixture.",
+                replacement_takeaway,
                 "Decomposition & Progression", "horizontal contribution bars", "7 declared dependency stages",
-                ["factor", "incremental_dex", "sequence"], "static PNG and PDF"),
+                (["factor", "incremental_dex", "sequence"] if replacement_available
+                 else ["status", "unavailable_factor"]), "static PNG and PDF"),
         },
     }
 
 
 def _report_markdown(report: dict, figures: dict) -> str:
     payload = report["payload"]
+    replacement = payload["replacement_closure"][0]
+    replacement_available = replacement.get("closure") is not None
+    unavailable_factor = replacement.get("unavailable_factor")
+    replacement_paragraph = (
+        "The replacement panel shows the available staged diagnostic arithmetic; it is not causal attribution."
+        if replacement_available else
+        f"Replacement closure is unavailable because independent evidence for `{unavailable_factor}` is missing; no staged bars or closure claim are shown."
+    )
     groups = {value.value: [] for value in Identifiability}
     for item in payload["classifications"]:
         groups[item["classification"]].append(item["candidate"])
@@ -492,7 +519,7 @@ def _report_markdown(report: dict, figures: dict) -> str:
         "qf_gradient": "The current-inverted gradient uses independently supplied Sentaurus mobility, density, and current. It is useful diagnostically, but because equivalent independent mobility evidence is not available for both solvers, the cross-solver operator remains confounded rather than identified.",
         "current_density": "The current panel compares vector magnitudes at node support. It does not substitute magnitude agreement for signed edge-flux or direction agreement, so any promotion still requires the corresponding support and semantic gates.",
         "alpha_generation": "The alpha and generation panels retain their distinct units and node support. Similar alpha values cannot uniquely identify an avalanche driver, and volumetric generation is not mixed with triangle-integrated or node-mapped source.",
-        "replacement_matrix": "The replacement bars show deterministic arithmetic increments through the declared dependency order. Their exact closure verifies replay bookkeeping; the synthetic decomposition is a QA control, not evidence that any physical stage caused the observed solver discrepancy.",
+        "replacement_matrix": replacement_paragraph,
     }
     lines = [
         "# PN2D Minimal6 Physics Inverse Audit", "", "## Technical summary", "",
@@ -512,9 +539,9 @@ def _report_markdown(report: dict, figures: dict) -> str:
         "## Scope, data, and metric definitions", "",
         "The scope is the exact sketch-and-mirror checkpoint matrix from -1 through -20 V. Discovery comprises sketch checkpoints -1, -4, -8, -12, -16, -19, and -20 V; mirror plus all other exact checkpoints are holdout. Node observations retain raw and SI values, support, component, orientation, conversion, source path, and source hash. Median and p95 absolute log10 errors compare finite nonzero paired magnitudes; missing, below-floor, incompatible, or non-finite samples remain typed and are not replaced by zero.", "",
         "## Methodology", "",
-        "The audit validates hash-bound inputs, writes canonical support tables, evaluates direct paired candidates without local scaling, reconstructs selected triangle, current-inverted, alpha, and generation identities, and runs a declared seven-stage multiplicative replacement closure control. Classification is descriptive or diagnostic unless independent factors, discovery, holdout, symmetry, direction, and magnitude gates establish identifiability. No result in this report is inferential or causal.", "",
+        "The audit validates hash-bound inputs, writes canonical support tables, evaluates typed physical candidates without local scaling, and reconstructs selected triangle, current-inverted, alpha, and generation identities. Replacement closure is attempted only when every declared independent factor is available; otherwise its missing factor is reported explicitly. Classification is descriptive or diagnostic unless independent factors, discovery, holdout, symmetry, direction, and magnitude gates establish identifiability. No result in this report is inferential or causal.", "",
         "## Limitations, uncertainty, and robustness", "",
-        "Aggregate node means can conceal local direction and support errors. The current-inverted quasi-Fermi result is confounded by cross-solver mobility availability. Alpha inversion can be branch-ambiguous, and alpha agreement does not uniquely determine the driver. The replacement decomposition is an arithmetic robustness fixture rather than fitted physical attribution. Byte-identical dual runs within the same Python and rendering-library versions, raw-input hashes, artifact hashes, decoded PNG pixel hashes, fixed thresholds, split membership, and independent semantic replay address reproducibility but do not create evidence absent from the inputs.", "",
+        "Aggregate node means can conceal local direction and support errors. The current-inverted quasi-Fermi result is confounded by cross-solver mobility availability. Alpha inversion can be branch-ambiguous, and alpha agreement does not uniquely determine the driver. Replacement closure is not evaluated when an independent factor is missing. Byte-identical dual runs within the same Python and rendering-library versions, raw-input hashes, artifact hashes, decoded PNG pixel hashes, fixed thresholds, split membership, and independent semantic replay address reproducibility but do not create evidence absent from the inputs.", "",
         "## Recommended next steps", "",
         "- Promote a formula to a production-change task only when its local support, direction, discovery, holdout, mirror, and replacement gates all pass.",
         "- Obtain independently comparable Vela and Sentaurus mobility on the same support before resolving the quasi-Fermi-gradient confounding.",

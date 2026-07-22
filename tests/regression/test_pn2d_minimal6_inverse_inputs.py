@@ -88,6 +88,16 @@ def write_vela_context(root: Path, member_sha256: dict[str, str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(VELA_HEADER, encoding="utf-8")
     member_sha256[relative] = sha256(path)
+    for topology in ("sketch", "mirror"):
+        for bias in range(-1, -21, -1):
+            token = f"m{abs(bias)}p000000"
+            relative = f"source/decks/{topology}/{token}.json"
+            path = root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps({
+                "impact_ionization": "van_overstraeten",
+            }, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+            member_sha256[relative] = sha256(path)
 
 
 
@@ -231,6 +241,31 @@ class PN2DMinimal6InverseInputsTest(unittest.TestCase):
                 context.provenance["parameter_identity"],
                 "sealed_vela_production_defaults",
             )
+
+            self.assertEqual(len(context.provenance["deck_sources"]), 40)
+            self.assertEqual(
+                context.provenance["effective_impact_ionization_config"],
+                {"model": "van_overstraeten", "parameter_set": "default"},
+            )
+
+    def test_rejects_hash_bound_deck_parameter_override(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            vela, sentaurus, supplemental = make_fixture(Path(tmp))
+            relative = "source/decks/sketch/m1p000000.json"
+            path = vela / relative
+            path.write_text(json.dumps({
+                "impact_ionization": {
+                    "model": "van_overstraeten",
+                    "parameter_set": "default",
+                    "A_scale": 2.0,
+                },
+            }, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+            manifest_path = vela / "manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["member_sha256"][relative] = sha256(path)
+            rewrite_manifest(vela, manifest)
+            with self.assertRaisesRegex(ValueError, "override.*A_scale"):
+                inverse_inputs.load_input_bundle(vela, sentaurus, supplemental)
 
     def test_rejects_tampered_state_before_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

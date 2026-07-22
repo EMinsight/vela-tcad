@@ -26,14 +26,20 @@ def integrate_nodal_field(values, weights):
 
 def map_local_sources_to_nodes(triangles, sources):
     if len(triangles) != len(sources): raise ValueError("triangles and sources must align")
+    finite_sources = tuple(float(source) for source in sources)
+    if any(not math.isfinite(source) for source in finite_sources):
+        raise ValueError("local sources must be finite")
+    if any(source < 0.0 for source in finite_sources):
+        raise ValueError("local generation sources must be non-negative")
     result = {}
-    for nodes, source in zip(triangles, sources):
+    for nodes, source in zip(triangles, finite_sources):
         if len(nodes) != 3 or len(set(nodes)) != 3: raise ValueError("local source needs three unique nodes")
-        share = float(source) / 3.0
+        share = source / 3.0
         for node in nodes: result[node] = result.get(node, 0.0) + share
-    mapped_total = sum(result.values())
-    source_total = sum(float(source) for source in sources)
-    if not math.isclose(mapped_total, source_total, rel_tol=1e-12, abs_tol=1e-12):
+    mapped_total = math.fsum(result.values())
+    source_total = math.fsum(finite_sources)
+    scale = math.fsum(abs(source) for source in finite_sources)
+    if abs(mapped_total - source_total) > 1.0e-12 + 1.0e-12 * scale:
         raise AssertionError("node mapping is not conservative")
     return result
 def integrate_cell_field(points, values, *, partial_volume_fraction=1.0):

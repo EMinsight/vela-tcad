@@ -33,6 +33,9 @@ from scripts.pn2d_minimal6_diagnostics.inverse_inputs import (
     InputBundle, field_inventory, load_input_bundle,
 )
 
+from scripts.pn2d_minimal6_diagnostics.independent_science import (
+    recompute_science,
+)
 
 REPORT_EXCLUSIONS = {"report_manifest.json", "verification.json", "package_manifest.json"}
 PACKAGE_EXCLUSIONS = {"package_manifest.json"}
@@ -69,6 +72,16 @@ _ELEMENTARY_CHARGE_C = 1.602176634e-19
 _BOLTZMANN_EV_PER_K = 8.617333262145e-5
 _VELA_HEADER_RELATIVE = "source/tracked/include/vela/physics/ImpactIonizationModel.h"
 _VELA_MESH_RELATIVE = "source/topologies/{topology}/mesh.json"
+_VELA_DECK_PREFIX = "source/decks/"
+_VELA_PARAMETER_OVERRIDE_KEYS = frozenset({
+    "A_scale", "B_scale", "electron_A_m_inv", "electron_B_V_m",
+    "hole_A_m_inv", "hole_B_V_m", "electron_a_low_m_inv",
+    "electron_a_high_m_inv", "electron_b_low_V_m", "electron_b_high_V_m",
+    "hole_a_low_m_inv", "hole_a_high_m_inv", "hole_b_low_V_m",
+    "hole_b_high_V_m", "switch_field_V_m", "phonon_energy_eV",
+    "reference_temperature_K", "temperature_K",
+})
+
 _NUMBER = r"([0-9.eE+-]+)"
 
 
@@ -211,10 +224,66 @@ def _independent_vela_context(roots):
         mesh_sources[topology] = {
             "logical_id": f"vela:{relative}", "sha256": _sha256(path),
         }
+    manifest = _load_json(root / "manifest.json")
+    member_hashes = manifest.get("member_sha256", {})
+    deck_relatives = sorted(
+        relative for relative in member_hashes
+        if relative.startswith(_VELA_DECK_PREFIX) and relative.endswith(".json")
+    )
+    if not deck_relatives:
+        raise ValueError("sealed Vela context lacks hash-bound simulation decks")
+
+    def impact_entries(value):
+        entries = []
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if key == "impact_ionization":
+                    entries.append(child)
+                else:
+                    entries.extend(impact_entries(child))
+        elif isinstance(value, list):
+            for child in value:
+                entries.extend(impact_entries(child))
+        return entries
+
+    deck_sources = []
+    effective_configs = set()
+    for relative in deck_relatives:
+        path = root / relative
+        if _sha256(path) != member_hashes[relative]:
+            raise ValueError("sealed Vela deck hash mismatch")
+        entries = impact_entries(_load_json(path))
+        if len(entries) != 1:
+            raise ValueError("sealed Vela deck impact config mismatch")
+        raw = entries[0]
+        if isinstance(raw, str):
+            model, parameter_set = raw, "default"
+        elif isinstance(raw, dict):
+            overrides = sorted(_VELA_PARAMETER_OVERRIDE_KEYS.intersection(raw))
+            if overrides:
+                raise ValueError(f"sealed Vela deck parameter override {overrides[0]}")
+            model = raw.get("model")
+            parameter_set = raw.get("parameter_set", "default")
+        else:
+            raise ValueError("sealed Vela deck impact config mismatch")
+        if model != "van_overstraeten" or parameter_set != "default":
+            raise ValueError("sealed Vela deck effective config mismatch")
+        effective_configs.add((model, parameter_set))
+        deck_sources.append({"logical_id": f"vela:{relative}",
+                             "sha256": member_hashes[relative],
+                             "effective_config": {"model": model,
+                                                  "parameter_set": parameter_set}})
+    if len(effective_configs) != 1:
+        raise ValueError("sealed Vela deck effective config mismatch")
+
     provenance = {
         "parameter_identity": "sealed_vela_production_defaults",
         "parameter_source": f"vela:{_VELA_HEADER_RELATIVE}",
         "parameter_sha256": _sha256(header_path), "mesh_sources": mesh_sources,
+        "deck_sources": deck_sources,
+        "effective_impact_ionization_config": {
+            "model": model, "parameter_set": parameter_set,
+        },
     }
     return {
         "mesh_by_topology": mesh, "parameters": parameters,
@@ -752,18 +821,23 @@ def _verify_typed_candidate_extension(
         reported_classifications, list
     ):
         raise ValueError("typed candidate payload must use lists")
-    if reported_metrics[:len(direct_metrics)] != direct_metrics:
-        raise ValueError("authoritative direct candidate metric reconstruction mismatch")
-    if reported_classifications[:len(direct_classifications)] != direct_classifications:
-        raise ValueError("authoritative direct classification reconstruction mismatch")
-    extra_metrics = reported_metrics[len(direct_metrics):]
-    extra_classifications = reported_classifications[len(direct_classifications):]
-    required = {
-        "triangle_minus_grad_psi", "triangle_qf_gradient_current",
-        "electric_field_magnitude",
+    extra_metrics = reported_metrics
+    extra_classifications = reported_classifications
+    authoritative = {
+        "triangle_minus_grad_psi", "node_area_weighted_minus_grad_psi",
+        "edge_area_weighted_minus_grad_psi",
+        "signed_edge_minus_delta_psi_over_h",
+        "triangle_qf_gradient_current",
+        "node_area_weighted_qf_gradient_current",
+        "edge_area_weighted_qf_gradient_current",
+        "signed_edge_qf_difference_current", "current_inverted_qf_gradient",
+        "signed_edge_sg_density_current",
+        "signed_edge_drift_diffusion_current", "electric_field_magnitude",
+        "qf_gradient_magnitude", "electric_field_current_aligned",
+        "qf_gradient_current_aligned",
     }
     candidates = {row.get("candidate") for row in extra_metrics if isinstance(row, dict)}
-    if not required <= candidates:
+    if candidates != authoritative:
         raise ValueError("typed field/transport/avalanche candidate coverage mismatch")
     allowed = {value.value for value in Identifiability}
     per_candidate: dict[str, str] = {}
@@ -820,11 +894,25 @@ def _verify_raw_semantics(root: Path, report: dict, bundle: InputBundle,
     if payload.get("sample_status_counts") != counts:
         raise ValueError("raw sample-status reconstruction mismatch")
     _verify_observations(root, rows)
-    direct_metrics, direct_classifications = _independent_candidate_metrics(bundle, rows)
-    metrics, classifications = _verify_typed_candidate_extension(
-        payload.get("candidate_metrics"), payload.get("classifications"),
-        direct_metrics, direct_classifications,
+    context = _independent_vela_context(roots)
+    metrics, classifications, replacement = recompute_science(
+        rows, context["mesh_by_topology"], context["parameters"],
+        context["thermal_voltage_V"], bundle.discovery_keys,
+        AcceptanceThresholds(),
     )
+    reported_metrics = payload.get("candidate_metrics")
+    metric_key = lambda row: (row["candidate"], row["split"], row["quantity"])
+    if (not isinstance(reported_metrics, list)
+            or sorted(reported_metrics, key=metric_key) != sorted(metrics, key=metric_key)):
+        raise ValueError("independent typed candidate metric reconstruction mismatch")
+    reported_classifications = payload.get("classifications")
+    classification_key = lambda row: row["candidate"]
+    if (not isinstance(reported_classifications, list)
+            or sorted(reported_classifications, key=classification_key)
+            != sorted(classifications, key=classification_key)):
+        raise ValueError("independent typed candidate classification reconstruction mismatch")
+    metrics = reported_metrics
+    classifications = reported_classifications
     if _read_csv(root / "candidate_metrics.csv", CANDIDATE_COLUMNS) != _candidate_csv(metrics):
         raise ValueError("candidate_metrics.csv raw semantic mismatch")
     persisted = _load_json(root / "candidate_classifications.json")
@@ -833,12 +921,10 @@ def _verify_raw_semantics(root: Path, report: dict, bundle: InputBundle,
     reported_replacement = payload.get("replacement_closure")
     if not isinstance(reported_replacement, list) or len(reported_replacement) != 1:
         raise ValueError("authoritative typed replacement payload mismatch")
-    replacement = _expected_replacement(reported_replacement[0])
     if payload.get("replacement_closure") != [replacement]:
-        raise ValueError("authoritative replacement closure mismatch")
+        raise ValueError("independent replacement evidence reconstruction mismatch")
     if _read_csv(root / "replacement_matrix.csv", REPLACEMENT_COLUMNS) != _replacement_csv(replacement):
         raise ValueError("replacement_matrix.csv raw semantic mismatch")
-    context = _independent_vela_context(roots)
     expected_context = {
         "provenance": context["provenance"],
         "van_overstraeten_parameters": context["parameters"],
@@ -959,12 +1045,21 @@ def verify_report(root: str | Path) -> dict:
     checks = _verify_raw_semantics(report_root, report, bundle, roots, rows)
     checks.extend(_verify_figures(report_root))
     checks.extend(("raw_input_hashes", "report_artifact_hashes"))
+    scientific_payload = {
+        "candidate_metrics": report["payload"]["candidate_metrics"],
+        "classifications": report["payload"]["classifications"],
+        "replacement_closure": report["payload"]["replacement_closure"],
+    }
+    scientific_payload_sha256 = hashlib.sha256(
+        _write_json_bytes(scientific_payload)
+    ).hexdigest()
     result = {
         "schema": "vela.pn2d_minimal6_inverse_verification.v1", "passed": True,
         "checks": sorted(checks),
         "report_manifest_sha256": _sha256(report_root / "report_manifest.json"),
         "verified_input_count": len(raw_ledger),
         "verified_artifact_count": len(report_manifest["artifacts"]),
+        "scientific_payload_sha256": scientific_payload_sha256,
     }
     _write_or_validate(report_root / "verification.json", result, "verification result")
     _write_package(report_root, raw_ledger)

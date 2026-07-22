@@ -1,3 +1,4 @@
+import math
 import tempfile
 import unittest
 from pathlib import Path
@@ -99,6 +100,11 @@ class DiagnosticPhysicsTest(unittest.TestCase):
         self.assertEqual(integrate_nodal_field((2., 4., 6.), (1., 2., 3.)), 28.)
         mapped = map_local_sources_to_nodes(((0, 1, 2),), (12.,))
         self.assertEqual(mapped, {0: 4., 1: 4., 2: 4.})
+    def test_node_mapping_rejects_signed_cancellation_sources(self):
+        sources = (1.0e300, 1.0, -1.0e300, 1.0)
+        triangles = ((0, 1, 2),) * len(sources)
+        with self.assertRaisesRegex(ValueError, "non-negative"):
+            map_local_sources_to_nodes(triangles, sources)
     def test_named_support_conversions_return_normalized_weights(self):
         cells = node_scalar_to_cells({0:3., 1:6., 2:9.}, ((0,1,2),), quantity="Potential")
         self.assertEqual(cells["values"], [6.])
