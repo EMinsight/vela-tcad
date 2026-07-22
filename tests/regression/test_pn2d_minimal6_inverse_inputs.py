@@ -42,6 +42,32 @@ SUPPLEMENTAL = {
     "eVelocity": (1, "cm*s^-1"), "hVelocity": (1, "cm*s^-1"),
 }
 VELA_HEADER = """struct ImpactIonizationModelConfig {
+    std::string model = "none";
+    std::string parameterSet = "default";
+    std::string drivingForce = "electric_field";
+    std::string generation = "carrier_density";
+    std::string currentApproximation = "mobility_density_gradient";
+    std::string currentMagnitudeMode = "edge_scalar_abs";
+    std::string cellReconstructedMidpointDensity = "bernoulli";
+    std::string drivingForceInterpolation = "none";
+    std::string quasiFermiGradientDiscretization = "edge_difference";
+    Real electronDrivingForceRefDensity = 0.0;
+    Real holeDrivingForceRefDensity = 0.0;
+    Real sourceGeometryScale = 1.0;
+    std::string sourceVolumePolicy = "genius_truncated";
+    Real sourceVolumeFactor = 0.0;
+    std::string sourceMappingMode = "node_F_node_alpha_node_G";
+    std::string edgeSourcePartition = "symmetric";
+    Real quasiFermiCarrierTruncation = 0.0;
+    Real minimumField = 0.0;
+    bool debugRawVanOverstraeten = false;
+    Real aScale = 1.0;
+    Real bScale = 1.0;
+    Real electronA = 7.03e7;
+    Real electronB = 1.231e8;
+    Real holeA = 1.582e8;
+    Real holeB = 2.036e8;
+    Real carrierVelocity = 1.0e5;
     Real electronALow = 7.03e7;
     Real electronAHigh = 7.03e7;
     Real electronBLow = 1.231e8;
@@ -157,6 +183,59 @@ def rewrite_manifest(root: Path, manifest: dict[str, object]) -> None:
     rewrite_seal(root)
 
 
+def tamper_vela_deck(
+    root: Path,
+    field: str,
+    value: object,
+    relative: str = "source/decks/sketch/m1p000000.json",
+) -> str:
+    path = root / relative
+    path.write_text(json.dumps({
+        "impact_ionization": {
+            "model": "van_overstraeten",
+            field: value,
+        },
+    }, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+    manifest_path = root / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["member_sha256"][relative] = sha256(path)
+    rewrite_manifest(root, manifest)
+    return relative
+
+
+def tamper_all_vela_decks(
+    root: Path,
+    overrides: dict[str, object],
+) -> None:
+    manifest_path = root / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    relatives = sorted(
+        relative for relative in manifest["member_sha256"]
+        if relative.startswith("source/decks/") and relative.endswith(".json")
+    )
+    for relative in relatives:
+        path = root / relative
+        path.write_text(json.dumps({
+            "impact_ionization": {
+                "model": "van_overstraeten",
+                **overrides,
+            },
+        }, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+        manifest["member_sha256"][relative] = sha256(path)
+    rewrite_manifest(root, manifest)
+
+
+def remove_vela_deck(
+    root: Path,
+    relative: str = "source/decks/sketch/m1p000000.json",
+) -> str:
+    (root / relative).unlink()
+    manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+    del manifest["member_sha256"][relative]
+    rewrite_manifest(root, manifest)
+    return relative
+
+
 def rebind_state(root: Path, state_index: int = 0) -> None:
     path = root / "manifest.json"
     manifest = json.loads(path.read_text(encoding="utf-8"))
@@ -243,10 +322,36 @@ class PN2DMinimal6InverseInputsTest(unittest.TestCase):
             )
 
             self.assertEqual(len(context.provenance["deck_sources"]), 40)
+            effective = context.provenance["effective_impact_ionization_config"]
+            self.assertEqual(len(effective), 38)
+            self.assertTrue(all(
+                item["effective_config"] == effective
+                for item in context.provenance["deck_sources"]
+            ))
+            self.assertEqual(effective["model"], "van_overstraeten")
+            self.assertEqual(effective["parameter_set"], "default")
+            self.assertEqual(effective["driving_force"], "electric_field")
+            self.assertEqual(effective["generation"], "carrier_density")
             self.assertEqual(
-                context.provenance["effective_impact_ionization_config"],
-                {"model": "van_overstraeten", "parameter_set": "default"},
+                effective["current_approximation"],
+                "mobility_density_gradient",
             )
+            self.assertEqual(effective["current_magnitude_mode"], "edge_scalar_abs")
+            self.assertEqual(
+                effective["cell_reconstructed_midpoint_density"],
+                "bernoulli",
+            )
+            self.assertEqual(effective["driving_force_interpolation"], "none")
+            self.assertEqual(
+                effective["quasi_fermi_gradient_discretization"],
+                "edge_difference",
+            )
+            self.assertEqual(
+                effective["source_mapping_mode"],
+                "node_F_node_alpha_node_G",
+            )
+            self.assertEqual(effective["electron_a_low_m_inv"], 7.03e7)
+            self.assertEqual(effective["hole_b_high_V_m"], 1.693e8)
 
     def test_rejects_hash_bound_deck_parameter_override(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -264,8 +369,51 @@ class PN2DMinimal6InverseInputsTest(unittest.TestCase):
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             manifest["member_sha256"][relative] = sha256(path)
             rewrite_manifest(vela, manifest)
-            with self.assertRaisesRegex(ValueError, "override.*A_scale"):
+            with self.assertRaisesRegex(
+                ValueError, "inconsistent effective impact config"
+            ):
                 inverse_inputs.load_input_bundle(vela, sentaurus, supplemental)
+
+    def test_rejects_cross_field_invalid_effective_config(self) -> None:
+        cases = (
+            {"driving_force": "grad_potential_parallel_j"},
+            {"driving_force_interpolation": "quasi_fermi_to_electric_field"},
+            {"cell_reconstructed_midpoint_density": "gss_logistic"},
+        )
+        for overrides in cases:
+            with self.subTest(overrides=overrides), tempfile.TemporaryDirectory() as tmp:
+                vela, sentaurus, supplemental = make_fixture(Path(tmp))
+                tamper_all_vela_decks(vela, overrides)
+                with self.assertRaisesRegex(ValueError, "cross-field"):
+                    inverse_inputs.load_input_bundle(
+                        vela, sentaurus, supplemental
+                    )
+
+    def test_requires_exactly_40_hash_bound_vela_decks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            vela, sentaurus, supplemental = make_fixture(Path(tmp))
+            remove_vela_deck(vela)
+            with self.assertRaisesRegex(ValueError, "exactly 40"):
+                inverse_inputs.load_input_bundle(
+                    vela, sentaurus, supplemental
+                )
+
+    def test_rejects_hash_bound_deck_effective_semantic_tampering(self) -> None:
+        cases = (
+            ("driving_force", "quasi_fermi_gradient"),
+            ("generation", "current_density"),
+            ("current_approximation", "density_gradient"),
+        )
+        for field, value in cases:
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as tmp:
+                vela, sentaurus, supplemental = make_fixture(Path(tmp))
+                tamper_vela_deck(vela, field, value)
+                with self.assertRaisesRegex(
+                    ValueError, "effective.*config|inconsistent"
+                ):
+                    inverse_inputs.load_input_bundle(
+                        vela, sentaurus, supplemental
+                    )
 
     def test_rejects_tampered_state_before_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

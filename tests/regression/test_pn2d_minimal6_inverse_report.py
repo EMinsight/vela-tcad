@@ -14,7 +14,10 @@ from scripts.pn2d_minimal6_diagnostics.inverse_inputs import (
     canonical_observations, load_input_bundle,
 )
 from scripts.pn2d_minimal6_diagnostics.inverse_report import _qf_series
-from scripts.verify_pn2d_minimal6_physics_inverse_audit import verify_report
+from scripts.verify_pn2d_minimal6_physics_inverse_audit import (
+    _independent_vela_context,
+    verify_report,
+)
 
 
 REPO = Path(__file__).resolve().parents[2]
@@ -225,6 +228,77 @@ class PN2DMinimal6InverseReportTest(unittest.TestCase):
             self.assertEqual(inverse_alpha["branch"], "low")
             self.assertEqual(inverse_alpha["prefactor_m_inv"], 7.03e7)
             self.assertEqual(inverse_alpha["critical_field_V_per_m"], 1.231e8)
+
+    def test_independent_verifier_rejects_cross_field_invalid_effective_config(self):
+        cases = (
+            {"driving_force": "grad_potential_parallel_j"},
+            {"driving_force_interpolation": "quasi_fermi_to_electric_field"},
+            {"cell_reconstructed_midpoint_density": "gss_logistic"},
+        )
+        for overrides in cases:
+            with self.subTest(overrides=overrides), tempfile.TemporaryDirectory() as tmp:
+                roots = make_three_node_fixture(Path(tmp) / "inputs")
+                INPUT_FIXTURE.tamper_all_vela_decks(roots[0], overrides)
+                with self.assertRaisesRegex(ValueError, "cross-field"):
+                    _independent_vela_context({
+                        "vela_root": str(roots[0].resolve()),
+                    })
+
+    def test_builder_and_verifier_require_exactly_40_hash_bound_vela_decks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            roots = make_three_node_fixture(root / "builder-inputs")
+            INPUT_FIXTURE.remove_vela_deck(roots[0])
+            with self.assertRaisesRegex(ValueError, "exactly 40"):
+                build_report_package(
+                    vela_root=roots[0], sentaurus_root=roots[1],
+                    supplemental_sentaurus_root=roots[2],
+                    out_dir=root / "out", phase_base="a5524cf",
+                )
+
+            roots = make_three_node_fixture(root / "verifier-inputs")
+            INPUT_FIXTURE.remove_vela_deck(roots[0])
+            with self.assertRaisesRegex(ValueError, "exactly 40"):
+                _independent_vela_context({
+                    "vela_root": str(roots[0].resolve()),
+                })
+
+    def test_builder_rejects_hash_bound_effective_deck_semantic_tampering(self):
+        cases = (
+            ("driving_force", "quasi_fermi_gradient"),
+            ("generation", "current_density"),
+            ("current_approximation", "density_gradient"),
+        )
+        for field, value in cases:
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                roots = make_three_node_fixture(root / "inputs")
+                INPUT_FIXTURE.tamper_vela_deck(roots[0], field, value)
+                with self.assertRaisesRegex(
+                    ValueError, "effective.*config|inconsistent"
+                ):
+                    build_report_package(
+                        vela_root=roots[0], sentaurus_root=roots[1],
+                        supplemental_sentaurus_root=roots[2],
+                        out_dir=root / "out", phase_base="a5524cf",
+                    )
+
+    def test_verifier_parser_rejects_hash_bound_effective_deck_semantic_tampering(self):
+        cases = (
+            ("driving_force", "quasi_fermi_gradient"),
+            ("generation", "current_density"),
+            ("current_approximation", "density_gradient"),
+        )
+        for field, value in cases:
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as tmp:
+                roots = make_three_node_fixture(Path(tmp) / "inputs")
+                INPUT_FIXTURE.tamper_vela_deck(roots[0], field, value)
+                with self.assertRaisesRegex(
+                    ValueError, "effective.*config|inconsistent"
+                ):
+                    _independent_vela_context({
+                        "vela_root": str(roots[0].resolve()),
+                    })
 
     def test_report_generation_fails_closed_when_mirror_invariance_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -716,7 +790,13 @@ class PN2DMinimal6InverseReportTest(unittest.TestCase):
             self.assertNotIn(
                 f"from scripts.pn2d_minimal6_diagnostics.{module} import", source
             )
-        self.assertIn("def _independent_candidate_metrics", source)
+        for legacy in (
+            "def _independent_candidate_metrics",
+            "def _verify_typed_candidate_extension",
+            "def _paired_errors",
+        ):
+            self.assertNotIn(legacy, source)
+        self.assertIn("recompute_science(", source)
         self.assertNotIn("canonical_observations", source)
 
     def test_verifier_independently_recomputes_sealed_vela_production_parameters(self):

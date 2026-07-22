@@ -73,14 +73,97 @@ _BOLTZMANN_EV_PER_K = 8.617333262145e-5
 _VELA_HEADER_RELATIVE = "source/tracked/include/vela/physics/ImpactIonizationModel.h"
 _VELA_MESH_RELATIVE = "source/topologies/{topology}/mesh.json"
 _VELA_DECK_PREFIX = "source/decks/"
-_VELA_PARAMETER_OVERRIDE_KEYS = frozenset({
-    "A_scale", "B_scale", "electron_A_m_inv", "electron_B_V_m",
-    "hole_A_m_inv", "hole_B_V_m", "electron_a_low_m_inv",
-    "electron_a_high_m_inv", "electron_b_low_V_m", "electron_b_high_V_m",
-    "hole_a_low_m_inv", "hole_a_high_m_inv", "hole_b_low_V_m",
-    "hole_b_high_V_m", "switch_field_V_m", "phonon_energy_eV",
-    "reference_temperature_K", "temperature_K",
+_IMPACT_STRING_MEMBERS = (
+    ("model", "model"), ("parameterSet", "parameter_set"),
+    ("drivingForce", "driving_force"), ("generation", "generation"),
+    ("currentApproximation", "current_approximation"),
+    ("currentMagnitudeMode", "current_magnitude_mode"),
+    ("cellReconstructedMidpointDensity", "cell_reconstructed_midpoint_density"),
+    ("drivingForceInterpolation", "driving_force_interpolation"),
+    ("quasiFermiGradientDiscretization", "quasi_fermi_gradient_discretization"),
+    ("sourceVolumePolicy", "source_volume_policy"),
+    ("sourceMappingMode", "source_mapping_mode"),
+    ("edgeSourcePartition", "edge_source_partition"),
+)
+_IMPACT_NUMBER_MEMBERS = (
+    ("electronDrivingForceRefDensity", "electron_driving_force_ref_density_m3"),
+    ("holeDrivingForceRefDensity", "hole_driving_force_ref_density_m3"),
+    ("sourceGeometryScale", "source_geometry_scale"),
+    ("sourceVolumeFactor", "source_volume_factor"),
+    ("quasiFermiCarrierTruncation", "quasi_fermi_carrier_truncation"),
+    ("minimumField", "minimum_field_V_m"),
+    ("aScale", "A_scale"), ("bScale", "B_scale"),
+    ("electronA", "electron_A_m_inv"), ("electronB", "electron_B_V_m"),
+    ("holeA", "hole_A_m_inv"), ("holeB", "hole_B_V_m"),
+    ("carrierVelocity", "carrier_velocity_m_s"),
+    ("electronALow", "electron_a_low_m_inv"),
+    ("electronAHigh", "electron_a_high_m_inv"),
+    ("electronBLow", "electron_b_low_V_m"),
+    ("electronBHigh", "electron_b_high_V_m"),
+    ("holeALow", "hole_a_low_m_inv"),
+    ("holeAHigh", "hole_a_high_m_inv"),
+    ("holeBLow", "hole_b_low_V_m"),
+    ("holeBHigh", "hole_b_high_V_m"),
+    ("switchField", "switch_field_V_m"),
+    ("phononEnergy", "phonon_energy_eV"),
+    ("referenceTemperature_K", "reference_temperature_K"),
+    ("temperature_K", "temperature_K"),
+)
+_IMPACT_BOOL_MEMBERS = (
+    ("debugRawVanOverstraeten", "debug_raw_vanoverstraeten"),
+)
+_NESTED_REF_KEYS = {
+    "electron_ref_density_m3": "electron_driving_force_ref_density_m3",
+    "hole_ref_density_m3": "hole_driving_force_ref_density_m3",
+}
+_DIRECT_STRING_KEYS = frozenset(
+    key for _, key in _IMPACT_STRING_MEMBERS
+    if key != "driving_force_interpolation"
+)
+_DIRECT_NUMBER_KEYS = frozenset(
+    key for _, key in _IMPACT_NUMBER_MEMBERS
+    if key not in set(_NESTED_REF_KEYS.values())
+)
+_DIRECT_BOOL_KEYS = frozenset(key for _, key in _IMPACT_BOOL_MEMBERS)
+_IMPACT_DECK_KEYS = (
+    _DIRECT_STRING_KEYS | _DIRECT_NUMBER_KEYS | _DIRECT_BOOL_KEYS
+    | {"driving_force_interpolation", "quasi_fermi_carrier_trucation"}
+)
+_POSITIVE_CONFIG_KEYS = frozenset({
+    "source_geometry_scale", "A_scale", "B_scale", "electron_A_m_inv",
+    "electron_B_V_m", "hole_A_m_inv", "hole_B_V_m", "carrier_velocity_m_s",
+    "electron_a_low_m_inv", "electron_a_high_m_inv", "electron_b_low_V_m",
+    "electron_b_high_V_m", "hole_a_low_m_inv", "hole_a_high_m_inv",
+    "hole_b_low_V_m", "hole_b_high_V_m", "switch_field_V_m",
+    "phonon_energy_eV", "reference_temperature_K", "temperature_K",
 })
+_ALLOWED_STRINGS = {
+    "model": {"van_overstraeten"},
+    "parameter_set": {"default"},
+    "driving_force": {
+        "electric_field", "quasi_fermi_gradient", "grad_potential_parallel_j",
+        "effective_field_parallel_j",
+    },
+    "generation": {"carrier_density", "current_density"},
+    "current_approximation": {
+        "mobility_density_gradient", "density_gradient", "grad_qf",
+        "cell_reconstructed", "psi_gradient_proxy",
+        "cell_current_reconstructed", "cell_vector_current_reconstructed",
+        "conserved_total_current",
+    },
+    "current_magnitude_mode": {"edge_scalar_abs", "dual_face_vector_mag"},
+    "cell_reconstructed_midpoint_density": {
+        "bernoulli", "arithmetic", "gss_logistic",
+    },
+    "driving_force_interpolation": {"none", "quasi_fermi_to_electric_field"},
+    "quasi_fermi_gradient_discretization": {"edge_difference", "cell_gradient"},
+    "source_volume_policy": {"genius_truncated", "edge_half_box", "edge_box"},
+    "source_mapping_mode": {
+        "node_F_node_alpha_node_G", "edge_F_edge_alpha_edge_G_to_node",
+        "cell_F_cell_alpha_cell_G_to_node", "triangle_gss_gradqf_truncated",
+    },
+    "edge_source_partition": {"symmetric", "qf_gradient"},
+}
 
 _NUMBER = r"([0-9.eE+-]+)"
 
@@ -150,54 +233,310 @@ def _independent_forward_van_overstraeten(field, parameters, carrier):
     )
 
 _MIRROR_ABSOLUTE_TOLERANCE_BY_UNIT_SI = {"V/m": 1.0e-8}
-def _independent_vela_context(roots):
-    root = Path(roots["vela_root"]).resolve()
-    header_path = root / _VELA_HEADER_RELATIVE
-    text = header_path.read_text(encoding="utf-8")
+def _config_number(value, label, *, positive=False):
+    if isinstance(value, bool):
+        raise ValueError(f"{label} must be numeric")
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"{label} must be numeric") from error
+    if not math.isfinite(number) or (positive and number <= 0.0):
+        qualifier = " and positive" if positive else ""
+        raise ValueError(f"{label} must be finite{qualifier}")
+    return number
 
-    def header_value(name):
+
+def _verify_header_defaults(text):
+    config = {}
+    for member, key in _IMPACT_STRING_MEMBERS:
         matches = re.findall(
-            rf"\bReal\s+{re.escape(name)}\s*=\s*{_NUMBER}\s*;", text
+            rf'\bstd::string\s+{re.escape(member)}\s*=\s*"([^"]*)"\s*;', text
         )
         if len(matches) != 1:
-            raise ValueError(f"sealed Vela header lacks unique numeric {name}")
-        value = float(matches[0])
-        if not math.isfinite(value) or value <= 0.0:
-            raise ValueError(f"sealed Vela header has invalid {name}")
-        return value
-
-    values = {
-        name: header_value(name)
-        for name in (
-            "electronALow", "electronAHigh", "electronBLow", "electronBHigh",
-            "holeALow", "holeAHigh", "holeBLow", "holeBHigh", "switchField",
-            "phononEnergy", "referenceTemperature_K", "temperature_K",
+            raise ValueError(
+                f"sealed Vela header lacks unique string {member}"
+            )
+        config[key] = matches[0]
+    for member, key in _IMPACT_NUMBER_MEMBERS:
+        matches = re.findall(
+            rf"\bReal\s+{re.escape(member)}\s*=\s*{_NUMBER}\s*;", text
         )
-    }
-    reference = values["referenceTemperature_K"]
-    temperature = values["temperature_K"]
-    phonon = values["phononEnergy"]
+        if len(matches) != 1:
+            raise ValueError(
+                f"sealed Vela header lacks unique numeric {member}"
+            )
+        config[key] = _config_number(
+            matches[0], f"sealed Vela header {member}"
+        )
+    for member, key in _IMPACT_BOOL_MEMBERS:
+        matches = re.findall(
+            rf"\bbool\s+{re.escape(member)}\s*=\s*(true|false)\s*;", text
+        )
+        if len(matches) != 1:
+            raise ValueError(
+                f"sealed Vela header lacks unique bool {member}"
+            )
+        config[key] = matches[0] == "true"
+    if len(config) != 38:
+        raise ValueError("sealed Vela header default config is incomplete")
+    return config
+
+
+def _verify_cross_field_config(config: dict[str, object], label: str) -> None:
+    debug = bool(config["debug_raw_vanoverstraeten"])
+    driving = config["driving_force"]
+    current_aligned = (
+        not debug
+        and driving in {"grad_potential_parallel_j", "effective_field_parallel_j"}
+    )
+    if current_aligned and (
+        config["generation"] != "current_density"
+        or config["current_approximation"] not in {"density_gradient", "grad_qf"}
+    ):
+        raise ValueError(
+            f"{label} cross-field config invalid: current-aligned driving force"
+        )
+    if (
+        config["driving_force_interpolation"] != "none"
+        and driving != "quasi_fermi_gradient"
+        and not debug
+    ):
+        raise ValueError(
+            f"{label} cross-field config invalid: driving-force interpolation"
+        )
+    if (
+        config["quasi_fermi_gradient_discretization"] == "cell_gradient"
+        and driving != "quasi_fermi_gradient"
+        and not debug
+    ):
+        raise ValueError(
+            f"{label} cross-field config invalid: quasi-Fermi discretization"
+        )
+    triangle_gss = config["source_mapping_mode"] == "triangle_gss_gradqf_truncated"
+    if triangle_gss:
+        required = (
+            config["generation"] == "current_density"
+            and driving == "quasi_fermi_gradient"
+            and config["current_approximation"] == "cell_reconstructed"
+            and config["current_magnitude_mode"] == "edge_scalar_abs"
+            and config["cell_reconstructed_midpoint_density"] == "gss_logistic"
+            and config["quasi_fermi_gradient_discretization"] == "cell_gradient"
+            and config["source_volume_policy"] == "genius_truncated"
+            and config["source_volume_factor"] == 0.0
+            and config["source_geometry_scale"] == 1.0
+            and config["edge_source_partition"] == "symmetric"
+            and config["driving_force_interpolation"] == "none"
+            and config["quasi_fermi_carrier_truncation"] == 0.0
+            and config["minimum_field_V_m"] == 0.0
+            and config["electron_driving_force_ref_density_m3"] == 0.0
+            and config["hole_driving_force_ref_density_m3"] == 0.0
+        )
+        if not required:
+            raise ValueError(
+                f"{label} cross-field config invalid: canonical GSS mapping"
+            )
+    if (
+        config["cell_reconstructed_midpoint_density"] == "gss_logistic"
+        and not triangle_gss
+    ):
+        raise ValueError(
+            f"{label} cross-field config invalid: GSS midpoint mapping"
+        )
+
+
+def _verify_effective_config(config, label):
+    expected = (
+        {key for _, key in _IMPACT_STRING_MEMBERS}
+        | {key for _, key in _IMPACT_NUMBER_MEMBERS}
+        | {key for _, key in _IMPACT_BOOL_MEMBERS}
+    )
+    if set(config) != expected or len(config) != 38:
+        raise ValueError(
+            f"{label} complete canonical effective config mismatch"
+        )
+    for key, allowed in _ALLOWED_STRINGS.items():
+        if not isinstance(config[key], str) or config[key] not in allowed:
+            raise ValueError(f"{label} unsupported {key}")
+    for _, key in _IMPACT_NUMBER_MEMBERS:
+        number = _config_number(
+            config[key],
+            f"{label} {key}",
+            positive=key in _POSITIVE_CONFIG_KEYS,
+        )
+        if key not in _POSITIVE_CONFIG_KEYS and number < 0.0:
+            raise ValueError(f"{label} {key} must be non-negative")
+        config[key] = number
+    volume = config["source_volume_factor"]
+    if volume != 0.0 and not 0.5 <= volume <= 1.0:
+        raise ValueError(
+            f"{label} source_volume_factor must be 0 or within [0.5, 1.0]"
+        )
+    if type(config["debug_raw_vanoverstraeten"]) is not bool:
+        raise ValueError(f"{label} invalid debug_raw_vanoverstraeten")
+    _verify_cross_field_config(config, label)
+
+
+
+def _verify_impact_entries(value):
+    entries = []
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if key == "impact_ionization":
+                entries.append(child)
+            else:
+                entries.extend(_verify_impact_entries(child))
+    elif isinstance(value, list):
+        for child in value:
+            entries.extend(_verify_impact_entries(child))
+    return entries
+
+
+def _verify_deck_effective(path, relative, defaults):
+    entries = _verify_impact_entries(_load_json(path))
+    if len(entries) != 1:
+        raise ValueError(
+            f"sealed Vela deck {relative} impact config mismatch"
+        )
+    raw = entries[0]
+    if isinstance(raw, str):
+        overrides = {"model": raw}
+    elif isinstance(raw, dict):
+        unknown = set(raw) - _IMPACT_DECK_KEYS
+        if unknown:
+            raise ValueError(
+                f"sealed Vela deck {relative} unknown impact override "
+                f"{sorted(unknown)[0]}"
+            )
+        overrides = {}
+        for key in _DIRECT_STRING_KEYS:
+            if key in raw:
+                if not isinstance(raw[key], str):
+                    raise ValueError(
+                        f"sealed Vela deck {relative} invalid {key}"
+                    )
+                overrides[key] = raw[key]
+        for key in _DIRECT_NUMBER_KEYS:
+            if key in raw:
+                overrides[key] = _config_number(
+                    raw[key], f"sealed Vela deck {relative} {key}"
+                )
+        for key in _DIRECT_BOOL_KEYS:
+            if key in raw:
+                if type(raw[key]) is not bool:
+                    raise ValueError(
+                        f"sealed Vela deck {relative} invalid {key}"
+                    )
+                overrides[key] = raw[key]
+        if "quasi_fermi_carrier_trucation" in raw:
+            if "quasi_fermi_carrier_truncation" in raw:
+                raise ValueError(
+                    f"sealed Vela deck {relative} declares both truncation spellings"
+                )
+            overrides["quasi_fermi_carrier_truncation"] = _config_number(
+                raw["quasi_fermi_carrier_trucation"],
+                f"sealed Vela deck {relative} quasi_fermi_carrier_trucation",
+            )
+        if "driving_force_interpolation" in raw:
+            interpolation = raw["driving_force_interpolation"]
+            if isinstance(interpolation, str):
+                overrides["driving_force_interpolation"] = interpolation
+            elif isinstance(interpolation, dict):
+                unknown_nested = set(interpolation) - (
+                    {"mode"} | set(_NESTED_REF_KEYS)
+                )
+                if unknown_nested:
+                    raise ValueError(
+                        f"sealed Vela deck {relative} unknown interpolation "
+                        f"override {sorted(unknown_nested)[0]}"
+                    )
+                if "mode" in interpolation:
+                    if not isinstance(interpolation["mode"], str):
+                        raise ValueError(
+                            f"sealed Vela deck {relative} invalid interpolation mode"
+                        )
+                    overrides["driving_force_interpolation"] = interpolation["mode"]
+                for source, target in _NESTED_REF_KEYS.items():
+                    if source in interpolation:
+                        overrides[target] = _config_number(
+                            interpolation[source],
+                            f"sealed Vela deck {relative} {source}",
+                        )
+            else:
+                raise ValueError(
+                    f"sealed Vela deck {relative} invalid "
+                    "driving_force_interpolation"
+                )
+    else:
+        raise ValueError(
+            f"sealed Vela deck {relative} impact config mismatch"
+        )
+    effective = dict(defaults)
+    effective.update(overrides)
+    _verify_effective_config(effective, f"sealed Vela deck {relative}")
+    return effective
+
+
+def _verify_parameters_from_effective(config):
+    reference = float(config["reference_temperature_K"])
+    temperature = float(config["temperature_K"])
+    phonon = float(config["phonon_energy_eV"])
     gamma = (
         math.tanh(phonon / (2.0 * _BOLTZMANN_EV_PER_K * reference))
         / math.tanh(phonon / (2.0 * _BOLTZMANN_EV_PER_K * temperature))
     )
+    a_scale = float(config["A_scale"])
+    b_scale = float(config["B_scale"])
     parameters = {
-        "gamma": gamma, "switch_field_V_m": values["switchField"],
+        "gamma": gamma,
+        "switch_field_V_m": float(config["switch_field_V_m"]),
         "electron": {
-            "low": [values["electronALow"], values["electronBLow"]],
-            "high": [values["electronAHigh"], values["electronBHigh"]],
+            "low": [
+                a_scale * float(config["electron_a_low_m_inv"]),
+                b_scale * float(config["electron_b_low_V_m"]),
+            ],
+            "high": [
+                a_scale * float(config["electron_a_high_m_inv"]),
+                b_scale * float(config["electron_b_high_V_m"]),
+            ],
         },
         "hole": {
-            "low": [values["holeALow"], values["holeBLow"]],
-            "high": [values["holeAHigh"], values["holeBHigh"]],
+            "low": [
+                a_scale * float(config["hole_a_low_m_inv"]),
+                b_scale * float(config["hole_b_low_V_m"]),
+            ],
+            "high": [
+                a_scale * float(config["hole_a_high_m_inv"]),
+                b_scale * float(config["hole_b_high_V_m"]),
+            ],
         },
-        "phonon_energy_eV": phonon, "reference_temperature_K": reference,
+        "phonon_energy_eV": phonon,
+        "reference_temperature_K": reference,
         "temperature_K": temperature,
     }
+    return parameters, _BOLTZMANN_EV_PER_K * temperature
+
+
+def _independent_vela_context(roots):
+    root = Path(roots["vela_root"]).resolve()
+    manifest = _load_json(root / "manifest.json")
+    member_hashes = manifest.get("member_sha256", {})
+    if not isinstance(member_hashes, dict):
+        raise ValueError("sealed Vela manifest member hashes mismatch")
+
+    def bound_path(relative):
+        path = root / relative
+        if relative not in member_hashes or _sha256(path) != member_hashes[relative]:
+            raise ValueError(f"sealed Vela member hash mismatch: {relative}")
+        return path
+
+    header_path = bound_path(_VELA_HEADER_RELATIVE)
+    defaults = _verify_header_defaults(
+        header_path.read_text(encoding="utf-8")
+    )
     mesh, mesh_sources = {}, {}
     for topology in ("sketch", "mirror"):
         relative = _VELA_MESH_RELATIVE.format(topology=topology)
-        path = root / relative
+        path = bound_path(relative)
         payload = _load_json(path)
         if not isinstance(payload, dict) or payload.get("coordinate_unit") != "um":
             raise ValueError("sealed Vela mesh coordinate contract mismatch")
@@ -212,8 +551,10 @@ def _independent_vela_context(roots):
                 raise ValueError("sealed Vela mesh triangle contract mismatch")
             points = tuple(coordinates[node] for node in nodes)
             twice_area = (
-                (points[1][0] - points[0][0]) * (points[2][1] - points[0][1])
-                - (points[2][0] - points[0][0]) * (points[1][1] - points[0][1])
+                (points[1][0] - points[0][0])
+                * (points[2][1] - points[0][1])
+                - (points[2][0] - points[0][0])
+                * (points[1][1] - points[0][1])
             )
             if not math.isfinite(twice_area) or abs(twice_area) <= 1.0e-300:
                 raise ValueError("sealed Vela mesh has degenerate triangle")
@@ -222,75 +563,49 @@ def _independent_vela_context(roots):
             raise ValueError("sealed Vela mesh has no triangles")
         mesh[topology] = {"triangles": triangles}
         mesh_sources[topology] = {
-            "logical_id": f"vela:{relative}", "sha256": _sha256(path),
+            "logical_id": f"vela:{relative}",
+            "sha256": member_hashes[relative],
         }
-    manifest = _load_json(root / "manifest.json")
-    member_hashes = manifest.get("member_sha256", {})
+
     deck_relatives = sorted(
         relative for relative in member_hashes
         if relative.startswith(_VELA_DECK_PREFIX) and relative.endswith(".json")
     )
-    if not deck_relatives:
-        raise ValueError("sealed Vela context lacks hash-bound simulation decks")
-
-    def impact_entries(value):
-        entries = []
-        if isinstance(value, dict):
-            for key, child in value.items():
-                if key == "impact_ionization":
-                    entries.append(child)
-                else:
-                    entries.extend(impact_entries(child))
-        elif isinstance(value, list):
-            for child in value:
-                entries.extend(impact_entries(child))
-        return entries
-
+    if len(deck_relatives) != 40:
+        raise ValueError(
+            "sealed Vela context requires exactly 40 hash-bound simulation decks"
+        )
     deck_sources = []
-    effective_configs = set()
+    effective_configs = []
     for relative in deck_relatives:
-        path = root / relative
-        if _sha256(path) != member_hashes[relative]:
-            raise ValueError("sealed Vela deck hash mismatch")
-        entries = impact_entries(_load_json(path))
-        if len(entries) != 1:
-            raise ValueError("sealed Vela deck impact config mismatch")
-        raw = entries[0]
-        if isinstance(raw, str):
-            model, parameter_set = raw, "default"
-        elif isinstance(raw, dict):
-            overrides = sorted(_VELA_PARAMETER_OVERRIDE_KEYS.intersection(raw))
-            if overrides:
-                raise ValueError(f"sealed Vela deck parameter override {overrides[0]}")
-            model = raw.get("model")
-            parameter_set = raw.get("parameter_set", "default")
-        else:
-            raise ValueError("sealed Vela deck impact config mismatch")
-        if model != "van_overstraeten" or parameter_set != "default":
-            raise ValueError("sealed Vela deck effective config mismatch")
-        effective_configs.add((model, parameter_set))
-        deck_sources.append({"logical_id": f"vela:{relative}",
-                             "sha256": member_hashes[relative],
-                             "effective_config": {"model": model,
-                                                  "parameter_set": parameter_set}})
-    if len(effective_configs) != 1:
+        path = bound_path(relative)
+        effective = _verify_deck_effective(path, relative, defaults)
+        effective_configs.append(effective)
+        deck_sources.append({
+            "logical_id": f"vela:{relative}",
+            "sha256": member_hashes[relative],
+            "effective_config": dict(effective),
+        })
+    effective_config = effective_configs[0]
+    if any(config != effective_config for config in effective_configs[1:]):
         raise ValueError("sealed Vela deck effective config mismatch")
-
+    parameters, thermal_voltage = _verify_parameters_from_effective(
+        effective_config
+    )
     provenance = {
         "parameter_identity": "sealed_vela_production_defaults",
         "parameter_source": f"vela:{_VELA_HEADER_RELATIVE}",
-        "parameter_sha256": _sha256(header_path), "mesh_sources": mesh_sources,
+        "parameter_sha256": member_hashes[_VELA_HEADER_RELATIVE],
+        "mesh_sources": mesh_sources,
         "deck_sources": deck_sources,
-        "effective_impact_ionization_config": {
-            "model": model, "parameter_set": parameter_set,
-        },
+        "effective_impact_ionization_config": dict(effective_config),
     }
     return {
-        "mesh_by_topology": mesh, "parameters": parameters,
-        "thermal_voltage_V": _BOLTZMANN_EV_PER_K * temperature,
+        "mesh_by_topology": mesh,
+        "parameters": parameters,
+        "thermal_voltage_V": thermal_voltage,
         "provenance": provenance,
     }
-
 
 
 def _expected_mirror_invariance(rows: tuple[Observation, ...]) -> dict[str, object]:
@@ -543,100 +858,6 @@ def _finite(row: Observation | None) -> float | None:
     return value if math.isfinite(value) else None
 
 
-def _percentile(values: list[float], fraction: float) -> float | None:
-    if not values:
-        return None
-    ordered = sorted(values)
-    if len(ordered) == 1:
-        return ordered[0]
-    position = fraction * (len(ordered) - 1)
-    lower, upper = math.floor(position), math.ceil(position)
-    weight = position - lower
-    return ordered[lower] * (1.0 - weight) + ordered[upper] * weight
-
-
-def _paired_errors(rows: tuple[Observation, ...], quantities: set[str],
-                   split_keys: set[tuple[str, float]]) -> list[float]:
-    index = _index(rows)
-    errors = []
-    for key, vela in sorted(index.items(), key=lambda item: tuple(map(str, item[0]))):
-        solver, topology, bias, node, quantity, component = key
-        if solver != "vela" or quantity not in quantities or (topology, bias) not in split_keys:
-            continue
-        sentaurus = index.get(("sentaurus", topology, bias, node, quantity, component))
-        first, second = _finite(vela), _finite(sentaurus)
-        if first is None or second is None or abs(second) <= 1.0e-300:
-            continue
-        errors.append(abs(math.log10(max(abs(first), 1.0e-300) /
-                                     max(abs(second), 1.0e-300))))
-    return errors
-
-
-def _independent_candidate_metrics(bundle: InputBundle, rows: tuple[Observation, ...]) -> tuple[list[dict], list[dict]]:
-    limits = AcceptanceThresholds()
-    specifications = (
-        ("potential_field_direct", "potential_and_field", "", {"ElectrostaticPotential", "ElectricField"}, limits.gradient_median_abs_dex),
-        ("current_density_direct", "current_density", "both", {"eCurrentDensity", "hCurrentDensity"}, limits.gradient_median_abs_dex),
-        ("alpha_generation_direct", "alpha_and_generation", "both", {"eAlphaAvalanche", "hAlphaAvalanche", "ImpactIonization"}, limits.local_generation_abs_dex),
-    )
-    split_sets = {"discovery": set(bundle.discovery_keys), "holdout": set(bundle.holdout_keys),
-                  "combined": set(bundle.common_keys)}
-    metrics, final_classes = [], {}
-    for candidate, quantity, carrier, fields, gate in specifications:
-        split_classes = {}
-        for split in ("discovery", "holdout", "combined"):
-            quantity_errors = {
-                field: _paired_errors(rows, {field}, split_sets[split])
-                for field in sorted(fields)
-            }
-            errors = [value for field in sorted(quantity_errors) for value in quantity_errors[field]]
-            missing_quantity = any(not values for values in quantity_errors.values())
-            median = statistics.median(errors) if errors else None
-            p95 = _percentile(errors, 0.95)
-            classification = (Identifiability.INSUFFICIENT_DATA if missing_quantity
-                              else Identifiability.IDENTIFIED if median is not None and p95 is not None
-                              and median <= gate and p95 <= limits.gradient_p95_abs_dex
-                              else Identifiability.REJECTED)
-            split_classes[split] = classification
-            metrics.append({
-                "candidate": candidate, "quantity": quantity, "carrier": carrier,
-                "split": split, "topology": "all", "bias_V": None,
-                "support_kind": SupportKind.NODE.value, "valid_count": len(errors),
-                "median_abs_error": median, "p95_abs_error": p95,
-                "median_angle_deg": None, "classification": classification.value,
-            })
-        if Identifiability.INSUFFICIENT_DATA in split_classes.values():
-            final = Identifiability.INSUFFICIENT_DATA
-        elif all(value is Identifiability.IDENTIFIED for value in split_classes.values()):
-            final = Identifiability.IDENTIFIED
-        else:
-            final = Identifiability.REJECTED
-        final_classes[candidate] = final
-    metrics.append({
-        "candidate": "current_inverted_qf_gradient", "quantity": "qf_gradient",
-        "carrier": "both", "split": "combined", "topology": "all", "bias_V": None,
-        "support_kind": SupportKind.NODE.value, "valid_count": 0,
-        "median_abs_error": None, "p95_abs_error": None, "median_angle_deg": None,
-        "classification": Identifiability.CONFOUNDED.value,
-    })
-    final_classes["current_inverted_qf_gradient"] = Identifiability.CONFOUNDED
-    classifications = []
-    for candidate in sorted(final_classes):
-        classification = final_classes[candidate]
-        classifications.append({
-            "candidate": candidate, "classification": classification.value,
-            "claim_type": "identifiability",
-            "reason": ("discovery, holdout, and combined numerical gates passed without local fitting"
-                       if classification is Identifiability.IDENTIFIED else
-                       "mobility and gradient are not independently available for both solvers"
-                       if classification is Identifiability.CONFOUNDED else
-                       "one or more declared quantities lacked compatible finite paired support in a required split"
-                       if classification is Identifiability.INSUFFICIENT_DATA else
-                       "one or more discovery, holdout, or combined gates failed"),
-        })
-    return metrics, classifications
-
-
 def _candidate_csv(metrics: list[dict]) -> list[dict[str, str]]:
     return [{column: _format_csv(row.get(column)) for column in CANDIDATE_COLUMNS}
             for row in metrics]
@@ -812,68 +1033,6 @@ def _sentaurus_version(roots: dict[str, str]) -> str:
         raise ValueError("raw inputs declare inconsistent Sentaurus versions")
     return next(iter(versions)) if versions else "not_declared_by_input_contract"
 
-
-def _verify_typed_candidate_extension(
-    reported_metrics: object, reported_classifications: object,
-    direct_metrics: list[dict], direct_classifications: list[dict],
-) -> tuple[list[dict], list[dict]]:
-    if not isinstance(reported_metrics, list) or not isinstance(
-        reported_classifications, list
-    ):
-        raise ValueError("typed candidate payload must use lists")
-    extra_metrics = reported_metrics
-    extra_classifications = reported_classifications
-    authoritative = {
-        "triangle_minus_grad_psi", "node_area_weighted_minus_grad_psi",
-        "edge_area_weighted_minus_grad_psi",
-        "signed_edge_minus_delta_psi_over_h",
-        "triangle_qf_gradient_current",
-        "node_area_weighted_qf_gradient_current",
-        "edge_area_weighted_qf_gradient_current",
-        "signed_edge_qf_difference_current", "current_inverted_qf_gradient",
-        "signed_edge_sg_density_current",
-        "signed_edge_drift_diffusion_current", "electric_field_magnitude",
-        "qf_gradient_magnitude", "electric_field_current_aligned",
-        "qf_gradient_current_aligned",
-    }
-    candidates = {row.get("candidate") for row in extra_metrics if isinstance(row, dict)}
-    if candidates != authoritative:
-        raise ValueError("typed field/transport/avalanche candidate coverage mismatch")
-    allowed = {value.value for value in Identifiability}
-    per_candidate: dict[str, str] = {}
-    per_split: dict[str, set[str]] = {}
-    for row in extra_metrics:
-        if not isinstance(row, dict) or set(row) != set(CANDIDATE_COLUMNS):
-            raise ValueError("typed candidate metric schema mismatch")
-        candidate = row["candidate"]
-        classification = row["classification"]
-        if classification not in allowed or row["split"] not in {
-            "discovery", "holdout", "combined",
-        }:
-            raise ValueError("typed candidate metric classification mismatch")
-        if not isinstance(row["valid_count"], int) or row["valid_count"] < 0:
-            raise ValueError("typed candidate valid count mismatch")
-        for field in ("median_abs_error", "p95_abs_error", "median_angle_deg"):
-            value = row[field]
-            if value is not None and (
-                not isinstance(value, (int, float)) or not math.isfinite(float(value))
-            ):
-                raise ValueError("typed candidate metric must be finite or null")
-        if candidate in per_candidate and per_candidate[candidate] != classification:
-            raise ValueError("typed candidate classification is inconsistent")
-        per_candidate[candidate] = classification
-        per_split.setdefault(candidate, set()).add(row["split"])
-    if any(splits != {"discovery", "holdout", "combined"}
-           for splits in per_split.values()):
-        raise ValueError("typed candidate split coverage mismatch")
-    classification_map = {}
-    for row in extra_classifications:
-        if not isinstance(row, dict) or row.get("classification") not in allowed:
-            raise ValueError("typed candidate classification schema mismatch")
-        classification_map[row.get("candidate")] = row.get("classification")
-    if classification_map != per_candidate:
-        raise ValueError("typed candidate classifications do not match metrics")
-    return reported_metrics, reported_classifications
 
 def _verify_raw_semantics(root: Path, report: dict, bundle: InputBundle,
                           roots: dict[str, str], rows: tuple[Observation, ...]) -> list[str]:

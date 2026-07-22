@@ -109,111 +109,11 @@ def _finite(row: Observation | None) -> float | None:
     return value if math.isfinite(value) else None
 
 
-def _percentile(values: list[float], fraction: float) -> float | None:
-    if not values:
-        return None
-    ordered = sorted(values)
-    if len(ordered) == 1:
-        return ordered[0]
-    position = fraction * (len(ordered) - 1)
-    lower = math.floor(position)
-    upper = math.ceil(position)
-    weight = position - lower
-    return ordered[lower] * (1.0 - weight) + ordered[upper] * weight
-
-
-def _paired_errors(rows: tuple[Observation, ...], quantities: set[str], split_keys: set[tuple[str, float]]) -> list[float]:
-    index = _index(rows)
-    errors = []
-    for key, vela in sorted(index.items(), key=lambda item: tuple(map(str, item[0]))):
-        solver, topology, bias, node, quantity, component = key
-        if solver != "vela" or quantity not in quantities or (topology, bias) not in split_keys:
-            continue
-        sentaurus = index.get(("sentaurus", topology, bias, node, quantity, component))
-        first, second = _finite(vela), _finite(sentaurus)
-        if first is None or second is None or abs(second) <= 1.0e-300:
-            continue
-        errors.append(abs(math.log10(max(abs(first), 1.0e-300) / max(abs(second), 1.0e-300))))
-    return errors
-
-
 def _candidate_metrics(bundle: InputBundle, rows: tuple[Observation, ...], limits: AcceptanceThresholds,
                        candidate_results: tuple[object, ...] = ()) -> tuple[list[dict], list[dict]]:
-    specifications = (
-        ("potential_field_direct", "potential_and_field", "", {"ElectrostaticPotential", "ElectricField"}, limits.gradient_median_abs_dex),
-        ("current_density_direct", "current_density", "both", {"eCurrentDensity", "hCurrentDensity"}, limits.gradient_median_abs_dex),
-        ("alpha_generation_direct", "alpha_and_generation", "both", {"eAlphaAvalanche", "hAlphaAvalanche", "ImpactIonization"}, limits.local_generation_abs_dex),
-    )
     result = []
     classifications = []
-    split_sets = {
-        "discovery": set(bundle.discovery_keys), "holdout": set(bundle.holdout_keys),
-        "combined": set(bundle.common_keys),
-    }
     candidate_classification = {}
-    for candidate, quantity, carrier, fields, gate in specifications:
-        split_rows = {}
-        for split in ("discovery", "holdout", "combined"):
-            errors_by_quantity = [
-                _paired_errors(rows, {field}, split_sets[split])
-                for field in sorted(fields)
-            ]
-            errors = [error for field_errors in errors_by_quantity for error in field_errors]
-            complete_coverage = all(errors_by_quantity)
-            median = statistics.median(errors) if errors else None
-            p95 = _percentile(errors, 0.95)
-            classification = (Identifiability.INSUFFICIENT_DATA if not complete_coverage
-                              else Identifiability.IDENTIFIED if median is not None and p95 is not None
-                              and median <= gate and p95 <= limits.gradient_p95_abs_dex
-                              else Identifiability.REJECTED)
-            split_rows[split] = classification
-            result.append({
-                "candidate": candidate, "quantity": quantity, "carrier": carrier,
-                "split": split, "topology": "all", "bias_V": None,
-                "support_kind": SupportKind.NODE.value, "valid_count": len(errors),
-                "median_abs_error": median, "p95_abs_error": p95,
-                "median_angle_deg": None, "classification": classification.value,
-            })
-        if any(value is Identifiability.INSUFFICIENT_DATA for value in split_rows.values()):
-            final = Identifiability.INSUFFICIENT_DATA
-        elif all(value is Identifiability.IDENTIFIED for value in split_rows.values()):
-            final = Identifiability.IDENTIFIED
-        else:
-            final = Identifiability.REJECTED
-        candidate_classification[candidate] = final
-
-    # Mobility is independently available only for the Sentaurus rows.  The
-    # Vela-to-Sentaurus gradient inference therefore remains a combined product.
-    qf_class = Identifiability.CONFOUNDED
-    result.append({
-        "candidate": "current_inverted_qf_gradient", "quantity": "qf_gradient",
-        "carrier": "both", "split": "combined", "topology": "all", "bias_V": None,
-        "support_kind": SupportKind.NODE.value, "valid_count": 0,
-        "median_abs_error": None, "p95_abs_error": None, "median_angle_deg": None,
-        "classification": qf_class.value,
-    })
-    candidate_classification["current_inverted_qf_gradient"] = qf_class
-    for candidate in sorted(candidate_classification):
-        classification = candidate_classification[candidate]
-        classifications.append({
-            "candidate": candidate, "classification": classification.value,
-            "claim_type": "identifiability",
-            "reason": (
-                "discovery, holdout, and combined numerical gates passed without local fitting"
-                if classification is Identifiability.IDENTIFIED else
-                "mobility and gradient are not independently available for both solvers"
-                if classification is Identifiability.CONFOUNDED else
-                "one or more declared quantities lacked compatible finite paired support in a required split"
-                if classification is Identifiability.INSUFFICIENT_DATA else
-                "one or more discovery, holdout, or combined gates failed"
-            ),
-        })
-    # Direct cross-solver composites remain localization-only controls.  Only
-    # typed physical evaluator results are authoritative/promotable candidates.
-    result.clear()
-    classifications.clear()
-    candidate_classification.clear()
-
     for ranked in rank_candidates(candidate_results, thresholds=limits):
         candidate = ranked["candidate"]
         if candidate in candidate_classification:
