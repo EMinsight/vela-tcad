@@ -496,7 +496,11 @@ def _write_state(path: Path, coordinates: dict, fields: dict, contract: dict) ->
 
 def _seal_root(root: Path, solver: str, contract: dict, records: list[dict],
                executable: Path, source_manifest: Path, phase_base: str,
-               extra_provenance: dict) -> None:
+               extra_provenance: dict,
+               expected_executable_sha256: str | None = None) -> None:
+    executable_sha256 = _sha256(executable)
+    if expected_executable_sha256 is not None and executable_sha256 != expected_executable_sha256:
+        raise ValueError("sealed executable SHA mismatch")
     _copy(source_manifest, root, "source/source_manifest.json")
     _copy(executable, root, f"source/executables/{executable.name}")
     _copy(Path(__file__), root, "source/tooling/inverse_input_sealer.py")
@@ -520,6 +524,9 @@ def _seal_root(root: Path, solver: str, contract: dict, records: list[dict],
         })
     ledger = {path.relative_to(root).as_posix(): _sha256(path)
               for path in sorted(root.rglob("*")) if path.is_file()}
+    executable_member = f"source/executables/{executable.name}"
+    if ledger.get(executable_member) != executable_sha256:
+        raise ValueError("sealed executable SHA mismatch")
     tracked = {f"source/tracked/{relative}": ledger[f"source/tracked/{relative}"]
                for relative in _TRACKED_SOURCE_PATHS}
     tracked.update({
@@ -527,7 +534,7 @@ def _seal_root(root: Path, solver: str, contract: dict, records: list[dict],
         "source/tooling/inverse_input_sealer.py": ledger["source/tooling/inverse_input_sealer.py"],
     })
     provenance = {
-        "executable_sha256": _sha256(executable),
+        "executable_sha256": executable_sha256,
         "tracked_source_sha256": tracked,
         "phase_base": phase_base,
         "tracked_source_binding": "current_workspace_bytes; phase_base verified separately",
@@ -697,7 +704,9 @@ def seal_inverse_input_roots(
                     export = work / solver_label / topology / tag
                     export.parent.mkdir(parents=True, exist_ok=True)
                     _require_importer_sha(importer_path, importer_sha256)
+                    _require_importer_sha(fixed_importer, importer_sha256)
                     _run_import(fixed_importer, tdr, export, importer_runner)
+                    _require_importer_sha(fixed_importer, importer_sha256)
                     _require_importer_sha(importer_path, importer_sha256)
                     if trusted_ledger is not None:
                         _require_reimport_matches_ledger(export, trusted_ledger)
@@ -725,13 +734,15 @@ def seal_inverse_input_roots(
                     "scientific_limitation": "unavailable native nodal E/J/alpha/source remain blank"})
         _seal_root(stage / "sentaurus", "sentaurus", REQUIRED_SENTARUS_FIELDS, sent_records,
                    fixed_importer, sentaurus_root / "sweep_manifest.json", phase_base,
-                   {"remote_solver_binding_status": "not_declared_by_source_manifest"})
+                   {"remote_solver_binding_status": "not_declared_by_source_manifest"},
+                   expected_executable_sha256=importer_sha256)
         _seal_root(stage / "supplemental", "supplemental", SUPPLEMENTAL_FIELDS,
                    supplemental_records, fixed_importer, supplemental_base / "manifest.json", phase_base,
                    {"remote_solver_binding_status": "release_declared_by_supplemental_manifest",
                     "sentaurus_version": supplemental_manifest["sentaurus_version"],
                     "declared_importer": str(importer_path),
-                    "importer_sha256": importer_sha256})
+                    "importer_sha256": importer_sha256},
+                   expected_executable_sha256=importer_sha256)
         shutil.rmtree(work)
         load_input_bundle(stage / "vela", stage / "sentaurus", stage / "supplemental")
         shutil.rmtree(fixed_importer.parent)
