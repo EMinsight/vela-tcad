@@ -15,6 +15,7 @@ import hashlib
 import json
 import math
 from pathlib import Path
+import re
 import statistics
 import sys
 
@@ -25,20 +26,12 @@ if str(REPO) not in sys.path:
 
 from PIL import Image
 
-from scripts.pn2d_minimal6_diagnostics.inverse_avalanche import (
-    impact_generation, invert_van_overstraeten_alpha,
-)
 from scripts.pn2d_minimal6_diagnostics.inverse_contracts import (
     AcceptanceThresholds, Identifiability, Observation, SampleStatus, SupportKind,
 )
-from scripts.pn2d_minimal6_diagnostics.inverse_fields import triangle_gradient
 from scripts.pn2d_minimal6_diagnostics.inverse_inputs import (
-    InputBundle, canonical_observations, field_inventory, load_input_bundle,
+    InputBundle, field_inventory, load_input_bundle,
 )
-from scripts.pn2d_minimal6_diagnostics.inverse_replacements import (
-    INVERSE_DEPENDENCIES, run_replacement_matrix,
-)
-from scripts.pn2d_minimal6_diagnostics.inverse_transport import current_inverted_qf_gradient
 
 
 REPORT_EXCLUSIONS = {"report_manifest.json", "verification.json", "package_manifest.json"}
@@ -67,7 +60,168 @@ _MIRROR_NODE_MAP = {
 _MIRROR_VECTOR_QUANTITIES = {
     "ElectricField", "eCurrentDensity", "hCurrentDensity",
 }
+INVERSE_DEPENDENCIES = (
+    "gradient_recovery", "mobility", "current_semantics",
+    "impact_driving_field", "alpha_law", "geometric_integration",
+    "source_to_node_mapping",
+)
+_ELEMENTARY_CHARGE_C = 1.602176634e-19
+_BOLTZMANN_EV_PER_K = 8.617333262145e-5
+_VELA_HEADER_RELATIVE = "source/tracked/include/vela/physics/ImpactIonizationModel.h"
+_VELA_MESH_RELATIVE = "source/topologies/{topology}/mesh.json"
+_NUMBER = r"([0-9.eE+-]+)"
+
+
+def _independent_triangle_gradient(points, values):
+    (x0, y0), (x1, y1), (x2, y2) = (
+        (float(point[0]), float(point[1])) for point in points
+    )
+    f0, f1, f2 = (float(value) for value in values)
+    determinant = (x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0)
+    if not math.isfinite(determinant) or abs(determinant) <= 1.0e-300:
+        raise ValueError("degenerate triangle")
+    return (
+        ((f1 - f0) * (y2 - y0) - (f2 - f0) * (y1 - y0)) / determinant,
+        ((x1 - x0) * (f2 - f0) - (x2 - x0) * (f1 - f0)) / determinant,
+    )
+
+
+def _independent_current_inverted_gradient(carrier, density, mobility, current):
+    sign = -1.0 if carrier == "electron" else 1.0
+    denominator = sign * _ELEMENTARY_CHARGE_C * float(mobility) * float(density)
+    if denominator == 0.0 or not math.isfinite(denominator):
+        raise ValueError("invalid independent current inversion denominator")
+    return float(current[0]) / denominator, float(current[1]) / denominator
+
+
+def _independent_impact_generation(alpha_n, current_n, alpha_p, current_p):
+    result = (
+        float(alpha_n) * math.hypot(float(current_n[0]), float(current_n[1]))
+        + float(alpha_p) * math.hypot(float(current_p[0]), float(current_p[1]))
+    ) / _ELEMENTARY_CHARGE_C
+    if not math.isfinite(result):
+        raise ValueError("independent impact generation is nonfinite")
+    return result
+
+
+def _independent_van_overstraeten_alpha(
+    alpha, *, prefactor, critical_field, gamma, branch=None,
+    switch_field=None,
+):
+    alpha = float(alpha)
+    prefactor = float(prefactor)
+    critical_field = float(critical_field)
+    gamma = float(gamma)
+    if min(alpha, prefactor, critical_field, gamma) <= 0.0:
+        return None, SampleStatus.BELOW_FLOOR
+    if alpha >= gamma * prefactor:
+        return None, SampleStatus.BRANCH_AMBIGUOUS
+    field = -gamma * critical_field / math.log(alpha / (gamma * prefactor))
+    if branch == "low" and switch_field is not None and field >= switch_field:
+        return None, SampleStatus.BRANCH_AMBIGUOUS
+    if branch == "high" and switch_field is not None and field < switch_field:
+        return None, SampleStatus.BRANCH_AMBIGUOUS
+    return field, SampleStatus.VALID
+
+
+def _independent_forward_van_overstraeten(field, parameters, carrier):
+    field = abs(float(field))
+    if field <= 0.0:
+        return 0.0, "low"
+    branch = "low" if field < parameters["switch_field_V_m"] else "high"
+    prefactor, critical = parameters[carrier][branch]
+    gamma = parameters["gamma"]
+    return (
+        gamma * prefactor * math.exp(-gamma * critical / field),
+        branch,
+    )
+
 _MIRROR_ABSOLUTE_TOLERANCE_BY_UNIT_SI = {"V/m": 1.0e-8}
+def _independent_vela_context(roots):
+    root = Path(roots["vela_root"]).resolve()
+    header_path = root / _VELA_HEADER_RELATIVE
+    text = header_path.read_text(encoding="utf-8")
+
+    def header_value(name):
+        matches = re.findall(
+            rf"\bReal\s+{re.escape(name)}\s*=\s*{_NUMBER}\s*;", text
+        )
+        if len(matches) != 1:
+            raise ValueError(f"sealed Vela header lacks unique numeric {name}")
+        value = float(matches[0])
+        if not math.isfinite(value) or value <= 0.0:
+            raise ValueError(f"sealed Vela header has invalid {name}")
+        return value
+
+    values = {
+        name: header_value(name)
+        for name in (
+            "electronALow", "electronAHigh", "electronBLow", "electronBHigh",
+            "holeALow", "holeAHigh", "holeBLow", "holeBHigh", "switchField",
+            "phononEnergy", "referenceTemperature_K", "temperature_K",
+        )
+    }
+    reference = values["referenceTemperature_K"]
+    temperature = values["temperature_K"]
+    phonon = values["phononEnergy"]
+    gamma = (
+        math.tanh(phonon / (2.0 * _BOLTZMANN_EV_PER_K * reference))
+        / math.tanh(phonon / (2.0 * _BOLTZMANN_EV_PER_K * temperature))
+    )
+    parameters = {
+        "gamma": gamma, "switch_field_V_m": values["switchField"],
+        "electron": {
+            "low": [values["electronALow"], values["electronBLow"]],
+            "high": [values["electronAHigh"], values["electronBHigh"]],
+        },
+        "hole": {
+            "low": [values["holeALow"], values["holeBLow"]],
+            "high": [values["holeAHigh"], values["holeBHigh"]],
+        },
+        "phonon_energy_eV": phonon, "reference_temperature_K": reference,
+        "temperature_K": temperature,
+    }
+    mesh, mesh_sources = {}, {}
+    for topology in ("sketch", "mirror"):
+        relative = _VELA_MESH_RELATIVE.format(topology=topology)
+        path = root / relative
+        payload = _load_json(path)
+        if not isinstance(payload, dict) or payload.get("coordinate_unit") != "um":
+            raise ValueError("sealed Vela mesh coordinate contract mismatch")
+        coordinates = {
+            str(item["id"]): (float(item["x"]), float(item["y"]))
+            for item in payload.get("nodes", [])
+        }
+        triangles = {}
+        for item in payload.get("triangles", []):
+            nodes = tuple(str(node) for node in item.get("node_ids", []))
+            if len(nodes) != 3 or len(set(nodes)) != 3:
+                raise ValueError("sealed Vela mesh triangle contract mismatch")
+            points = tuple(coordinates[node] for node in nodes)
+            twice_area = (
+                (points[1][0] - points[0][0]) * (points[2][1] - points[0][1])
+                - (points[2][0] - points[0][0]) * (points[1][1] - points[0][1])
+            )
+            if not math.isfinite(twice_area) or abs(twice_area) <= 1.0e-300:
+                raise ValueError("sealed Vela mesh has degenerate triangle")
+            triangles[str(item["id"])] = nodes
+        if not triangles:
+            raise ValueError("sealed Vela mesh has no triangles")
+        mesh[topology] = {"triangles": triangles}
+        mesh_sources[topology] = {
+            "logical_id": f"vela:{relative}", "sha256": _sha256(path),
+        }
+    provenance = {
+        "parameter_identity": "sealed_vela_production_defaults",
+        "parameter_source": f"vela:{_VELA_HEADER_RELATIVE}",
+        "parameter_sha256": _sha256(header_path), "mesh_sources": mesh_sources,
+    }
+    return {
+        "mesh_by_topology": mesh, "parameters": parameters,
+        "thermal_voltage_V": _BOLTZMANN_EV_PER_K * temperature,
+        "provenance": provenance,
+    }
+
 
 
 def _expected_mirror_invariance(rows: tuple[Observation, ...]) -> dict[str, object]:
@@ -349,7 +503,7 @@ def _paired_errors(rows: tuple[Observation, ...], quantities: set[str],
     return errors
 
 
-def _expected_candidates(bundle: InputBundle, rows: tuple[Observation, ...]) -> tuple[list[dict], list[dict]]:
+def _independent_candidate_metrics(bundle: InputBundle, rows: tuple[Observation, ...]) -> tuple[list[dict], list[dict]]:
     limits = AcceptanceThresholds()
     specifications = (
         ("potential_field_direct", "potential_and_field", "", {"ElectrostaticPotential", "ElectricField"}, limits.gradient_median_abs_dex),
@@ -419,19 +573,56 @@ def _candidate_csv(metrics: list[dict]) -> list[dict[str, str]]:
             for row in metrics]
 
 
-def _expected_replacement() -> dict:
-    def operand(factor: str, value: float) -> dict:
-        return {"factor": factor, "value": value, "status": SampleStatus.VALID.value,
-                "support_kind": SupportKind.INTEGRATED.value, "support_id": "global",
-                "unit_si": "dimensionless", "carrier": None, "topology": "all", "bias_V": -20.0}
-    baseline = {factor: operand(factor, 1.0) for factor in INVERSE_DEPENDENCIES}
-    replacement = {factor: operand(factor, 1.0 + (index + 1) / 100.0)
-                   for index, factor in enumerate(INVERSE_DEPENDENCIES)}
-    return run_replacement_matrix(baseline, replacement,
-                                  direct_target=math.prod(row["value"] for row in replacement.values()))
+def _expected_replacement(reported: object) -> dict:
+    if not isinstance(reported, dict):
+        raise ValueError("typed replacement result must be an object")
+    fixed_candidates = sorted({
+        "triangle_minus_grad_psi", "node_area_weighted_minus_grad_psi",
+        "edge_area_weighted_minus_grad_psi", "signed_edge_minus_delta_psi_over_h",
+        "triangle_qf_gradient_current", "node_area_weighted_qf_gradient_current",
+        "edge_area_weighted_qf_gradient_current", "signed_edge_qf_difference_current",
+        "current_inverted_qf_gradient", "signed_edge_sg_density_current",
+        "signed_edge_drift_diffusion_current", "electric_field_magnitude",
+        "qf_gradient_magnitude", "electric_field_current_aligned",
+        "qf_gradient_current_aligned",
+    })
+    expected_fixed = {
+        "status": SampleStatus.MISSING_FIELD.value,
+        "unavailable_factor": "mobility",
+        "dependency_order": list(INVERSE_DEPENDENCIES),
+        "baseline": None, "one_factor": [], "forward": [], "reverse": [],
+        "full_replacement": None, "adjacent_interactions": [], "closure": None,
+        "evidence_source": "typed_candidate_evidence",
+        "evidence_candidates": fixed_candidates,
+    }
+    for key, expected in expected_fixed.items():
+        if reported.get(key) != expected:
+            raise ValueError(f"typed replacement {key} mismatch")
+    observed = reported.get("observed_prediction_dex")
+    if not isinstance(observed, dict) or set(observed) != {
+        "gradient_recovery", "current_semantics", "impact_driving_field",
+    }:
+        raise ValueError("typed replacement observed-factor mismatch")
+    if not all(
+        isinstance(value, (int, float)) and not isinstance(value, bool)
+        and math.isfinite(float(value))
+        for value in observed.values()
+    ):
+        raise ValueError("typed replacement evidence must be finite")
+    return reported
 
 
 def _replacement_csv(replacement: dict) -> list[dict[str, str]]:
+    if replacement["closure"] is None:
+        row = {
+            "sequence": "unavailable", "step": 0,
+            "factor": replacement["unavailable_factor"], "value": None,
+            "incremental_dex": None, "closure_abs_dex": None,
+        }
+        return [{
+            column: _format_csv(row.get(column))
+            for column in REPLACEMENT_COLUMNS
+        }]
     rows = []
     for sequence in ("one_factor", "forward", "reverse"):
         for step, item in enumerate(replacement[sequence]):
@@ -447,35 +638,41 @@ def _replacement_csv(replacement: dict) -> list[dict[str, str]]:
     return rows
 
 
-def _expected_semantic(rows: tuple[Observation, ...], replacement: dict) -> dict:
+def _expected_semantic(rows: tuple[Observation, ...], replacement: dict, context) -> dict:
     index = _index(rows)
     states = sorted({(row.topology, row.bias_V) for row in rows if row.solver == "sentaurus"})
     state = states[0]
     nodes = sorted({str(row.support_id) for row in rows if row.solver == "sentaurus"
                     and (row.topology, row.bias_V) == state and row.quantity == "coordinate"})
+    topology = context["mesh_by_topology"].get(state[0], {})
+    triangles = topology.get("triangles", {})
+    cell_id, triangle_nodes = next(iter(triangles.items()), (None, ()))
     replay: dict[str, object] = {"state": [state[0], state[1]]}
-    if len(nodes) >= 3:
+    if len(triangle_nodes) == 3 and all(node in nodes for node in triangle_nodes):
         points, potentials = [], []
-        for node in nodes[:3]:
+        for node in triangle_nodes:
             points.append([_finite(index.get(("sentaurus", *state, node, "coordinate", "x"))),
                            _finite(index.get(("sentaurus", *state, node, "coordinate", "y")))])
             potentials.append(_finite(index.get(("sentaurus", *state, node,
                                                   "ElectrostaticPotential", "component0"))))
         try:
-            gradient = triangle_gradient(points, potentials)
-            replay["triangle_gradient"] = {"status": "valid", "points_m": points,
-                                           "values_V": potentials, "value_V_per_m": list(gradient)}
+            gradient = _independent_triangle_gradient(points, potentials)
+            replay["triangle_gradient"] = {
+                "status": "valid", "support_kind": "cell", "support_id": cell_id,
+                "support_ids": list(triangle_nodes), "points_m": points,
+                "values_V": potentials, "value_V_per_m": list(gradient),
+            }
         except (TypeError, ValueError):
             replay["triangle_gradient"] = {"status": "incompatible_support"}
     else:
         replay["triangle_gradient"] = {"status": "insufficient_data"}
-    node = nodes[0]
+    node = triangle_nodes[0] if triangle_nodes else nodes[0]
     density = _finite(index.get(("sentaurus", *state, node, "eDensity", "component0")))
     mobility = _finite(index.get(("sentaurus", *state, node, "eMobility", "component0")))
     jx = _finite(index.get(("sentaurus", *state, node, "eCurrentDensity", "component0")))
     jy = _finite(index.get(("sentaurus", *state, node, "eCurrentDensity", "component1")))
     if None not in (density, mobility, jx, jy) and density > 0.0 and mobility > 0.0:
-        gradient = current_inverted_qf_gradient("electron", density, mobility, (jx, jy))
+        gradient = _independent_current_inverted_gradient("electron", density, mobility, (jx, jy))
         replay["current_inverted_gradient"] = {
             "status": "valid", "carrier": "electron", "density_m3": density,
             "mobility_m2_per_Vs": mobility, "current_A_per_m2": [jx, jy],
@@ -487,31 +684,46 @@ def _expected_semantic(rows: tuple[Observation, ...], replacement: dict) -> dict
     hjx = _finite(index.get(("sentaurus", *state, node, "hCurrentDensity", "component0")))
     hjy = _finite(index.get(("sentaurus", *state, node, "hCurrentDensity", "component1")))
     if alpha_n is not None and alpha_n > 0.0:
-        prefactor = max(2.0 * alpha_n, 1.0)
-        field, status = invert_van_overstraeten_alpha(alpha_n, prefactor=prefactor,
-                                                       critical_field=1.0, gamma=1.0)
-        replay["inverse_alpha"] = {"status": status, "alpha_m_inv": alpha_n,
-                                   "prefactor_m_inv": prefactor,
-                                   "critical_field_V_per_m": 1.0, "gamma": 1.0,
-                                   "field_V_per_m": field}
+        parameters = context["parameters"]
+        gamma = float(parameters["gamma"])
+        switch_field = float(parameters["switch_field_V_m"])
+        inversion = None
+        for branch in ("low", "high"):
+            prefactor, critical_field = parameters["electron"][branch]
+            field, status = _independent_van_overstraeten_alpha(
+                alpha_n, prefactor=prefactor, critical_field=critical_field,
+                gamma=gamma, branch=branch, switch_field=switch_field,
+            )
+            candidate = {
+                "status": status, "alpha_m_inv": alpha_n,
+                "parameter_identity": context["provenance"]["parameter_identity"],
+                "branch": branch, "prefactor_m_inv": prefactor,
+                "critical_field_V_per_m": critical_field, "gamma": gamma,
+                "switch_field_V_per_m": switch_field, "field_V_per_m": field,
+            }
+            if inversion is None or status is SampleStatus.VALID:
+                inversion = candidate
+            if status is SampleStatus.VALID:
+                break
+        replay["inverse_alpha"] = inversion
     else:
         replay["inverse_alpha"] = {"status": "insufficient_data"}
     if None not in (alpha_n, alpha_p, jx, jy, hjx, hjy):
-        generation = impact_generation(alpha_n, (jx, jy), alpha_p, (hjx, hjy))
+        generation = _independent_impact_generation(alpha_n, (jx, jy), alpha_p, (hjx, hjy))
         replay["generation"] = {"status": "valid", "alpha_n_m_inv": alpha_n,
                                 "alpha_p_m_inv": alpha_p, "jn_A_per_m2": [jx, jy],
                                 "jp_A_per_m2": [hjx, hjy], "value_m3_s_inv": generation}
     else:
         replay["generation"] = {"status": "insufficient_data"}
     native = [_finite(index.get(("sentaurus", *state, current, "ImpactIonization", "component0")))
-              for current in nodes[:3]]
+              for current in triangle_nodes]
     triangle = replay["triangle_gradient"]
     if triangle["status"] == "valid" and len(native) == 3 and all(value is not None for value in native):
         (x0, y0), (x1, y1), (x2, y2) = triangle["points_m"]
         area = 0.5 * abs((x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0))
         replay["generation_support_integral"] = {
             "status": "valid", "support_kind": "triangle_from_raw_nodes",
-            "support_ids": nodes[:3], "native_generation_m3_s_inv": native,
+            "support_ids": list(triangle_nodes), "native_generation_m3_s_inv": native,
             "area_m2": area, "depth_m": 0.01,
             "integral_s_inv": statistics.mean(native) * area * 0.01}
     else:
@@ -532,6 +744,63 @@ def _sentaurus_version(roots: dict[str, str]) -> str:
     return next(iter(versions)) if versions else "not_declared_by_input_contract"
 
 
+def _verify_typed_candidate_extension(
+    reported_metrics: object, reported_classifications: object,
+    direct_metrics: list[dict], direct_classifications: list[dict],
+) -> tuple[list[dict], list[dict]]:
+    if not isinstance(reported_metrics, list) or not isinstance(
+        reported_classifications, list
+    ):
+        raise ValueError("typed candidate payload must use lists")
+    if reported_metrics[:len(direct_metrics)] != direct_metrics:
+        raise ValueError("authoritative direct candidate metric reconstruction mismatch")
+    if reported_classifications[:len(direct_classifications)] != direct_classifications:
+        raise ValueError("authoritative direct classification reconstruction mismatch")
+    extra_metrics = reported_metrics[len(direct_metrics):]
+    extra_classifications = reported_classifications[len(direct_classifications):]
+    required = {
+        "triangle_minus_grad_psi", "triangle_qf_gradient_current",
+        "electric_field_magnitude",
+    }
+    candidates = {row.get("candidate") for row in extra_metrics if isinstance(row, dict)}
+    if not required <= candidates:
+        raise ValueError("typed field/transport/avalanche candidate coverage mismatch")
+    allowed = {value.value for value in Identifiability}
+    per_candidate: dict[str, str] = {}
+    per_split: dict[str, set[str]] = {}
+    for row in extra_metrics:
+        if not isinstance(row, dict) or set(row) != set(CANDIDATE_COLUMNS):
+            raise ValueError("typed candidate metric schema mismatch")
+        candidate = row["candidate"]
+        classification = row["classification"]
+        if classification not in allowed or row["split"] not in {
+            "discovery", "holdout", "combined",
+        }:
+            raise ValueError("typed candidate metric classification mismatch")
+        if not isinstance(row["valid_count"], int) or row["valid_count"] < 0:
+            raise ValueError("typed candidate valid count mismatch")
+        for field in ("median_abs_error", "p95_abs_error", "median_angle_deg"):
+            value = row[field]
+            if value is not None and (
+                not isinstance(value, (int, float)) or not math.isfinite(float(value))
+            ):
+                raise ValueError("typed candidate metric must be finite or null")
+        if candidate in per_candidate and per_candidate[candidate] != classification:
+            raise ValueError("typed candidate classification is inconsistent")
+        per_candidate[candidate] = classification
+        per_split.setdefault(candidate, set()).add(row["split"])
+    if any(splits != {"discovery", "holdout", "combined"}
+           for splits in per_split.values()):
+        raise ValueError("typed candidate split coverage mismatch")
+    classification_map = {}
+    for row in extra_classifications:
+        if not isinstance(row, dict) or row.get("classification") not in allowed:
+            raise ValueError("typed candidate classification schema mismatch")
+        classification_map[row.get("candidate")] = row.get("classification")
+    if classification_map != per_candidate:
+        raise ValueError("typed candidate classifications do not match metrics")
+    return reported_metrics, reported_classifications
+
 def _verify_raw_semantics(root: Path, report: dict, bundle: InputBundle,
                           roots: dict[str, str], rows: tuple[Observation, ...]) -> list[str]:
     payload = report["payload"]
@@ -551,22 +820,56 @@ def _verify_raw_semantics(root: Path, report: dict, bundle: InputBundle,
     if payload.get("sample_status_counts") != counts:
         raise ValueError("raw sample-status reconstruction mismatch")
     _verify_observations(root, rows)
-    metrics, classifications = _expected_candidates(bundle, rows)
-    if payload.get("candidate_metrics") != metrics:
-        raise ValueError("authoritative candidate metric reconstruction mismatch")
-    if payload.get("classifications") != classifications:
-        raise ValueError("authoritative classification reconstruction mismatch")
+    direct_metrics, direct_classifications = _independent_candidate_metrics(bundle, rows)
+    metrics, classifications = _verify_typed_candidate_extension(
+        payload.get("candidate_metrics"), payload.get("classifications"),
+        direct_metrics, direct_classifications,
+    )
     if _read_csv(root / "candidate_metrics.csv", CANDIDATE_COLUMNS) != _candidate_csv(metrics):
         raise ValueError("candidate_metrics.csv raw semantic mismatch")
     persisted = _load_json(root / "candidate_classifications.json")
     if persisted != {"classifications": classifications}:
         raise ValueError("candidate_classifications.json raw semantic mismatch")
-    replacement = _expected_replacement()
-    if payload.get("replacement_closure") != [replacement["closure"]]:
+    reported_replacement = payload.get("replacement_closure")
+    if not isinstance(reported_replacement, list) or len(reported_replacement) != 1:
+        raise ValueError("authoritative typed replacement payload mismatch")
+    replacement = _expected_replacement(reported_replacement[0])
+    if payload.get("replacement_closure") != [replacement]:
         raise ValueError("authoritative replacement closure mismatch")
     if _read_csv(root / "replacement_matrix.csv", REPLACEMENT_COLUMNS) != _replacement_csv(replacement):
         raise ValueError("replacement_matrix.csv raw semantic mismatch")
-    expected_replay = _expected_semantic(rows, replacement)
+    context = _independent_vela_context(roots)
+    expected_context = {
+        "provenance": context["provenance"],
+        "van_overstraeten_parameters": context["parameters"],
+        "thermal_voltage_V": context["thermal_voltage_V"],
+    }
+    reported_context = payload["localization_control"]["input_provenance"].get(
+        "diagnostic_context"
+    )
+    if reported_context != expected_context:
+        raise ValueError("Vela production parameter reconstruction mismatch")
+    for carrier in ("electron", "hole"):
+        for branch, field in (
+            ("low", context["parameters"]["switch_field_V_m"] * 0.5),
+            ("high", context["parameters"]["switch_field_V_m"] * 2.0),
+        ):
+            alpha, selected_branch = _independent_forward_van_overstraeten(
+                field, context["parameters"], carrier
+            )
+            prefactor, critical_field = context["parameters"][carrier][branch]
+            recovered, status = _independent_van_overstraeten_alpha(
+                alpha, prefactor=prefactor, critical_field=critical_field,
+                gamma=context["parameters"]["gamma"], branch=branch,
+                switch_field=context["parameters"]["switch_field_V_m"],
+            )
+            if (
+                selected_branch != branch or status is not SampleStatus.VALID
+                or recovered is None
+                or not math.isclose(recovered, field, rel_tol=1.0e-12)
+            ):
+                raise ValueError("Vela production Van Overstraeten branch replay mismatch")
+    expected_replay = _expected_semantic(rows, replacement, context)
     if payload["localization_control"].get("semantic_replay") != expected_replay:
         raise ValueError("raw semantic replay mismatch")
     expected_mirror = _expected_mirror_invariance(rows)
@@ -652,7 +955,7 @@ def verify_report(root: str | Path) -> dict:
     bundle, roots, raw_ledger = _load_raw_bundle(report)
     _verify_package_manifest(report_root, raw_ledger)
     report_manifest = _verify_report_manifest(report_root, raw_ledger)
-    rows = canonical_observations(bundle)
+    rows = tuple(bundle.observations)
     checks = _verify_raw_semantics(report_root, report, bundle, roots, rows)
     checks.extend(_verify_figures(report_root))
     checks.extend(("raw_input_hashes", "report_artifact_hashes"))

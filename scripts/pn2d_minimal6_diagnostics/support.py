@@ -31,7 +31,10 @@ def map_local_sources_to_nodes(triangles, sources):
         if len(nodes) != 3 or len(set(nodes)) != 3: raise ValueError("local source needs three unique nodes")
         share = float(source) / 3.0
         for node in nodes: result[node] = result.get(node, 0.0) + share
-    if abs(sum(result.values()) - sum(float(source) for source in sources)) > 1e-12: raise AssertionError("node mapping is not conservative")
+    mapped_total = sum(result.values())
+    source_total = sum(float(source) for source in sources)
+    if not math.isclose(mapped_total, source_total, rel_tol=1e-12, abs_tol=1e-12):
+        raise AssertionError("node mapping is not conservative")
     return result
 def integrate_cell_field(points, values, *, partial_volume_fraction=1.0):
     if len(points) != 3 or len(values) != 3: raise ValueError("cell field requires one triangle")

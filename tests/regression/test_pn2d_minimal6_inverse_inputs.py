@@ -41,12 +41,62 @@ SUPPLEMENTAL = {
     "eMobility": (1, "cm^2*V^-1*s^-1"), "hMobility": (1, "cm^2*V^-1*s^-1"),
     "eVelocity": (1, "cm*s^-1"), "hVelocity": (1, "cm*s^-1"),
 }
+VELA_HEADER = """struct ImpactIonizationModelConfig {
+    Real electronALow = 7.03e7;
+    Real electronAHigh = 7.03e7;
+    Real electronBLow = 1.231e8;
+    Real electronBHigh = 1.231e8;
+    Real holeALow = 1.582e8;
+    Real holeAHigh = 6.71e7;
+    Real holeBLow = 2.036e8;
+    Real holeBHigh = 1.693e8;
+    Real switchField = 4.0e7;
+    Real phononEnergy = 0.063;
+    Real referenceTemperature_K = 300.0;
+    Real temperature_K = 300.0;
+};
+"""
+
+
+def write_vela_context(root: Path, member_sha256: dict[str, str]) -> None:
+    coordinates = {
+        0: (0.0, 0.5), 1: (1.0, 0.4), 2: (2.0, 0.5),
+        3: (2.0, 0.0), 4: (0.0, 0.0), 5: (1.0, 0.1),
+    }
+    triangles = {
+        "sketch": ((0, 4, 1), (4, 5, 1), (1, 5, 3), (1, 3, 2)),
+        "mirror": ((0, 4, 5), (0, 5, 1), (1, 5, 2), (5, 3, 2)),
+    }
+    for topology in ("sketch", "mirror"):
+        relative = f"source/topologies/{topology}/mesh.json"
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({
+            "coordinate_unit": "um",
+            "nodes": [
+                {"id": node, "x": point[0], "y": point[1]}
+                for node, point in coordinates.items()
+            ],
+            "triangles": [
+                {"id": cell, "node_ids": list(nodes), "region_id": 0}
+                for cell, nodes in enumerate(triangles[topology])
+            ],
+        }, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+        member_sha256[relative] = sha256(path)
+    relative = "source/tracked/include/vela/physics/ImpactIonizationModel.h"
+    path = root / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(VELA_HEADER, encoding="utf-8")
+    member_sha256[relative] = sha256(path)
+
 
 
 def write_root(root: Path, solver: str, fields: dict[str, tuple[int, str]],
                *, omit_field: str | None = None) -> None:
     states = []
     member_sha256 = {}
+    if solver == "vela":
+        write_vela_context(root, member_sha256)
     for topology in ("sketch", "mirror"):
         for bias in range(-1, -21, -1):
             token = f"m{abs(bias)}p000000"
@@ -161,6 +211,26 @@ class PN2DMinimal6InverseInputsTest(unittest.TestCase):
             inverse_inputs.write_input_manifest(bundle, output)
             self.assertTrue(output.is_file())
             self.assertEqual(json.loads(output.read_text(encoding="utf-8"))["executable_sha256"], ["a" * 64])
+
+    def test_loads_hash_bound_topology_and_vela_production_avalanche_context(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            vela, sentaurus, supplemental = make_fixture(Path(tmp))
+            bundle = inverse_inputs.load_input_bundle(vela, sentaurus, supplemental)
+            context = bundle.diagnostic_context
+            self.assertEqual(
+                context.mesh_by_topology["sketch"]["triangles"]["0"],
+                ("0", "4", "1"),
+            )
+            self.assertTrue(context.mesh_by_topology["sketch"]["edges"])
+            self.assertEqual(
+                context.van_overstraeten_parameters["electron"]["low"],
+                (7.03e7, 1.231e8),
+            )
+            self.assertEqual(context.van_overstraeten_parameters["gamma"], 1.0)
+            self.assertEqual(
+                context.provenance["parameter_identity"],
+                "sealed_vela_production_defaults",
+            )
 
     def test_rejects_tampered_state_before_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

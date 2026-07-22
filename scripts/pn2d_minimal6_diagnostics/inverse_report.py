@@ -11,18 +11,27 @@ from pathlib import Path
 import statistics
 from typing import Iterable
 
-from .inverse_avalanche import impact_generation, invert_van_overstraeten_alpha
+from .inverse_avalanche import (
+    evaluate_avalanche_candidates, impact_generation,
+    invert_van_overstraeten_alpha,
+)
 from .inverse_contracts import (
     AcceptanceThresholds, Identifiability, Observation, SampleStatus,
     SupportKind, validate_inverse_report_v1,
 )
-from .inverse_fields import evaluate_mirror_invariance, triangle_gradient
+from .inverse_fields import (
+    evaluate_field_candidates, evaluate_mirror_invariance, triangle_gradient,
+)
 from .inverse_inputs import (
     InputBundle, canonical_observations, field_inventory, write_input_manifest,
 )
 from .inverse_plots import FIGURE_NAMES, render_inverse_figures, write_figure_manifest
-from .inverse_replacements import INVERSE_DEPENDENCIES, run_replacement_matrix
-from .inverse_transport import current_inverted_qf_gradient
+from .inverse_replacements import (
+    INVERSE_DEPENDENCIES, rank_candidates, replacement_from_evidence,
+)
+from .inverse_transport import (
+    current_inverted_qf_gradient, evaluate_transport_candidates,
+)
 
 
 OBSERVATION_COLUMNS = (
@@ -128,7 +137,8 @@ def _paired_errors(rows: tuple[Observation, ...], quantities: set[str], split_ke
     return errors
 
 
-def _candidate_metrics(bundle: InputBundle, rows: tuple[Observation, ...], limits: AcceptanceThresholds) -> tuple[list[dict], list[dict]]:
+def _candidate_metrics(bundle: InputBundle, rows: tuple[Observation, ...], limits: AcceptanceThresholds,
+                       candidate_results: tuple[object, ...] = ()) -> tuple[list[dict], list[dict]]:
     specifications = (
         ("potential_field_direct", "potential_and_field", "", {"ElectrostaticPotential", "ElectricField"}, limits.gradient_median_abs_dex),
         ("current_density_direct", "current_density", "both", {"eCurrentDensity", "hCurrentDensity"}, limits.gradient_median_abs_dex),
@@ -198,47 +208,71 @@ def _candidate_metrics(bundle: InputBundle, rows: tuple[Observation, ...], limit
                 "one or more discovery, holdout, or combined gates failed"
             ),
         })
+    for ranked in rank_candidates(candidate_results, thresholds=limits):
+        candidate = ranked["candidate"]
+        if candidate in candidate_classification:
+            continue
+        classification = ranked["classification"]
+        for split, summaries in (
+            ("discovery", ranked["discovery_metrics"]),
+            ("holdout", ranked["holdout_metrics"]),
+            ("combined", ranked["combined_metrics"]),
+        ):
+            for metric, summary in sorted(summaries.items()):
+                direction = metric.endswith("_direction_deg")
+                result.append({
+                    "candidate": candidate,
+                    "quantity": metric,
+                    "carrier": "both",
+                    "split": split,
+                    "topology": "all",
+                    "bias_V": None,
+                    "support_kind": "mixed",
+                    "valid_count": summary["valid_count"],
+                    "median_abs_error": None if direction else summary["median_abs_error"],
+                    "p95_abs_error": None if direction else summary["p95_abs_error"],
+                    "median_angle_deg": summary["median_abs_error"] if direction else None,
+                    "classification": classification.value,
+                })
+        classifications.append({
+            "candidate": candidate,
+            "classification": classification.value,
+            "claim_type": "identifiability",
+            "reason": ranked["reason"],
+        })
     return result, classifications
 
 
-def _replacement() -> dict:
-    def operand(factor: str, value: float) -> dict:
-        return {
-            "factor": factor, "value": value, "status": SampleStatus.VALID.value,
-            "support_kind": SupportKind.INTEGRATED.value, "support_id": "global",
-            "unit_si": "dimensionless", "carrier": None, "topology": "all", "bias_V": -20.0,
-        }
-    baseline = {factor: operand(factor, 1.0) for factor in INVERSE_DEPENDENCIES}
-    replacement = {factor: operand(factor, 1.0 + (index + 1) / 100.0)
-                   for index, factor in enumerate(INVERSE_DEPENDENCIES)}
-    target = math.prod(row["value"] for row in replacement.values())
-    return run_replacement_matrix(baseline, replacement, direct_target=target)
-
-
-def _semantic_replay(rows: tuple[Observation, ...], replacement: dict) -> dict:
+def _semantic_replay(rows: tuple[Observation, ...], replacement: dict, context) -> dict:
     index = _index(rows)
     sentaurus_states = sorted({(row.topology, row.bias_V) for row in rows if row.solver == "sentaurus"})
     state = sentaurus_states[0]
     nodes = sorted({str(row.support_id) for row in rows if row.solver == "sentaurus"
                     and (row.topology, row.bias_V) == state and row.quantity == "coordinate"})
+    topology = context.mesh_by_topology.get(state[0], {})
+    triangles = topology.get("triangles", {})
+    cell_id, triangle_nodes = next(iter(triangles.items()), (None, ()))
     replay: dict[str, object] = {"state": [state[0], state[1]]}
-    if len(nodes) >= 3:
+    if len(triangle_nodes) == 3 and all(node in nodes for node in triangle_nodes):
         points, potentials = [], []
-        for node in nodes[:3]:
+        for node in triangle_nodes:
             x = _finite(index.get(("sentaurus", *state, node, "coordinate", "x")))
             y = _finite(index.get(("sentaurus", *state, node, "coordinate", "y")))
             psi = _finite(index.get(("sentaurus", *state, node, "ElectrostaticPotential", "component0")))
             points.append([x, y]); potentials.append(psi)
         try:
             gradient = triangle_gradient(points, potentials)
-            replay["triangle_gradient"] = {"status": "valid", "points_m": points,
-                                           "values_V": potentials, "value_V_per_m": list(gradient)}
+            replay["triangle_gradient"] = {
+                "status": "valid", "support_kind": "cell", "support_id": cell_id,
+                "support_ids": list(triangle_nodes), "points_m": points,
+                "values_V": potentials, "value_V_per_m": list(gradient),
+            }
         except (TypeError, ValueError):
             replay["triangle_gradient"] = {"status": "incompatible_support"}
     else:
         replay["triangle_gradient"] = {"status": "insufficient_data"}
 
-    node = nodes[0]
+    node = triangle_nodes[0] if triangle_nodes else nodes[0]
     density = _finite(index.get(("sentaurus", *state, node, "eDensity", "component0")))
     mobility = _finite(index.get(("sentaurus", *state, node, "eMobility", "component0")))
     jx = _finite(index.get(("sentaurus", *state, node, "eCurrentDensity", "component0")))
@@ -258,13 +292,28 @@ def _semantic_replay(rows: tuple[Observation, ...], replacement: dict) -> dict:
     hjx = _finite(index.get(("sentaurus", *state, node, "hCurrentDensity", "component0")))
     hjy = _finite(index.get(("sentaurus", *state, node, "hCurrentDensity", "component1")))
     if alpha_n is not None and alpha_n > 0.0:
-        prefactor = max(2.0 * alpha_n, 1.0)
-        field, status = invert_van_overstraeten_alpha(alpha_n, prefactor=prefactor,
-                                                       critical_field=1.0, gamma=1.0)
-        replay["inverse_alpha"] = {
-            "status": status, "alpha_m_inv": alpha_n, "prefactor_m_inv": prefactor,
-            "critical_field_V_per_m": 1.0, "gamma": 1.0, "field_V_per_m": field,
-        }
+        parameters = context.van_overstraeten_parameters
+        gamma = float(parameters["gamma"])
+        switch_field = float(parameters["switch_field_V_m"])
+        inversion = None
+        for branch in ("low", "high"):
+            prefactor, critical_field = parameters["electron"][branch]
+            field, status = invert_van_overstraeten_alpha(
+                alpha_n, prefactor=prefactor, critical_field=critical_field,
+                gamma=gamma, branch=branch, switch_field=switch_field,
+            )
+            candidate = {
+                "status": status, "alpha_m_inv": alpha_n,
+                "parameter_identity": context.provenance["parameter_identity"],
+                "branch": branch, "prefactor_m_inv": prefactor,
+                "critical_field_V_per_m": critical_field, "gamma": gamma,
+                "switch_field_V_per_m": switch_field, "field_V_per_m": field,
+            }
+            if inversion is None or status is SampleStatus.VALID:
+                inversion = candidate
+            if status is SampleStatus.VALID:
+                break
+        replay["inverse_alpha"] = inversion
     else:
         replay["inverse_alpha"] = {"status": "insufficient_data"}
     if None not in (alpha_n, alpha_p, jx, jy, hjx, hjy):
@@ -278,7 +327,7 @@ def _semantic_replay(rows: tuple[Observation, ...], replacement: dict) -> dict:
         replay["generation"] = {"status": "insufficient_data"}
     generation_rows = [
         _finite(index.get(("sentaurus", *state, current, "ImpactIonization", "component0")))
-        for current in nodes[:3]
+        for current in triangle_nodes
     ]
     triangle = replay["triangle_gradient"]
     if (triangle["status"] == "valid" and len(generation_rows) == 3
@@ -288,7 +337,7 @@ def _semantic_replay(rows: tuple[Observation, ...], replacement: dict) -> dict:
         depth_m = 0.01
         replay["generation_support_integral"] = {
             "status": "valid", "support_kind": "triangle_from_raw_nodes",
-            "support_ids": nodes[:3], "native_generation_m3_s_inv": generation_rows,
+            "support_ids": list(triangle_nodes), "native_generation_m3_s_inv": generation_rows,
             "area_m2": area_m2, "depth_m": depth_m,
             "integral_s_inv": statistics.mean(generation_rows) * area_m2 * depth_m,
         }
@@ -514,23 +563,50 @@ def build_analysis_artifacts(bundle: InputBundle, out_dir: str | Path, *, phase_
         selected = [_observation_row(row) for row in rows if row.support_kind is support]
         write_csv(root / f"observations_{support.value}.csv", OBSERVATION_COLUMNS, selected)
     limits = AcceptanceThresholds()
-    metrics, classifications = _candidate_metrics(bundle, rows, limits)
+    context = bundle.diagnostic_context
+    field_results = evaluate_field_candidates(
+        rows, context.mesh_by_topology, reference_floor=0.0, thresholds=limits,
+    )
+    transport_results = evaluate_transport_candidates(
+        rows, context.mesh_by_topology, density_floor=0.0, current_floor=0.0,
+        thermal_voltage_V=context.thermal_voltage_V, thresholds=limits,
+    )
+    avalanche_results = evaluate_avalanche_candidates(
+        rows, context.mesh_by_topology,
+        parameters=context.van_overstraeten_parameters,
+        generation_floor=0.0, current_floor=0.0, thresholds=limits,
+    )
+    candidate_results = field_results + transport_results + avalanche_results
+    metrics, classifications = _candidate_metrics(
+        bundle, rows, limits, candidate_results,
+    )
     write_csv(root / "candidate_metrics.csv", CANDIDATE_COLUMNS, metrics)
     write_json(root / "candidate_classifications.json", {"classifications": classifications})
-    replacement = _replacement()
+    replacement = replacement_from_evidence(candidate_results)
     replacement_rows = []
-    for sequence in ("one_factor", "forward", "reverse"):
-        for step, row in enumerate(replacement[sequence]):
+    if replacement["closure"] is None:
+        replacement_rows.append({
+            "sequence": "unavailable", "step": 0,
+            "factor": replacement["unavailable_factor"], "value": None,
+            "incremental_dex": None, "closure_abs_dex": None,
+        })
+    else:
+        for sequence in ("one_factor", "forward", "reverse"):
+            for step, row in enumerate(replacement[sequence]):
+                replacement_rows.append({
+                    "sequence": sequence, "step": step, "factor": row["factor"],
+                    "value": row["value"],
+                    "incremental_dex": row.get(
+                        "incremental_dex", row.get("delta_dex")
+                    ),
+                    "closure_abs_dex": None,
+                })
+        for name in ("forward_abs_dex", "reverse_abs_dex", "direct_abs_dex"):
             replacement_rows.append({
-                "sequence": sequence, "step": step, "factor": row["factor"],
-                "value": row["value"],
-                "incremental_dex": row.get("incremental_dex", row.get("delta_dex")),
-                "closure_abs_dex": None,
+                "sequence": "closure", "step": 0, "factor": name,
+                "value": None, "incremental_dex": None,
+                "closure_abs_dex": replacement["closure"][name],
             })
-    for name in ("forward_abs_dex", "reverse_abs_dex", "direct_abs_dex"):
-        replacement_rows.append({"sequence": "closure", "step": 0, "factor": name,
-                                 "value": None, "incremental_dex": None,
-                                 "closure_abs_dex": replacement["closure"][name]})
     write_csv(root / "replacement_matrix.csv", REPLACEMENT_COLUMNS, replacement_rows)
 
     status_counts = {status.value: 0 for status in SampleStatus}
@@ -551,12 +627,20 @@ def build_analysis_artifacts(bundle: InputBundle, out_dir: str | Path, *, phase_
             "sample_status_counts": status_counts,
             "candidate_metrics": metrics,
             "classifications": classifications,
-            "replacement_closure": [replacement["closure"]],
+            "replacement_closure": [replacement],
             "localization_control": {
                 "mirror_invariance": mirror_invariance,
-                "semantic_replay": _semantic_replay(rows, replacement),
-                "input_provenance": {"input_roots": dict(input_roots),
-                                     "raw_inputs": raw_inputs},
+                "semantic_replay": _semantic_replay(rows, replacement, context),
+                "input_provenance": {
+                    "input_roots": dict(input_roots),
+                    "raw_inputs": raw_inputs,
+                    "diagnostic_context": {
+                        "provenance": context.provenance,
+                        "van_overstraeten_parameters":
+                            context.van_overstraeten_parameters,
+                        "thermal_voltage_V": context.thermal_voltage_V,
+                    },
+                },
                 "classification": "localization_control",
                 "excluded_from_ranking": True,
             },

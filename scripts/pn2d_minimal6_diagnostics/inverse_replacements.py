@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping
 import math
+import statistics
 from typing import Any
 
 try:
@@ -535,7 +536,52 @@ def _flatten_evidence(records: Iterable[object]) -> list[object]:
         else:
             flattened.append(record)
     return flattened
+def replacement_from_evidence(records: Iterable[object]) -> dict:
+    """Build a fail-closed replacement result from typed candidate evidence.
 
+    Only factors carrying finite signed prediction evidence are observed.
+    Absent independent factors remain typed unavailable; they are never filled
+    with identity values and no direct closure target is synthesized.
+    """
+    flattened = [
+        row for row in _flatten_evidence(records)
+        if isinstance(row, Mapping)
+        and _field(row, "record_kind", "formula_candidate") == "formula_candidate"
+    ]
+    candidates = sorted({
+        str(_field(row, "candidate")) for row in flattened
+        if _field(row, "candidate") is not None
+    })
+    observed: dict[str, float] = {}
+    for factor in INVERSE_DEPENDENCIES:
+        predictions = []
+        for row in flattened:
+            if _field(row, "factor") != factor:
+                continue
+            if _status(_field(row, "status")) is not SampleStatus.VALID:
+                continue
+            value = _field(row, "prediction_dex")
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                value = float(value)
+                if math.isfinite(value):
+                    predictions.append(value)
+        if predictions:
+            observed[factor] = statistics.median(predictions)
+    unavailable = next(
+        (factor for factor in INVERSE_DEPENDENCIES if factor not in observed),
+        None,
+    )
+    if unavailable is None:
+        raise ValueError(
+            "typed evidence lacks an independently observed direct replacement target"
+        )
+    result = _typed_unavailable(unavailable, SampleStatus.MISSING_FIELD)
+    result.update({
+        "evidence_source": "typed_candidate_evidence",
+        "evidence_candidates": candidates,
+        "observed_prediction_dex": observed,
+    })
+    return result
 
 def _percentile(sorted_values: list[float], percentile: float) -> float:
     if len(sorted_values) == 1:

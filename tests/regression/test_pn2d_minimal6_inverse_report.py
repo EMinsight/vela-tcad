@@ -52,11 +52,11 @@ def make_three_node_fixture(root: Path, *, omit_field: str | None = None):
     roots = INPUT_FIXTURE.make_fixture(root, omit_field=omit_field)
     points = (
         ("0", 0.0, 0.5),
-        ("1", 1.0, 0.5),
+        ("1", 1.0, 0.4),
         ("2", 2.0, 0.5),
         ("3", 2.0, 0.0),
         ("4", 0.0, 0.0),
-        ("5", 1.0, 0.0),
+        ("5", 1.0, 0.1),
     )
     for input_root in roots:
         manifest = json.loads((input_root / "manifest.json").read_text())
@@ -185,6 +185,32 @@ class PN2DMinimal6InverseReportTest(unittest.TestCase):
             self.assertEqual(mirror["unpaired_count"], 0)
             self.assertIn("mirror_invariance", verify_report(out)["checks"])
 
+    def test_report_executes_all_typed_candidate_evaluators_on_noncollinear_mesh(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out, _ = self.build(Path(tmp), "report")
+            payload = json.loads(
+                (out / "physics_inverse_audit.json").read_text(encoding="utf-8")
+            )["payload"]
+            candidates = {row["candidate"] for row in payload["candidate_metrics"]}
+            self.assertIn("triangle_minus_grad_psi", candidates)
+            self.assertIn("triangle_qf_gradient_current", candidates)
+            self.assertIn("electric_field_magnitude", candidates)
+            triangle = payload["localization_control"]["semantic_replay"]["triangle_gradient"]
+            self.assertEqual(triangle["status"], "valid")
+            self.assertEqual(triangle.get("support_ids"), ["0", "4", "5"])
+            (x0, y0), (x1, y1), (x2, y2) = triangle["points_m"]
+            self.assertGreater(
+                abs((x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0)), 0.0
+            )
+            inverse_alpha = payload["localization_control"]["semantic_replay"][
+                "inverse_alpha"
+            ]
+            self.assertEqual(inverse_alpha["parameter_identity"],
+                             "sealed_vela_production_defaults")
+            self.assertEqual(inverse_alpha["branch"], "low")
+            self.assertEqual(inverse_alpha["prefactor_m_inv"], 7.03e7)
+            self.assertEqual(inverse_alpha["critical_field_V_per_m"], 1.231e8)
+
     def test_report_generation_fails_closed_when_mirror_invariance_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -269,7 +295,7 @@ class PN2DMinimal6InverseReportTest(unittest.TestCase):
                 "vela_root": str(roots[0].resolve()), "sentaurus_root": str(roots[1].resolve()),
                 "supplemental_sentaurus_root": str(roots[2].resolve()),
             })
-            self.assertEqual(len(provenance["raw_inputs"]), 126)
+            self.assertEqual(len(provenance["raw_inputs"]), 129)
             self.assertTrue({"vela:manifest.json", "vela:seal.json",
                              "sentaurus:manifest.json", "sentaurus:seal.json",
                              "supplemental:manifest.json", "supplemental:seal.json"}
@@ -515,6 +541,54 @@ class PN2DMinimal6InverseReportTest(unittest.TestCase):
                 with self.subTest(label=label), self.assertRaises(ValueError):
                     verify_report(target)
 
+
+    def test_replacement_uses_typed_candidate_evidence_and_missing_factor_is_unavailable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out, _ = self.build(Path(tmp), "report")
+            payload = json.loads(
+                (out / "physics_inverse_audit.json").read_text(encoding="utf-8")
+            )["payload"]
+            replacement = payload["replacement_closure"][0]
+            self.assertEqual(replacement["evidence_source"], "typed_candidate_evidence")
+            self.assertEqual(replacement["status"], "missing_field")
+            self.assertEqual(replacement["unavailable_factor"], "mobility")
+            self.assertIsNone(replacement["closure"])
+            with (out / "replacement_matrix.csv").open(newline="", encoding="utf-8") as handle:
+                rows = list(csv.DictReader(handle))
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["sequence"], "unavailable")
+            self.assertEqual(rows[0]["factor"], "mobility")
+            self.assertEqual(rows[0]["value"], "")
+
+    def test_verifier_has_no_shared_scientific_helper_imports(self):
+        source = (
+            REPO / "scripts" / "verify_pn2d_minimal6_physics_inverse_audit.py"
+        ).read_text(encoding="utf-8")
+        for module in (
+            "inverse_avalanche", "inverse_fields", "inverse_transport",
+            "inverse_replacements",
+        ):
+            self.assertNotIn(
+                f"from scripts.pn2d_minimal6_diagnostics.{module} import", source
+            )
+        self.assertIn("def _independent_candidate_metrics", source)
+        self.assertNotIn("canonical_observations", source)
+
+    def test_verifier_independently_recomputes_sealed_vela_production_parameters(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out, _ = self.build(Path(tmp), "report")
+            report_path = out / "physics_inverse_audit.json"
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            parameters = report["payload"]["localization_control"][
+                "input_provenance"
+            ]["diagnostic_context"]["van_overstraeten_parameters"]
+            parameters["electron"]["low"][0] *= 2.0
+            write_json(report_path, report)
+            refresh_integrity(out)
+            with self.assertRaisesRegex(
+                ValueError, "Vela production parameter reconstruction mismatch"
+            ):
+                verify_report(out)
 
 if __name__ == "__main__":
     unittest.main()

@@ -18,6 +18,12 @@ except ImportError:
         Observation, SampleStatus, SupportKind, classify_numeric_sample,
     )
 
+try:
+    from .inverse_context import DiagnosticContext, load_sealed_vela_context
+except ImportError:
+    from scripts.pn2d_minimal6_diagnostics.inverse_context import (  # type: ignore
+        DiagnosticContext, load_sealed_vela_context,
+    )
 
 COMMON_BIASES = tuple(float(-value) for value in range(1, 21))
 TOPOLOGIES = ("sketch", "mirror")
@@ -59,6 +65,7 @@ class InputBundle:
     executable_hashes: tuple[str, ...]
     tracked_source_hashes: tuple[tuple[str, str], ...]
     input_hashes: tuple[tuple[str, str], ...]
+    diagnostic_context: DiagnosticContext
 
 
 @dataclass(frozen=True)
@@ -306,12 +313,13 @@ def load_input_bundle(vela_root: str | Path, sentaurus_root: str | Path, supplem
     observation_keys = [observation.key for observation in observations]
     if len(observation_keys) != len(set(observation_keys)):
         raise ValueError("duplicate observation key")
+    diagnostic_context = load_sealed_vela_context(vela_base, vela_hashes)
     return InputBundle(common, DISCOVERY_KEYS, tuple(key for key in common if key not in DISCOVERY_KEYS), observations,
                        tuple(sorted(set(vela_fields + sentaurus_fields + supplemental_fields))), tuple(sorted(executable)),
                        tuple(sorted(sources)), tuple(sorted(
                            [(f"vela:{path}", digest) for path, digest in vela_hashes.items()] +
                            [(f"sentaurus:{path}", digest) for path, digest in sentaurus_hashes.items()] +
-                           [(f"supplemental:{path}", digest) for path, digest in supplemental_hashes.items()])))
+                           [(f"supplemental:{path}", digest) for path, digest in supplemental_hashes.items()])), diagnostic_context)
 
 
 def canonical_observations(bundle: InputBundle) -> tuple[Observation, ...]:
