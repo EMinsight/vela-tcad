@@ -164,10 +164,11 @@ def _candidate_metrics(bundle: InputBundle, rows: tuple[Observation, ...], limit
                 "median_abs_error": median, "p95_abs_error": p95,
                 "median_angle_deg": None, "classification": classification.value,
             })
-        final = split_rows["combined"]
         if any(value is Identifiability.INSUFFICIENT_DATA for value in split_rows.values()):
             final = Identifiability.INSUFFICIENT_DATA
-        elif final is Identifiability.IDENTIFIED and split_rows["holdout"] is not Identifiability.IDENTIFIED:
+        elif all(value is Identifiability.IDENTIFIED for value in split_rows.values()):
+            final = Identifiability.IDENTIFIED
+        else:
             final = Identifiability.REJECTED
         candidate_classification[candidate] = final
 
@@ -188,7 +189,7 @@ def _candidate_metrics(bundle: InputBundle, rows: tuple[Observation, ...], limit
             "candidate": candidate, "classification": classification.value,
             "claim_type": "identifiability",
             "reason": (
-                "combined and holdout numerical gates passed without local fitting"
+                "discovery, holdout, and combined numerical gates passed without local fitting"
                 if classification is Identifiability.IDENTIFIED else
                 "mobility and gradient are not independently available for both solvers"
                 if classification is Identifiability.CONFOUNDED else

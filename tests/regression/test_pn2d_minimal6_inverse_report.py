@@ -94,6 +94,27 @@ def blank_root_field(root: Path, field: str) -> None:
         INPUT_FIXTURE.rebind_state(root, state_index)
 
 
+def scale_root_fields_at_state(root: Path, *, topology: str, bias_V: float,
+                               fields: tuple[str, ...], factor: float) -> None:
+    manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+    for state_index, state in enumerate(manifest["states"]):
+        if state["topology"] != topology or state["actual_bias_V"] != bias_V:
+            continue
+        path = root / state["state_path"]
+        with path.open(newline="", encoding="utf-8") as handle:
+            rows = list(csv.reader(handle))
+        columns = [index for index, name in enumerate(rows[0])
+                   if any(name.startswith(f"{field}_component") for field in fields)]
+        for row in rows[1:]:
+            for index in columns:
+                row[index] = format(float(row[index]) * factor, ".17g")
+        with path.open("w", newline="", encoding="utf-8") as handle:
+            csv.writer(handle, lineterminator="\n").writerows(rows)
+        INPUT_FIXTURE.rebind_state(root, state_index)
+        return
+    raise AssertionError(f"state not found: {topology}@{bias_V:g}V")
+
+
 def refresh_integrity(root: Path) -> None:
     report_manifest_path = root / "report_manifest.json"
     report_manifest = json.loads(report_manifest_path.read_text())
@@ -228,6 +249,56 @@ class PN2DMinimal6InverseReportTest(unittest.TestCase):
                              ["discovery", "holdout", "combined"])
             self.assertTrue(all(row["classification"] == "insufficient_data"
                                 for row in metrics))
+
+    def test_discovery_numerical_rejection_propagates_to_final_and_verifier(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            roots = make_three_node_fixture(root / "inputs")
+            scale_root_fields_at_state(
+                roots[0], topology="sketch", bias_V=-1.0,
+                fields=("ElectrostaticPotential", "ElectricField"), factor=1.0e6,
+            )
+            out = root / "report"
+            build_report_package(
+                vela_root=roots[0], sentaurus_root=roots[1],
+                supplemental_sentaurus_root=roots[2], out_dir=out,
+                phase_base="a5524cf",
+            )
+            report_path = out / "physics_inverse_audit.json"
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            payload = report["payload"]
+            metrics = {
+                row["split"]: row["classification"]
+                for row in payload["candidate_metrics"]
+                if row["candidate"] == "potential_field_direct"
+            }
+            self.assertEqual(metrics, {
+                "discovery": "rejected", "holdout": "identified",
+                "combined": "identified",
+            })
+            classification = next(
+                row for row in payload["classifications"]
+                if row["candidate"] == "potential_field_direct"
+            )
+            self.assertEqual(classification["classification"], "rejected")
+
+            classification["classification"] = "identified"
+            classification["reason"] = (
+                "discovery, holdout, and combined numerical gates passed without local fitting"
+            )
+            write_json(report_path, report)
+            classifications_path = out / "candidate_classifications.json"
+            classifications = json.loads(classifications_path.read_text(encoding="utf-8"))
+            persisted = next(
+                row for row in classifications["classifications"]
+                if row["candidate"] == "potential_field_direct"
+            )
+            persisted.update(classification)
+            write_json(classifications_path, classifications)
+            refresh_integrity(out)
+
+            with self.assertRaisesRegex(ValueError, "classification reconstruction mismatch"):
+                verify_report(out)
 
     def test_verifier_rejects_partial_composite_promoted_to_identified(self):
         with tempfile.TemporaryDirectory() as tmp:
