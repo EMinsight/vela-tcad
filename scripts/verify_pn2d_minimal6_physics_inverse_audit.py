@@ -265,12 +265,17 @@ def _expected_candidates(bundle: InputBundle, rows: tuple[Observation, ...]) -> 
     for candidate, quantity, carrier, fields, gate in specifications:
         split_classes = {}
         for split in ("discovery", "holdout", "combined"):
-            errors = _paired_errors(rows, fields, split_sets[split])
+            quantity_errors = {
+                field: _paired_errors(rows, {field}, split_sets[split])
+                for field in sorted(fields)
+            }
+            errors = [value for field in sorted(quantity_errors) for value in quantity_errors[field]]
+            missing_quantity = any(not values for values in quantity_errors.values())
             median = statistics.median(errors) if errors else None
             p95 = _percentile(errors, 0.95)
-            classification = (Identifiability.IDENTIFIED if median is not None and p95 is not None
+            classification = (Identifiability.INSUFFICIENT_DATA if missing_quantity
+                              else Identifiability.IDENTIFIED if median is not None and p95 is not None
                               and median <= gate and p95 <= limits.gradient_p95_abs_dex
-                              else Identifiability.INSUFFICIENT_DATA if not errors
                               else Identifiability.REJECTED)
             split_classes[split] = classification
             metrics.append({
@@ -281,7 +286,9 @@ def _expected_candidates(bundle: InputBundle, rows: tuple[Observation, ...]) -> 
                 "median_angle_deg": None, "classification": classification.value,
             })
         final = split_classes["combined"]
-        if final is Identifiability.IDENTIFIED and split_classes["holdout"] is not Identifiability.IDENTIFIED:
+        if Identifiability.INSUFFICIENT_DATA in split_classes.values():
+            final = Identifiability.INSUFFICIENT_DATA
+        elif final is Identifiability.IDENTIFIED and split_classes["holdout"] is not Identifiability.IDENTIFIED:
             final = Identifiability.REJECTED
         final_classes[candidate] = final
     metrics.append({
@@ -302,7 +309,7 @@ def _expected_candidates(bundle: InputBundle, rows: tuple[Observation, ...]) -> 
                        if classification is Identifiability.IDENTIFIED else
                        "mobility and gradient are not independently available for both solvers"
                        if classification is Identifiability.CONFOUNDED else
-                       "no compatible finite paired support was available"
+                       "one or more declared quantities lacked compatible finite paired support in a required split"
                        if classification is Identifiability.INSUFFICIENT_DATA else
                        "one or more discovery, holdout, or combined gates failed"),
         })

@@ -144,12 +144,17 @@ def _candidate_metrics(bundle: InputBundle, rows: tuple[Observation, ...], limit
     for candidate, quantity, carrier, fields, gate in specifications:
         split_rows = {}
         for split in ("discovery", "holdout", "combined"):
-            errors = _paired_errors(rows, fields, split_sets[split])
+            errors_by_quantity = [
+                _paired_errors(rows, {field}, split_sets[split])
+                for field in sorted(fields)
+            ]
+            errors = [error for field_errors in errors_by_quantity for error in field_errors]
+            complete_coverage = all(errors_by_quantity)
             median = statistics.median(errors) if errors else None
             p95 = _percentile(errors, 0.95)
-            classification = (Identifiability.IDENTIFIED if median is not None and p95 is not None
+            classification = (Identifiability.INSUFFICIENT_DATA if not complete_coverage
+                              else Identifiability.IDENTIFIED if median is not None and p95 is not None
                               and median <= gate and p95 <= limits.gradient_p95_abs_dex
-                              else Identifiability.INSUFFICIENT_DATA if not errors
                               else Identifiability.REJECTED)
             split_rows[split] = classification
             result.append({
@@ -160,7 +165,9 @@ def _candidate_metrics(bundle: InputBundle, rows: tuple[Observation, ...], limit
                 "median_angle_deg": None, "classification": classification.value,
             })
         final = split_rows["combined"]
-        if final is Identifiability.IDENTIFIED and split_rows["holdout"] is not Identifiability.IDENTIFIED:
+        if any(value is Identifiability.INSUFFICIENT_DATA for value in split_rows.values()):
+            final = Identifiability.INSUFFICIENT_DATA
+        elif final is Identifiability.IDENTIFIED and split_rows["holdout"] is not Identifiability.IDENTIFIED:
             final = Identifiability.REJECTED
         candidate_classification[candidate] = final
 
@@ -185,7 +192,7 @@ def _candidate_metrics(bundle: InputBundle, rows: tuple[Observation, ...], limit
                 if classification is Identifiability.IDENTIFIED else
                 "mobility and gradient are not independently available for both solvers"
                 if classification is Identifiability.CONFOUNDED else
-                "no compatible finite paired support was available"
+                "one or more declared quantities lacked compatible finite paired support in a required split"
                 if classification is Identifiability.INSUFFICIENT_DATA else
                 "one or more discovery, holdout, or combined gates failed"
             ),

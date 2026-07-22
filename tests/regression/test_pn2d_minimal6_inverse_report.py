@@ -78,6 +78,22 @@ def make_three_node_fixture(root: Path, *, omit_field: str | None = None):
     return roots
 
 
+def blank_root_field(root: Path, field: str) -> None:
+    manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+    for state_index, state in enumerate(manifest["states"]):
+        path = root / state["state_path"]
+        with path.open(newline="", encoding="utf-8") as handle:
+            rows = list(csv.reader(handle))
+        columns = [index for index, name in enumerate(rows[0])
+                   if name.startswith(f"{field}_component")]
+        for row in rows[1:]:
+            for index in columns:
+                row[index] = ""
+        with path.open("w", newline="", encoding="utf-8") as handle:
+            csv.writer(handle, lineterminator="\n").writerows(rows)
+        INPUT_FIXTURE.rebind_state(root, state_index)
+
+
 def refresh_integrity(root: Path) -> None:
     report_manifest_path = root / "report_manifest.json"
     report_manifest = json.loads(report_manifest_path.read_text())
@@ -167,6 +183,97 @@ class PN2DMinimal6InverseReportTest(unittest.TestCase):
             self.assertTrue(electron["values"])
             self.assertTrue(all(value is None for value in electron["values"]))
             self.assertNotIn(0.0, electron["values"])
+
+    def test_composite_candidate_requires_every_declared_quantity_in_every_split(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            complete_roots = make_three_node_fixture(root / "complete-inputs")
+            complete = root / "complete"
+            build_report_package(
+                vela_root=complete_roots[0], sentaurus_root=complete_roots[1],
+                supplemental_sentaurus_root=complete_roots[2], out_dir=complete,
+                phase_base="a5524cf",
+            )
+            complete_report = json.loads(
+                (complete / "physics_inverse_audit.json").read_text(encoding="utf-8")
+            )["payload"]
+            complete_status = next(
+                row for row in complete_report["classifications"]
+                if row["candidate"] == "potential_field_direct"
+            )
+            self.assertEqual(complete_status["classification"], "identified")
+
+            partial_roots = make_three_node_fixture(root / "partial-inputs")
+            blank_root_field(partial_roots[0], "ElectricField")
+            partial = root / "partial"
+            build_report_package(
+                vela_root=partial_roots[0], sentaurus_root=partial_roots[1],
+                supplemental_sentaurus_root=partial_roots[2], out_dir=partial,
+                phase_base="a5524cf",
+            )
+            partial_report = json.loads(
+                (partial / "physics_inverse_audit.json").read_text(encoding="utf-8")
+            )["payload"]
+            classification = next(
+                row for row in partial_report["classifications"]
+                if row["candidate"] == "potential_field_direct"
+            )
+            self.assertEqual(classification["classification"], "insufficient_data")
+            self.assertIn("declared quantities", classification["reason"])
+            metrics = [
+                row for row in partial_report["candidate_metrics"]
+                if row["candidate"] == "potential_field_direct"
+            ]
+            self.assertEqual([row["split"] for row in metrics],
+                             ["discovery", "holdout", "combined"])
+            self.assertTrue(all(row["classification"] == "insufficient_data"
+                                for row in metrics))
+
+    def test_verifier_rejects_partial_composite_promoted_to_identified(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            roots = make_three_node_fixture(root / "inputs")
+            blank_root_field(roots[0], "ElectricField")
+            out = root / "report"
+            build_report_package(
+                vela_root=roots[0], sentaurus_root=roots[1],
+                supplemental_sentaurus_root=roots[2], out_dir=out,
+                phase_base="a5524cf",
+            )
+
+            report_path = out / "physics_inverse_audit.json"
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            for row in report["payload"]["candidate_metrics"]:
+                if row["candidate"] == "potential_field_direct":
+                    row["classification"] = "identified"
+            for row in report["payload"]["classifications"]:
+                if row["candidate"] == "potential_field_direct":
+                    row["classification"] = "identified"
+                    row["reason"] = "combined and holdout numerical gates passed without local fitting"
+            write_json(report_path, report)
+
+            metrics_path = out / "candidate_metrics.csv"
+            with metrics_path.open(newline="", encoding="utf-8") as handle:
+                metric_rows = list(csv.reader(handle))
+            candidate_column = metric_rows[0].index("candidate")
+            classification_column = metric_rows[0].index("classification")
+            for row in metric_rows[1:]:
+                if row[candidate_column] == "potential_field_direct":
+                    row[classification_column] = "identified"
+            with metrics_path.open("w", newline="", encoding="utf-8") as handle:
+                csv.writer(handle, lineterminator="\n").writerows(metric_rows)
+
+            classifications_path = out / "candidate_classifications.json"
+            classifications = json.loads(classifications_path.read_text(encoding="utf-8"))
+            for row in classifications["classifications"]:
+                if row["candidate"] == "potential_field_direct":
+                    row["classification"] = "identified"
+                    row["reason"] = "combined and holdout numerical gates passed without local fitting"
+            write_json(classifications_path, classifications)
+            refresh_integrity(out)
+
+            with self.assertRaisesRegex(ValueError, "candidate metric reconstruction"):
+                verify_report(out)
 
     def test_independent_verifier_rejects_simple_byte_mutations(self):
         with tempfile.TemporaryDirectory() as tmp:
