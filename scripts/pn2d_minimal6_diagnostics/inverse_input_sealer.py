@@ -254,11 +254,22 @@ def _validate_supplemental(root: Path) -> tuple[dict, dict]:
     if manifest.get("sentaurus_version") != SUPPLEMENTAL_VERSION:
         raise ValueError("supplemental Sentaurus version mismatch")
     raw_matrix = manifest.get("expected_matrix")
-    try:
-        declared = {(str(row[0]), float(row[1])) for row in raw_matrix}
-    except (TypeError, ValueError, IndexError) as error:
-        raise ValueError("supplemental expected matrix mismatch") from error
-    if declared != _matrix(False) or len(raw_matrix) != 40:
+    if type(raw_matrix) is not list or len(raw_matrix) != 40:
+        raise ValueError("supplemental expected matrix mismatch")
+    declared = set()
+    for row in raw_matrix:
+        if type(row) is not list or len(row) != 2:
+            raise ValueError("supplemental expected matrix mismatch")
+        topology, bias = row
+        if (type(topology) is not str
+                or type(bias) is not float
+                or not math.isfinite(bias)):
+            raise ValueError("supplemental expected matrix mismatch")
+        key = (topology, bias)
+        if key in declared:
+            raise ValueError("supplemental expected matrix mismatch")
+        declared.add(key)
+    if declared != _matrix(False):
         raise ValueError("supplemental expected matrix mismatch")
     rows = manifest.get("states")
     if not isinstance(rows, list):
@@ -563,6 +574,14 @@ def _require_reimport_matches_ledger(export: Path, ledger: dict) -> None:
                 or actual[relative] != digest.lower()):
             raise ValueError(f"supplemental reimport mismatch: {relative}")
 
+def _require_importer_sha(importer: Path, expected: str) -> None:
+    try:
+        actual = _sha256(importer)
+    except OSError as error:
+        raise ValueError("importer SHA changed during sealing") from error
+    if actual != expected:
+        raise ValueError("importer SHA changed during sealing")
+
 
 def seal_inverse_input_roots(
     vela_sweep_root: str | Path,
@@ -588,6 +607,7 @@ def seal_inverse_input_roots(
     vela_executable_path = Path(vela_executable).resolve()
     if not importer_path.is_file() or not vela_executable_path.is_file():
         raise ValueError("declared executable is not a file")
+    importer_sha256 = _sha256(importer_path)
 
     vela_manifest, vela_states, vela_decks = _validate_sweep(vela_root, "vela", include_zero=False)
     _, sent_states, sent_decks = _validate_sweep(
@@ -654,6 +674,12 @@ def seal_inverse_input_roots(
     stage = Path(tempfile.mkdtemp(prefix=f".{destination.name}.staging-", dir=destination.parent))
     work = stage / "_work"
     try:
+        fixed_importer = stage / "_tools" / importer_path.name
+        fixed_importer.parent.mkdir(parents=True)
+        _require_importer_sha(importer_path, importer_sha256)
+        shutil.copyfile(importer_path, fixed_importer)
+        _require_importer_sha(fixed_importer, importer_sha256)
+        _require_importer_sha(importer_path, importer_sha256)
         sent_records = []
         supplemental_records = []
         for solver_label, state_map, deck_map, contract, target_records in (
@@ -670,7 +696,9 @@ def seal_inverse_input_roots(
                         _, tdr, trusted_ledger = state_map[(topology, bias)]
                     export = work / solver_label / topology / tag
                     export.parent.mkdir(parents=True, exist_ok=True)
-                    _run_import(importer_path, tdr, export, importer_runner)
+                    _require_importer_sha(importer_path, importer_sha256)
+                    _run_import(fixed_importer, tdr, export, importer_runner)
+                    _require_importer_sha(importer_path, importer_sha256)
                     if trusted_ledger is not None:
                         _require_reimport_matches_ledger(export, trusted_ledger)
                     imported = _validate_import(export, contract, meshes[topology], bias)
@@ -689,21 +717,24 @@ def seal_inverse_input_roots(
                         "coordinates": imported["coordinates"], "fields": imported["fields"],
                         "evidence": evidence,
                     })
+        _require_importer_sha(importer_path, importer_sha256)
+        _require_importer_sha(fixed_importer, importer_sha256)
         _seal_root(stage / "vela", "vela", REQUIRED_SENTARUS_FIELDS, vela_records,
                    vela_executable_path, vela_root / "sweep_manifest.json", phase_base,
                    {"execution_binding_status": "post_hoc_observed",
                     "scientific_limitation": "unavailable native nodal E/J/alpha/source remain blank"})
         _seal_root(stage / "sentaurus", "sentaurus", REQUIRED_SENTARUS_FIELDS, sent_records,
-                   importer_path, sentaurus_root / "sweep_manifest.json", phase_base,
+                   fixed_importer, sentaurus_root / "sweep_manifest.json", phase_base,
                    {"remote_solver_binding_status": "not_declared_by_source_manifest"})
         _seal_root(stage / "supplemental", "supplemental", SUPPLEMENTAL_FIELDS,
-                   supplemental_records, importer_path, supplemental_base / "manifest.json", phase_base,
+                   supplemental_records, fixed_importer, supplemental_base / "manifest.json", phase_base,
                    {"remote_solver_binding_status": "release_declared_by_supplemental_manifest",
                     "sentaurus_version": supplemental_manifest["sentaurus_version"],
                     "declared_importer": str(importer_path),
-                    "importer_sha256": _sha256(importer_path)})
+                    "importer_sha256": importer_sha256})
         shutil.rmtree(work)
         load_input_bundle(stage / "vela", stage / "sentaurus", stage / "supplemental")
+        shutil.rmtree(fixed_importer.parent)
         os.replace(stage, destination)
     except Exception:
         shutil.rmtree(stage, ignore_errors=True)
