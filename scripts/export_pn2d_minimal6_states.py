@@ -12,6 +12,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -1365,9 +1366,187 @@ def _live_executor(
     }
 
 
+def _relative_resume_path(root: Path, value: object, label: str) -> str:
+    return _resolve_inside(root, str(value), label).relative_to(root.resolve()).as_posix()
+
+
+def _validate_passed_resume_state(
+    run_root: Path, state: dict[str, object], expected: dict[str, object],
+    sentaurus_version: str,
+) -> None:
+    topology = str(state["topology_id"])
+    requested = float(state["requested_bias_V"])
+    actual = validate_final_bias(requested, float(state.get("actual_bias_V", math.nan)))
+    if abs(actual - requested) > BIAS_TOLERANCE_V:
+        raise ValueError(f"{topology} at {requested:g} V has invalid actual bias")
+    if _normalize_sentaurus_version(
+        state.get("sentaurus_version"), label="passed state"
+    ) != sentaurus_version:
+        raise ValueError("partial manifest has mixed Sentaurus versions")
+
+    export_dir = _resolve_inside(run_root, str(state.get("export_dir", "")), "export_dir")
+    expected_relative = (
+        Path("states") / topology / str(state["bias_tag"]) / "export"
+    ).as_posix()
+    if export_dir.relative_to(run_root).as_posix() != expected_relative:
+        raise ValueError("passed state export_dir does not match preparation contract")
+    if not export_dir.is_dir():
+        raise ValueError(f"passed state export directory is missing: {export_dir}")
+
+    field_manifest = _resolve_inside(
+        run_root, str(state.get("field_manifest", "")), "field_manifest"
+    )
+    state_csv = _resolve_inside(run_root, str(state.get("state_csv", "")), "state_csv")
+    if field_manifest != export_dir / "field_manifest.json":
+        raise ValueError("passed state field_manifest path mismatch")
+    if state_csv != export_dir / "state.csv":
+        raise ValueError("passed state state_csv path mismatch")
+    if not field_manifest.is_file() or not state_csv.is_file():
+        raise ValueError("passed state is missing required neutral outputs")
+    try:
+        validate_field_manifest(json.loads(field_manifest.read_text(encoding="utf-8")))
+    except (json.JSONDecodeError, ValueError) as error:
+        raise ValueError("passed state field manifest contract is invalid") from error
+
+    ledger = state.get("member_sha256")
+    if not isinstance(ledger, dict) or not ledger or not all(
+        isinstance(name, str) and isinstance(digest, str)
+        and SHA256_PATTERN.fullmatch(digest)
+        for name, digest in ledger.items()
+    ):
+        raise ValueError("passed state member SHA-256 ledger is invalid")
+    validate_member_hashes(export_dir, ledger)
+
+    original_state_csv = state_csv.read_bytes()
+    with tempfile.TemporaryDirectory() as temp:
+        copied = Path(temp) / "export"
+        shutil.copytree(export_dir, copied)
+        regenerated = write_state_csv(copied)
+        if regenerated.read_bytes() != original_state_csv:
+            raise ValueError("passed state state.csv contract mismatch")
+
+
+def _validate_resume_preparation(
+    manifest_path: Path, *,
+    topology_ids: Sequence[str], biases: Sequence[float], run_id: str,
+    output_dir: Path, ssh_target: str, remote_root: str, importer: Path,
+) -> dict[str, object]:
+    manifest_path = Path(manifest_path).resolve()
+    run_root = (Path(output_dir) / run_id).resolve()
+    if manifest_path != run_root / "manifest.json":
+        raise ValueError("resume manifest path does not match CLI run identity")
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError("cannot read persisted partial manifest") from error
+    if not isinstance(manifest, dict) or manifest.get("schema") != SCHEMA:
+        raise ValueError("resume manifest schema mismatch")
+    if manifest.get("outputs_complete") is not False:
+        raise ValueError("resume requires an incomplete manifest")
+    if "error" in manifest:
+        raise ValueError("resume manifest contains a top-level error")
+    if Path(str(manifest.get("manifest_path", ""))).resolve() != manifest_path:
+        raise ValueError("resume manifest self path mismatch")
+
+    topologies, bias_values = _validated_requested_matrix(topology_ids, biases)
+    expected_identity = {
+        "run_id": run_id,
+        "ssh_target": ssh_target,
+        "remote_root": remote_root,
+        "importer": str(Path(importer).resolve()),
+        "bias_tolerance_V": BIAS_TOLERANCE_V,
+    }
+    for name, expected_value in expected_identity.items():
+        if manifest.get(name) != expected_value:
+            raise ValueError(f"resume CLI identity mismatch: {name}")
+
+    _prepared_manifest_expected_matrix(manifest)
+    states = manifest.get("states")
+    assert isinstance(states, list)
+    statuses = [state.get("status") for state in states if isinstance(state, dict)]
+    if len(statuses) != len(states) or set(statuses) - {"passed", "prepared"}:
+        raise ValueError("resume manifest contains an invalid or failed state status")
+    if "passed" not in statuses or "prepared" not in statuses:
+        raise ValueError("resume requires both passed and prepared states")
+
+    version = _normalize_sentaurus_version(
+        manifest.get("sentaurus_version"), label="partial manifest"
+    )
+    if (
+        _SENTAURUS_RELEASE_TOKEN.fullmatch(version) is None
+        or "_" in version
+    ):
+        raise ValueError("partial manifest Sentaurus release is not canonical")
+
+    with tempfile.TemporaryDirectory() as temp:
+        regenerated = prepare_exports(
+            topology_ids=topologies, biases=bias_values, run_id=run_id,
+            output_dir=Path(temp), ssh_target=ssh_target,
+            remote_root=remote_root, importer=importer,
+        )
+        if manifest["expected_matrix"] != regenerated["expected_matrix"]:
+            raise ValueError("resume expected matrix differs from regenerated preparation")
+        if len(states) != len(regenerated["states"]):
+            raise ValueError("resume state count differs from regenerated preparation")
+
+        logical_keys = (
+            "topology_id", "requested_bias_V", "bias_tag", "remote_dir",
+            "deck_name", "staged_files", "topology_contract", "remote_commands",
+            "final_tdr_name", "current_plt_name", "log_name", "stdout_name",
+            "returned_files",
+        )
+        for state, expected in zip(states, regenerated["states"]):
+            if not isinstance(state, dict):
+                raise ValueError("resume manifest state must be an object")
+            for key in logical_keys:
+                if state.get(key) != expected.get(key):
+                    raise ValueError(f"resume state declaration mismatch: {key}")
+            for key in ("bundle_dir", "artifacts_dir", "export_dir"):
+                actual_relative = _relative_resume_path(run_root, state.get(key), key)
+                expected_relative = _relative_resume_path(
+                    Path(temp) / run_id, expected.get(key), key
+                )
+                if actual_relative != expected_relative:
+                    raise ValueError(f"resume state path declaration mismatch: {key}")
+            actual_bundle = _resolve_inside(
+                run_root, str(state["bundle_dir"]), "bundle_dir"
+            )
+            expected_bundle = Path(str(expected["bundle_dir"]))
+            if collect_member_hashes(actual_bundle) != collect_member_hashes(expected_bundle):
+                raise ValueError("resume staged source bytes differ from regeneration")
+            if state["status"] == "prepared" and any(
+                key in state for key in (
+                    "actual_bias_V", "sentaurus_version", "state_csv",
+                    "field_manifest", "member_sha256", "error",
+                )
+            ):
+                raise ValueError("prepared resume state contains runtime result fields")
+            if state["status"] == "passed":
+                _validate_passed_resume_state(run_root, state, expected, version)
+    return manifest
+
+
+def resume_exports(
+    manifest_path: Path, *,
+    topology_ids: Sequence[str], biases: Sequence[float], run_id: str,
+    output_dir: Path, ssh_target: str, remote_root: str = DEFAULT_REMOTE_ROOT,
+    importer: Path = DEFAULT_IMPORTER,
+    executor: Callable[[dict[str, object]], dict[str, object] | None],
+) -> dict[str, object]:
+    manifest = _validate_resume_preparation(
+        manifest_path, topology_ids=topology_ids, biases=biases, run_id=run_id,
+        output_dir=output_dir, ssh_target=ssh_target, remote_root=remote_root,
+        importer=importer,
+    )
+    run_exports(manifest, executor=executor, _skip_passed=True)
+    return manifest
+
+
+
 def run_exports(
     manifest: dict[str, object],
     *, executor: Callable[[dict[str, object]], dict[str, object] | None],
+    _skip_passed: bool = False,
 ) -> None:
     manifest_path = Path(str(manifest["manifest_path"]))
     try:
@@ -1386,6 +1565,8 @@ def run_exports(
     manifest["outputs_complete"] = False
     write_manifest(manifest_path, manifest)
     for state in manifest["states"]:
+        if _skip_passed and state.get("status") == "passed":
+            continue
         try:
             result = executor(state) or {}
             if "actual_bias_V" not in result:
@@ -1457,6 +1638,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--scp-bin", default=None)
     parser.add_argument("--remote-root", default=DEFAULT_REMOTE_ROOT)
     parser.add_argument("--importer", type=Path, default=DEFAULT_IMPORTER)
+    parser.add_argument("--resume-manifest", type=Path, default=None)
     parser.add_argument("--dry-run", action="store_true")
     return parser
 
@@ -1465,26 +1647,47 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     manifest: dict[str, object] | None = None
     try:
-        run_id = args.run_id or datetime.now().strftime("minimal6_states_%Y%m%d_%H%M%S")
-        manifest = prepare_exports(
-            topology_ids=tuple(value.strip() for value in args.topologies.split(",") if value.strip()),
-            biases=_parse_csv_values(args.biases),
-            run_id=run_id,
-            output_dir=args.output_dir,
-            ssh_target=args.ssh_target,
-            remote_root=args.remote_root,
-            importer=args.importer,
+        topologies = tuple(
+            value.strip() for value in args.topologies.split(",") if value.strip()
         )
-        if not args.dry_run:
+        biases = _parse_csv_values(args.biases)
+        if args.resume_manifest is not None:
+            if args.run_id is None:
+                raise ValueError("--resume-manifest requires explicit --run-id")
+            if args.dry_run:
+                raise ValueError("--resume-manifest cannot be combined with --dry-run")
             ssh_bin = args.ssh_bin or default_windows_openssh("ssh")
             scp_bin = args.scp_bin or default_windows_openssh("scp")
-            run_exports(
-                manifest,
+            manifest = resume_exports(
+                args.resume_manifest,
+                topology_ids=topologies, biases=biases, run_id=args.run_id,
+                output_dir=args.output_dir, ssh_target=args.ssh_target,
+                remote_root=args.remote_root, importer=args.importer,
                 executor=lambda state: _live_executor(
                     state, ssh_bin=ssh_bin, scp_bin=scp_bin,
                     ssh_target=args.ssh_target, importer=args.importer.resolve(),
                 ),
             )
+        else:
+            run_id = args.run_id or datetime.now().strftime(
+                "minimal6_states_%Y%m%d_%H%M%S"
+            )
+            manifest = prepare_exports(
+                topology_ids=topologies, biases=biases, run_id=run_id,
+                output_dir=args.output_dir, ssh_target=args.ssh_target,
+                remote_root=args.remote_root, importer=args.importer,
+            )
+            if not args.dry_run:
+                ssh_bin = args.ssh_bin or default_windows_openssh("ssh")
+                scp_bin = args.scp_bin or default_windows_openssh("scp")
+                run_exports(
+                    manifest,
+                    executor=lambda state: _live_executor(
+                        state, ssh_bin=ssh_bin, scp_bin=scp_bin,
+                        ssh_target=args.ssh_target, importer=args.importer.resolve(),
+                    ),
+                )
+
         print(json.dumps(manifest, indent=2))
         return 0
     except Exception as error:  # noqa: BLE001 - partial manifest is the contract.

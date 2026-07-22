@@ -101,6 +101,28 @@ def write_neutral_state(root: Path, missing: str | None = None) -> None:
         )
 
 
+def write_partial_export(
+    root: Path, *, run_id: str = "minimal6_states_resume",
+) -> dict[str, object]:
+    manifest = export.prepare_exports(
+        topology_ids=("sketch",), biases=(0.0, -1.0, -2.0),
+        run_id=run_id, output_dir=root, ssh_target="sentaurus",
+        remote_root="~/vela_resume", importer=root / "sentaurus_import.exe",
+    )
+    state = manifest["states"][0]
+    export_dir = Path(state["export_dir"])
+    write_neutral_state(export_dir)
+    state["actual_bias_V"] = 0.0
+    state["sentaurus_version"] = "O-2018.06-SP2"
+    state["state_csv"] = str(export.write_state_csv(export_dir))
+    state["field_manifest"] = str(export_dir / "field_manifest.json")
+    state["member_sha256"] = export.collect_member_hashes(export_dir)
+    state["status"] = "passed"
+    manifest["sentaurus_version"] = "O-2018.06-SP2"
+    export.write_manifest(Path(manifest["manifest_path"]), manifest)
+    return manifest
+
+
 def write_recovery_candidate(root: Path) -> tuple[Path, str]:
     topology_contracts = {
         "sketch": [[1, 5, 2], [5, 6, 2], [2, 6, 4], [2, 4, 3]],
@@ -220,6 +242,112 @@ def write_recovery_candidate(root: Path) -> tuple[Path, str]:
 
 
 class PN2DMinimal6StateExportTest(unittest.TestCase):
+    def test_resume_skips_valid_passed_state_and_preserves_its_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            partial = write_partial_export(root)
+            passed = partial["states"][0]
+            export_dir = Path(passed["export_dir"])
+            before = export.collect_member_hashes(export_dir)
+            calls: list[tuple[str, float]] = []
+
+            def executor(state: dict[str, object]) -> dict[str, object]:
+                key = (str(state["topology_id"]), float(state["requested_bias_V"]))
+                calls.append(key)
+                neutral = Path(state["export_dir"])
+                write_neutral_state(neutral)
+                return {
+                    "actual_bias_V": key[1], "export_dir": str(neutral),
+                    "sentaurus_version": "O-2018.06-SP2",
+                }
+
+            resumed = export.resume_exports(
+                Path(partial["manifest_path"]),
+                topology_ids=("sketch",), biases=(0.0, -1.0, -2.0),
+                run_id="minimal6_states_resume", output_dir=root,
+                ssh_target="sentaurus", remote_root="~/vela_resume",
+                importer=root / "sentaurus_import.exe", executor=executor,
+            )
+
+            self.assertEqual(calls, [("sketch", -1.0), ("sketch", -2.0)])
+            self.assertEqual(export.collect_member_hashes(export_dir), before)
+            self.assertTrue(resumed["outputs_complete"])
+            self.assertEqual({state["status"] for state in resumed["states"]}, {"passed"})
+
+    def test_resume_rejects_adversarial_partial_before_executor_call(self) -> None:
+        mutations = {
+            "member": lambda manifest, root: (
+                Path(manifest["states"][0]["state_csv"]).write_bytes(b"tampered\n")
+            ),
+            "ledger": lambda manifest, root: manifest["states"][0][
+                "member_sha256"
+            ].__setitem__("state.csv", "0" * 64),
+            "source": lambda manifest, root: Path(
+                manifest["states"][0]["bundle_dir"]
+            ).joinpath(manifest["states"][0]["staged_files"][0]).write_bytes(b"tampered\n"),
+            "declaration": lambda manifest, root: manifest["states"][0][
+                "staged_files"
+            ].append("unexpected.dat"),
+            "version": lambda manifest, root: manifest["states"][0].__setitem__(
+                "sentaurus_version", "O-2019.03"
+            ),
+            "status": lambda manifest, root: manifest["states"][1].__setitem__(
+                "status", "failed"
+            ),
+            "path": lambda manifest, root: manifest["states"][0].__setitem__(
+                "export_dir", str(root.parent)
+            ),
+        }
+        for label, mutate in mutations.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                partial = write_partial_export(root, run_id=f"resume_{label}")
+                mutate(partial, root)
+                export.write_manifest(Path(partial["manifest_path"]), partial)
+                calls: list[object] = []
+                with self.assertRaises(ValueError):
+                    export.resume_exports(
+                        Path(partial["manifest_path"]),
+                        topology_ids=("sketch",), biases=(0.0, -1.0, -2.0),
+                        run_id=f"resume_{label}", output_dir=root,
+                        ssh_target="sentaurus", remote_root="~/vela_resume",
+                        importer=root / "sentaurus_import.exe",
+                        executor=lambda state: calls.append(state),
+                    )
+                self.assertEqual(calls, [])
+
+    def test_resume_rejects_cli_identity_complete_and_top_level_error(self) -> None:
+        variants = (
+            ("ssh", lambda manifest: None, {"ssh_target": "other"}),
+            ("complete", lambda manifest: manifest.__setitem__("outputs_complete", True), {}),
+            ("error", lambda manifest: manifest.__setitem__("error", "old failure"), {}),
+        )
+        for label, mutate, overrides in variants:
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                partial = write_partial_export(root, run_id=f"resume_{label}")
+                mutate(partial)
+                export.write_manifest(Path(partial["manifest_path"]), partial)
+                calls: list[object] = []
+                arguments = {
+                    "topology_ids": ("sketch",), "biases": (0.0, -1.0, -2.0),
+                    "run_id": f"resume_{label}", "output_dir": root,
+                    "ssh_target": "sentaurus", "remote_root": "~/vela_resume",
+                    "importer": root / "sentaurus_import.exe",
+                }
+                arguments.update(overrides)
+                with self.assertRaises(ValueError):
+                    export.resume_exports(
+                        Path(partial["manifest_path"]),
+                        executor=lambda state: calls.append(state), **arguments,
+                    )
+                self.assertEqual(calls, [])
+
+    def test_parser_accepts_explicit_resume_manifest(self) -> None:
+        parsed = export.build_parser().parse_args(["--resume-manifest", "partial.json"])
+        self.assertEqual(parsed.resume_manifest, Path("partial.json"))
+
+
     def test_v2_native_avalanche_identity_uses_raw_impact_ionization(self) -> None:
         fields = export.validate_v2_field_manifest(valid_field_manifest())
         native = fields["sentaurus_native_avalanche_generation"]
