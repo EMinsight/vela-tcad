@@ -153,7 +153,18 @@ def make_fixture(base: Path) -> tuple[Path, Path, Path, Path, Path]:
             bias, index = -float(magnitude), magnitude - 1
             token = f"m{magnitude}p000000"
             deck = vela / "vela" / topology / "decks" / f"segment_{index:02d}.json"
-            write_json(deck, {"topology": topology, "stop": bias})
+            write_json(deck, {
+                "topology": topology,
+                "stop": bias,
+                "solver": {
+                    "impact_ionization": {
+                        "model": "van_overstraeten",
+                        "driving_force": "quasi_fermi_gradient",
+                        "generation": "current_density",
+                        "current_approximation": "density_gradient",
+                    },
+                },
+            })
             state = vela / "vela" / topology / "states" / f"segment_{index:02d}_bias_{token}.csv"
             state.parent.mkdir(parents=True, exist_ok=True)
             with state.open("w", newline="", encoding="utf-8") as handle:
