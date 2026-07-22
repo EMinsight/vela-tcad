@@ -210,3 +210,87 @@ The full hash audit SHA-256 is
 `73650d0625fb7a49af6581c70b48afcd6e50b0536857ea8bad738dd441cf512f`.
 
 > minimal6 diagnostic sweep; not a physical BV curve
+
+## Task 9 physics inverse audit (2026-07-22)
+
+Answer first: the exact 40-state inverse audit is deterministic and
+integrity-valid, but it does **not** identify a replacement electric-field,
+current-density, avalanche-alpha, or generation formula. The authoritative
+classification is `insufficient_data` for `potential_field_direct`,
+`current_density_direct`, and `alpha_generation_direct`, and `confounded` for
+`current_inverted_qf_gradient`. No production C++ formula was changed.
+
+The authoritative report is
+`build-release/pn2d-minimal6-physics-inverse-audit-20260722-a/`; the independent
+reproduction is the sibling root ending in `-b`. Both contain 25 files with
+identical relative paths and SHA-256 values. Each independent verifier passes
+22 report artifacts and 1,274 input files. The report-manifest SHA-256 is
+`8288ad978793aeb8f05dccce9a1026a0a7439268dc13819e4d1075bd5eb074e1`,
+and the canonical input-manifest SHA-256 recorded by the report is
+`1bf13239725fbdb9439b7d20164a0611cd601076cbc8c1ec3520da522fa71300`.
+The phase base is `a5524cf`, `production_cpp_changed=false`, and the unique
+Sentaurus version is `O-2018.06-SP2`.
+
+The remote supplemental root completed exactly 40/40 requested sketch/mirror
+states from `-1` through `-20 V`, with zero prepared or failed states and
+`outputs_complete=true`. Its manifest SHA-256 is
+`675f3f42fbe463700330c630ac056bd5270cb240b7f9b4ca1378412dc2e3433d`.
+The 1,376 members belonging to the 32 states that predated resume remained
+byte-identical before and after resume; their aggregate SHA-256 stayed
+`5d972825781b4bf8273390f88f5f05b24cce74bc3d7f6549e04e9587aa323c15`.
+
+The three canonical input roots are independently sealed:
+
+| root | manifest SHA-256 | seal SHA-256 |
+|---|---|---|
+| `vela` | `131b4fe53fefa90d6c43ede6317c9a24a78111ecaa1d94dc664a4f4af3d4b883` | `0b0edea45f07d39adba38f232bab02e44ca423066012032aebba1c80307a4d5c` |
+| `sentaurus` | `7ed91f79720211ab943eb22e2a8939645cea940651a15cbc50ec0ca05ce0cfb2` | `94f82c24ca137965bbffa4756908ad9750f31bf104e74e4902e5e2aab8364041` |
+| `supplemental` | `eeb72a54c48b4e56258075f50bbdbddf3a1545ba582537e79f63ab767b17eb59` | `7b2679bb840edbd9f772f78f46b2fd408f05af2cbb058d9c41ca5e1175822cff` |
+
+The report contains 8,640 canonical observations over seven discovery and 33
+holdout states: 6,480 are `valid` and 2,160 are explicitly
+`missing_field`. Vela contributes all 2,160 gaps: 480 ElectricField
+components, 480 electron-current components, 480 hole-current components,
+240 ImpactIonization values, 240 electron-alpha values, and 240 hole-alpha
+values. These gaps are never replaced with projected edge/cell values or
+zeros.
+
+The available scalar electrostatic potential is strongly consistent but does
+not identify the composite potential-plus-field operator. Across 240 finite
+scalar node pairs, the combined median absolute log10 error is
+`0.0005166848838372509 dex` and p95 is `0.013717021772377052 dex`;
+discovery and holdout show the same qualitative agreement. All 480 comparable
+Vela electric-field components are missing, so every split and the final
+`potential_field_direct` conclusion remain `insufficient_data`. The final
+classification gate requires every declared quantity to have compatible
+finite evidence and requires discovery, holdout, and combined numerical gates
+to pass independently.
+
+Direct current-density comparison is `insufficient_data` because same-support
+Vela current vectors are absent. The Sentaurus-only current inversion replay
+at `mirror/-20 V` yields an electron quasi-Fermi-gradient vector
+`[1.0408143798333524e7, -2.0124359044299674e3] V/m`, but the cross-solver
+operator is `confounded`: mobility and quasi-Fermi gradient are not
+independently available for both solvers. This vector is a diagnostic identity
+evaluation, not an inferred Vela production formula.
+
+The local Sentaurus replay of
+`G=(alpha_n*|J_n|+alpha_p*|J_p|)/q` is finite at
+`1.3489143181480254e17 m^-3 s^-1`, and the alpha inverse-control replay is
+also finite. Neither result identifies the production avalanche driver or
+alpha law: Vela alpha/current/generation fields are absent, triangle-gradient
+support is `incompatible_support`, and the generation support integral is
+`insufficient_data`. The inverse-alpha control uses declared synthetic
+parameters and must not be read as a recovered physical electric field.
+
+The seven-stage replacement matrix is a deterministic arithmetic QA control,
+not a causal substitution into production physics. Its closure errors are
+`0.0 dex` direct, `9.71445146547012e-17 dex` forward, and
+`2.7755575615628914e-17 dex` reverse, all below the `1e-10 dex` tolerance.
+Accordingly, the next formula-identification experiment requires native Vela
+node- or same-support electric-field and signed current vectors, independently
+comparable carrier mobility/quasi-Fermi gradients, alpha values, and
+volumetric plus integrated generation. No formula replacement is justified by
+the present audit.
+
+> minimal6 inverse audit; diagnostic identities and arithmetic closure are not a physical BV curve or a production-formula change
