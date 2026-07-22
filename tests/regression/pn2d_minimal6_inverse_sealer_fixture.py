@@ -114,16 +114,18 @@ def fake_importer(tdr: Path, output: Path) -> None:
             writer.writerow(("node_id", *(f"component{i}" for i in range(field["components"]))))
             for source in sorted(int(value) for value in field["values"]):
                 writer.writerow((source, *field["values"][str(source)]))
-    for region, value in ((1, 0.0), (2, raw["bias_V"])):
+    for region, region_name, value in (
+            (1, "Cathode", 0.0), (2, "Anode", raw["bias_V"])):
         with (fields_dir / f"ContactExternalVoltage_region{region}.csv").open(
                 "w", newline="", encoding="utf-8") as handle:
             writer = csv.writer(handle, lineterminator="\n")
             writer.writerow(("node_id", "component0"))
-            writer.writerow((0, value))
+            writer.writerow((raw["contacts"][region_name][0], value))
         manifest_fields.append({"name": "ContactExternalVoltage", "components": 1,
-                                "unit": "V", "region": region, "mapping_status": "complete",
+                                "unit": "V", "region": region, "mapping_status": "scalar",
                                 "values": 1, "global_vertex_count": 6,
-                                "global_node_mapping": "global_vertex_order"})
+                                "global_node_mapping": "contact_scalar",
+                                "region_name": region_name})
     write_json(output / "field_manifest.json", {"fields": manifest_fields})
 
 
@@ -207,13 +209,13 @@ def make_fixture(base: Path) -> tuple[Path, Path, Path, Path, Path]:
             tdr = state_root / "artifacts" / f"pn2d_minimal6_state_{tag}.tdr"
             write_json(tdr, raw_tdr(topology, bias, SUPPLEMENTAL))
             export = state_root / "export"
-            export.mkdir(parents=True)
-            old = export / "old_member.txt"
-            old.write_text("bound old export\n", encoding="utf-8")
+            fake_importer(tdr, export)
+            ledger = {path.relative_to(export).as_posix(): sha256(path)
+                      for path in export.rglob("*") if path.is_file()}
             supplemental_states.append({
                 "topology_id": topology, "requested_bias_V": bias, "actual_bias_V": bias,
                 "bias_tag": tag, "status": "passed", "sentaurus_version": "O-2018.06-SP2",
-                "final_tdr_name": tdr.name, "member_sha256": {old.name: sha256(old)},
+                "final_tdr_name": tdr.name, "member_sha256": ledger,
                 "export_dir": str(export.resolve()), "artifacts_dir": str(tdr.parent.resolve()),
             })
             expected_matrix.append([topology, bias])
@@ -221,6 +223,7 @@ def make_fixture(base: Path) -> tuple[Path, Path, Path, Path, Path]:
         "schema": "vela.pn2d_minimal6_states.v1", "run_id": "fixture",
         "bias_tolerance_V": 1.0e-12, "expected_matrix": expected_matrix,
         "sentaurus_version": "O-2018.06-SP2", "outputs_complete": True,
+        "importer": str(importer.resolve()),
         "states": supplemental_states,
         "manifest_path": str((supplemental / "manifest.json").resolve()),
     })

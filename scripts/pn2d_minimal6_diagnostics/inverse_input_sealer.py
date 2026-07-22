@@ -179,21 +179,49 @@ def _mesh_contract(path: Path) -> dict:
     triangles = value.get("triangles")
     if not isinstance(triangles, list) or len(triangles) != 4:
         raise ValueError("Vela topology mesh triangle mismatch")
-    topology = set()
+    triangle_ids = set()
+    topology = []
     for row in triangles:
         ids = row.get("node_ids") if isinstance(row, dict) else None
-        if not isinstance(ids, list) or len(ids) != 3 or any(node not in coordinates for node in ids):
+        element_id = row.get("id") if isinstance(row, dict) else None
+        if not isinstance(element_id, int) or element_id in triangle_ids:
+            raise ValueError("Vela topology mesh duplicate triangle id")
+        triangle_ids.add(element_id)
+        if (not isinstance(ids, list) or len(ids) != 3 or len(set(ids)) != 3
+                or any(node not in coordinates for node in ids)):
             raise ValueError("Vela topology mesh triangle mismatch")
-        topology.add(tuple(sorted(ids)))
+        triangle = tuple(sorted(ids))
+        if triangle in topology:
+            raise ValueError("Vela topology mesh duplicate triangle")
+        topology.append(triangle)
     if len(topology) != 4:
         raise ValueError("Vela topology mesh duplicate triangle")
     contacts = value.get("contacts")
-    if not isinstance(contacts, list):
+    if not isinstance(contacts, list) or len(contacts) != 2:
         raise ValueError("Vela topology mesh contact mismatch")
-    contact_map = {row.get("name"): set(row.get("node_ids", [])) for row in contacts if isinstance(row, dict)}
+    contact_ids = set()
+    contact_names = set()
+    contact_map = {}
+    for row in contacts:
+        if not isinstance(row, dict) or not isinstance(row.get("id"), int):
+            raise ValueError("Vela topology mesh contact mismatch")
+        contact_id = row["id"]
+        name = row.get("name")
+        node_ids = row.get("node_ids")
+        if contact_id in contact_ids:
+            raise ValueError("Vela topology mesh duplicate contact id")
+        if not isinstance(name, str) or name in contact_names:
+            raise ValueError("Vela topology mesh duplicate contact name")
+        if (not isinstance(node_ids, list) or len(node_ids) != 2
+                or len(set(node_ids)) != 2
+                or any(node not in coordinates for node in node_ids)):
+            raise ValueError("Vela topology mesh duplicate contact node")
+        contact_ids.add(contact_id)
+        contact_names.add(name)
+        contact_map[name] = set(node_ids)
     if contact_map != {"Anode": {0, 4}, "Cathode": {2, 3}}:
         raise ValueError("Vela topology mesh contact mismatch")
-    return {"coordinates": coordinates, "triangles": topology, "contacts": contact_map}
+    return {"coordinates": coordinates, "triangles": set(topology), "contacts": contact_map}
 
 
 def _read_vela_state(path: Path) -> dict[int, dict[str, float]]:
@@ -267,7 +295,7 @@ def _validate_supplemental(root: Path) -> tuple[dict, dict]:
             member = _checked(export, relative, "supplemental export member")
             _require_hash(member, digest, "supplemental export member")
         tdr = _checked(artifacts, row.get("final_tdr_name"), "supplemental final TDR")
-        result[key] = (row, tdr, tuple(sorted(export.rglob("*"))))
+        result[key] = (row, tdr, dict(ledger))
     if set(result) != _matrix(False):
         raise ValueError("supplemental exact matrix mismatch")
     return manifest, result
@@ -289,8 +317,15 @@ def _validate_import(export: Path, contract: dict, mesh_contract: dict, bias: fl
     if not isinstance(entries, list):
         raise ValueError("imported field schema mismatch")
     by_name = {}
+    contact_entries = []
     for entry in entries:
-        if not isinstance(entry, dict) or entry.get("region") != 0:
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get("name")
+        if name == "ContactExternalVoltage":
+            contact_entries.append(entry)
+            continue
+        if entry.get("region") != 0:
             continue
         name = entry.get("name")
         if name in contract:
@@ -327,7 +362,16 @@ def _validate_import(export: Path, contract: dict, mesh_contract: dict, bias: fl
         source_for_canonical[canonical] = matches[0]
         used.add(matches[0])
     canonical_for_source = {source: canonical for canonical, source in source_for_canonical.items()}
-    element_rows = _read_rows(export / "elements.csv", {"node0", "node1", "node2"}, "imported elements")
+    element_rows = _read_rows(
+        export / "elements.csv", {"id", "node0", "node1", "node2"}, "imported elements")
+    if len(element_rows) != 4:
+        raise ValueError("imported topology element count mismatch")
+    element_ids = [int(row["id"]) for row in element_rows]
+    if len(set(element_ids)) != len(element_ids):
+        raise ValueError("imported duplicate element id")
+    source_triangles = [tuple(int(row[f"node{i}"]) for i in range(3)) for row in element_rows]
+    if any(len(set(nodes)) != 3 for nodes in source_triangles):
+        raise ValueError("imported topology duplicate element node")
     try:
         imported_triangles = {tuple(sorted(canonical_for_source[int(row[f"node{i}"])] for i in range(3)))
                               for row in element_rows}
@@ -335,24 +379,64 @@ def _validate_import(export: Path, contract: dict, mesh_contract: dict, bias: fl
         raise ValueError("imported topology references an unknown node") from error
     if imported_triangles != mesh_contract["triangles"]:
         raise ValueError("imported topology mismatch")
+    contact_rows = _read_rows(
+        export / "contacts.csv", {"name", "node_ids", "region"}, "imported contacts")
+    if len(contact_rows) != 2:
+        raise ValueError("imported contact topology count mismatch")
     contacts = {}
-    for row in _read_rows(export / "contacts.csv", {"name", "node_ids"}, "imported contacts"):
+    for row in contact_rows:
+        name = row["name"]
+        if name in contacts:
+            raise ValueError("imported duplicate contact name")
+        if row["region"] != "R.Si":
+            raise ValueError("imported contact region mismatch")
+        source_node_ids = [value for value in row["node_ids"].split(";") if value]
+        if len(source_node_ids) != 2 or len(set(source_node_ids)) != 2:
+            raise ValueError("imported duplicate contact node")
         try:
-            contacts[row["name"]] = {canonical_for_source[int(value)]
-                                      for value in row["node_ids"].split(";") if value}
-        except KeyError as error:
+            contacts[name] = {canonical_for_source[int(value)] for value in source_node_ids}
+        except (KeyError, ValueError) as error:
             raise ValueError("imported contact references an unknown node") from error
     if contacts != mesh_contract["contacts"]:
         raise ValueError("imported contact topology mismatch")
-    voltages = []
-    for path in sorted((export / "fields").glob("ContactExternalVoltage_region*.csv")):
-        rows = _read_rows(path, {"component0"}, "imported contact voltage")
+    expected_contact_regions = {1: "Cathode", 2: "Anode"}
+    if len(contact_entries) != 2:
+        raise ValueError("imported contact voltage manifest count mismatch")
+    entries_by_region = {}
+    for entry in contact_entries:
+        region = entry.get("region")
+        if region not in expected_contact_regions or region in entries_by_region:
+            raise ValueError("imported contact voltage manifest region mismatch")
+        if (entry.get("components") != 1
+                or entry.get("unit") != "V"
+                or entry.get("mapping_status") != "scalar"
+                or entry.get("region_name") != expected_contact_regions[region]
+                or entry.get("global_node_mapping") != "contact_scalar"
+                or entry.get("values") != 1
+                or entry.get("global_vertex_count") != 6):
+            raise ValueError("imported contact voltage manifest contract mismatch")
+        entries_by_region[region] = entry
+    expected_paths = {export / "fields" / f"ContactExternalVoltage_region{region}.csv"
+                      for region in expected_contact_regions}
+    actual_paths = set((export / "fields").glob("ContactExternalVoltage_region*.csv"))
+    if actual_paths != expected_paths:
+        raise ValueError("imported contact voltage file set mismatch")
+    for region, role in expected_contact_regions.items():
+        path = export / "fields" / f"ContactExternalVoltage_region{region}.csv"
+        rows = _read_rows(path, {"node_id", "component0"}, "imported contact voltage")
         if len(rows) != 1:
             raise ValueError("imported contact voltage row mismatch")
-        voltages.append(_finite(float(rows[0]["component0"]), "imported contact voltage"))
-    if len(voltages) != 2 or not any(abs(value) <= BIAS_TOLERANCE_V for value in voltages) \
-            or not any(abs(value - bias) <= BIAS_TOLERANCE_V for value in voltages):
-        raise ValueError("imported contact bias mismatch")
+        try:
+            source = int(rows[0]["node_id"])
+            canonical = canonical_for_source[source]
+        except (KeyError, ValueError) as error:
+            raise ValueError("imported contact voltage node mismatch") from error
+        if canonical not in contacts[role]:
+            raise ValueError("imported contact voltage role mismatch")
+        value = _finite(float(rows[0]["component0"]), "imported contact voltage")
+        expected = bias if role == "Anode" else 0.0
+        if abs(value - expected) > BIAS_TOLERANCE_V:
+            raise ValueError("imported contact bias role mismatch")
     fields = {}
     for name, (components, _) in contract.items():
         rows = _read_rows(export / "fields" / f"{name}_region0.csv",
@@ -469,6 +553,16 @@ def _run_import(importer: Path, tdr: Path, output: Path,
     if not output.is_dir():
         raise ValueError("importer did not create its export directory")
 
+def _require_reimport_matches_ledger(export: Path, ledger: dict) -> None:
+    actual = {path.relative_to(export).as_posix(): _sha256(path)
+              for path in export.rglob("*") if path.is_file()}
+    if set(actual) != set(ledger):
+        raise ValueError("supplemental reimport mismatch: member set")
+    for relative, digest in ledger.items():
+        if (not isinstance(digest, str)
+                or actual[relative] != digest.lower()):
+            raise ValueError(f"supplemental reimport mismatch: {relative}")
+
 
 def seal_inverse_input_roots(
     vela_sweep_root: str | Path,
@@ -499,6 +593,13 @@ def seal_inverse_input_roots(
     _, sent_states, sent_decks = _validate_sweep(
         sentaurus_root, "sentaurus", include_zero=True)
     supplemental_manifest, supplemental_states = _validate_supplemental(supplemental_base)
+    declared_importer = supplemental_manifest.get("importer")
+    if (not isinstance(declared_importer, str)
+            or not Path(declared_importer).is_absolute()
+            or os.path.normcase(str(Path(declared_importer).resolve()))
+            != os.path.normcase(str(importer_path))):
+        raise ValueError("supplemental importer identity mismatch")
+
     meshes = {}
     mesh_paths = {}
     doping_paths = {}
@@ -564,11 +665,14 @@ def seal_inverse_input_roots(
                     tag = _bias_tag(bias)
                     if solver_label == "sentaurus":
                         _, tdr = state_map[(topology, bias)]
+                        trusted_ledger = None
                     else:
-                        _, tdr, _ = state_map[(topology, bias)]
+                        _, tdr, trusted_ledger = state_map[(topology, bias)]
                     export = work / solver_label / topology / tag
                     export.parent.mkdir(parents=True, exist_ok=True)
                     _run_import(importer_path, tdr, export, importer_runner)
+                    if trusted_ledger is not None:
+                        _require_reimport_matches_ledger(export, trusted_ledger)
                     imported = _validate_import(export, contract, meshes[topology], bias)
                     evidence = [(tdr, f"source/tdr/{topology}/{tag}.tdr")]
                     if deck_map is not None:
@@ -595,7 +699,9 @@ def seal_inverse_input_roots(
         _seal_root(stage / "supplemental", "supplemental", SUPPLEMENTAL_FIELDS,
                    supplemental_records, importer_path, supplemental_base / "manifest.json", phase_base,
                    {"remote_solver_binding_status": "release_declared_by_supplemental_manifest",
-                    "sentaurus_version": supplemental_manifest["sentaurus_version"]})
+                    "sentaurus_version": supplemental_manifest["sentaurus_version"],
+                    "declared_importer": str(importer_path),
+                    "importer_sha256": _sha256(importer_path)})
         shutil.rmtree(work)
         load_input_bundle(stage / "vela", stage / "sentaurus", stage / "supplemental")
         os.replace(stage, destination)
