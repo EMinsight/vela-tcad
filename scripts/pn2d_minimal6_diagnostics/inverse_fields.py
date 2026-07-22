@@ -229,10 +229,130 @@ def edge_scalar_difference(start_value, end_value, start, end) -> float:
 
 
 def mirror_vector(vector) -> Vector:
-    """Transform a global Cartesian vector through the x-coordinate mirror."""
+    """Transform a global Cartesian vector through the y-coordinate mirror."""
     x, y = _finite_vector(vector, "vector")
-    return -x, y
+    return x, -y
 
+
+MIRROR_NODE_MAP = {
+    "0": "4",
+    "1": "5",
+    "2": "3",
+    "3": "2",
+    "4": "0",
+    "5": "1",
+}
+MIRROR_RELATIVE_TOLERANCE = 1.0e-9
+MIRROR_ABSOLUTE_TOLERANCE_BY_UNIT_SI = {"V/m": 1.0e-8}
+_MIRRORED_VECTOR_QUANTITIES = {
+    "ElectricField",
+    "eCurrentDensity",
+    "hCurrentDensity",
+}
+
+
+def evaluate_mirror_invariance(observations: Iterable[Observation]) -> dict[str, object]:
+    """Compare canonical sketch rows with the labelled vertical reflection."""
+    rows = tuple(
+        row
+        for row in observations
+        if row.support_kind is SupportKind.NODE
+        and row.topology in {"sketch", "mirror"}
+    )
+    index = {}
+    duplicate_count = 0
+    for row in rows:
+        key = (
+            row.solver,
+            row.topology,
+            float(row.bias_V),
+            str(row.support_id),
+            row.quantity,
+            row.component,
+        )
+        if key in index:
+            duplicate_count += 1
+        else:
+            index[key] = row
+
+    valid_pair_count = 0
+    matching_nonvalid_pair_count = 0
+    mismatch_count = duplicate_count
+    unpaired_count = 0
+    paired_mirror_keys = set()
+    sketch_rows = sorted(
+        (row for row in rows if row.topology == "sketch"),
+        key=lambda row: (
+            row.solver,
+            float(row.bias_V),
+            str(row.support_id),
+            row.quantity,
+            row.component,
+        ),
+    )
+    for sketch in sketch_rows:
+        mirror_node = MIRROR_NODE_MAP.get(str(sketch.support_id))
+        mirror_key = (
+            sketch.solver,
+            "mirror",
+            float(sketch.bias_V),
+            mirror_node,
+            sketch.quantity,
+            sketch.component,
+        )
+        mirror = index.get(mirror_key) if mirror_node is not None else None
+        if mirror is None:
+            unpaired_count += 1
+            continue
+        paired_mirror_keys.add(mirror_key)
+        if sketch.unit_si != mirror.unit_si or sketch.status is not mirror.status:
+            mismatch_count += 1
+            continue
+        if sketch.status is not SampleStatus.VALID:
+            matching_nonvalid_pair_count += 1
+            continue
+        if sketch.value_si is None or mirror.value_si is None:
+            mismatch_count += 1
+            continue
+        left, right = float(sketch.value_si), float(mirror.value_si)
+        if not math.isfinite(left) or not math.isfinite(right):
+            mismatch_count += 1
+            continue
+        if sketch.quantity == "coordinate" and sketch.component == "y":
+            expected = 0.5e-6 - left
+        elif (sketch.quantity in _MIRRORED_VECTOR_QUANTITIES
+              and sketch.component == "component1"):
+            expected = -left
+        else:
+            expected = left
+        valid_pair_count += 1
+        if not math.isclose(
+            right,
+            expected,
+            rel_tol=MIRROR_RELATIVE_TOLERANCE,
+            abs_tol=MIRROR_ABSOLUTE_TOLERANCE_BY_UNIT_SI.get(sketch.unit_si, 0.0),
+        ):
+            mismatch_count += 1
+
+    mirror_keys = {key for key in index if key[1] == "mirror"}
+    unpaired_count += len(mirror_keys - paired_mirror_keys)
+    passed = (
+        valid_pair_count > 0
+        and mismatch_count == 0
+        and unpaired_count == 0
+    )
+    return {
+        "status": "pass" if passed else "fail",
+        "reflection": "(x,y)->(x,0.5um-y)",
+        "node_map": dict(MIRROR_NODE_MAP),
+        "vector_transform": "(vx,vy)->(vx,-vy)",
+        "relative_tolerance": MIRROR_RELATIVE_TOLERANCE,
+        "absolute_tolerance_by_unit_si": dict(MIRROR_ABSOLUTE_TOLERANCE_BY_UNIT_SI),
+        "valid_pair_count": valid_pair_count,
+        "matching_nonvalid_pair_count": matching_nonvalid_pair_count,
+        "mismatch_count": mismatch_count,
+        "unpaired_count": unpaired_count,
+    }
 
 def vector_error(candidate, reference, *, reference_floor: float) -> VectorErrorResult:
     """Compare vector magnitude and direction without component-wise ratios."""

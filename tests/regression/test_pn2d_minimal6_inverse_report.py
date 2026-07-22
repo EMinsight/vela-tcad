@@ -50,7 +50,14 @@ def write_json(path: Path, payload: object) -> None:
 
 def make_three_node_fixture(root: Path, *, omit_field: str | None = None):
     roots = INPUT_FIXTURE.make_fixture(root, omit_field=omit_field)
-    points = (("0", 0.0, 0.0), ("1", 2.0, 0.0), ("2", 0.0, 1.0))
+    points = (
+        ("0", 0.0, 0.5),
+        ("1", 1.0, 0.5),
+        ("2", 2.0, 0.5),
+        ("3", 2.0, 0.0),
+        ("4", 0.0, 0.0),
+        ("5", 1.0, 0.0),
+    )
     for input_root in roots:
         manifest = json.loads((input_root / "manifest.json").read_text())
         for state_index, state in enumerate(manifest["states"]):
@@ -65,10 +72,22 @@ def make_three_node_fixture(root: Path, *, omit_field: str | None = None):
                 row[header.index("x_um")] = format(x_um, ".17g")
                 row[header.index("y_um")] = format(y_um, ".17g")
                 if "ElectrostaticPotential_component0" in header:
+                    source_y_um = (
+                        y_um if state["topology"] == "sketch" else 0.5 - y_um
+                    )
                     row[header.index("ElectrostaticPotential_component0")] = format(
-                        3.0 * x_um - 4.0 * y_um + abs(float(state["actual_bias_V"])), ".17g")
+                        3.0 * x_um - 4.0 * source_y_um
+                        + abs(float(state["actual_bias_V"])),
+                        ".17g",
+                    )
                     row[header.index("ElectricField_component0")] = "-30000"
-                    row[header.index("ElectricField_component1")] = "40000"
+                    row[header.index("ElectricField_component1")] = (
+                        "40000" if state["topology"] == "sketch" else "-40000"
+                    )
+                    for quantity in ("eCurrentDensity", "hCurrentDensity"):
+                        component = header.index(f"{quantity}_component1")
+                        if state["topology"] == "mirror":
+                            row[component] = format(-float(row[component]), ".17g")
                 generated.append(row)
             with path.open("w", newline="", encoding="utf-8") as handle:
                 writer = csv.writer(handle, lineterminator="\n")
@@ -148,8 +167,77 @@ class PN2DMinimal6InverseReportTest(unittest.TestCase):
         self.assertTrue(result["passed"])
         return out, roots
 
+    def test_report_persists_passing_mirror_invariance_and_verifier_recomputes_it(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out, _ = self.build(Path(tmp), "report")
+            report = json.loads(
+                (out / "physics_inverse_audit.json").read_text(encoding="utf-8")
+            )
+            mirror = report["payload"]["localization_control"]["mirror_invariance"]
+            self.assertEqual(mirror["status"], "pass")
+            self.assertEqual(mirror["relative_tolerance"], 1.0e-9)
+            self.assertEqual(
+                mirror["absolute_tolerance_by_unit_si"], {"V/m": 1.0e-8}
+            )
+            self.assertEqual(mirror["vector_transform"], "(vx,vy)->(vx,-vy)")
+            self.assertGreater(mirror["valid_pair_count"], 0)
+            self.assertEqual(mirror["mismatch_count"], 0)
+            self.assertEqual(mirror["unpaired_count"], 0)
+            self.assertIn("mirror_invariance", verify_report(out)["checks"])
+
+    def test_report_generation_fails_closed_when_mirror_invariance_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            roots = make_three_node_fixture(root / "inputs")
+            scale_root_fields_at_state(
+                roots[0],
+                topology="mirror",
+                bias_V=-1.0,
+                fields=("ElectrostaticPotential",),
+                factor=2.0,
+            )
+            with self.assertRaisesRegex(ValueError, "mirror invariance"):
+                build_report_package(
+                    vela_root=roots[0],
+                    sentaurus_root=roots[1],
+                    supplemental_sentaurus_root=roots[2],
+                    out_dir=root / "report",
+                    phase_base="a5524cf",
+                )
+
+    def test_verifier_rejects_forged_mirror_pass_and_metrics_after_rehash(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out, _ = self.build(Path(tmp), "report")
+            report_path = out / "physics_inverse_audit.json"
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            report["payload"]["localization_control"]["mirror_invariance"] = {
+                "status": "pass",
+                "reflection": "(x,y)->(x,0.5um-y)",
+                "node_map": {
+                    "0": "4",
+                    "1": "5",
+                    "2": "3",
+                    "3": "2",
+                    "4": "0",
+                    "5": "1",
+                },
+                "relative_tolerance": 1.0e-9,
+                "absolute_tolerance_by_unit_si": {"V/m": 1.0e-8},
+                "vector_transform": "(vx,vy)->(vx,-vy)",
+                "valid_pair_count": 1,
+                "matching_nonvalid_pair_count": 0,
+                "mismatch_count": 0,
+                "unpaired_count": 0,
+            }
+            write_json(report_path, report)
+            refresh_integrity(out)
+
+            with self.assertRaisesRegex(ValueError, "mirror invariance"):
+                verify_report(out)
+
     def test_two_runs_are_byte_identical_and_report_contract_is_complete(self):
         with tempfile.TemporaryDirectory() as tmp:
+
             root = Path(tmp)
             roots = make_three_node_fixture(root / "shared-inputs")
             outputs = []
@@ -256,7 +344,11 @@ class PN2DMinimal6InverseReportTest(unittest.TestCase):
             roots = make_three_node_fixture(root / "inputs")
             scale_root_fields_at_state(
                 roots[0], topology="sketch", bias_V=-1.0,
-                fields=("ElectrostaticPotential", "ElectricField"), factor=1.0e6,
+                fields=("ElectricField",), factor=1.0e6,
+            )
+            scale_root_fields_at_state(
+                roots[0], topology="mirror", bias_V=-1.0,
+                fields=("ElectricField",), factor=1.0e6,
             )
             out = root / "report"
             build_report_package(

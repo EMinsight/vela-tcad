@@ -16,7 +16,7 @@ from .inverse_contracts import (
     AcceptanceThresholds, Identifiability, Observation, SampleStatus,
     SupportKind, validate_inverse_report_v1,
 )
-from .inverse_fields import triangle_gradient
+from .inverse_fields import evaluate_mirror_invariance, triangle_gradient
 from .inverse_inputs import (
     InputBundle, canonical_observations, field_inventory, write_input_manifest,
 )
@@ -503,10 +503,13 @@ def build_analysis_artifacts(bundle: InputBundle, out_dir: str | Path, *, phase_
                              input_roots: dict[str, str], sentaurus_version: str) -> dict:
     if phase_base != "a5524cf":
         raise ValueError("phase-base must be a5524cf")
+    rows = canonical_observations(bundle)
+    mirror_invariance = evaluate_mirror_invariance(rows)
+    if mirror_invariance["status"] != "pass":
+        raise ValueError("mirror invariance gate failed")
     root = Path(out_dir)
     root.mkdir(parents=True, exist_ok=False)
     write_input_manifest(bundle, root / "input_manifest.json")
-    rows = canonical_observations(bundle)
     for support in SupportKind:
         selected = [_observation_row(row) for row in rows if row.support_kind is support]
         write_csv(root / f"observations_{support.value}.csv", OBSERVATION_COLUMNS, selected)
@@ -550,6 +553,7 @@ def build_analysis_artifacts(bundle: InputBundle, out_dir: str | Path, *, phase_
             "classifications": classifications,
             "replacement_closure": [replacement["closure"]],
             "localization_control": {
+                "mirror_invariance": mirror_invariance,
                 "semantic_replay": _semantic_replay(rows, replacement),
                 "input_provenance": {"input_roots": dict(input_roots),
                                      "raw_inputs": raw_inputs},

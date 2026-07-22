@@ -15,6 +15,7 @@ from scripts.pn2d_minimal6_diagnostics.inverse_fields import (
     cell_to_node_vectors,
     edge_scalar_difference,
     evaluate_field_candidates,
+    evaluate_mirror_invariance,
     mirror_vector,
     triangle_gradient,
     vector_error,
@@ -74,7 +75,7 @@ class InverseFieldsTest(unittest.TestCase):
                          (("large", 2.0 / 3.0), ("small", 1.0 / 3.0)))
 
     def test_mirror_and_directed_edge_difference_have_deterministic_signs(self):
-        self.assertEqual(mirror_vector((3.0, -4.0)), (-3.0, -4.0))
+        self.assertEqual(mirror_vector((3.0, -4.0)), (3.0, 4.0))
         self.assertEqual(edge_scalar_difference(2.0, 8.0, (0.0, 0.0), (2.0, 0.0)), 3.0)
         self.assertEqual(edge_scalar_difference(8.0, 2.0, (2.0, 0.0), (0.0, 0.0)), -3.0)
         with self.assertRaisesRegex(ValueError, "zero length"):
@@ -88,6 +89,76 @@ class InverseFieldsTest(unittest.TestCase):
             with self.subTest(start=start, end=end):
                 with self.assertRaises(ValueError):
                     edge_scalar_difference(2.0, 8.0, start, end)
+
+    def test_mirror_invariance_reflects_coordinates_vectors_and_typed_gaps(self):
+        base = self.make_observations(reference_scale=1.0)[0]
+        sketch_x = replace(base, value_si=0.0)
+        mirror_x = replace(
+            sketch_x, topology="mirror", support_id="4", value_si=0.0
+        )
+        sketch_y = replace(base, component="y", value_si=0.5e-6)
+        mirror_y = replace(
+            sketch_y, topology="mirror", support_id="4", value_si=0.0
+        )
+        sketch_vector = replace(
+            base,
+            quantity="ElectricField",
+            component="component1",
+            value_si=-4.0,
+            unit_si="V/m",
+        )
+        mirror_vector_row = replace(
+            sketch_vector, topology="mirror", support_id="4", value_si=4.0
+        )
+
+        passed = evaluate_mirror_invariance(
+            (sketch_x, mirror_x, sketch_y, mirror_y,
+             sketch_vector, mirror_vector_row)
+        )
+        self.assertEqual(passed["status"], "pass")
+        self.assertEqual(passed["valid_pair_count"], 3)
+        self.assertEqual(passed["matching_nonvalid_pair_count"], 0)
+        self.assertEqual(passed["mismatch_count"], 0)
+        self.assertEqual(passed["unpaired_count"], 0)
+
+        missing_sketch = replace(
+            sketch_x, status=SampleStatus.MISSING_FIELD, value_si=None
+        )
+        missing_mirror = replace(
+            mirror_x, status=SampleStatus.MISSING_FIELD, value_si=None
+        )
+        gaps_only = evaluate_mirror_invariance((missing_sketch, missing_mirror))
+        self.assertEqual(gaps_only["status"], "fail")
+        self.assertEqual(gaps_only["valid_pair_count"], 0)
+        self.assertEqual(gaps_only["matching_nonvalid_pair_count"], 1)
+
+        for changed_mirror in (
+            replace(mirror_x, unit_si="cm"),
+            replace(mirror_x, status=SampleStatus.MISSING_FIELD, value_si=None),
+        ):
+            with self.subTest(changed_mirror=changed_mirror):
+                failed = evaluate_mirror_invariance((sketch_x, changed_mirror))
+                self.assertEqual(failed["status"], "fail")
+                self.assertEqual(failed["mismatch_count"], 1)
+        near_zero_coordinate = evaluate_mirror_invariance(
+            (sketch_x, replace(mirror_x, value_si=5.0e-9))
+        )
+        self.assertEqual(near_zero_coordinate["status"], "fail")
+        self.assertEqual(near_zero_coordinate["mismatch_count"], 1)
+
+        sketch_zero_vector = replace(sketch_vector, value_si=0.0)
+        near_zero_field = evaluate_mirror_invariance((
+            sketch_zero_vector,
+            replace(mirror_vector_row, value_si=5.0e-9),
+        ))
+        self.assertEqual(near_zero_field["status"], "pass")
+        self.assertEqual(
+            near_zero_field["absolute_tolerance_by_unit_si"], {"V/m": 1.0e-8}
+        )
+        self.assertEqual(
+            near_zero_field["vector_transform"], "(vx,vy)->(vx,-vy)"
+        )
+
 
     def test_vector_error_types_zero_floor_nonfinite_and_undefined_direction(self):
         exact = vector_error((-3.0, 4.0), (-3.0, 4.0), reference_floor=1.0e-12)

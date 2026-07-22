@@ -60,6 +60,103 @@ REPLACEMENT_COLUMNS = (
     "sequence", "step", "factor", "value", "incremental_dex", "closure_abs_dex",
 )
 
+_MIRROR_NODE_MAP = {
+    "0": "4", "1": "5", "2": "3",
+    "3": "2", "4": "0", "5": "1",
+}
+_MIRROR_VECTOR_QUANTITIES = {
+    "ElectricField", "eCurrentDensity", "hCurrentDensity",
+}
+_MIRROR_ABSOLUTE_TOLERANCE_BY_UNIT_SI = {"V/m": 1.0e-8}
+
+
+def _expected_mirror_invariance(rows: tuple[Observation, ...]) -> dict[str, object]:
+    """Independently reconstruct the labelled vertical-reflection gate."""
+    node_rows = tuple(
+        row for row in rows
+        if row.support_kind is SupportKind.NODE
+        and row.topology in {"sketch", "mirror"}
+    )
+    index = {}
+    duplicates = 0
+    for row in node_rows:
+        key = (
+            row.solver, row.topology, float(row.bias_V), str(row.support_id),
+            row.quantity, row.component,
+        )
+        if key in index:
+            duplicates += 1
+        else:
+            index[key] = row
+
+    valid_pairs = 0
+    matching_nonvalid_pairs = 0
+    mismatches = duplicates
+    unpaired = 0
+    consumed_mirror_keys = set()
+    for sketch in sorted(
+        (row for row in node_rows if row.topology == "sketch"),
+        key=lambda row: (
+            row.solver, float(row.bias_V), str(row.support_id),
+            row.quantity, row.component,
+        ),
+    ):
+        reflected_node = _MIRROR_NODE_MAP.get(str(sketch.support_id))
+        reflected_key = (
+            sketch.solver, "mirror", float(sketch.bias_V), reflected_node,
+            sketch.quantity, sketch.component,
+        )
+        mirror = index.get(reflected_key) if reflected_node is not None else None
+        if mirror is None:
+            unpaired += 1
+            continue
+        consumed_mirror_keys.add(reflected_key)
+        if sketch.unit_si != mirror.unit_si or sketch.status is not mirror.status:
+            mismatches += 1
+            continue
+        if sketch.status is not SampleStatus.VALID:
+            matching_nonvalid_pairs += 1
+            continue
+        if sketch.value_si is None or mirror.value_si is None:
+            mismatches += 1
+            continue
+        sketch_value = float(sketch.value_si)
+        mirror_value = float(mirror.value_si)
+        if not math.isfinite(sketch_value) or not math.isfinite(mirror_value):
+            mismatches += 1
+            continue
+        if sketch.quantity == "coordinate" and sketch.component == "y":
+            reflected_value = 0.5e-6 - sketch_value
+        elif (sketch.quantity in _MIRROR_VECTOR_QUANTITIES
+              and sketch.component == "component1"):
+            reflected_value = -sketch_value
+        else:
+            reflected_value = sketch_value
+        valid_pairs += 1
+        if not math.isclose(
+            mirror_value,
+            reflected_value,
+            rel_tol=1.0e-9,
+            abs_tol=_MIRROR_ABSOLUTE_TOLERANCE_BY_UNIT_SI.get(sketch.unit_si, 0.0),
+        ):
+            mismatches += 1
+
+    mirror_keys = {key for key in index if key[1] == "mirror"}
+    unpaired += len(mirror_keys - consumed_mirror_keys)
+    passed = valid_pairs > 0 and mismatches == 0 and unpaired == 0
+    return {
+        "status": "pass" if passed else "fail",
+        "reflection": "(x,y)->(x,0.5um-y)",
+        "node_map": dict(_MIRROR_NODE_MAP),
+        "vector_transform": "(vx,vy)->(vx,-vy)",
+        "relative_tolerance": 1.0e-9,
+        "absolute_tolerance_by_unit_si": dict(_MIRROR_ABSOLUTE_TOLERANCE_BY_UNIT_SI),
+        "valid_pair_count": valid_pairs,
+        "matching_nonvalid_pair_count": matching_nonvalid_pairs,
+        "mismatch_count": mismatches,
+        "unpaired_count": unpaired,
+    }
+
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -472,6 +569,11 @@ def _verify_raw_semantics(root: Path, report: dict, bundle: InputBundle,
     expected_replay = _expected_semantic(rows, replacement)
     if payload["localization_control"].get("semantic_replay") != expected_replay:
         raise ValueError("raw semantic replay mismatch")
+    expected_mirror = _expected_mirror_invariance(rows)
+    if expected_mirror["status"] != "pass":
+        raise ValueError("raw mirror invariance failed")
+    if payload["localization_control"].get("mirror_invariance") != expected_mirror:
+        raise ValueError("authoritative mirror invariance reconstruction mismatch")
     if payload.get("sentaurus_version") != _sentaurus_version(roots):
         raise ValueError("raw Sentaurus version reconstruction mismatch")
     expected_input_manifest = {
@@ -491,7 +593,8 @@ def _verify_raw_semantics(root: Path, report: dict, bundle: InputBundle,
     return ["raw_observations", "raw_candidate_metrics", "raw_classifications",
             "raw_replacement_sequences", "raw_triangle_gradient",
             "raw_current_inverted_gradient", "raw_inverse_alpha",
-            "raw_local_generation", "raw_generation_support_integral"]
+            "raw_local_generation", "raw_generation_support_integral",
+            "mirror_invariance"]
 
 
 def _verify_figures(root: Path) -> list[str]:
