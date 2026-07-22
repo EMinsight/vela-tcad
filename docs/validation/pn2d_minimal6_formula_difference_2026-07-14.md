@@ -221,15 +221,30 @@ classification is `insufficient_data` for `potential_field_direct`,
 `current_inverted_qf_gradient`. No production C++ formula was changed.
 
 The authoritative report is
-`build-release/pn2d-minimal6-physics-inverse-audit-20260722-a/`; the independent
-reproduction is the sibling root ending in `-b`. Both contain 25 files with
+`build-release/pn2d-minimal6-physics-inverse-audit-20260722-c/`; the independent
+reproduction is the sibling root ending in `-d`. Both contain 25 files with
 identical relative paths and SHA-256 values. Each independent verifier passes
 22 report artifacts and 1,274 input files. The report-manifest SHA-256 is
-`8288ad978793aeb8f05dccce9a1026a0a7439268dc13819e4d1075bd5eb074e1`,
+`5001630d355db0baafe1417da378b9ad8b012fc1cf8ed33378b710a81cdb7076`,
 and the canonical input-manifest SHA-256 recorded by the report is
 `1bf13239725fbdb9439b7d20164a0611cd601076cbc8c1ec3520da522fa71300`.
 The phase base is `a5524cf`, `production_cpp_changed=false`, and the unique
 Sentaurus version is `O-2018.06-SP2`.
+
+The report and independent verifier also enforce the labelled vertical mirror
+contract before accepting any inverse evidence: coordinates transform as
+`(x,y)->(x,0.5 um-y)`, vector components as `(vx,vy)->(vx,-vy)`, and the
+zero-based node map is `0<->4`, `1<->5`, `2<->3`. With relative tolerance
+`1e-9` and a dimensionally scoped `1e-8 V/m` absolute tolerance, the sealed
+inputs contain 3,240 valid mirror pairs and 1,080 matching nonvalid pairs,
+with zero mismatches and zero unpaired samples. The earlier `-a/-b` roots are
+retained only as provisional, pre-mirror-gate packages and are not
+authoritative.
+
+The `production_cpp_changed=false` payload flag is evidence metadata rather
+than an internally executed Git check. The required external phase-base diff
+against `a5524cf` is therefore retained as the fail-closed production-source
+guard; it confirms no changes under `include/` or `src/`.
 
 The remote supplemental root completed exactly 40/40 requested sketch/mirror
 states from `-1` through `-20 V`, with zero prepared or failed states and
