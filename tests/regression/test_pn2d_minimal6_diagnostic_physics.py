@@ -5,8 +5,29 @@ from pathlib import Path
 from scripts.pn2d_minimal6_diagnostics.geometry import p1_gradient
 from scripts.pn2d_minimal6_diagnostics.support import project_vector_to_edge, integrate_nodal_field, integrate_cell_field, map_local_sources_to_nodes, node_scalar_to_cells, node_vector_to_edges, edge_scalar_to_cells, local_edge_sources_to_nodes
 from scripts.pn2d_minimal6_diagnostics.physics import van_overstraeten_alpha, invert_alpha, infer_ni_eff, parse_van_overstraeten_de_man, parse_vela_van_overstraeten_defaults, invert_piecewise_alpha, compare_van_overstraeten_parameters
+from scripts.pn2d_minimal6_diagnostics.independent_science import (
+    _ordered_mean, _ordered_nodal_integral, _ordered_sum,
+)
 
 class DiagnosticPhysicsTest(unittest.TestCase):
+    def test_independent_integration_uses_contract_float_order(self):
+        values = (1.1, 2.2, 3.3)
+        self.assertEqual(_ordered_mean(values), sum(values) / len(values))
+        self.assertEqual(_ordered_mean(values), 2.1999999999999997)
+        area = 2.5e-13
+        self.assertEqual(_ordered_nodal_integral(area, values), 5.5e-13)
+        self.assertNotEqual(
+            _ordered_nodal_integral(area, values),
+            area * _ordered_mean(values),
+        )
+        cell_integrals = (
+            65982.42112678674,
+            97530.49181508641,
+            161732.9932978846,
+            194859.21034367438,
+        )
+        self.assertEqual(_ordered_sum(cell_integrals), 520105.11658343213)
+
     def test_p1_gradient_recovers_affine_field_in_ccw_triangle(self):
         # f(x,y)=2x-3y+5 on a CCW triangle.
         gradient = p1_gradient(((0.,0.), (2.,0.), (0.,1.)), (5.,9.,2.))

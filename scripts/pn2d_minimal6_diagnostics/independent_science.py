@@ -54,6 +54,27 @@ def _area(points, signed=False):
         raise ValueError("independent generation replay requires CCW triangles")
     return .5 * (twice if signed else abs(twice))
 
+def _ordered_mean(values):
+    rows = tuple(values)
+    if not rows:
+        raise ValueError("independent integration cannot average empty support")
+    # Match the report contract's deterministic binary64 operation order.
+    return sum(rows) / len(rows)
+
+
+def _ordered_nodal_integral(area, values):
+    rows = tuple(values)
+    if not rows:
+        raise ValueError("independent integration cannot integrate empty support")
+    # Native nodal integration is left-associative: (area * sum) / count.
+    return area * sum(rows) / len(rows)
+
+
+def _ordered_sum(values):
+    # Python's built-in float sum is part of the persisted report contract.
+    return sum(tuple(values))
+
+
 def _topology(mesh, topology):
     selected = mesh[topology] if topology in mesh else mesh
     cells = {str(cell): tuple(str(node) for node in nodes)
@@ -300,11 +321,11 @@ def _transport_evidence(rows,mesh,thermal_voltage,discovery):
                                            tuple(ms[node] for node in snodes))
                     reference_invalid=_first_invalid(js[node] for node in snodes)
                     dvalue=(None if _first_invalid(ds[node] for node in snodes) else
-                            statistics.mean(density[node] for node in snodes))
+                            _ordered_mean(density[node] for node in snodes))
                     mvalue=(None if _first_invalid(ms[node] for node in snodes) else
-                            statistics.mean(mobility[node] for node in snodes))
+                            _ordered_mean(mobility[node] for node in snodes))
                     reference=(None if any(current[node] is None for node in snodes) else
-                               tuple(statistics.mean(current[node][i] for node in snodes) for i in (0,1)))
+                               tuple(_ordered_mean(current[node][i] for node in snodes) for i in (0,1)))
                     if candidate=="signed_edge_qf_difference_current" and reference is not None:
                         reference=_edge_vector(_project(reference,coordinates[snodes[0]],coordinates[snodes[1]]),
                                                coordinates[snodes[0]],coordinates[snodes[1]])
@@ -340,13 +361,13 @@ def _transport_evidence(rows,mesh,thermal_voltage,discovery):
                                            tuple(ms[node] for node in pair))
                     reference_invalid=_first_invalid(js[node] for node in pair)
                     reference=(None if any(current[node] is None for node in pair) else
-                               tuple(statistics.mean(current[node][i] for node in pair) for i in (0,1)))
+                               tuple(_ordered_mean(current[node][i] for node in pair) for i in (0,1)))
                     start,end=coordinates[start_node],coordinates[end_node]
                     if reference is not None:
                         reference=_edge_vector(_project(reference,start,end),start,end)
                     value=None
                     if invalid is None:
-                        length=_tangent(start,end)[2]; mu=statistics.mean(mobility[node] for node in pair)
+                        length=_tangent(start,end)[2]; mu=_ordered_mean(mobility[node] for node in pair)
                         if candidate=="signed_edge_sg_density_current":
                             u=(psi[end_node]-psi[start_node])/thermal_voltage
                             difference=(_bernoulli(u)*density[end_node]-_bernoulli(-u)*density[start_node]
@@ -356,7 +377,7 @@ def _transport_evidence(rows,mesh,thermal_voltage,discovery):
                         else:
                             gp=(psi[end_node]-psi[start_node])/length
                             gn=(density[end_node]-density[start_node])/length
-                            navg=statistics.mean(density[node] for node in pair)
+                            navg=_ordered_mean(density[node] for node in pair)
                             scalar=(Q*mu*(-navg*gp+thermal_voltage*gn) if carrier=="electron"
                                     else Q*mu*(navg*gp-thermal_voltage*gn))
                         value=_edge_vector(scalar,start,end)
@@ -475,11 +496,25 @@ def _avalanche_evidence(rows,mesh,parameters,discovery):
                                      "impact_driving_field",status,error,prediction,split))
             status,error,prediction=SampleStatus.MISSING_FIELD,None,None
             if len(candidate_generation)==len(nodes) and all(ns[node] is SampleStatus.VALID for node in nodes):
-                candidate_total=native_total=0.
-                for cell in sorted(cells,key=_key):
-                    cnodes=cells[cell]; area=_area(tuple(coordinates[node] for node in cnodes),signed=True)
-                    candidate_total+=area*statistics.mean(candidate_generation[node] for node in cnodes)
-                    native_total+=area*statistics.mean(native[node] for node in cnodes)
+                candidate_cells = []
+                native_cells = []
+                for cell in sorted(cells, key=_key):
+                    cnodes = cells[cell]
+                    area = _area(
+                        tuple(coordinates[node] for node in cnodes), signed=True
+                    )
+                    candidate_cells.append(
+                        area * _ordered_mean(
+                            candidate_generation[node] for node in cnodes
+                        )
+                    )
+                    native_cells.append(
+                        _ordered_nodal_integral(
+                            area, (native[node] for node in cnodes)
+                        )
+                    )
+                candidate_total = _ordered_sum(candidate_cells)
+                native_total = _ordered_sum(native_cells)
                 if candidate_total>0 and native_total>0:
                     status=SampleStatus.VALID; prediction=math.log10(candidate_total/native_total); error=abs(prediction)
                 else: status=SampleStatus.BELOW_FLOOR
@@ -571,7 +606,7 @@ def _rank(evidence,thresholds):
         rows=[row for row in evidence if row["candidate"]==candidate]
         valid=[row for row in rows if row["split"]=="discovery"
                and row["status"] is SampleStatus.VALID]
-        score=(statistics.mean(abs(float(row["error"])) for row in valid) if valid else math.inf)
+        score=(_ordered_mean(abs(float(row["error"])) for row in valid) if valid else math.inf)
         classification=classifications[candidate]
         if classification is Identifiability.IDENTIFIED:
             reason="all combined and holdout gates pass"
