@@ -138,35 +138,86 @@ definition/operator convention, not evidence for a sign error.
 
 ## Scientific conclusion
 
-1. The earlier near-90-degree pooled direction error was not a mobility
-   problem; with carrier conventions separated, both carriers have the same
-   accepted negative-QFP-gradient sign.
+The native-element regeneration below supersedes the node-vector
+reconstruction for conclusions about current direction. The staged
+node-to-edge replacement remains useful as a conditional sensitivity audit.
+
+1. The earlier near-90-degree pooled direction error was not a mobility or
+   QFP-sign problem. On identical native element support, current and
+   negative QFP gradient are aligned to much less than one degree.
 2. QFP or density replacement alone corrects current direction but does not
    close magnitude.
 3. Mobility replacement after the carrier-state replacement is the dominant
-   closure step and reduces the median mismatch to 0.13-0.19 dex.
+   closure step inside the conditional node-current reconstruction.
 4. Electrostatic-potential replacement is immaterial on this state lattice.
 5. Endpoint versus adjacent-cell support mapping contributes only about
-   0.04-0.05 dex to the pooled median, although boundary-to-interior edges
-   retain a larger sub-dex mismatch.
-6. The available evidence supports investigating why Vela's production edge
-   mobility is 1.8-2.1 dex below the mobility required by the Sentaurus
-   current/state pair. It does not support changing the QFP sign or SG
-   formula.
+   0.04-0.05 dex inside that reconstruction, although boundary-to-interior
+   edges retain a larger sub-dex mismatch.
+6. The apparent 1.8-2.1 dex Vela mobility gap is conditional on a
+   reconstructed node-current reference and must not be interpreted as an
+   independently established mobility defect.
 7. A production formula change remains unauthorized because no native
    Sentaurus directed-edge flux is observable.
 
-## Remote probe and remaining gate
+## Native element regeneration
 
-A read-only retry to the authorized Sentaurus host on 2026-07-23 timed out
-while connecting to port 22. No remote deck or result was changed.
+After the authorized Sentaurus host became reachable, a single-state
+O-2018.06-SP2 probe established the following native element fields:
 
-When the host is reachable, the next gate is a single-state O-2018.06-SP2
-probe for an element/edge current-output qualifier. A 40-state regeneration
-is justified only if that probe produces a dataset with native cell or
-nine-edge support. If it again produces six global-node values, the native
-edge-flux question remains unobservable and no additional 40-state export is
-scientifically useful.
+- `ElectricField/Element/Vector`;
+- `eGradQuasiFermi/Element/Vector` and
+  `hGradQuasiFermi/Element/Vector`;
+- `eMobility/Element` and `hMobility/Element`; and
+- `eCurrentDensity/Element/Vector` and
+  `hCurrentDensity/Element/Vector`.
+
+Each field has exactly four values in `region_cell_order`, one per triangle.
+The requested element potential, carrier densities, and QFP scalars are not
+available. Native directed-edge flux is also still unavailable.
+
+All 40 states were regenerated: 20/20 mirror and 20/20 sketch passed. The
+downloaded archive SHA-256 is
+`34eb46ae228a0477482209ef540356539e80eff9f862e6f20ec1324658a75583`.
+All 40 TDR files independently matched the remote SHA-256 ledger.
+
+## Same-element transport result
+
+The Sentaurus manual defines `eGradQuasiFermi` and `hGradQuasiFermi` as
+negative QFP gradients. Under the active isothermal drift-diffusion model and
+Einstein relation, both carriers therefore obey the observable direction
+contract
+
+`J = q * mobility * density * GradQuasiFermi`.
+
+The current, mobility, and QFP-gradient fields were compared on identical
+native element support. Carrier density cannot be checked on that same
+support, so an effective density was inferred by least-squares projection and
+compared only to diagnostic node-to-cell density controls.
+
+| Carrier | Valid | Current/gradient angle median / p95 (deg) | Orthogonal residual median / p95 | Effective vs arithmetic node-density gap median / p95 (dex) | Effective vs geometric node-density gap median / p95 (dex) |
+|---|---:|---:|---:|---:|---:|
+| electron | 160/160 | 0.008824 / 0.351724 | 0.000154 / 0.006139 | 6.340327 / 7.253257 | 4.968272 / 7.397695 |
+| hole | 160/160 | 0.011670 / 0.350602 | 0.000204 / 0.006119 | 5.923051 / 6.927266 | 4.029447 / 6.903342 |
+
+There are no sign-incompatible or degenerate samples. This directly rejects
+mobility and carrier-sign convention as explanations for the earlier
+near-90-degree direction mismatch. The magnitude does not close against any
+node-density interpolation: the element current's magnitude support cannot be
+combined with node density as if they were the same discrete operator.
+
+Two output roots were generated independently and are byte-identical. A
+standalone verifier recomputed all 320 carrier samples without importing the
+main analysis implementation. It found zero density or orthogonal-residual
+reconstruction error and a maximum angle reconstruction difference of
+`1.454e-12` degrees.
+
+## Remaining gate
+
+The next scientifically discriminating input is a native directed-edge
+carrier flux or an independently documented conversion from Sentaurus's
+element current representation to the SG edge operator. Without it, neither
+the remaining magnitude gap nor a production formula replacement is
+identifiable.
 
 ## Evidence
 
@@ -179,7 +230,16 @@ scientifically useful.
 - Required mobility samples: `mobility_inversion_samples.csv`
 - Required mobility summary: `mobility_inversion_summary.csv`
 - Independent verification: `independent_verification.json`
+- Native transport source and export:
+  `build-release/pn2d-minimal6-transport-elements-20260723-b`
+- Same-element deterministic audits:
+  `build-release/pn2d-minimal6-transport-element-closure-20260723-b/audit-a`
+  and `audit-b`
+- Same-element independent verification:
+  `build-release/pn2d-minimal6-transport-element-closure-20260723-b/independent-verification-a.json`
+  and `independent-verification-b.json`
 
-The standalone verifier passed with zero failures and independently checked
-all output hashes, raw residuals, grouped medians, paired contributions,
-mobility classifications, and required-mobility algebra.
+The original standalone verifier passed with zero failures and independently
+checked all output hashes, raw residuals, grouped medians, paired
+contributions, mobility classifications, and required-mobility algebra. The
+new same-element verifier independently passed all 320 carrier samples.

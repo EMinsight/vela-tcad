@@ -296,6 +296,8 @@ SentaurusTdrField readFieldGroup(hid_t group, const std::string& groupName)
     field.index = trailingIndex(groupName, "dataset_");
     field.name = readStringAttribute(values.id, "name", readStringAttribute(group, "name", groupName));
     field.region_index = readIntAttribute(values.id, "region", readIntAttribute(group, "region", -1));
+    field.location_type = readIntAttribute(
+        values.id, "location type", readIntAttribute(group, "location type", -1));
     field.value_count = readSizeAttribute(values.id, "number of values",
                                           readSizeAttribute(group, "number of values", 0));
     field.unit = readUnitAttribute(values.id);
@@ -369,10 +371,40 @@ bool usesGlobalVertexOrder(const SentaurusTdrInventory& inventory,
         field.value_count == inventory.vertices.size();
 }
 
+bool usesRegionCellOrder(const SentaurusTdrField& field,
+                         const SentaurusTdrRegion& region)
+{
+    constexpr int elementLocationType = 3;
+    return field.location_type == elementLocationType &&
+        region.type == SentaurusTdrRegionType::Material &&
+        field.value_count == region.triangles.size();
+}
+
+std::vector<std::size_t> regionCellOrder(const SentaurusTdrInventory& inventory,
+                                         const SentaurusTdrRegion& target)
+{
+    std::size_t offset = 0;
+    for (const auto& region : inventory.regions) {
+        if (region.type != SentaurusTdrRegionType::Material) {
+            continue;
+        }
+        if (region.index == target.index) {
+            std::vector<std::size_t> order(region.triangles.size());
+            std::iota(order.begin(), order.end(), offset);
+            return order;
+        }
+        offset += region.triangles.size();
+    }
+    return {};
+}
+
 std::vector<std::size_t> fieldNodeOrder(const SentaurusTdrInventory& inventory,
                                         const SentaurusTdrField& field,
                                         const SentaurusTdrRegion& region)
 {
+    if (usesRegionCellOrder(field, region)) {
+        return {};
+    }
     if (usesGlobalVertexOrder(inventory, field, region)) {
         return globalVertexOrder(inventory.vertices.size());
     }
@@ -487,6 +519,27 @@ void writeFieldCsv(const std::filesystem::path& path,
     }
 }
 
+void writeCellFieldCsv(const std::filesystem::path& path,
+                       const SentaurusTdrField& field,
+                       const std::vector<std::size_t>& cells)
+{
+    std::ofstream out(path);
+    out << std::setprecision(std::numeric_limits<double>::max_digits10);
+    out << "cell_id";
+    for (std::size_t component = 0; component < field.component_count; ++component) {
+        out << ",component" << component;
+    }
+    out << "\n";
+    const std::size_t rows = std::min(cells.size(), field.value_count);
+    for (std::size_t row = 0; row < rows; ++row) {
+        out << cells[row];
+        for (std::size_t component = 0; component < field.component_count; ++component) {
+            out << "," << field.values[row * field.component_count + component];
+        }
+        out << "\n";
+    }
+}
+
 nlohmann::json fieldManifestEntry(const SentaurusTdrInventory& inventory,
                                   const SentaurusTdrField& field)
 {
@@ -494,6 +547,8 @@ nlohmann::json fieldManifestEntry(const SentaurusTdrInventory& inventory,
         {"index", field.index},
         {"name", field.name},
         {"region", field.region_index},
+        {"location_type", field.location_type},
+        {"support_kind", "unknown"},
         {"unit", field.unit},
         {"values", field.value_count},
         {"raw_value_count", field.values.size()},
@@ -515,8 +570,23 @@ nlohmann::json fieldManifestEntry(const SentaurusTdrInventory& inventory,
     const auto nodes = regionNodeOrder(*region);
     entry["region_node_count"] = nodes.size();
     entry["global_vertex_count"] = inventory.vertices.size();
+    entry["region_cell_count"] = region->triangles.size();
+    entry["support_kind"] = "node";
+    entry["csv_file"] =
+        sanitizeFilename(field.name) + "_region" + std::to_string(field.region_index) + ".csv";
+
+    if (usesRegionCellOrder(field, *region)) {
+        entry["support_kind"] = "cell";
+        entry["global_node_mapping"] = "region_cell_order";
+        entry["mapping_status"] = "complete";
+        entry["csv_file"] =
+            sanitizeFilename(field.name) + "_region" + std::to_string(field.region_index) +
+            "_cells.csv";
+        return entry;
+    }
 
     if (region->type == SentaurusTdrRegionType::Contact && field.value_count == 1) {
+        entry["support_kind"] = "contact";
         entry["global_node_mapping"] = "contact_scalar";
         entry["mapping_status"] = "scalar";
         return entry;
@@ -878,6 +948,14 @@ void SentaurusTdrReader::exportNeutral(const std::string& filename,
         if (region == nullptr || field.values.empty()) {
             continue;
         }
+        if (usesRegionCellOrder(field, *region)) {
+            const auto cells = regionCellOrder(inventory, *region);
+            const auto fieldPath = outDir / "fields" /
+                (sanitizeFilename(field.name) + "_region" +
+                 std::to_string(field.region_index) + "_cells.csv");
+            writeCellFieldCsv(fieldPath, field, cells);
+            continue;
+        }
         const auto nodes = fieldNodeOrder(inventory, field, *region);
         const auto fieldPath = outDir / "fields" /
             (sanitizeFilename(field.name) + "_region" + std::to_string(field.region_index) + ".csv");
@@ -906,6 +984,7 @@ void SentaurusTdrReader::exportNeutral(const std::string& filename,
             {"index", field.index},
             {"name", field.name},
             {"region", field.region_index},
+            {"location_type", field.location_type},
             {"unit", field.unit},
             {"values", field.value_count},
             {"components", field.component_count},

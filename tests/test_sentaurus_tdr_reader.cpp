@@ -181,6 +181,11 @@ std::filesystem::path writeSyntheticTdr(const std::vector<SyntheticField>& dopin
     hid_t d5 = createGroup(state, ("dataset_" + std::to_string(datasetIndex++)).c_str());
     writeDoubleDatasetWithAttrs(d5, "values", {7.0, 8.0, 9.0}, "MismatchedScalar", 0, 3, "1");
     H5Gclose(d5);
+    hid_t d6 = createGroup(state, ("dataset_" + std::to_string(datasetIndex++)).c_str());
+    writeIntAttribute(d6, "location type", 3);
+    writeDoubleDatasetWithAttrs(d6, "values", {10.0, 20.0, 30.0, 40.0},
+                                "CellCurrent", 0, 2, "A*cm^-2");
+    H5Gclose(d6);
     H5Gclose(state);
 
     H5Gclose(geometry);
@@ -424,7 +429,7 @@ TEST_CASE("SentaurusTdrReader reads mesh regions contacts and state datasets", "
 
     REQUIRE(inventory.vertices.size() == 4);
     REQUIRE(inventory.regions.size() == 3);
-    REQUIRE(inventory.fields.size() == 6);
+    REQUIRE(inventory.fields.size() == 7);
 
     const auto& silicon = inventory.regions.at(0);
     REQUIRE(silicon.name == "Silicon_1");
@@ -447,6 +452,12 @@ TEST_CASE("SentaurusTdrReader reads mesh regions contacts and state datasets", "
     REQUIRE(electricField->component_count == 2);
     REQUIRE(electricField->values.size() == 8);
 
+    const auto* cellCurrent = inventory.findField("CellCurrent", 0);
+    REQUIRE(cellCurrent != nullptr);
+    REQUIRE(cellCurrent->location_type == 3);
+    REQUIRE(cellCurrent->component_count == 2);
+    REQUIRE(cellCurrent->value_count == 2);
+
     const auto* contactVoltage = inventory.findField("ContactExternalVoltage", 1);
     REQUIRE(contactVoltage != nullptr);
     REQUIRE(contactVoltage->values.at(0) == Catch::Approx(5.0));
@@ -467,6 +478,8 @@ TEST_CASE("SentaurusTdrReader exports neutral reference TCAD CSV files", "[senta
     REQUIRE(std::filesystem::is_regular_file(outDir / "contacts.csv"));
     REQUIRE(std::filesystem::is_regular_file(outDir / "doping.csv"));
     REQUIRE(std::filesystem::is_regular_file(outDir / "fields" / "ElectricField_region0.csv"));
+    REQUIRE(std::filesystem::is_regular_file(
+        outDir / "fields" / "CellCurrent_region0_cells.csv"));
     REQUIRE(std::filesystem::is_regular_file(outDir / "metadata.json"));
     REQUIRE(std::filesystem::is_regular_file(outDir / "field_manifest.json"));
 
@@ -489,10 +502,10 @@ TEST_CASE("SentaurusTdrReader exports neutral reference TCAD CSV files", "[senta
 
     const std::string metadata = readFile(outDir / "metadata.json");
     REQUIRE(metadata.find("\"vertex_count\": 4") != std::string::npos);
-    REQUIRE(metadata.find("\"dataset_count\": 6") != std::string::npos);
+    REQUIRE(metadata.find("\"dataset_count\": 7") != std::string::npos);
 
     const auto manifest = nlohmann::json::parse(readFile(outDir / "field_manifest.json"));
-    REQUIRE(manifest["fields"].size() == 6);
+    REQUIRE(manifest["fields"].size() == 7);
     const auto electric = std::find_if(
         manifest["fields"].begin(), manifest["fields"].end(),
         [](const nlohmann::json& field) {
@@ -513,6 +526,28 @@ TEST_CASE("SentaurusTdrReader exports neutral reference TCAD CSV files", "[senta
     REQUIRE((*mismatch)["mapping_status"] == "partial");
     REQUIRE((*mismatch)["warnings"][0].get<std::string>().find("value_count 3 does not match region node count 4")
             != std::string::npos);
+
+    const auto cellCurrent = std::find_if(
+        manifest["fields"].begin(), manifest["fields"].end(),
+        [](const nlohmann::json& field) {
+            return field["name"] == "CellCurrent";
+        });
+    REQUIRE(cellCurrent != manifest["fields"].end());
+    REQUIRE((*cellCurrent)["location_type"] == 3);
+    REQUIRE((*cellCurrent)["support_kind"] == "cell");
+    REQUIRE((*cellCurrent)["global_node_mapping"] == "region_cell_order");
+    REQUIRE((*cellCurrent)["mapping_status"] == "complete");
+    REQUIRE((*cellCurrent)["csv_file"] == "CellCurrent_region0_cells.csv");
+
+    const auto cellRows =
+        readCsvRows(outDir / "fields" / "CellCurrent_region0_cells.csv");
+    REQUIRE(cellRows.size() == 2);
+    REQUIRE(cellRows[0][0] == "0");
+    REQUIRE(std::stod(cellRows[0][1]) == Catch::Approx(10.0));
+    REQUIRE(std::stod(cellRows[0][2]) == Catch::Approx(20.0));
+    REQUIRE(cellRows[1][0] == "1");
+    REQUIRE(std::stod(cellRows[1][1]) == Catch::Approx(30.0));
+    REQUIRE(std::stod(cellRows[1][2]) == Catch::Approx(40.0));
 }
 
 TEST_CASE("SentaurusTdrReader preserves small scalar field differences in CSV export",

@@ -436,6 +436,17 @@ add_test(NAME sentaurus_import_tools
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/regression/test_sentaurus_import_tools.py)
 vela_set_windows_msys2_test_path(sentaurus_import_tools)
 
+add_test(NAME pn2d_minimal6_transport_element_regression
+    COMMAND ${Python3_EXECUTABLE} -m unittest
+            tests.regression.test_pn2d_minimal6_element_currents
+            tests.regression.test_pn2d_minimal6_native_cell_sg
+            tests.regression.test_pn2d_minimal6_transport_elements
+            tests.regression.test_pn2d_minimal6_transport_element_closure
+            tests.regression.test_pn2d_minimal6_transport_element_verify)
+set_tests_properties(pn2d_minimal6_transport_element_regression PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+vela_set_windows_msys2_test_path(pn2d_minimal6_transport_element_regression)
+
 add_test(NAME sentaurus_vanoverstraeten_fit_regression
     COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/regression/test_sentaurus_vanoverstraeten_fit.py)

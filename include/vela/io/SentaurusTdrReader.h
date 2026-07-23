@@ -33,6 +33,7 @@ struct SentaurusTdrField {
     int index = -1;
     std::string name;
     int region_index = -1;
+    int location_type = -1;
     std::string unit;
     std::size_t value_count = 0;
     std::size_t component_count = 1;
