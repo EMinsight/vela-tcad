@@ -1,262 +1,112 @@
-# Task 3 Report: Independent Physics And Support-Conversion Library
+# Task 3 Report: Generalize the supplemental Sentaurus field matrix safely
 
 ## Status
 
-Completed from clean base `1a88019a8b397d6c75545c26ca8159aba65bf5ee`.
-The independent geometry, physics, and support-conversion library now has direct
-coverage for every Task 3 edge contract, including the tracked Sentaurus
-parameter provenance and an exact comparison against Vela production defaults.
+Completed and committed as `0501c99` (`0501c99ef46cb07156e467f11638300147c44a85`).
+Only the Task 3 exporter and its existing state-export regression module were
+committed. The unrelated untracked `docs/validation/figures/` directory was
+preserved.
 
 ## RED
 
-The first required RED was run before changing implementation code:
-
-```powershell
-python -m unittest tests.regression.test_pn2d_minimal6_diagnostic_physics.DiagnosticPhysicsTest.test_edge_to_cell_rejects_native_avalanche_generation
-```
-
-Observed result:
+Before production changes, the focused state-export module was run with the
+new forty-state and version-provenance tests. It failed as intended:
 
 ```text
-TypeError: edge_scalar_to_cells() got an unexpected keyword argument 'quantity'
-Ran 1 test in 0.001s
-FAILED (errors=1)
+TypeError: validate_state_matrix() takes 1 positional argument but 2 were given
+KeyError: 'sentaurus_version'
+Ran 33 tests
+FAILED (errors=2)
 ```
 
-The expanded focused suite then failed during import because the independent
-Vela production-default parser did not exist:
-
-```text
-ImportError: cannot import name 'parse_vela_van_overstraeten_defaults'
-Ran 1 test in 0.000s
-FAILED (errors=1)
-```
-
-The other newly direct tests characterize already-correct fail-closed behavior:
-degenerate triangles, zero-length edges, an inverse alpha domain with no valid
-candidate, inconsistent electron/hole `ni_eff` estimates without an
-authoritative average, and partial-volume fractions outside `[0, 1]`.
+This demonstrated the missing declared-matrix API and absent version binding.
 
 ## GREEN
 
-Implemented the minimum missing behavior:
+The exporter now:
 
-- `edge_scalar_to_cells(..., quantity=...)` rejects native Sentaurus
-  `ImpactIonization` and Vela `AvalancheGeneration` before averaging.
-- `parse_vela_van_overstraeten_defaults` reads the numeric production defaults
-  from `include/vela/physics/ImpactIonizationModel.h`, converts the SI values to
-  the cm-based units used by Sentaurus, and records the header path and SHA-256.
-- No second unversioned coefficient table was added.
+- accepts a nonempty, finite, duplicate-free caller-declared matrix over valid
+  minimal6 topologies while preserving the omitted-argument legacy six-state
+  validator;
+- records a sorted JSON `expected_matrix` at preparation, binds it to the
+  prepared states, rejects mutation during execution, and threads it through
+  recovered-archive validation;
+- retains exact bias checking and rejects missing/changed states; and
+- captures a nonempty `sdevice -version` result, records it in both manifest
+  and states, and fails closed on missing or mixed versions.
 
-Focused result:
-
-```text
-....................
-Ran 20 tests in 0.019s
-OK
-```
-
-## Parameter provenance and comparison
-
-Tracked source:
-
-`reference_tcad/pn2d_sentaurus2018_minimal6/source/models.par`
-
-SHA-256:
-
-`b4b3ebfdefba530f756f3855d43d7d587720689771d8badc747b61439ed42742`
-
-| Carrier | Coefficient | Sentaurus parsed | Vela production default after SI-to-cm conversion | Result |
-|---|---:|---:|---:|---|
-| electron | `a_low` | `7.03e5 1/cm` | `7.03e5 1/cm` | match |
-| electron | `a_high` | `7.03e5 1/cm` | `7.03e5 1/cm` | match |
-| electron | `b_low` | `1.231e6 V/cm` | `1.231e6 V/cm` | match |
-| electron | `b_high` | `1.231e6 V/cm` | `1.231e6 V/cm` | match |
-| hole | `a_low` | `1.582e6 1/cm` | `1.582e6 1/cm` | match |
-| hole | `a_high` | `6.71e5 1/cm` | `6.71e5 1/cm` | match |
-| hole | `b_low` | `2.036e6 V/cm` | `2.036e6 V/cm` | match |
-| hole | `b_high` | `1.693e6 V/cm` | `1.693e6 V/cm` | match |
-| shared | switch field | `4.0e5 V/cm` | `4.0e5 V/cm` | match |
-
-The comparison status is `available`; there are no missing production
-coefficients and no mismatches.
+Existing V2 member-hash, field-contract, recovery, and audit-provenance tests
+remain in the focused state-export module and passed unchanged.
 
 ## Verification
 
-Task 2 contracts:
-
 ```text
-python -m unittest tests.regression.test_pn2d_minimal6_diagnostic_contracts
-Ran 18 tests in 0.152s
+python tests\regression\test_pn2d_minimal6_state_export.py
+Ran 33 tests in 18.431s
 OK
-```
 
-Task 2 compatibility/import controls:
-
-```text
-python -m compileall -q scripts\pn2d_minimal6_diagnostics
-imports OK
-```
-
-C++ controls:
-
-```text
-build-release\test_impact_ionization.exe
-All tests passed (511 assertions in 40 test cases)
-
-build-release\test_cell_reconstructed_avalanche.exe
-All tests passed (83 assertions in 14 test cases)
-```
-
-Formula gate control:
-
-```text
-python -m unittest tests.regression.test_pn2d_minimal6_fixed_state_audit.ReviewContractTests.test_complete_matrix_unique_keys_and_formula_gate -v
-Ran 1 test in 0.078s
+python -m unittest discover -s tests\regression -p test_pn2d_minimal6_inverse_inputs.py
+Ran 12 tests in 13.272s
 OK
-```
 
-`scripts/audit_pn2d_minimal6_fixed_state.py` remains unchanged with
-`FORMULA_LIMIT = 5.0e-12`.
-
-Repository hygiene:
-
-```text
 git diff --check
+(no output)
 ```
 
-No output; exit code 0.
+Running the Task 2 input module directly is not its supported invocation: its
+importlib fixture needs unittest discovery to establish the repository package
+context. The prescribed discovery command above passed.
 
-## Changed files
+## Self-review
 
-- `scripts/pn2d_minimal6_diagnostics/physics.py`
-- `scripts/pn2d_minimal6_diagnostics/support.py`
-- `tests/regression/test_pn2d_minimal6_diagnostic_physics.py`
-- `.superpowers/sdd/task-3-report.md`
-
-## Concerns
-
-No parameter-coverage concern remains: Vela exposes the full comparable numeric
-table. The production-default parser intentionally fails closed if those C++
-declarations stop being explicit numeric initializers; such a source-format
-change will require updating this independent audit control.
-
-## Interrupted fix wave (2026-07-16)
-
-This wave resumed at `2f178a8fc60eb5a6273279c92ea3af9e8ad0b7ee`
-without discarding or reimplementing the existing uncommitted changes.
+- The forty-state `(sketch, mirror) x (-1 .. -20 V)` fixture validates exact
+  declared coverage and preserves the 1e-12 V final-bias tolerance.
+- The default validator still requires exactly the legacy six states and keeps
+  its existing `exact six-state matrix mismatch` error contract.
+- `prepare_exports()` serializes canonical sorted matrix pairs; execution
+  snapshots that record and restores it before writing a failed partial
+  manifest if an executor mutates it.
+- No remote Sentaurus run, V2 schema change, source/include change, generated
+  output change, or Task 4 work was performed.
+## Review-fix wave (2026-07-18)
 
 ### RED
 
-Before the interrupted implementation was added, the expanded focused suite
-ran 21 tests and reported:
+After review, the expanded focused state-export suite reproduced three binding
+failures before production edits:
 
 ```text
-Ran 21 tests
-FAILED (failures=2, errors=1)
+ValueError: recovered archive expected_matrix does not match caller declaration
+AssertionError: ValueError not raised
+AssertionError: ' O-2018.06-SP2 ' != 'O-2018.06-SP2'
+Ran 38 tests
+FAILED (2 failures, 1 error)
 ```
 
-The two failures demonstrated that phonon mismatch and omitted conversion
-provenance were not yet enforced. The error demonstrated that the Vela parser
-did not yet expose `phonon_energy_eV` for the tracked comparison. These were
-expected missing-behavior results, not fixture, import, or syntax failures.
+Those failures proved that caller order was treated as semantic, synchronized
+in-memory mutation could replace the prepared contract, and padded versions
+were retained verbatim.
 
-### GREEN
+### GREEN and commit
 
-The interrupted implementation added the minimum behavior needed by those
-tests:
+Commit `8ac29b5edd47494de306f064e4d285cda6a71c33` binds `run_exports()` to the
+original on-disk prepared manifest, canonicalizes caller/recovered matrices
+only after duplicate validation, and normalizes nonempty Sentaurus versions.
+New-format recovery now requires matching manifest and per-state provenance;
+legacy manifests without `expected_matrix` retain optional version behavior.
 
-- parse Vela's numeric `phononEnergy` and retain the header path and SHA-256;
-- compare `phonon_energy_eV` for both carriers;
-- require recognized, non-native provenance for every node-to-cell and
-  edge-to-cell average, rejecting omitted, unknown, `ImpactIonization`, and
-  `AvalancheGeneration` provenance; and
-- document the `infer_ni_eff` quasi-Fermi sign convention and inverse relations.
-
-The recorded GREEN rerun was:
+Focused verification:
 
 ```text
-Ran 21 tests in 0.020s
+python tests\regression\test_pn2d_minimal6_state_export.py
+Ran 38 tests in 19.999s
 OK
-```
 
-### Phonon units and comparison scope
-
-Sentaurus declares `hbarOmega = 0.063, 0.063` in eV, while Vela declares
-`phononEnergy = 0.063` in eV. Unlike inverse-length and electric-field
-coefficients, this value needs no SI-to-cm conversion. It is compared directly
-for both carriers, with mismatch or unavailable returned on difference or
-omission.
-
-Vela's `aScale` and `bScale` are runtime diagnostic multipliers, not material
-coefficients in the tracked Sentaurus block. Comparing them to `a(low/high)` or
-`b(low/high)` would conflate controls with source parameters, so they remain
-explicitly outside this comparison.
-
-Vela's `referenceTemperature_K` and `temperature_K` are runtime inputs. The
-tracked Sentaurus block documents the thermal factor in terms of `T0` and `T`
-but supplies no numeric values for those inputs. Temperatures therefore remain
-outside the direct default comparison. The common phonon energy is included
-because both sources explicitly serialize it in eV.
-
-### Fresh verification after resume
-
-Focused physics/support:
-
-```text
-python -m unittest tests.regression.test_pn2d_minimal6_diagnostic_physics -v
-Ran 21 tests in 0.020s
-OK
-```
-
-Task 2 contracts and imports:
-
-```text
-python -m unittest tests.regression.test_pn2d_minimal6_diagnostic_contracts -v
-Ran 18 tests in 0.205s
-OK
-python -m compileall -q scripts\pn2d_minimal6_diagnostics
-imports OK
-```
-
-C++ controls:
-
-```text
-build-release\test_impact_ionization.exe
-All tests passed (511 assertions in 40 test cases)
-build-release\test_cell_reconstructed_avalanche.exe
-All tests passed (83 assertions in 14 test cases)
-```
-
-Formula gate and repository hygiene:
-
-```text
-python -m unittest tests.regression.test_pn2d_minimal6_fixed_state_audit.ReviewContractTests.test_complete_matrix_unique_keys_and_formula_gate -v
-Ran 1 test in 0.078s
-OK
-FORMULA_LIMIT = 5.0e-12
 git diff --check
-no output; exit code 0
+(no output)
 ```
 
-### Provenance audit and self-review
-
-A repository-wide callsite search found no consumers outside the focused test
-module. Every successful `node_scalar_to_cells` or `edge_scalar_to_cells`
-callsite passes an allowed provenance (`Potential` or `IonizationCoefficient`);
-omitted and unknown values occur only in deliberate rejection tests. The
-helpers fail closed when provenance is absent.
-
-Production header provenance:
-`include/vela/physics/ImpactIonizationModel.h`
-SHA-256 `b1582b41074043207fc5dafcd4c73f95d3fc8b3af3eba4503cddb3113130c008`
-
-Tracked Sentaurus provenance:
-`reference_tcad/pn2d_sentaurus2018_minimal6/source/models.par`
-SHA-256 `b4b3ebfdefba530f756f3855d43d7d587720689771d8badc747b61439ed42742`
-
-Self-review found no correctness gap in the scoped diff. The allowlist is
-intentionally narrow and requires an explicit code-and-test update when a new
-intensive quantity is approved for averaging. The regex parser remains a
-fail-closed audit over explicit numeric C++ initializers, not a general C++
-parser.
+The added discriminating tests cover invalid, empty, nonfinite, duplicate, and
+unknown-topology declarations; missing and extra declared states; generalized
+recovery; caller ordering; missing, mixed, and whitespace versions; and a
+synchronized in-memory matrix/state mutation before `run_exports()`.
