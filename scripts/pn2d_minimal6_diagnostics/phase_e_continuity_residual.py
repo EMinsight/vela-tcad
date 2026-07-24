@@ -1180,4 +1180,3 @@ def run_phase_e(
         json.dumps(manifest, indent=2) + "\n", encoding="utf-8", newline="\n"
     )
     return manifest
-

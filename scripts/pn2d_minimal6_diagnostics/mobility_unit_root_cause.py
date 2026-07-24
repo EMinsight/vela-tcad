@@ -703,4 +703,3 @@ def run_mobility_unit_root_cause(
         json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
     )
     return manifest
-
