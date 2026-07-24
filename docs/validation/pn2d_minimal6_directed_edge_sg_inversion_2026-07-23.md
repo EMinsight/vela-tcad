@@ -1,5 +1,10 @@
 # PN2D Minimal6 directed-edge SG inversion audit
 
+> Quantitative correction: the node-to-edge tables below used the pre-fix
+> Vela restart-unit and fixed-`ni` inputs. They are superseded by
+> `pn2d_minimal6_state_unit_and_transport_reaudit_2026-07-23.md`. The native
+> Sentaurus element observations remain valid.
+
 Date: 2026-07-23
 
 ## Question

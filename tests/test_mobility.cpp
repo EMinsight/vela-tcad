@@ -308,6 +308,54 @@ TEST_CASE("High-field mobility defaults match Sentaurus 2018 Silicon parameters"
     REQUIRE(config.holeField.beta == Catch::Approx(1.213));
 }
 
+TEST_CASE("High-field mobility preserves physical parity under unit scaling",
+          "[mobility][field][scaling]")
+{
+    const UnitScalingConfig scaling{UnitScalingMode::UnitScaling};
+    const MobilityModelConfig legacyConfig =
+        mobilityModelConfigFromJson("masetti_field");
+    const MobilityModelConfig scaledConfig =
+        mobilityModelConfigFromJson("masetti_field", scaling);
+
+    REQUIRE(scaledConfig.electronField.saturationVelocity ==
+            Catch::Approx(1.07e7));
+    REQUIRE(scaledConfig.holeField.saturationVelocity ==
+            Catch::Approx(8.37e6));
+
+    MaterialDatabase legacyMaterials;
+    MaterialDatabase scaledMaterials(scaling);
+    DopingDependentMobility legacyMobility(legacyConfig);
+    DopingDependentMobility scaledMobility(scaledConfig);
+    const Real electronLegacy = legacyMobility.electronMobility(
+        legacyMaterials.getMaterial("Si"), 1.0e23, 0.0, 0.0, 1.0e7);
+    const Real electronScaled = scaledMobility.electronMobility(
+        scaledMaterials.getMaterial("Si"), 1.0e17, 0.0, 0.0, 1.0e5);
+    const Real holeLegacy = legacyMobility.holeMobility(
+        legacyMaterials.getMaterial("Si"), 1.0e23, 0.0, 0.0, 1.0e7);
+    const Real holeScaled = scaledMobility.holeMobility(
+        scaledMaterials.getMaterial("Si"), 1.0e17, 0.0, 0.0, 1.0e5);
+
+    REQUIRE(scaling.mobilityToSI(electronScaled) ==
+            Catch::Approx(electronLegacy).epsilon(1.0e-13));
+    REQUIRE(scaling.mobilityToSI(holeScaled) ==
+            Catch::Approx(holeLegacy).epsilon(1.0e-13));
+}
+
+TEST_CASE("Explicit unit-scaled saturation velocity uses TCAD internal cm per second",
+          "[mobility][field][json][scaling]")
+{
+    const MobilityModelConfig config = mobilityModelConfigFromJson(
+        nlohmann::json{
+            {"model", "masetti_field"},
+            {"electron_saturation_velocity_m_s", 1.23e7},
+            {"hole_saturation_velocity_m_s", 7.89e6},
+        },
+        UnitScalingConfig{UnitScalingMode::UnitScaling});
+
+    REQUIRE(config.electronField.saturationVelocity == Catch::Approx(1.23e7));
+    REQUIRE(config.holeField.saturationVelocity == Catch::Approx(7.89e6));
+}
+
 TEST_CASE("High-field mobility limiter decomposes limited mobility from low-field mobility",
           "[mobility][field][diagnostics]")
 {

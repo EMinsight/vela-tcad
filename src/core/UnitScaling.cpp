@@ -10,6 +10,7 @@ PhysicalUnitSystem::PhysicalUnitSystem(Real lengthMPerInternal,
                                        Real concentrationM3PerInternal,
                                        Real sheetDensityM2PerInternal,
                                        Real mobilityM2PerVSPerInternal,
+                                       Real velocityMPerSPerInternal,
                                        Real electricFieldVPerMPerInternal,
                                        Real inverseLengthMInvPerInternal,
                                        Real surfaceFieldCoefficientMPerVPerInternal,
@@ -18,6 +19,7 @@ PhysicalUnitSystem::PhysicalUnitSystem(Real lengthMPerInternal,
       concentrationM3PerInternal_(concentrationM3PerInternal),
       sheetDensityM2PerInternal_(sheetDensityM2PerInternal),
       mobilityM2PerVSPerInternal_(mobilityM2PerVSPerInternal),
+      velocityMPerSPerInternal_(velocityMPerSPerInternal),
       electricFieldVPerMPerInternal_(electricFieldVPerMPerInternal),
       inverseLengthMInvPerInternal_(inverseLengthMInvPerInternal),
       surfaceFieldCoefficientMPerVPerInternal_(surfaceFieldCoefficientMPerVPerInternal),
@@ -26,12 +28,12 @@ PhysicalUnitSystem::PhysicalUnitSystem(Real lengthMPerInternal,
 
 PhysicalUnitSystem PhysicalUnitSystem::legacySI()
 {
-    return PhysicalUnitSystem(1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0);
+    return PhysicalUnitSystem(1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0);
 }
 
 PhysicalUnitSystem PhysicalUnitSystem::tcadInternal()
 {
-    return PhysicalUnitSystem(1.0e-6, 1.0e6, 1.0e4, 1.0e-4, 1.0e2, 1.0e2, 1.0e-2, 1.0e4);
+    return PhysicalUnitSystem(1.0e-6, 1.0e6, 1.0e4, 1.0e-4, 1.0e-2, 1.0e2, 1.0e2, 1.0e-2, 1.0e4);
 }
 
 Real PhysicalUnitSystem::chargeVolumeFactor() const
@@ -47,6 +49,11 @@ Real PhysicalUnitSystem::chargeSheetFactor() const
 Real PhysicalUnitSystem::fieldFromCoordinateDeltaFactor() const
 {
     return (1.0 / lengthMPerInternal_) / electricFieldVPerMPerInternal_;
+}
+
+Real PhysicalUnitSystem::continuitySourceIntegralFactor() const
+{
+    return areaM2PerInternal() / mobilityM2PerVSPerInternal_;
 }
 
 Real PhysicalUnitSystem::currentPerInternalDepthFactor() const
@@ -84,6 +91,11 @@ Real UnitScalingConfig::sheetDensityToSI(Real value) const
 Real UnitScalingConfig::mobilityToSI(Real value) const
 {
     return unitSystem().internalMobilityToM2PerVS(value);
+}
+
+Real UnitScalingConfig::velocityToSI(Real value) const
+{
+    return unitSystem().internalVelocityToMPerS(value);
 }
 
 Real UnitScalingConfig::electricFieldToSI(Real value) const

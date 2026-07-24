@@ -1,5 +1,8 @@
 import unittest
 
+from scripts.pn2d_minimal6_diagnostics.qfp_sg_experiment import (
+    effective_intrinsic_density_m3,
+)
 from scripts.pn2d_minimal6_diagnostics.qfp_sg_replacement import (
     continuity_flux_from_current_proxy,
     density_sg_flux,
@@ -9,6 +12,32 @@ from scripts.pn2d_minimal6_diagnostics.qfp_sg_replacement import (
 
 
 class Minimal6QfpSgReplacementTest(unittest.TestCase):
+    def test_effective_intrinsic_density_is_recovered_from_frozen_state(self):
+        import math
+
+        vt = 0.025851999786435535
+        ni = 1.6556319846864e16
+        state = {
+            0: {
+                "psi_V": -0.3,
+                "phin_V": -0.1,
+                "phip_V": -0.6,
+                "n_m3": ni * math.exp((-0.3 + 0.1) / vt),
+                "p_m3": ni * math.exp((-0.6 + 0.3) / vt),
+            }
+        }
+
+        self.assertAlmostEqual(
+            effective_intrinsic_density_m3(state, 0, "electron"),
+            ni,
+            delta=ni * 2.0e-14,
+        )
+        self.assertAlmostEqual(
+            effective_intrinsic_density_m3(state, 0, "hole"),
+            ni,
+            delta=ni * 2.0e-14,
+        )
+
     def test_qf_sg_matches_density_sg_for_consistent_endpoint_densities(self):
         vt = 0.025851999786435535
         ni = 1.0e16

@@ -61,7 +61,8 @@ long long parseRestartStateNodeId(const std::string& nodeIdText)
 } // namespace
 
 DDSolution readDDSolutionStateCsv(const std::filesystem::path& path,
-                                  Index expectedNodeCount)
+                                  Index expectedNodeCount,
+                                  UnitScalingConfig scaling)
 {
     std::ifstream input(path);
     if (!input.is_open())
@@ -84,6 +85,8 @@ DDSolution readDDSolutionStateCsv(const std::filesystem::path& path,
     DDSolution solution;
     solution.psi = VectorXd::Zero(static_cast<int>(expectedNodeCount));
     solution.phin = VectorXd::Zero(static_cast<int>(expectedNodeCount));
+    const PhysicalUnitSystem& units = scaling.unitSystem();
+
     solution.phip = VectorXd::Zero(static_cast<int>(expectedNodeCount));
     solution.n = VectorXd::Zero(static_cast<int>(expectedNodeCount));
     solution.p = VectorXd::Zero(static_cast<int>(expectedNodeCount));
@@ -118,8 +121,10 @@ DDSolution readDDSolutionStateCsv(const std::filesystem::path& path,
         solution.psi(rowIndex) = parseRestartStateReal(row.at(1), "psi", nodeId);
         solution.phin(rowIndex) = parseRestartStateReal(row.at(2), "phin", nodeId);
         solution.phip(rowIndex) = parseRestartStateReal(row.at(3), "phip", nodeId);
-        solution.n(rowIndex) = parseRestartStateReal(row.at(4), "electrons_m3", nodeId);
-        solution.p(rowIndex) = parseRestartStateReal(row.at(5), "holes_m3", nodeId);
+        solution.n(rowIndex) = units.m3ToInternalConcentration(
+            parseRestartStateReal(row.at(4), "electrons_m3", nodeId));
+        solution.p(rowIndex) = units.m3ToInternalConcentration(
+            parseRestartStateReal(row.at(5), "holes_m3", nodeId));
     }
 
     for (Index nodeId = 0; nodeId < expectedNodeCount; ++nodeId) {
@@ -133,7 +138,8 @@ DDSolution readDDSolutionStateCsv(const std::filesystem::path& path,
 }
 
 void writeDDSolutionStateCsv(const std::filesystem::path& path,
-                             const DDSolution& solution)
+                             const DDSolution& solution,
+                             UnitScalingConfig scaling)
 {
     const auto fieldSize = solution.psi.size();
     if (solution.phin.size() != fieldSize ||
@@ -143,6 +149,7 @@ void writeDDSolutionStateCsv(const std::filesystem::path& path,
         throw std::runtime_error("DCSweep: cannot write restart state with inconsistent field sizes.");
     }
 
+    const PhysicalUnitSystem& units = scaling.unitSystem();
     if (!path.parent_path().empty())
         std::filesystem::create_directories(path.parent_path());
     std::ofstream output(path);
@@ -155,8 +162,8 @@ void writeDDSolutionStateCsv(const std::filesystem::path& path,
                << formatRestartReal(solution.psi(i)) << ','
                << formatRestartReal(solution.phin(i)) << ','
                << formatRestartReal(solution.phip(i)) << ','
-               << formatRestartReal(solution.n(i)) << ','
-               << formatRestartReal(solution.p(i)) << '\n';
+               << formatRestartReal(units.internalConcentrationToM3(solution.n(i))) << ','
+               << formatRestartReal(units.internalConcentrationToM3(solution.p(i))) << '\n';
     }
 }
 

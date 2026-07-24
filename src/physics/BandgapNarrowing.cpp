@@ -58,12 +58,15 @@ Real effectiveIntrinsicDensity(Real ni, Real thermalVoltage, Real deltaEg)
     return ni * std::exp(exponent);
 }
 
-BandgapNarrowingConfig bandgapNarrowingConfig(std::string modelName)
+BandgapNarrowingConfig bandgapNarrowingConfig(
+    std::string modelName,
+    UnitScalingConfig scaling)
 {
     BandgapNarrowingConfig config;
     config.model = std::move(modelName);
     if (config.model == "old_slotboom") {
-        config.referenceDoping = 1.0e23;
+        config.referenceDoping =
+            scaling.unitSystem().m3ToInternalConcentration(1.0e23);
         config.coefficient = 9.0e-3;
         config.smoothing = 0.5;
         config.offset = 0.0;

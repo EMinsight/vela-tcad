@@ -245,6 +245,9 @@ void DDAssembler::assembleElectronContinuity(const VectorXd& psi,
         electronQuasiFermiFromDensity(psiForMobility, n_old, ni_, Vt_, scaling_);
     const bool qfMobility = mobilityConfig_.highFieldDrivingForce == "quasi_fermi_gradient";
     const Real fieldFactor = scaling_.enabled ? scaling_.fieldFromCoordinateDeltaFactor : 1.0;
+    const Real sourceIntegralFactor = scaling_.enabled
+        ? scaling_.unitSystem.continuitySourceIntegralFactor()
+        : 1.0;
 
     // SG matrix entries from all edges
     for (Index e = 0; e < mesh_.numEdges(); ++e) {
@@ -355,14 +358,16 @@ void DDAssembler::assembleElectronContinuity(const VectorXd& psi,
         const RecombinationLinearization linearization =
             recombination_.electronLinearization(n_v, p_v, ni_i);
         if (scaling_.enabled) {
-            A_.coeffRef(ii, ii) += linearization.diagonal * vol_i / scaling_.D0;
-            b_(ii) += linearization.rhs * vol_i / (scaling_.C0 * scaling_.D0);
+            A_.coeffRef(ii, ii) +=
+                linearization.diagonal * vol_i * sourceIntegralFactor / scaling_.D0;
+            b_(ii) += linearization.rhs * vol_i * sourceIntegralFactor /
+                (scaling_.C0 * scaling_.D0);
         } else {
             A_.coeffRef(ii, ii) += linearization.diagonal * vol_i;
             b_(ii) += linearization.rhs * vol_i;
         }
         if (impactIonizationEnabled_ && sgCurrentAvalanche) {
-            const Real gen = sgAvalancheSourceIntegrals[i];
+            const Real gen = sgAvalancheSourceIntegrals[i] * sourceIntegralFactor;
             b_(ii) += scaling_.enabled ? (gen / (scaling_.C0 * scaling_.D0)) : gen;
         } else if (impactIonizationEnabled_) {
             const Real gen = detail::impactIonizationGenerationRate(
@@ -380,7 +385,7 @@ void DDAssembler::assembleElectronContinuity(const VectorXd& psi,
                 nodeHoleDrivingFields[i],
                 n_v,
                 p_v) * vol_i;
-            b_(ii) += scaling_.enabled ? (gen / (scaling_.C0 * scaling_.D0)) : gen;
+            b_(ii) += scaling_.enabled ? (gen * sourceIntegralFactor / (scaling_.C0 * scaling_.D0)) : gen;
         }
     }
 
@@ -419,6 +424,9 @@ void DDAssembler::assembleHoleContinuity(const VectorXd& psi,
         holeQuasiFermiFromDensity(psiForMobility, p_old, ni_, Vt_, scaling_);
     const bool qfMobility = mobilityConfig_.highFieldDrivingForce == "quasi_fermi_gradient";
     const Real fieldFactor = scaling_.enabled ? scaling_.fieldFromCoordinateDeltaFactor : 1.0;
+    const Real sourceIntegralFactor = scaling_.enabled
+        ? scaling_.unitSystem.continuitySourceIntegralFactor()
+        : 1.0;
 
     // SG matrix entries for holes
     for (Index e = 0; e < mesh_.numEdges(); ++e) {
@@ -529,14 +537,16 @@ void DDAssembler::assembleHoleContinuity(const VectorXd& psi,
         const RecombinationLinearization linearization =
             recombination_.holeLinearization(n_v, p_v, ni_i);
         if (scaling_.enabled) {
-            A_.coeffRef(ii, ii) += linearization.diagonal * vol_i / scaling_.D0;
-            b_(ii) += linearization.rhs * vol_i / (scaling_.C0 * scaling_.D0);
+            A_.coeffRef(ii, ii) +=
+                linearization.diagonal * vol_i * sourceIntegralFactor / scaling_.D0;
+            b_(ii) += linearization.rhs * vol_i * sourceIntegralFactor /
+                (scaling_.C0 * scaling_.D0);
         } else {
             A_.coeffRef(ii, ii) += linearization.diagonal * vol_i;
             b_(ii) += linearization.rhs * vol_i;
         }
         if (impactIonizationEnabled_ && sgCurrentAvalanche) {
-            const Real gen = sgAvalancheSourceIntegrals[i];
+            const Real gen = sgAvalancheSourceIntegrals[i] * sourceIntegralFactor;
             b_(ii) += scaling_.enabled ? (gen / (scaling_.C0 * scaling_.D0)) : gen;
         } else if (impactIonizationEnabled_) {
             const Real gen = detail::impactIonizationGenerationRate(
@@ -554,7 +564,7 @@ void DDAssembler::assembleHoleContinuity(const VectorXd& psi,
                 nodeHoleDrivingFields[i],
                 n_v,
                 p_v) * vol_i;
-            b_(ii) += scaling_.enabled ? (gen / (scaling_.C0 * scaling_.D0)) : gen;
+            b_(ii) += scaling_.enabled ? (gen * sourceIntegralFactor / (scaling_.C0 * scaling_.D0)) : gen;
         }
     }
 

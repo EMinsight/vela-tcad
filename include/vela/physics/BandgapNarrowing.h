@@ -1,6 +1,7 @@
 #pragma once
 
 #include "vela/core/Types.h"
+#include "vela/core/UnitScaling.h"
 #include <memory>
 #include <string>
 
@@ -40,7 +41,9 @@ private:
 /// Return ni_eff = ni * exp(DeltaEg / (2 Vt)) for a narrowing in eV.
 Real effectiveIntrinsicDensity(Real ni, Real thermalVoltage, Real deltaEg);
 
-BandgapNarrowingConfig bandgapNarrowingConfig(std::string modelName);
+BandgapNarrowingConfig bandgapNarrowingConfig(
+    std::string modelName,
+    UnitScalingConfig scaling = UnitScalingConfig{});
 std::unique_ptr<BandgapNarrowing> makeBandgapNarrowingModel(
     const BandgapNarrowingConfig& config);
 

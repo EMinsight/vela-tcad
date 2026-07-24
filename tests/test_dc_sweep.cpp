@@ -3082,6 +3082,33 @@ TEST_CASE("DDSolution CSV shared IO roundtrips restart state", "[dc_sweep]")
     REQUIRE((loaded.p - solution.p).norm() == Catch::Approx(0.0));
 }
 
+TEST_CASE("DDSolution CSV writes physical m3 densities in unit scaling mode", "[dc_sweep][scaling]")
+{
+    const auto dir = makeUniqueSweepDir();
+    const ScopedDirectoryCleanup cleanup{dir};
+    std::filesystem::create_directories(dir);
+    const auto path = dir / "state_unit_scaling.csv";
+
+    DDSolution solution;
+    solution.psi = VectorXd::Constant(1, -0.25);
+    solution.phin = VectorXd::Constant(1, -0.20);
+    solution.phip = VectorXd::Constant(1, -0.30);
+    solution.n = VectorXd::Constant(1, 1.0e17);
+    solution.p = VectorXd::Constant(1, 2.0e3);
+
+    const UnitScalingConfig scaling{UnitScalingMode::UnitScaling};
+    writeDDSolutionStateCsv(path, solution, scaling);
+
+    const auto rows = readCsvRows(path);
+    REQUIRE(rows.size() == 2);
+    REQUIRE(std::stod(rows[1][4]) == Catch::Approx(1.0e23));
+    REQUIRE(std::stod(rows[1][5]) == Catch::Approx(2.0e9));
+
+    const DDSolution loaded = readDDSolutionStateCsv(path, 1, scaling);
+    REQUIRE(loaded.n(0) == Catch::Approx(solution.n(0)));
+    REQUIRE(loaded.p(0) == Catch::Approx(solution.p(0)));
+}
+
 TEST_CASE("DCSweep: write_state_every_point_prefix stores accepted states", "[dc_sweep]")
 {
     const auto dir = makeUniqueSweepDir();

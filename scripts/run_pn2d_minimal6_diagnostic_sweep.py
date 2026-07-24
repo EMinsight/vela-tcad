@@ -55,7 +55,7 @@ def _sha(path: Path) -> str:
 
 def _strip_allowed(deck: dict[str, Any]) -> dict[str, Any]:
     value = copy.deepcopy(deck)
-    for key in ("mesh_file", "node_doping_file"):
+    for key in ("mesh_file", "node_doping_file", "materials_file"):
         value.pop(key, None)
     sweep = value.get("sweep", {})
     for key in ("start", "stop", "initial_state_file", "write_state_every_point_prefix", "csv_file"):
@@ -70,7 +70,10 @@ def _strip_allowed(deck: dict[str, Any]) -> dict[str, Any]:
 def validate_segment_deck(template: dict[str, Any], generated: dict[str, Any]) -> None:
     if _strip_allowed(template) != _strip_allowed(generated):
         raise ValueError("generated segment changed immutable physics or solver configuration")
-    for key in ("mesh_file", "node_doping_file"):
+    required_inputs = ["mesh_file", "node_doping_file"]
+    if "materials_file" in template:
+        required_inputs.append("materials_file")
+    for key in required_inputs:
         if not isinstance(generated.get(key), str) or not generated[key]:
             raise ValueError(f"segment deck lacks topology input {key}")
     sweep = generated.get("sweep")
@@ -93,6 +96,8 @@ def make_segment_deck(template: dict[str, Any], *, topology: str, segment_start:
     deck = copy.deepcopy(template)
     deck["mesh_file"] = str(root / "inputs" / topology / "mesh.json")
     deck["node_doping_file"] = str(root / "inputs" / topology / "doping.csv")
+    if "materials_file" in template:
+        deck["materials_file"] = str(root / "inputs" / topology / "materials.json")
     sweep = deck["sweep"]
     sweep.update({"start": segment_start, "stop": segment_start - 1.0,
                   "csv_file": str(root / "vela" / topology / f"segment_{abs(int(segment_start)):02d}.csv"),
@@ -817,8 +822,11 @@ def validate_sweep_manifest(manifest: dict[str, Any], *, package_root: Path | No
         raise ValueError("complete package requires both topology input hash roots")
     for topology in ("sketch", "mirror"):
         hashes = topology_hashes[topology]
-        if not isinstance(hashes, dict) or set(hashes) != {"mesh.json", "doping.csv"}:
-            raise ValueError(f"{topology} topology hashes must cover mesh and doping")
+        expected_members = {"mesh.json", "doping.csv"}
+        if "materials_file" in template:
+            expected_members.add("materials.json")
+        if not isinstance(hashes, dict) or set(hashes) != expected_members:
+            raise ValueError(f"{topology} topology hashes cover incorrect inputs")
         package_mesh = checked_path(
             str(Path("inputs") / topology / "mesh.json"),
             hashes["mesh.json"],
@@ -829,6 +837,17 @@ def validate_sweep_manifest(manifest: dict[str, Any], *, package_root: Path | No
             hashes["doping.csv"],
             f"{topology} doping.csv",
         )
+        if "materials_file" in template:
+            package_materials = checked_path(
+                str(Path("inputs") / topology / "materials.json"),
+                hashes["materials.json"],
+                f"{topology} materials.json",
+            )
+            template_materials = Path(str(template["materials_file"]))
+            if not template_materials.is_absolute():
+                template_materials = template_path.parent / template_materials
+            if package_materials.read_bytes() != template_materials.resolve().read_bytes():
+                raise ValueError(f"{topology} package materials do not match template")
         source = expected_authoritative["topology_sources"][topology]
         source_mesh = source_root / Path(source["mesh_path"])
         source_doping = source_root / Path(source["doping_path"])
@@ -875,11 +894,16 @@ def validate_sweep_manifest(manifest: dict[str, Any], *, package_root: Path | No
         deck = json.loads(deck_path.read_text(encoding="utf-8"))
         validate_segment_deck(template, deck)
         expected_input_root = root / "inputs" / topology
-        if (
+        input_mismatch = (
             Path(deck["mesh_file"]) != expected_input_root / "mesh.json"
             or Path(deck["node_doping_file"]) != expected_input_root / "doping.csv"
-        ):
-            raise ValueError("Vela segment uses topology-mismatched mesh/doping")
+        )
+        if "materials_file" in template:
+            input_mismatch = input_mismatch or (
+                Path(deck["materials_file"]) != expected_input_root / "materials.json"
+            )
+        if input_mismatch:
+            raise ValueError("Vela segment uses topology-mismatched inputs")
         sweep = deck["sweep"]
         if float(sweep["start"]) != start_bias or float(sweep["stop"]) != target_bias:
             raise ValueError("Vela deck bias does not match segment identity")
@@ -998,6 +1022,20 @@ def write_sentaurus_decks(root: Path, deck_template: Path, topologies: tuple[str
 def initialise_package(root: Path, template_path: Path, topologies: tuple[str, ...] = ("sketch", "mirror"), authoritative_state_root: Path | None = None) -> Path:
     template = json.loads(template_path.read_text(encoding="utf-8"))
     input_hashes = {} if authoritative_state_root is None else copy_topology_inputs(authoritative_state_root, root, topologies)
+    if "materials_file" in template:
+        material_source = Path(str(template["materials_file"]))
+        if not material_source.is_absolute():
+            material_source = template_path.parent / material_source
+        material_source = material_source.resolve()
+        if not material_source.is_file():
+            raise FileNotFoundError(
+                f"immutable template material input is missing: {material_source}"
+            )
+        for topology in topologies:
+            material_target = root / "inputs" / topology / "materials.json"
+            material_target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(material_source, material_target)
+            input_hashes.setdefault(topology, {})["materials.json"] = _sha(material_target)
     authoritative_identity = (
         None if authoritative_state_root is None
         else _authoritative_state_root_identity(authoritative_state_root, topologies)

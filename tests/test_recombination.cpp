@@ -147,6 +147,26 @@ TEST_CASE("OldSlotboom matches Sentaurus split ni and positive BGN semantics", "
     REQUIRE(niEff / 1.0e6 == Catch::Approx(1.6556319846864e10).epsilon(1.0e-10));
 }
 
+TEST_CASE("OldSlotboom reference doping follows unit scaling concentration units", "[bgn][scaling]")
+{
+    const UnitScalingConfig scaling{UnitScalingMode::UnitScaling};
+    const BandgapNarrowingConfig config =
+        bandgapNarrowingConfig("old_slotboom", scaling);
+
+    REQUIRE(config.referenceDoping == Catch::Approx(1.0e17));
+
+    const auto bgn = makeBandgapNarrowingModel(config);
+    const Real deltaEg = bgn->deltaEg(1.0e17, 0.0, 0.0);
+    REQUIRE(deltaEg == Catch::Approx(0.006363961030678928).epsilon(1.0e-12));
+
+    const Real materialNi = 1.4638914958767616e10;
+    const Real niEff = effectiveIntrinsicDensity(
+        materialNi, 0.025851999786435, deltaEg);
+    REQUIRE(niEff == Catch::Approx(1.6556319846864e10).epsilon(1.0e-10));
+    REQUIRE(niEff * niEff / 1.0e17 ==
+            Catch::Approx(2741.1172687166).epsilon(1.0e-10));
+}
+
 TEST_CASE("CarrierStatistics intrinsic density uses temperature_K material path", "[temperature]")
 {
     MaterialDatabase matdb;

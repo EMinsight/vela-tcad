@@ -71,11 +71,15 @@ bool isFieldMobilityModel(const std::string& model)
 
 void parseField(const nlohmann::json& json,
                 FieldMobilityParameters& params,
-                const char* prefix)
+                const char* prefix,
+                UnitScalingConfig scaling)
 {
-    params.saturationVelocity = json.value(
-        (std::string(prefix) + "_saturation_velocity_m_s").c_str(),
-        params.saturationVelocity);
+    const std::string velocityKey =
+        std::string(prefix) + "_saturation_velocity_m_s";
+    if (json.contains(velocityKey)) {
+        params.saturationVelocity = scaling.velocityToInternal(
+            json.at(velocityKey).get<Real>());
+    }
     params.beta = json.value((std::string(prefix) + "_field_beta").c_str(), params.beta);
 }
 
@@ -111,6 +115,12 @@ void convertMobilityDefaultsToInternal(MobilityModelConfig& config,
     convertCT(config.holeCT);
     convertMasetti(config.electronMasetti);
     convertMasetti(config.holeMasetti);
+    config.electronField.saturationVelocity =
+        units.mPerSToInternalVelocity(
+            config.electronField.saturationVelocity);
+    config.holeField.saturationVelocity =
+        units.mPerSToInternalVelocity(
+            config.holeField.saturationVelocity);
     config.surface.thetaElectron =
         units.mPerVToInternalSurfaceFieldCoefficient(config.surface.thetaElectron);
     config.surface.thetaHole =
@@ -301,8 +311,8 @@ MobilityModelConfig mobilityModelConfigFromJson(
     parseCaugheyThomas(value, config.holeCT, "hole", scaling);
     parseMasetti(value, config.electronMasetti, "electron", scaling);
     parseMasetti(value, config.holeMasetti, "hole", scaling);
-    parseField(value, config.electronField, "electron");
-    parseField(value, config.holeField, "hole");
+    parseField(value, config.electronField, "electron", scaling);
+    parseField(value, config.holeField, "hole", scaling);
 
     if (value.contains("surface")) {
         const auto& surface = value.at("surface");

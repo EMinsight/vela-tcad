@@ -253,6 +253,9 @@ VectorXd CoupledDDAssembler::residual(const VectorXd& x,
         : nodeElectricFields;
     const bool qfMobility = mobilityConfig_.highFieldDrivingForce == "quasi_fermi_gradient";
     const Real chargeVolumeFactor = scaling_.enabled ? scaling_.chargeVolumeFactor : 1.0;
+    const Real sourceIntegralFactor = scaling_.enabled
+        ? scaling_.unitSystem.continuitySourceIntegralFactor()
+        : 1.0;
     const bool sgCurrentAvalanche = impactIonizationEnabled_ &&
         detail::usesEdgeCurrentAvalancheSource(impactIonizationConfig_);
     const std::vector<Real> sgAvalancheSourceIntegrals = sgCurrentAvalanche
@@ -392,15 +395,15 @@ VectorXd CoupledDDAssembler::residual(const VectorXd& x,
             const Real R = recombination_.totalRateFromExcessProduct(
                 excessProduct, n(ii), p(ii), ni);
             if (R != 0.0) {
-                r(phinOffset() + ii) += R * vol[i];
-                r(phipOffset() + ii) += R * vol[i];
+                r(phinOffset() + ii) += R * vol[i] * sourceIntegralFactor;
+                r(phipOffset() + ii) += R * vol[i] * sourceIntegralFactor;
                 hasElectronContribution[static_cast<std::size_t>(ii)] = true;
                 hasHoleContribution[static_cast<std::size_t>(ii)] = true;
             }
         }
 
         if (impactIonizationEnabled_ && sgCurrentAvalanche) {
-            const Real source = sgAvalancheSourceIntegrals[i];
+            const Real source = sgAvalancheSourceIntegrals[i] * sourceIntegralFactor;
             if (source != 0.0) {
                 r(phinOffset() + ii) -= source;
                 r(phipOffset() + ii) -= source;
@@ -424,8 +427,8 @@ VectorXd CoupledDDAssembler::residual(const VectorXd& x,
                 n(ii),
                 p(ii));
             if (G != 0.0) {
-                r(phinOffset() + ii) -= G * vol[i];
-                r(phipOffset() + ii) -= G * vol[i];
+                r(phinOffset() + ii) -= G * vol[i] * sourceIntegralFactor;
+                r(phipOffset() + ii) -= G * vol[i] * sourceIntegralFactor;
                 hasElectronContribution[static_cast<std::size_t>(ii)] = true;
                 hasHoleContribution[static_cast<std::size_t>(ii)] = true;
             }
@@ -520,6 +523,9 @@ CoupledDDAssembler::carrierContinuityTermDiagnostics(
             impactIonizationConfig_, mesh_, nodeCells_, psi, phipPhysical, p, ni_, Vt_, fieldFactor)
         : nodeElectricFields;
     const bool qfMobility = mobilityConfig_.highFieldDrivingForce == "quasi_fermi_gradient";
+    const Real sourceIntegralFactor = scaling_.enabled
+        ? scaling_.unitSystem.continuitySourceIntegralFactor()
+        : 1.0;
     const bool sgCurrentAvalanche = impactIonizationEnabled_ &&
         detail::usesEdgeCurrentAvalancheSource(impactIonizationConfig_);
     const detail::SgAvalancheSourceComponentIntegrals sgAvalancheSourceComponents =
@@ -633,7 +639,7 @@ CoupledDDAssembler::carrierContinuityTermDiagnostics(
             const Real R = recombination_.totalRateFromExcessProduct(
                 excessProduct, n(ii), p(ii), ni);
             if (R != 0.0) {
-                const Real contribution = R * vol_[i];
+                const Real contribution = R * vol_[i] * sourceIntegralFactor;
                 terms[i].electronRecombination += contribution;
                 terms[i].holeRecombination += contribution;
                 hasElectronContribution[static_cast<std::size_t>(ii)] = true;
@@ -642,13 +648,16 @@ CoupledDDAssembler::carrierContinuityTermDiagnostics(
         }
 
         if (impactIonizationEnabled_ && sgCurrentAvalanche) {
-            const Real source = sgAvalancheSourceComponents.combined[i];
+            const Real source =
+                sgAvalancheSourceComponents.combined[i] * sourceIntegralFactor;
             const Real contribution = -source;
             if (contribution != 0.0) {
                 terms[i].electronImpact += contribution;
                 terms[i].holeImpact += contribution;
-                terms[i].impactElectronSource += sgAvalancheSourceComponents.electron[i];
-                terms[i].impactHoleSource += sgAvalancheSourceComponents.hole[i];
+                terms[i].impactElectronSource +=
+                    sgAvalancheSourceComponents.electron[i] * sourceIntegralFactor;
+                terms[i].impactHoleSource +=
+                    sgAvalancheSourceComponents.hole[i] * sourceIntegralFactor;
                 terms[i].impactCombinedSource += source;
                 hasElectronContribution[static_cast<std::size_t>(ii)] = true;
                 hasHoleContribution[static_cast<std::size_t>(ii)] = true;
@@ -670,10 +679,10 @@ CoupledDDAssembler::carrierContinuityTermDiagnostics(
                 n(ii),
                 p(ii));
             if (G != 0.0) {
-                const Real contribution = -G * vol_[i];
+                const Real contribution = -G * vol_[i] * sourceIntegralFactor;
                 terms[i].electronImpact += contribution;
                 terms[i].holeImpact += contribution;
-                terms[i].impactCombinedSource += G * vol_[i];
+                terms[i].impactCombinedSource += G * vol_[i] * sourceIntegralFactor;
                 hasElectronContribution[static_cast<std::size_t>(ii)] = true;
                 hasHoleContribution[static_cast<std::size_t>(ii)] = true;
             }
@@ -891,6 +900,9 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
         : nodeElectricFields;
     const bool qfMobility = mobilityConfig_.highFieldDrivingForce == "quasi_fermi_gradient";
     const Real chargeVolumeFactor = scaling_.enabled ? scaling_.chargeVolumeFactor : 1.0;
+    const Real sourceIntegralFactor = scaling_.enabled
+        ? scaling_.unitSystem.continuitySourceIntegralFactor()
+        : 1.0;
     const std::vector<bool> contactNodes = detail::contactNodeMask(mesh_);
     const std::vector<std::vector<Index>> cellEdges = detail::buildCellEdgeMap(edgeCells_, mesh_);
     const bool transportMobilityDerivative = transportMobilityDependsOnPotentials(mobilityConfig_);
@@ -1524,8 +1536,10 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
             auto appendDerivative = [&](int col, const EdgeAvalancheNodeSources& sp,
                                         const EdgeAvalancheNodeSources& sm, Real step) {
                 cols.push_back(col);
-                dS0.push_back((sp.node0 - sm.node0) / (2.0 * step));
-                dS1.push_back((sp.node1 - sm.node1) / (2.0 * step));
+                dS0.push_back(
+                    (sp.node0 - sm.node0) * sourceIntegralFactor / (2.0 * step));
+                dS1.push_back(
+                    (sp.node1 - sm.node1) * sourceIntegralFactor / (2.0 * step));
                 if (dS0.back() != 0.0 || dS1.back() != 0.0)
                     anyNonzero = true;
             };
@@ -1680,7 +1694,8 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
                     const VectorXd minusSources = cellNodeSources(
                         cellId, psiMinus, phinMinus, phipMinus, nMinus, pMinus);
                     const VectorXd derivative =
-                        (plusSources - minusSources) / (2.0 * step);
+                        (plusSources - minusSources) * sourceIntegralFactor /
+                        (2.0 * step);
                     const int column = (variableBlock == 0 ? psiOffset()
                         : (variableBlock == 1 ? phinOffset() : phipOffset())) +
                         nodeIndex;
@@ -1740,12 +1755,12 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
                 const Real dR_dphip = deriv.dRateDp * dpi_dphip
                                      + deriv.dRateDExcess * dExcess_dphip;
 
-                add(phinOffset() + ii, psiOffset() + ii, dR_dpsi * vol_[i]);
-                add(phinOffset() + ii, phinOffset() + ii, dR_dphin * vol_[i]);
-                add(phinOffset() + ii, phipOffset() + ii, dR_dphip * vol_[i]);
-                add(phipOffset() + ii, psiOffset() + ii, dR_dpsi * vol_[i]);
-                add(phipOffset() + ii, phinOffset() + ii, dR_dphin * vol_[i]);
-                add(phipOffset() + ii, phipOffset() + ii, dR_dphip * vol_[i]);
+                add(phinOffset() + ii, psiOffset() + ii, dR_dpsi * vol_[i] * sourceIntegralFactor);
+                add(phinOffset() + ii, phinOffset() + ii, dR_dphin * vol_[i] * sourceIntegralFactor);
+                add(phinOffset() + ii, phipOffset() + ii, dR_dphip * vol_[i] * sourceIntegralFactor);
+                add(phipOffset() + ii, psiOffset() + ii, dR_dpsi * vol_[i] * sourceIntegralFactor);
+                add(phipOffset() + ii, phinOffset() + ii, dR_dphin * vol_[i] * sourceIntegralFactor);
+                add(phipOffset() + ii, phipOffset() + ii, dR_dphip * vol_[i] * sourceIntegralFactor);
 
                 hasElectronContribution[static_cast<std::size_t>(ii)] = true;
                 hasHoleContribution[static_cast<std::size_t>(ii)] = true;
@@ -1816,12 +1831,12 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
                 const Real dG_dphin = electronFactor * dni_dphin;
                 const Real dG_dphip = holeFactor * dpi_dphip;
 
-                add(phinOffset() + ii, psiOffset() + ii, -dG_dpsi * vol_[i]);
-                add(phinOffset() + ii, phinOffset() + ii, -dG_dphin * vol_[i]);
-                add(phinOffset() + ii, phipOffset() + ii, -dG_dphip * vol_[i]);
-                add(phipOffset() + ii, psiOffset() + ii, -dG_dpsi * vol_[i]);
-                add(phipOffset() + ii, phinOffset() + ii, -dG_dphin * vol_[i]);
-                add(phipOffset() + ii, phipOffset() + ii, -dG_dphip * vol_[i]);
+                add(phinOffset() + ii, psiOffset() + ii, -dG_dpsi * vol_[i] * sourceIntegralFactor);
+                add(phinOffset() + ii, phinOffset() + ii, -dG_dphin * vol_[i] * sourceIntegralFactor);
+                add(phinOffset() + ii, phipOffset() + ii, -dG_dphip * vol_[i] * sourceIntegralFactor);
+                add(phipOffset() + ii, psiOffset() + ii, -dG_dpsi * vol_[i] * sourceIntegralFactor);
+                add(phipOffset() + ii, phinOffset() + ii, -dG_dphin * vol_[i] * sourceIntegralFactor);
+                add(phipOffset() + ii, phipOffset() + ii, -dG_dphip * vol_[i] * sourceIntegralFactor);
 
                 hasElectronContribution[static_cast<std::size_t>(ii)] = true;
                 hasHoleContribution[static_cast<std::size_t>(ii)] = true;
@@ -1847,7 +1862,8 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
                     return;
                 if (!(carrierDensity < carrierDiagonalFloor_.minorityDensityRatio * ni))
                     return;
-                const Real rawFloor = carrierDiagonalFloor_.scale * volume * ni / (tauSum * Vt_);
+                const Real rawFloor = carrierDiagonalFloor_.scale * volume * ni *
+                    sourceIntegralFactor / (tauSum * Vt_);
                 const Real floor = scaleDerivative(row, row, rawFloor);
                 if (!(floor > 0.0) || !std::isfinite(floor))
                     return;

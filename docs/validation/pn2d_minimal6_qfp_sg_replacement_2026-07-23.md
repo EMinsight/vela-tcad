@@ -1,5 +1,10 @@
 # PN2D Minimal6 internal-QFP SG replacement audit
 
+> Quantitative correction: this report used the pre-fix Vela restart-unit and
+> fixed-`ni` inverse inputs. Its numerical tables are superseded by
+> `pn2d_minimal6_state_unit_and_transport_reaudit_2026-07-23.md`. The original
+> report is retained as historical evidence.
+
 ## Conclusion
 
 Replacing only the Sentaurus electron and hole quasi-Fermi potentials at

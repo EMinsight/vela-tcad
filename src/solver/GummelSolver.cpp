@@ -167,10 +167,11 @@ GummelConfig gummelConfigFromJson(const nlohmann::json& json, UnitScalingConfig 
     if (json.contains("bandgap_narrowing")) {
         const auto& value = json.at("bandgap_narrowing");
         if (value.is_string()) {
-            cfg.bandgapNarrowing = bandgapNarrowingConfig(value.get<std::string>());
+            cfg.bandgapNarrowing =
+                bandgapNarrowingConfig(value.get<std::string>(), scaling);
         } else if (value.is_object()) {
             cfg.bandgapNarrowing = bandgapNarrowingConfig(
-                value.value("model", cfg.bandgapNarrowing.model));
+                value.value("model", cfg.bandgapNarrowing.model), scaling);
             if (value.contains("reference_doping_m3")) {
                 cfg.bandgapNarrowing.referenceDoping = scaling.concentrationToInternal(
                     value.at("reference_doping_m3").get<Real>());

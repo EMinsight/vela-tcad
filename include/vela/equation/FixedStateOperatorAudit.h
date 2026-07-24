@@ -1,6 +1,7 @@
 #pragma once
 
 #include "vela/equation/AssemblerUtils.h"
+#include "vela/material/MaterialDatabase.h"
 #include "vela/solver/GummelSolver.h"
 
 #include <array>
@@ -42,5 +43,12 @@ FixedStateOperatorAuditResult evaluateFixedStateOperators(
     const VectorXd& doping,
     const DDSolution& state,
     const GummelConfig& config);
+
+FixedStateOperatorAuditResult evaluateFixedStateOperators(
+    const DeviceMesh& mesh,
+    const VectorXd& doping,
+    const DDSolution& state,
+    const GummelConfig& config,
+    const MaterialDatabase& materials);
 
 } // namespace vela

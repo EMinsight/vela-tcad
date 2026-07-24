@@ -25,6 +25,11 @@ namespace {
 using vela::Index;
 using vela::Real;
 
+struct AuditConfiguration {
+    vela::GummelConfig solver;
+    vela::MaterialDatabase materials;
+};
+
 struct Arguments {
     std::filesystem::path mesh;
     std::filesystem::path doping;
@@ -220,15 +225,24 @@ vela::DDSolution readState(const std::filesystem::path& path,
     return state;
 }
 
-vela::GummelConfig readConfig(const std::filesystem::path& path)
+AuditConfiguration readConfig(const std::filesystem::path& path)
 {
     std::ifstream input = openInput(path, "audit JSON");
     nlohmann::json json;
     input >> json;
     const vela::UnitScalingConfig scaling = vela::parseUnitScalingConfig(json);
-    if (json.contains("solver"))
-        return vela::gummelConfigFromJson(json.at("solver"), scaling);
-    return vela::gummelConfigFromJson(json, scaling);
+    const vela::GummelConfig solver = json.contains("solver")
+        ? vela::gummelConfigFromJson(json.at("solver"), scaling)
+        : vela::gummelConfigFromJson(json, scaling);
+    vela::MaterialDatabase materials(scaling);
+    if (json.contains("materials_file")) {
+        std::filesystem::path materialsPath =
+            json.at("materials_file").get<std::string>();
+        if (materialsPath.is_relative())
+            materialsPath = path.parent_path() / materialsPath;
+        materials.loadJson(materialsPath.lexically_normal().string(), scaling);
+    }
+    return {solver, materials};
 }
 
 void writeNodes(const std::filesystem::path& path,
@@ -367,7 +381,8 @@ int main(int argc, char** argv)
 {
     try {
         const Arguments args = parseArguments(argc, argv);
-        const vela::GummelConfig config = readConfig(args.config);
+        const AuditConfiguration auditConfig = readConfig(args.config);
+        const vela::GummelConfig& config = auditConfig.solver;
         vela::JsonMeshReader reader;
         const vela::DeviceMesh mesh = reader.read(args.mesh.string());
         const vela::VectorXd doping =
@@ -376,7 +391,8 @@ int main(int argc, char** argv)
             readState(args.state, mesh.numNodes(), config.inputScaling);
 
         const vela::FixedStateOperatorAuditResult result =
-            vela::evaluateFixedStateOperators(mesh, doping, state, config);
+            vela::evaluateFixedStateOperators(
+                mesh, doping, state, config, auditConfig.materials);
         if (result.nodes.size() != 6 ||
             result.edges.size() != 9 ||
             result.triangles.size() != 4) {

@@ -235,7 +235,8 @@ nlohmann::json runNewtonSolveFromState(const std::string& configFile,
     if (cfg.contains("output_state_file")) {
         vela::writeDDSolutionStateCsv(
             resolvePath(cfgDir, cfg.at("output_state_file").get<std::string>()),
-            result.solution);
+            result.solution,
+            problem.newton.inputScaling);
     }
     if (cfg.contains("output_vtk")) {
         vela::writeDDSolutionVTK(
@@ -1118,6 +1119,7 @@ void writeNewtonCarrierTermProbeCsv(
     std::ofstream out(path);
     if (!out.is_open())
         throw std::runtime_error("Cannot write Newton carrier-term probe CSV: " + path.string());
+    out << std::setprecision(17);
     out << "node_id,x,y,"
         << "electron_flux,electron_recombination,electron_impact,electron_gauge,electron_boundary,"
         << "electron_term_sum,electron_residual,electron_adjusted_impact,"
@@ -1459,7 +1461,10 @@ nlohmann::json runNewtonJacobianBlockProbe(const std::string& configFile,
     const std::filesystem::path statePath =
         resolvePath(cfgDir, cfg.at("state_file").get<std::string>());
     const vela::DDSolution state =
-        vela::readDDSolutionStateCsv(statePath, problem.mesh.numNodes());
+        vela::readDDSolutionStateCsv(
+            statePath,
+            problem.mesh.numNodes(),
+            problem.newton.inputScaling);
     const vela::Real fdStep = cfg.value("finite_difference_step", 1.0e-7);
     std::vector<std::string> blocks;
     if (cfg.contains("blocks")) {

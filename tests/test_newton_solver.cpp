@@ -610,6 +610,192 @@ static Real nodeVolume(const DeviceMesh& mesh, Index node)
     return volume;
 }
 
+TEST_CASE("CoupledDDAssembler: TCAD SRH source scaling covers residual diagnostics and Jacobian",
+          "[newton][coupled][scaling][source_units][srh]")
+{
+    DeviceMesh mesh = makePNMesh();
+    MaterialDatabase matdb;
+    DopingModel doping = makePNDoping(mesh);
+
+    DDScalingSpec legacyScaling;
+    legacyScaling.enabled = true;
+    legacyScaling.V0 = 1.0;
+    legacyScaling.C0 = 1.0;
+    legacyScaling.mu0 = 1.0;
+    legacyScaling.D0 = 1.0;
+    legacyScaling.L0 = 1.0;
+    legacyScaling.permittivityReference_F_per_m = constants::eps0 * 11.7;
+    legacyScaling.unitSystem = PhysicalUnitSystem::legacySI();
+
+    DDScalingSpec tcadScaling = legacyScaling;
+    tcadScaling.unitSystem = PhysicalUnitSystem::tcadInternal();
+
+    const RecombinationModelConfig noRecombination =
+        recombinationModelConfig({"none"});
+    const RecombinationModelConfig srh =
+        recombinationModelConfig({"srh"}, 1.0e-7, 2.0e-7);
+
+    const auto makeAssembler = [&](const RecombinationModelConfig& recombination,
+                                   const DDScalingSpec& scaling) {
+        return CoupledDDAssembler(
+            mesh,
+            matdb,
+            doping,
+            constants::Vt_300,
+            mobilityModelConfig("constant"),
+            recombination,
+            BandgapNarrowingConfig{},
+            ImpactIonizationModelConfig{},
+            {},
+            {},
+            scaling);
+    };
+
+    CoupledDDAssembler baseline = makeAssembler(noRecombination, legacyScaling);
+    CoupledDDAssembler legacy = makeAssembler(srh, legacyScaling);
+    CoupledDDAssembler tcad = makeAssembler(srh, tcadScaling);
+
+    const int N = static_cast<int>(mesh.numNodes());
+    CoupledDDState state;
+    state.psi = VectorXd::Zero(N);
+    state.phin = VectorXd::Constant(N, -0.01);
+    state.phip = VectorXd::Constant(N, 0.01);
+    const VectorXd x = legacy.pack(state);
+    const CoupledDDBoundaryConditions bcs;
+
+    const auto legacyTerms = legacy.carrierContinuityTermDiagnostics(x, bcs);
+    const auto tcadTerms = tcad.carrierContinuityTermDiagnostics(x, bcs);
+    const Index node = 4;
+    REQUIRE(std::abs(legacyTerms[node].electronRecombination) > 0.0);
+    REQUIRE(tcadTerms[node].electronRecombination ==
+            Catch::Approx(legacyTerms[node].electronRecombination * 1.0e-8)
+                .epsilon(1.0e-12));
+    REQUIRE(tcadTerms[node].holeRecombination ==
+            Catch::Approx(legacyTerms[node].holeRecombination * 1.0e-8)
+                .epsilon(1.0e-12));
+
+    const VectorXd legacySourceResidual =
+        legacy.residual(x, bcs).segment(N, 2 * N);
+    const VectorXd tcadSourceResidual =
+        tcad.residual(x, bcs).segment(N, 2 * N);
+    REQUIRE(tcadSourceResidual.norm() ==
+            Catch::Approx(legacySourceResidual.norm() * 1.0e-8)
+                .epsilon(1.0e-12));
+
+    const Eigen::MatrixXd baselineJacobian =
+        Eigen::MatrixXd(baseline.assembleJacobian(x, bcs));
+    const Eigen::MatrixXd legacySourceJacobian =
+        Eigen::MatrixXd(legacy.assembleJacobian(x, bcs)) - baselineJacobian;
+    const Eigen::MatrixXd tcadSourceJacobian =
+        Eigen::MatrixXd(tcad.assembleJacobian(x, bcs)) - baselineJacobian;
+    REQUIRE(legacySourceJacobian.norm() > 0.0);
+    REQUIRE(tcadSourceJacobian.norm() ==
+            Catch::Approx(legacySourceJacobian.norm() * 1.0e-8)
+                .epsilon(1.0e-5));
+}
+
+TEST_CASE("CoupledDDAssembler: TCAD impact source scaling covers residual diagnostics and Jacobian",
+          "[newton][coupled][scaling][source_units][impact]")
+{
+    DeviceMesh mesh = makePNMesh();
+    MaterialDatabase matdb;
+    DopingModel doping = makePNDoping(mesh);
+
+    DDScalingSpec legacyScaling;
+    legacyScaling.enabled = true;
+    legacyScaling.V0 = 1.0;
+    legacyScaling.C0 = 1.0;
+    legacyScaling.mu0 = 1.0;
+    legacyScaling.D0 = 1.0;
+    legacyScaling.L0 = 1.0;
+    legacyScaling.permittivityReference_F_per_m = constants::eps0 * 11.7;
+    legacyScaling.unitSystem = PhysicalUnitSystem::legacySI();
+
+    DDScalingSpec tcadScaling = legacyScaling;
+    tcadScaling.unitSystem = PhysicalUnitSystem::tcadInternal();
+
+    MobilityModelConfig mobility = mobilityModelConfig("constant");
+    mobility.highFieldDrivingForce = "quasi_fermi_gradient";
+
+    ImpactIonizationModelConfig impact;
+    impact.model = "selberherr";
+    impact.drivingForce = "quasi_fermi_gradient";
+    impact.generation = "current_density";
+    impact.currentApproximation = "cell_reconstructed";
+    impact.sourceVolumePolicy = "edge_box";
+    impact.electronA = 1.0e8;
+    impact.electronB = 1.0e-30;
+    impact.holeA = 1.0e8;
+    impact.holeB = 1.0e-30;
+
+    const auto makeAssembler = [&](const ImpactIonizationModelConfig& impactConfig,
+                                   const DDScalingSpec& scaling) {
+        return CoupledDDAssembler(
+            mesh,
+            matdb,
+            doping,
+            constants::Vt_300,
+            mobility,
+            recombinationModelConfig({"none"}),
+            BandgapNarrowingConfig{},
+            impactConfig,
+            {},
+            {},
+            scaling);
+    };
+
+    CoupledDDAssembler baseline =
+        makeAssembler(ImpactIonizationModelConfig{}, legacyScaling);
+    CoupledDDAssembler legacy = makeAssembler(impact, legacyScaling);
+    CoupledDDAssembler tcad = makeAssembler(impact, tcadScaling);
+
+    const int N = static_cast<int>(mesh.numNodes());
+    CoupledDDState state;
+    state.psi = VectorXd::LinSpaced(N, 0.0, -0.8);
+    state.phin = VectorXd::LinSpaced(N, 0.0, -1.4);
+    state.phip = VectorXd::LinSpaced(N, -0.2, -0.9);
+    const VectorXd x = legacy.pack(state);
+    const CoupledDDBoundaryConditions bcs;
+
+    const auto legacyTerms = legacy.carrierContinuityTermDiagnostics(x, bcs);
+    const auto tcadTerms = tcad.carrierContinuityTermDiagnostics(x, bcs);
+    Real legacyImpactNorm = 0.0;
+    Real tcadImpactNorm = 0.0;
+    for (Index node = 0; node < mesh.numNodes(); ++node) {
+        legacyImpactNorm += std::abs(legacyTerms[node].electronImpact);
+        tcadImpactNorm += std::abs(tcadTerms[node].electronImpact);
+    }
+    REQUIRE(legacyImpactNorm > 0.0);
+    REQUIRE(tcadImpactNorm ==
+            Catch::Approx(legacyImpactNorm * 1.0e-8).epsilon(1.0e-10));
+
+    const VectorXd legacyResidual = legacy.residual(x, bcs);
+    const VectorXd tcadResidual = tcad.residual(x, bcs);
+    for (int node = 0; node < N; ++node) {
+        REQUIRE(legacyResidual(N + node) - tcadResidual(N + node) ==
+                Catch::Approx(
+                    legacyTerms[static_cast<Index>(node)].electronImpact -
+                    tcadTerms[static_cast<Index>(node)].electronImpact)
+                    .epsilon(1.0e-8));
+        REQUIRE(legacyResidual(2 * N + node) - tcadResidual(2 * N + node) ==
+                Catch::Approx(
+                    legacyTerms[static_cast<Index>(node)].holeImpact -
+                    tcadTerms[static_cast<Index>(node)].holeImpact)
+                    .epsilon(1.0e-8));
+    }
+
+    const Eigen::MatrixXd baselineJacobian =
+        Eigen::MatrixXd(baseline.assembleJacobian(x, bcs));
+    const Eigen::MatrixXd legacySourceJacobian =
+        Eigen::MatrixXd(legacy.assembleJacobian(x, bcs)) - baselineJacobian;
+    const Eigen::MatrixXd tcadSourceJacobian =
+        Eigen::MatrixXd(tcad.assembleJacobian(x, bcs)) - baselineJacobian;
+    REQUIRE(legacySourceJacobian.norm() > 0.0);
+    REQUIRE(tcadSourceJacobian.norm() ==
+            Catch::Approx(legacySourceJacobian.norm() * 1.0e-8)
+                .epsilon(1.0e-4));
+}
+
 TEST_CASE("CoupledDDAssembler: carrier diagonal floor anchors depleted minority row", "[newton][coupled]")
 {
     DeviceMesh mesh = makePNMesh();

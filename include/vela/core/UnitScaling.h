@@ -21,6 +21,7 @@ public:
     Real concentrationM3PerInternal() const { return concentrationM3PerInternal_; }
     Real sheetDensityM2PerInternal() const { return sheetDensityM2PerInternal_; }
     Real mobilityM2PerVSPerInternal() const { return mobilityM2PerVSPerInternal_; }
+    Real velocityMPerSPerInternal() const { return velocityMPerSPerInternal_; }
     Real electricFieldVPerMPerInternal() const { return electricFieldVPerMPerInternal_; }
     Real inverseLengthMInvPerInternal() const { return inverseLengthMInvPerInternal_; }
     Real surfaceFieldCoefficientMPerVPerInternal() const
@@ -32,6 +33,11 @@ public:
     Real chargeVolumeFactor() const;
     Real chargeSheetFactor() const;
     Real fieldFromCoordinateDeltaFactor() const;
+    /**
+     * Converts a volumetric rate integrated over 2-D area into the native
+     * Scharfetter-Gummel particle-flux units used by continuity rows.
+     */
+    Real continuitySourceIntegralFactor() const;
     Real currentPerInternalDepthFactor() const;
 
     Real internalLengthToMeters(Real value) const { return value * lengthMPerInternal_; }
@@ -53,6 +59,14 @@ public:
     Real m2PerVSToInternalMobility(Real value) const
     {
         return value / mobilityM2PerVSPerInternal_;
+    }
+    Real internalVelocityToMPerS(Real value) const
+    {
+        return value * velocityMPerSPerInternal_;
+    }
+    Real mPerSToInternalVelocity(Real value) const
+    {
+        return value / velocityMPerSPerInternal_;
     }
     Real internalElectricFieldToVPerM(Real value) const
     {
@@ -102,6 +116,7 @@ private:
                        Real concentrationM3PerInternal,
                        Real sheetDensityM2PerInternal,
                        Real mobilityM2PerVSPerInternal,
+                       Real velocityMPerSPerInternal,
                        Real electricFieldVPerMPerInternal,
                        Real inverseLengthMInvPerInternal,
                        Real surfaceFieldCoefficientMPerVPerInternal,
@@ -111,6 +126,7 @@ private:
     Real concentrationM3PerInternal_ = 1.0;
     Real sheetDensityM2PerInternal_ = 1.0;
     Real mobilityM2PerVSPerInternal_ = 1.0;
+    Real velocityMPerSPerInternal_ = 1.0;
     Real electricFieldVPerMPerInternal_ = 1.0;
     Real inverseLengthMInvPerInternal_ = 1.0;
     Real surfaceFieldCoefficientMPerVPerInternal_ = 1.0;
@@ -131,6 +147,7 @@ struct UnitScalingConfig {
     Real concentrationToInternal(Real value) const { return value; }
     Real sheetDensityToInternal(Real value) const { return value; }
     Real mobilityToInternal(Real value) const { return value; }
+    Real velocityToInternal(Real value) const { return value; }
     Real electricFieldToInternal(Real value) const { return value; }
     Real inverseLengthToInternal(Real value) const { return value; }
     Real surfaceFieldCoefficientToInternal(Real value) const { return value; }
@@ -139,6 +156,7 @@ struct UnitScalingConfig {
     Real concentrationToSI(Real value) const;
     Real sheetDensityToSI(Real value) const;
     Real mobilityToSI(Real value) const;
+    Real velocityToSI(Real value) const;
     Real electricFieldToSI(Real value) const;
     Real inverseLengthToSI(Real value) const;
     Real surfaceFieldCoefficientToSI(Real value) const;

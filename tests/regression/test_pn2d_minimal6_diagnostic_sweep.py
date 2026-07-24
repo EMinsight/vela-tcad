@@ -48,8 +48,13 @@ class DiagnosticSweepTest(unittest.TestCase):
     def _complete_package(self, root):
         repo = Path(__file__).resolve().parents[2]
         source_template = repo / "reference_tcad" / "pn2d_sentaurus2018_minimal6" / "vela" / "pn2d_minimal6_sweep_template.json"
+        source_materials = source_template.parent / "pn2d_minimal6_materials.json"
         template = root / "immutable_template.json"
         template.write_text(source_template.read_text(encoding="utf-8"), encoding="utf-8")
+        (root / "pn2d_minimal6_materials.json").write_text(
+            source_materials.read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
         fixture = repo / "tests" / "fixtures" / "pn2d_minimal6_synthetic"
         manifest_path = initialise_package(root, template, authoritative_state_root=fixture)
         return json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -896,18 +901,46 @@ class DiagnosticSweepTest(unittest.TestCase):
         self.assertIn("hCurrentDensity/Vector", deck)
 
     def test_vela_sweep_template_uses_sentaurus_equivalent_ohmic_qf_pinning(self):
-        source = (
+        template_path = (
             Path(__file__).resolve().parents[2]
             / "reference_tcad"
             / "pn2d_sentaurus2018_minimal6"
             / "vela"
             / "pn2d_minimal6_sweep_template.json"
         )
-        deck = json.loads(source.read_text(encoding="utf-8"))
+        deck = json.loads(template_path.read_text(encoding="utf-8"))
         self.assertIs(
             deck["solver"]["contact_boundary_minority_electron_relaxation"],
             False,
         )
+        materials_path = template_path.parent / deck["materials_file"]
+        materials = json.loads(materials_path.read_text(encoding="utf-8"))
+        silicon = materials["materials"][0]
+        self.assertEqual(silicon["name"], "Si")
+        self.assertAlmostEqual(
+            silicon["ni"],
+            1.4638914958767616e10,
+        )
+
+    def test_generated_vela_decks_seal_sentaurus_material_input(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            manifest = self._complete_package(root)
+            row = next(
+                item
+                for item in manifest["segments"]
+                if item["topology"] == "sketch"
+            )
+            deck = json.loads(
+                (root / row["deck"]).read_text(encoding="utf-8")
+            )
+            materials_path = Path(deck["materials_file"])
+            self.assertTrue(materials_path.is_absolute())
+            self.assertTrue(materials_path.exists())
+            self.assertEqual(
+                manifest["topology_input_sha256"]["sketch"]["materials.json"],
+                self._sha256(materials_path),
+            )
 
     def test_sentaurus_decks_are_exact_and_checkpoint_paths_are_unique(self):
         with tempfile.TemporaryDirectory() as temp:

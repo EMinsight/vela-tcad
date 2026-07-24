@@ -294,6 +294,7 @@ def run_native_cell_sg_experiment(
                         )
                         state = _operator_state(
                             formulation,
+                            carrier,
                             edge,
                             length,
                             vela,
@@ -330,6 +331,7 @@ def run_native_cell_sg_experiment(
 
                     unit_state = _operator_state(
                         formulation,
+                        carrier,
                         edge,
                         length,
                         vela,

@@ -75,6 +75,7 @@ In `unit_scaling` mode, input values use common external TCAD units:
 | length | m | um |
 | concentration | m^-3 | cm^-3 |
 | mobility | m^2/(V s) | cm^2/(V s) |
+| velocity | m/s | cm/s |
 | electric field | V/m | V/cm |
 | sheet density | m^-2 | cm^-2 |
 | voltage | V | V |
@@ -88,7 +89,7 @@ The interpretation is applied while reading mesh coordinates, material override
 files, doping, region fixed charge, interface sheet/trap charge, mobility
 settings, and electric-field-related solver settings. In `unit_scaling`, these
 values remain in TCAD internal units (um, cm^-3, cm^-2, cm^2/(V s),
-V/cm, cm^-1, cm/V) and the assemblers apply named composite factors where
+cm/s, V/cm, cm^-1, cm/V) and the assemblers apply named composite factors where
 geometry and charge/current units meet.
 
 Poisson driver note:
@@ -714,9 +715,10 @@ reference_field, 0))^beta)^(1/beta)`, optionally clamped by
 The first implementation estimates `E_normal` with the local edge electric-field magnitude on edges that match `surface_region` and/or the two-name `surface_interface`; this is sufficient for trend regressions but should not be interpreted as a calibrated normal-field extraction. If no matching surface edge is found for a mobility evaluation, surface degradation is disabled and the existing low-field or velocity-saturation behavior is used.
 
 With `scaling.mode: "unit_scaling"`, Caughey-Thomas and Masetti mobility
-values are read as `cm^2/(V s)`, reference dopings as `cm^-3`, surface
-reference fields as `V/cm`, and surface theta coefficients as `cm/V`. They are
-kept internally as `cm^2/(V s)`, `cm^-3`, `V/cm`, and `cm/V` before mobility evaluation.
+values are read as `cm^2/(V s)`, reference dopings as `cm^-3`, saturation
+velocities as `cm/s`, surface reference fields as `V/cm`, and surface theta
+coefficients as `cm/V`. They are kept internally in those TCAD units before
+mobility evaluation.
 
 ## sweep
 

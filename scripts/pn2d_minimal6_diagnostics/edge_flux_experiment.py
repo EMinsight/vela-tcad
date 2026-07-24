@@ -25,7 +25,29 @@ from .qfp_sg_replacement import (
 
 
 THERMAL_VOLTAGE_300K_V = 1.380649e-23 * 300.0 / 1.602176634e-19
-SILICON_NI_300K_M3 = 1.0e16
+
+
+def _effective_intrinsic_density_m3(
+    carrier: str,
+    state: Mapping[int, Mapping[str, float]],
+    node: int,
+) -> float:
+    values = state[node]
+    psi = float(values["psi_V"])
+    qf = float(values["qf_V"])
+    density = float(values["density_m3"])
+    if carrier == "electron":
+        exponent = (psi - qf) / THERMAL_VOLTAGE_300K_V
+    elif carrier == "hole":
+        exponent = (qf - psi) / THERMAL_VOLTAGE_300K_V
+    else:
+        raise ValueError(f"unsupported carrier {carrier!r}")
+    if not math.isfinite(density) or density <= 0.0:
+        raise ValueError("carrier density must be finite and positive")
+    ni = math.exp(math.log(density) - exponent)
+    if not math.isfinite(ni) or ni <= 0.0:
+        raise ValueError("effective intrinsic density must be finite and positive")
+    return ni
 EXPECTED_STATES = tuple(
     (topology, float(-bias))
     for topology in ("mirror", "sketch")
@@ -272,8 +294,8 @@ def _sentaurus_supports(
             "qf1_V": sent_state[edge[1]]["qf_V"],
             "density0_m3": sent_state[edge[0]]["density_m3"],
             "density1_m3": sent_state[edge[1]]["density_m3"],
-            "ni0_m3": SILICON_NI_300K_M3,
-            "ni1_m3": SILICON_NI_300K_M3,
+            "ni0_m3": _effective_intrinsic_density_m3(carrier, sent_state, edge[0]),
+            "ni1_m3": _effective_intrinsic_density_m3(carrier, sent_state, edge[1]),
             "mobility_m2_per_Vs": 1.0,
             "length_m": length,
             "thermal_voltage_V": THERMAL_VOLTAGE_300K_V,
@@ -294,6 +316,7 @@ def _sentaurus_supports(
 
 def _operator_state(
     formulation: str,
+    carrier: str,
     edge: tuple[int, int],
     length: float,
     vela: Mapping[int, Mapping[str, float]],
@@ -312,8 +335,8 @@ def _operator_state(
         "qf1_V": primary[edge[1]]["qf_V"],
         "density0_m3": primary[edge[0]]["density_m3"],
         "density1_m3": primary[edge[1]]["density_m3"],
-        "ni0_m3": SILICON_NI_300K_M3,
-        "ni1_m3": SILICON_NI_300K_M3,
+        "ni0_m3": _effective_intrinsic_density_m3(carrier, vela, edge[0]),
+        "ni1_m3": _effective_intrinsic_density_m3(carrier, vela, edge[1]),
         "mobility_m2_per_Vs": mobility,
         "length_m": length,
         "thermal_voltage_V": THERMAL_VOLTAGE_300K_V,
@@ -758,6 +781,7 @@ def run_edge_flux_experiment(
                             mobility = sent_mobility if mobility_flag else native
                             state = _operator_state(
                                 formulation,
+                                carrier,
                                 edge,
                                 length,
                                 vela,
@@ -800,6 +824,7 @@ def run_edge_flux_experiment(
 
                         full_unit = _operator_state(
                             formulation,
+                            carrier,
                             edge,
                             length,
                             vela,

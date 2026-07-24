@@ -18,7 +18,7 @@ if str(REPO) not in sys.path:
 
 from scripts.build_pn2d_minimal6_cpp_mobility_current_input import triangle_mobility
 from scripts.pn2d_minimal6_diagnostics.qfp_sg_experiment import (
-    SILICON_NI_300K_M3,
+    effective_intrinsic_density_m3,
     THERMAL_VOLTAGE_300K_V,
     _observation_index,
     _state,
@@ -90,8 +90,8 @@ def main() -> int:
             length = float(row["length_m"])
             unit_flux = qf_sg_flux(
                 carrier,
-                SILICON_NI_300K_M3,
-                SILICON_NI_300K_M3,
+                effective_intrinsic_density_m3(state, node0, carrier),
+                effective_intrinsic_density_m3(state, node1, carrier),
                 state[node0]["psi_V"],
                 state[node1]["psi_V"],
                 state[node0][qf_key],

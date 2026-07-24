@@ -23,7 +23,34 @@ from .qfp_sg_replacement import (
 
 
 THERMAL_VOLTAGE_300K_V = 1.380649e-23 * 300.0 / 1.602176634e-19
-SILICON_NI_300K_M3 = 1.0e16
+
+
+def effective_intrinsic_density_m3(
+    state: Mapping[int, Mapping[str, float]],
+    node: int,
+    carrier: str,
+) -> float:
+    """Recover the frozen node effective-ni represented by n/p and QFP."""
+    values = state[node]
+    psi = float(values["psi_V"])
+    if carrier == "electron":
+        density = float(values["n_m3"])
+        exponent = (psi - float(values["phin_V"])) / THERMAL_VOLTAGE_300K_V
+    elif carrier == "hole":
+        density = float(values["p_m3"])
+        exponent = (float(values["phip_V"]) - psi) / THERMAL_VOLTAGE_300K_V
+    else:
+        raise ValueError(f"unsupported carrier {carrier!r}")
+    if not math.isfinite(density) or density <= 0.0:
+        raise ValueError("frozen carrier density must be finite and positive")
+    log_ni = math.log(density) - exponent
+    try:
+        ni = math.exp(log_ni)
+    except OverflowError as error:
+        raise ValueError("recovered effective intrinsic density overflowed") from error
+    if not math.isfinite(ni) or ni <= 0.0:
+        raise ValueError("recovered effective intrinsic density must be finite and positive")
+    return ni
 
 
 def _quantile(values: list[float], fraction: float) -> float | None:
@@ -155,6 +182,20 @@ def _run_baseline_audit(
     triangle_path = state_root / "triangles.csv"
     _write_state(state_path, state)
     source = inverse_root / "vela" / "source"
+    deck_path = source / "decks" / topology / f"{label}.json"
+    deck = json.loads(deck_path.read_text(encoding="utf-8"))
+    if "materials_file" in deck:
+        sealed_materials = source / "topologies" / topology / "materials.json"
+        if not sealed_materials.is_file():
+            raise ValueError(
+                f"sealed inverse root lacks materials for {topology} {bias:g} V"
+            )
+        deck["materials_file"] = str(sealed_materials.resolve())
+    audit_config_path = state_root / "audit_config.json"
+    audit_config_path.write_text(
+        json.dumps(deck, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
     command = [
         str(executable),
         "--mesh",
@@ -164,7 +205,7 @@ def _run_baseline_audit(
         "--state",
         str(state_path),
         "--config",
-        str(source / "decks" / topology / f"{label}.json"),
+        str(audit_config_path),
         "--node-out",
         str(node_path),
         "--edge-out",
@@ -345,6 +386,10 @@ def run_qfp_replacement_experiment(
             for name, value in flags.items()
         }
         for carrier in ("electron", "hole"):
+            effective_ni = {
+                node: effective_intrinsic_density_m3(vela, node, carrier)
+                for node in range(6)
+            }
             qf_key = "phin_V" if carrier == "electron" else "phip_V"
             density_key = "n_m3" if carrier == "electron" else "p_m3"
             cpp_key = (
@@ -365,8 +410,8 @@ def run_qfp_replacement_experiment(
                 )
                 replay = qf_sg_flux(
                     carrier,
-                    SILICON_NI_300K_M3,
-                    SILICON_NI_300K_M3,
+                    effective_ni[node0],
+                    effective_ni[node1],
                     vela[node0]["psi_V"],
                     vela[node1]["psi_V"],
                     vela[node0][qf_key],
@@ -387,8 +432,8 @@ def run_qfp_replacement_experiment(
                 branch_fluxes = {
                     name: qf_sg_flux(
                         carrier,
-                        SILICON_NI_300K_M3,
-                        SILICON_NI_300K_M3,
+                        effective_ni[node0],
+                        effective_ni[node1],
                         branch[node0]["psi_V"],
                         branch[node1]["psi_V"],
                         branch[node0][qf_key],

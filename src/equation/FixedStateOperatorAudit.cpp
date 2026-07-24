@@ -92,6 +92,17 @@ FixedStateOperatorAuditResult evaluateFixedStateOperators(
     const DDSolution& state,
     const GummelConfig& config)
 {
+    const MaterialDatabase materials(config.inputScaling);
+    return evaluateFixedStateOperators(mesh, doping, state, config, materials);
+}
+
+FixedStateOperatorAuditResult evaluateFixedStateOperators(
+    const DeviceMesh& mesh,
+    const VectorXd& doping,
+    const DDSolution& state,
+    const GummelConfig& config,
+    const MaterialDatabase& materials)
+{
     if (mesh.numNodes() != 6)
         throw std::invalid_argument("fixed-state audit requires exactly 6 nodes");
     if (mesh.numCells() != 4)
@@ -162,9 +173,8 @@ FixedStateOperatorAuditResult evaluateFixedStateOperators(
             nodeId, state.psi(i), state.phin(i), state.phip(i), state.n(i), state.p(i)});
     }
 
-    MaterialDatabase matdb(config.inputScaling);
     const std::vector<Material> cellMaterials =
-        detail::buildCellMaterials(mesh, matdb, config.temperature_K);
+        detail::buildCellMaterials(mesh, materials, config.temperature_K);
     const std::vector<Real> ni = buildIntrinsicDensity(mesh, cellMaterials);
     const DopingModel dopingModel = makeDopingModel(doping);
     const auto mobility = makeMobilityModel(config.mobility);

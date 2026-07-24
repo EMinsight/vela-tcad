@@ -4205,13 +4205,13 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                                temperature_K);
         }
         if (converged && !sweep.writeStateFile.empty())
-            writeDDSolutionStateCsv(sweep.writeStateFile, sol);
+            writeDDSolutionStateCsv(sweep.writeStateFile, sol, sweep.scaling);
         if (converged && !sweep.writeStateEveryPointPrefix.empty()) {
             const std::filesystem::path prefix(sweep.writeStateEveryPointPrefix);
             const std::filesystem::path path =
                 prefix.parent_path() /
                 (prefix.filename().string() + "_bias_" + biasToken(voltage) + ".csv");
-            writeDDSolutionStateCsv(path, sol);
+            writeDDSolutionStateCsv(path, sol, sweep.scaling);
         }
 
         points.push_back(std::move(point));
@@ -4251,7 +4251,8 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
     std::unique_ptr<DDSolution> initialState;
     if (!sweep.initialStateFile.empty()) {
         initialState = std::make_unique<DDSolution>(
-            readDDSolutionStateCsv(sweep.initialStateFile, mesh.numNodes()));
+            readDDSolutionStateCsv(
+                sweep.initialStateFile, mesh.numNodes(), sweep.scaling));
     } else if (sweep.initialization.mode == "poisson_block") {
         const Real initialBias = !sweep.biasPoints.empty() ? sweep.biasPoints.front() : sweep.start;
         auto initializationBiases = baseBiases;
@@ -4268,7 +4269,8 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
             initializer.buildPoissonBlockInitialization();
         initialState = std::make_unique<DDSolution>(initialization.poissonBlockInitial);
         if (!sweep.initialization.writeStateFile.empty())
-            writeDDSolutionStateCsv(sweep.initialization.writeStateFile, *initialState);
+            writeDDSolutionStateCsv(
+                sweep.initialization.writeStateFile, *initialState, sweep.scaling);
         if (!sweep.initialization.diagnosticCsv.empty()) {
             writePoissonBlockInitializationDiagnosticCsv(
                 std::filesystem::path(sweep.initialization.diagnosticCsv),

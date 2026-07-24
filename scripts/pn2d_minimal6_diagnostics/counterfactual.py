@@ -469,7 +469,26 @@ def native_source_anchor(values, *, volume_m3):
 
 
 def integrate_native_nodal_per_unit_depth(mesh: dict, values_by_node: Mapping[int, float]) -> dict:
-    coordinates = {int(node["id"]): (float(node["x"]), float(node["y"])) for node in mesh["nodes"]}
+    coordinate_unit = str(mesh.get("coordinate_unit", "m")).strip().lower()
+    coordinate_scale_to_m = {
+        "m": 1.0,
+        "meter": 1.0,
+        "metre": 1.0,
+        "um": 1.0e-6,
+        "micrometer": 1.0e-6,
+        "micrometre": 1.0e-6,
+    }.get(coordinate_unit)
+    if coordinate_scale_to_m is None:
+        raise ValueError(
+            f"unsupported native source mesh coordinate_unit {coordinate_unit}"
+        )
+    coordinates = {
+        int(node["id"]): (
+            float(node["x"]) * coordinate_scale_to_m,
+            float(node["y"]) * coordinate_scale_to_m,
+        )
+        for node in mesh["nodes"]
+    }
     if len(coordinates) != len(mesh["nodes"]):
         raise ValueError("native source mesh contains duplicate node IDs")
     total = 0.0

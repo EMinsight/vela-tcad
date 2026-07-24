@@ -2,6 +2,7 @@
     "simulation_type":  "dc_sweep",
     "mesh_file":  "mesh.json",
     "node_doping_file":  "doping.csv",
+    "materials_file":  "pn2d_minimal6_materials.json",
     "scaling":  {
                     "mode":  "unit_scaling"
                 },

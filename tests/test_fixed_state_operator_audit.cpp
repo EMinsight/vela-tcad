@@ -3,6 +3,7 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include "vela/equation/FixedStateOperatorAudit.h"
+#include "vela/material/MaterialDatabase.h"
 #include "vela/mesh/DeviceMesh.h"
 #include "vela/physics/MobilityModel.h"
 
@@ -159,6 +160,35 @@ TEST_CASE("fixed-state audit enumerates nine edges and four triangles",
         REQUIRE(std::isfinite(result.edges[edgeId].electronRawSignedFlux));
         REQUIRE(std::isfinite(result.edges[edgeId].holeRawSignedFlux));
     }
+}
+
+TEST_CASE("fixed-state audit honors an explicit material database",
+          "[minimal6][fixed-state][materials]")
+{
+    const DeviceMesh mesh = makeMinimal6Mesh();
+    const VectorXd doping = VectorXd::Zero(6);
+    const DDSolution state = makeState();
+    GummelConfig config = makeConfig();
+    config.impactIonization.model = "none";
+
+    MaterialDatabase baseline;
+    MaterialDatabase overridden;
+    Material silicon = overridden.getMaterial("Si");
+    silicon.ni *= 2.0;
+    overridden.addMaterial(silicon);
+
+    const auto baselineResult =
+        evaluateFixedStateOperators(mesh, doping, state, config, baseline);
+    const auto overriddenResult =
+        evaluateFixedStateOperators(mesh, doping, state, config, overridden);
+
+    REQUIRE(baselineResult.edges[0].electronRawSignedFlux != 0.0);
+    REQUIRE(overriddenResult.edges[0].electronRawSignedFlux ==
+            Catch::Approx(2.0 * baselineResult.edges[0].electronRawSignedFlux)
+                .epsilon(2.0e-14));
+    REQUIRE(overriddenResult.edges[0].holeRawSignedFlux ==
+            Catch::Approx(2.0 * baselineResult.edges[0].holeRawSignedFlux)
+                .epsilon(2.0e-14));
 }
 
 TEST_CASE("fixed-state audit zeroes right-triangle hypotenuse support",

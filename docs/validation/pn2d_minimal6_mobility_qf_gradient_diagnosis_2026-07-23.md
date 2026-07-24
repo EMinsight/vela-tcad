@@ -1,5 +1,10 @@
 # PN2D Minimal6 mobility and quasi-Fermi-gradient diagnosis
 
+> Quantitative correction: the direction conclusion is unchanged, but the
+> original numeric tables used pre-fix Vela restart-unit inputs. Corrected
+> values and evidence roots are in
+> `pn2d_minimal6_state_unit_and_transport_reaudit_2026-07-23.md`.
+
 Date: 2026-07-23
 
 Scope: 40 exact Sentaurus/Vela states, two topologies, two carriers

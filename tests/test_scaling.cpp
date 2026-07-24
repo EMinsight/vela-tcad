@@ -103,6 +103,7 @@ TEST_CASE("UnitScalingConfig unit_scaling keeps TCAD values internal", "[scaling
     REQUIRE(unitScaling.concentrationToInternal(1.0e17) == Catch::Approx(1.0e17));
     REQUIRE(unitScaling.sheetDensityToInternal(2.5e11) == Catch::Approx(2.5e11));
     REQUIRE(unitScaling.mobilityToInternal(1000.0) == Catch::Approx(1000.0));
+    REQUIRE(unitScaling.velocityToInternal(1.07e7) == Catch::Approx(1.07e7));
     REQUIRE(unitScaling.electricFieldToInternal(3.0e5) == Catch::Approx(3.0e5));
     REQUIRE(unitScaling.inverseLengthToInternal(1.2e6) == Catch::Approx(1.2e6));
     REQUIRE(unitScaling.surfaceFieldCoefficientToInternal(0.7) == Catch::Approx(0.7));
@@ -111,6 +112,7 @@ TEST_CASE("UnitScalingConfig unit_scaling keeps TCAD values internal", "[scaling
             Catch::Approx(1.0e-8));
     REQUIRE(unitScaling.unitSystem().internalConcentrationToM3(1.0e17) ==
             Catch::Approx(1.0e23));
+    REQUIRE(unitScaling.velocityToSI(1.07e7) == Catch::Approx(1.07e5));
     REQUIRE(unitScaling.unitSystem().internalElectricFieldToVPerM(3.0e5) ==
             Catch::Approx(3.0e7));
 }
@@ -123,6 +125,7 @@ TEST_CASE("PhysicalUnitSystem exposes TCAD composite factors", "[scaling]")
     REQUIRE(units.chargeVolumeFactor() == Catch::Approx(1.0e-12));
     REQUIRE(units.chargeSheetFactor() == Catch::Approx(1.0e-8));
     REQUIRE(units.fieldFromCoordinateDeltaFactor() == Catch::Approx(1.0e4));
+    REQUIRE(units.continuitySourceIntegralFactor() == Catch::Approx(1.0e-8));
     REQUIRE(units.currentPerInternalDepthFactor() == Catch::Approx(1.0e-6));
 }
 TEST_CASE("UnitScalingSystem: unit_scaling references stay in TCAD internal units", "[scaling]")

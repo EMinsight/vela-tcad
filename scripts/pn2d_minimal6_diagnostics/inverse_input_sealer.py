@@ -644,6 +644,7 @@ def seal_inverse_input_roots(
     meshes = {}
     mesh_paths = {}
     doping_paths = {}
+    material_paths = {}
     topology_hashes = vela_manifest.get("topology_input_sha256")
     if not isinstance(topology_hashes, dict):
         raise ValueError("Vela topology input hash schema mismatch")
@@ -657,6 +658,13 @@ def seal_inverse_input_roots(
             raise ValueError("Vela topology input hash schema mismatch")
         _require_hash(mesh_path, declared.get("mesh.json"), "Vela topology mesh")
         _require_hash(doping_path, declared.get("doping.csv"), "Vela topology doping")
+        if "materials.json" in declared:
+            material_path = _checked(
+                vela_root, f"inputs/{topology}/materials.json",
+                "Vela topology materials")
+            _require_hash(material_path, declared.get("materials.json"),
+                          "Vela topology materials")
+            material_paths[topology] = material_path
         meshes[topology] = _mesh_contract(mesh_path)
         mesh_paths[topology], doping_paths[topology] = mesh_path, doping_path
 
@@ -680,15 +688,21 @@ def seal_inverse_input_roots(
                     values[node] = mapped
                 fields[name] = values
             tag = _bias_tag(bias)
+            evidence = [
+                (state_path, f"source/states/{topology}/{tag}.csv"),
+                (vela_decks[(topology, bias)], f"source/decks/{topology}/{tag}.json"),
+                (mesh_paths[topology], f"source/topologies/{topology}/mesh.json"),
+                (doping_paths[topology], f"source/topologies/{topology}/doping.csv"),
+            ]
+            if topology in material_paths:
+                evidence.append((
+                    material_paths[topology],
+                    f"source/topologies/{topology}/materials.json"))
             vela_records.append({
-                "topology": topology, "bias": bias, "coordinates": meshes[topology]["coordinates"],
+                "topology": topology, "bias": bias,
+                "coordinates": meshes[topology]["coordinates"],
                 "fields": fields,
-                "evidence": [
-                    (state_path, f"source/states/{topology}/{tag}.csv"),
-                    (vela_decks[(topology, bias)], f"source/decks/{topology}/{tag}.json"),
-                    (mesh_paths[topology], f"source/topologies/{topology}/mesh.json"),
-                    (doping_paths[topology], f"source/topologies/{topology}/doping.csv"),
-                ],
+                "evidence": evidence,
             })
 
     destination.parent.mkdir(parents=True, exist_ok=True)
