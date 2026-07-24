@@ -126,4 +126,3 @@ approximately 0.048-0.059 dex.
 The residual question after unit parity is restored is whether the remaining
 approximately 0.05 dex median element gap is dominated by doping
 interpolation or Sentaurus-specific high-field temperature dependence.
-

@@ -50,4 +50,3 @@ parity reference.
 The isolated `20260724-a` and `20260724-b` roots are byte-identical for every
 stable CSV, report, and independent verification JSON.  Both independent
 verifications pass.
-
