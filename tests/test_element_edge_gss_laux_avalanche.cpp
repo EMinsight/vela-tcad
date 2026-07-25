@@ -53,6 +53,43 @@ DeviceMesh makeSingleRightTriangle()
     mesh.buildEdges();
     return mesh;
 }
+DeviceMesh makeSingleAcuteScaleneTriangle(bool reverse)
+{
+    DeviceMesh mesh;
+    Node n0;
+    n0.id = 0;
+    n0.x = 0.0;
+    n0.y = 0.0;
+    mesh.addNode(n0);
+    Node n1;
+    n1.id = 1;
+    n1.x = 1.0e-6;
+    n1.y = 0.0;
+    mesh.addNode(n1);
+    Node n2;
+    n2.id = 2;
+    n2.x = 0.2e-6;
+    n2.y = 0.8e-6;
+    mesh.addNode(n2);
+
+    Cell cell;
+    cell.id = 0;
+    cell.type = CellType::Tri3;
+    cell.region_id = 0;
+    cell.node_ids = reverse ? std::vector<Index>{0, 2, 1}
+                            : std::vector<Index>{0, 1, 2};
+    mesh.addCell(cell);
+
+    Region region;
+    region.id = 0;
+    region.name = "si";
+    region.material = "Si";
+    region.cell_ids = {0};
+    mesh.addRegion(region);
+
+    mesh.buildEdges();
+    return mesh;
+}
 
 } // namespace
 
@@ -82,8 +119,8 @@ TEST_CASE("Element-edge GSS Laux mode has an explicit canonical contract",
             "element_edge_sg_gss_laux requires the canonical element-box configuration"));
 }
 
-TEST_CASE("GSS Laux element reconstruction keeps a zero-box diagonal current",
-          "[impact][element_edge_gss_laux][geometry]")
+TEST_CASE("A zero-box diagonal is inactive on a right triangle",
+          "[impact][element_edge_gss_laux][geometry][right_triangle]")
 {
     DeviceMesh mesh = makeSingleRightTriangle();
     const Cell& cell = mesh.getCell(0);
@@ -114,11 +151,76 @@ TEST_CASE("GSS Laux element reconstruction keeps a zero-box diagonal current",
     REQUIRE(reconstructed.y() ==
             Catch::Approx(expected.y()).epsilon(1.0e-13));
 
+    auto perturbedDiagonalCurrent = signedEdgeCurrent;
+    perturbedDiagonalCurrent[1] += 123.0;
+    const Point2 perturbed = detail::gssLauxTri3CurrentVector(
+        mesh, cell, perturbedDiagonalCurrent);
+    REQUIRE(perturbed.x() ==
+            Catch::Approx(reconstructed.x()).epsilon(1.0e-13));
+    REQUIRE(perturbed.y() ==
+            Catch::Approx(reconstructed.y()).epsilon(1.0e-13));
+
     const auto vertexMeasures =
         detail::tri3ElementVertexBoxMeasures(mesh, cell);
     const Real measureSum =
         vertexMeasures[0] + vertexMeasures[1] + vertexMeasures[2];
     REQUIRE(measureSum == Catch::Approx(0.25e-12).epsilon(1.0e-13));
+}
+
+TEST_CASE("GSS Laux reconstruction is orientation invariant on a scalene triangle",
+          "[impact][element_edge_gss_laux][geometry][general_mesh]")
+{
+    const Point2 expected{-2.75, 6.5};
+    for (const bool reverse : {false, true}) {
+        DeviceMesh mesh = makeSingleAcuteScaleneTriangle(reverse);
+        const Cell& cell = mesh.getCell(0);
+        std::array<Real, 3> signedEdgeCurrent{};
+        for (int localEdge = 0; localEdge < 3; ++localEdge) {
+            const Index node0 =
+                cell.node_ids[static_cast<std::size_t>(localEdge)];
+            const Index node1 =
+                cell.node_ids[
+                    static_cast<std::size_t>((localEdge + 1) % 3)];
+            const Point2 delta =
+                detail::meshPoint(mesh, node1) -
+                detail::meshPoint(mesh, node0);
+            signedEdgeCurrent[static_cast<std::size_t>(localEdge)] =
+                (delta / delta.norm()).dot(expected);
+        }
+
+        const Point2 reconstructed = detail::gssLauxTri3CurrentVector(
+            mesh, cell, signedEdgeCurrent);
+        REQUIRE(reconstructed.x() ==
+                Catch::Approx(expected.x()).epsilon(1.0e-13));
+        REQUIRE(reconstructed.y() ==
+                Catch::Approx(expected.y()).epsilon(1.0e-13));
+
+        for (int localEdge = 0; localEdge < 3; ++localEdge) {
+            auto perturbedEdgeCurrent = signedEdgeCurrent;
+            perturbedEdgeCurrent[static_cast<std::size_t>(localEdge)] +=
+                123.0;
+            const Point2 perturbed = detail::gssLauxTri3CurrentVector(
+                mesh, cell, perturbedEdgeCurrent);
+            REQUIRE((perturbed - reconstructed).norm() >
+                    1.0e-6);
+        }
+
+        const auto partialVolumes =
+            detail::tri3ElementEdgeBoxPartialVolumes(mesh, cell);
+        REQUIRE(partialVolumes[0] > 0.0);
+        REQUIRE(partialVolumes[1] > 0.0);
+        REQUIRE(partialVolumes[2] > 0.0);
+
+        const auto vertexMeasures =
+            detail::tri3ElementVertexBoxMeasures(mesh, cell);
+        const Real measureSum =
+            vertexMeasures[0] + vertexMeasures[1] + vertexMeasures[2];
+        REQUIRE(measureSum ==
+                Catch::Approx(0.4e-12).epsilon(1.0e-13));
+        REQUIRE(partialVolumes[0] + partialVolumes[1] +
+                    partialVolumes[2] ==
+                Catch::Approx(0.4e-12).epsilon(1.0e-13));
+    }
 }
 
 TEST_CASE("Element-edge GSS Laux records use exact SG currents and box measures",
@@ -164,8 +266,8 @@ TEST_CASE("Element-edge GSS Laux records use exact SG currents and box measures"
 
     const auto record =
         detail::elementEdgeGssLauxAvalancheSourceRecordForCell(
-            impactConfig, *impact, *mobility, cellEdges.at(0), mesh, doping,
-            cellMaterials, 0, psi, phin, phip, n, p, ni, Vt);
+            impactConfig, *impact, mobilityConfig, *mobility, cellEdges.at(0),
+            mesh, doping, cellMaterials, 0, psi, phin, phip, n, p, ni, Vt);
 
     REQUIRE(record.cellId == 0);
     REQUIRE(record.vertexMeasures[0] + record.vertexMeasures[1] +
@@ -216,8 +318,8 @@ TEST_CASE("Element-edge GSS Laux records use exact SG currents and box measures"
     impactConfig.drivingForce = "electric_field";
     const auto electricRecord =
         detail::elementEdgeGssLauxAvalancheSourceRecordForCell(
-            impactConfig, *impact, *mobility, cellEdges.at(0), mesh, doping,
-            cellMaterials, 0, psi, phin, phip, n, p, ni, Vt);
+            impactConfig, *impact, mobilityConfig, *mobility, cellEdges.at(0),
+            mesh, doping, cellMaterials, 0, psi, phin, phip, n, p, ni, Vt);
     const Real expectedElectricField = std::hypot(2.0e5, 1.6e5);
     REQUIRE(electricRecord.electronImpactField ==
             Catch::Approx(expectedElectricField).epsilon(1.0e-13));
@@ -225,4 +327,30 @@ TEST_CASE("Element-edge GSS Laux records use exact SG currents and box measures"
             Catch::Approx(expectedElectricField).epsilon(1.0e-13));
     REQUIRE(electricRecord.electronImpactField !=
             Catch::Approx(record.electronImpactField));
+
+    MobilityModelConfig fieldMobilityConfig =
+        mobilityModelConfig("masetti_field");
+    fieldMobilityConfig.highFieldDrivingForce = "electric_field";
+    const auto fieldMobility = makeMobilityModel(fieldMobilityConfig);
+    const auto electricMobilityRecord =
+        detail::elementEdgeGssLauxAvalancheSourceRecordForCell(
+            impactConfig, *impact, fieldMobilityConfig, *fieldMobility,
+            cellEdges.at(0), mesh, doping, cellMaterials, 0, psi, phin, phip,
+            n, p, ni, Vt);
+
+    fieldMobilityConfig.highFieldDrivingForce = "quasi_fermi_gradient";
+    const auto qfMobilityRecord =
+        detail::elementEdgeGssLauxAvalancheSourceRecordForCell(
+            impactConfig, *impact, fieldMobilityConfig, *fieldMobility,
+            cellEdges.at(0), mesh, doping, cellMaterials, 0, psi, phin, phip,
+            n, p, ni, Vt);
+
+    REQUIRE(electricMobilityRecord.electronMobilities[0] >
+            qfMobilityRecord.electronMobilities[0]);
+    REQUIRE(electricMobilityRecord.holeMobilities[0] >
+            qfMobilityRecord.holeMobilities[0]);
+    REQUIRE(electricMobilityRecord.electronSignedEdgeFlux[0] !=
+            Catch::Approx(qfMobilityRecord.electronSignedEdgeFlux[0]));
+    REQUIRE(electricMobilityRecord.holeSignedEdgeFlux[0] !=
+            Catch::Approx(qfMobilityRecord.holeSignedEdgeFlux[0]));
 }

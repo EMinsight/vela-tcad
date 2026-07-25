@@ -2268,6 +2268,7 @@ inline ElementEdgeGssLauxAvalancheSourceRecord
 elementEdgeGssLauxAvalancheSourceRecordForCell(
     const ImpactIonizationModelConfig& config,
     const ImpactIonizationModel&       impact,
+    const MobilityModelConfig&         mobilityConfig,
     const MobilityModel&               mobility,
     const std::vector<Index>&          cellEdgeIds,
     const DeviceMesh&                  mesh,
@@ -2355,6 +2356,13 @@ elementEdgeGssLauxAvalancheSourceRecordForCell(
             throw std::invalid_argument(
                 "degenerate triangle edge cannot evaluate an SG current");
         }
+        const Real electricEdgeField =
+            std::abs(
+                psi(static_cast<int>(node1)) -
+                psi(static_cast<int>(node0))) /
+            edgeLength * fieldFactor;
+        const bool qfMobility =
+            mobilityConfig.highFieldDrivingForce == "quasi_fermi_gradient";
         record.edgeIds[local] = edgeId;
         record.edgeLengths[local] = edgeLength;
 
@@ -2371,11 +2379,13 @@ elementEdgeGssLauxAvalancheSourceRecordForCell(
         const Real electronMobility =
             triangleGssEndpointAveragedMobility(
                 mobility, mesh, doping, cellMaterials, n, p, cellId,
-                node0, node1, CarrierType::Electron, electronEdgeField);
+                node0, node1, CarrierType::Electron,
+                qfMobility ? electronEdgeField : electricEdgeField);
         const Real holeMobility =
             triangleGssEndpointAveragedMobility(
                 mobility, mesh, doping, cellMaterials, n, p, cellId,
-                node0, node1, CarrierType::Hole, holeEdgeField);
+                node0, node1, CarrierType::Hole,
+                qfMobility ? holeEdgeField : electricEdgeField);
         record.electronMobilities[local] = electronMobility;
         record.holeMobilities[local] = holeMobility;
         record.electronSignedEdgeFlux[local] =
@@ -2447,7 +2457,7 @@ elementEdgeGssLauxAvalancheSourceRecords(
     for (Index cellId = 0; cellId < mesh.numCells(); ++cellId) {
         records.push_back(
             elementEdgeGssLauxAvalancheSourceRecordForCell(
-                config, impact, mobility,
+                config, impact, mobilityConfig, mobility,
                 cellEdges.at(static_cast<std::size_t>(cellId)),
                 mesh, doping, cellMaterials, cellId, psi, phin, phip, n, p,
                 ni, Vt, fieldFactor));

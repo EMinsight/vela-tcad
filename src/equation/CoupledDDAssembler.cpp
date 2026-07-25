@@ -1636,7 +1636,7 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
                 const auto record =
                     detail::elementEdgeGssLauxAvalancheSourceRecordForCell(
                         impactIonizationConfig_, *impactIonization_,
-                        *mobility_,
+                        mobilityConfig_, *mobility_,
                         cellEdges.at(static_cast<std::size_t>(cellId)),
                         mesh_, doping_, cellMaterials_, cellId, psiValues,
                         phinValues, phipValues, nValues, pValues, ni_, Vt_,

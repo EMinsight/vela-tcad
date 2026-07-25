@@ -89,12 +89,14 @@ The complete fixed-state evidence supports all of the following:
 1. Sentaurus Van Overstraeten coefficients in this experiment are driven by
    the element electric-field magnitude, while imported QFP values determine
    carrier density and SG current.
-2. A zero diagonal box partial area removes that edge from direct source
-   integration, but its directed current remains required by the GSS/Laux
-   vector reconstruction.
-3. The dominant historical discrepancy was the triangle current support and
-   vector reconstruction, not the Van Overstraeten coefficient formula,
-   mobility formula, or QFP sign convention.
+2. On the Minimal6 right triangles, a zero diagonal box partial area makes
+   that edge numerically inactive in the GSS/Laux vector; this is why the
+   GSS/Laux and two-active-edge controls are exactly identical. The general
+   implementation still supports all three edges for non-right triangles.
+3. The dominant fixed-state avalanche-source discrepancy was the triangle
+   current support and vector reconstruction, not the Van Overstraeten
+   coefficient formula, mobility formula, or QFP sign convention. This does
+   not classify the remaining self-consistent QFP/current mismatch.
 
 Task 9 must now test the same operator in a self-consistent 40-state sweep.
 No production default should change until that nonlinear sweep and the

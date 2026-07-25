@@ -38,8 +38,9 @@ recomputed-versus-exported Sentaurus density difference of 4.426180e-6 dex.
 For each triangle and carrier, the diagnostic path:
 
 1. evaluates all three directed variable-ni SG edge particle fluxes;
-2. retains the hypotenuse edge current even when its box partial volume is
-   zero;
+2. represents all three edge currents in the general operator; on this
+   right-triangle mesh the zero-weight hypotenuse current is numerically
+   inactive;
 3. reconstructs one cell current vector with the GSS/Laux pair solve and box
    weighting;
 4. evaluates the Van Overstraeten coefficient from the cell P1 electric field
@@ -49,8 +50,9 @@ For each triangle and carrier, the diagnostic path:
    measures.
 
 All 24 right-triangle hypotenuse partial volumes are exactly zero. They are
-geometric integration weights, not instructions to discard the corresponding
-directed SG current from the vector reconstruction.
+geometric integration weights. The implementation keeps a general three-edge
+record, but the Minimal6 GSS/Laux weighted vector is exactly unchanged if a
+zero-weight hypotenuse current is perturbed.
 
 ## Six-state comparison
 
@@ -115,17 +117,18 @@ The fixed-state evidence supports the following decomposition:
    reproduces the carrier state;
 2. the remaining directed-edge and reconstructed-vector current errors are
    at the known Vela-versus-Sentaurus element-mobility scale;
-3. GSS/Laux three-edge reconstruction correctly retains zero-dual
-   hypotenuse currents;
+3. GSS/Laux reduces exactly to its two positive-weight edges on Minimal6;
+   a separate acute-scalene regression establishes that all three edges are
+   active when all three partial volumes are positive;
 4. electric-field-driven Van Overstraeten alpha agrees with Sentaurus to
    numerical precision;
 5. accumulated node and integrated avalanche source errors reduce to the
    same mobility/current scale.
 
-The evidence rejects changes to the Van Overstraeten coefficient formula and
-rejects deleting diagonal SG currents. It supports continuing with the
-opt-in element-edge current support and electric-field coefficient driver,
-then extending the same audit to all 40 exact states before any production
+The evidence rejects changes to the Van Overstraeten coefficient formula. It
+supports continuing with the opt-in element-edge current support and
+electric-field coefficient driver, while retaining a general three-edge
+operator for non-right-triangle meshes, before any production
 default decision.
 
 ## Evidence

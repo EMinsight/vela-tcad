@@ -124,6 +124,31 @@ At the 40 exact checkpoints:
 The candidate therefore introduces no continuation failure, terminal-current
 method inconsistency, or high-bias KCL regression.
 
+## Final implementation audit
+
+Final review found that the cell-local element-edge replay always selected
+the QFP edge gradient for high-field mobility, even when the candidate
+configuration selected `electric_field`. The aggregate residual path and
+cell-local Jacobian replay now both receive the same `MobilityModelConfig`
+and select the configured mobility driving field.
+
+A focused regression verifies both branches produce different mobility and
+SG current when the electric and QFP fields differ. The general-mesh geometry
+tests also establish:
+
+- a zero-weight hypotenuse is numerically inactive in the Minimal6
+  right-triangle GSS/Laux vector;
+- all three edges are active on an acute scalene triangle;
+- forward and reverse cell orientation recover the same constant vector and
+  conserve the triangle area.
+
+The canonical 40-state A/B sweep and Phase F roots were regenerated after
+the fix. All 40 state CSV pairs have identical SHA-256 hashes, the independent
+Phase F verifier reports `deterministic_pair: true`, and the scientific
+metrics above are unchanged at the reported precision. This confirms that
+the remaining mismatch is not an artifact of the repaired mobility-driver
+selection.
+
 ## Decision
 
 Keep the operator opt-in. Do not change the production default in Task 9.
@@ -131,6 +156,6 @@ Keep the operator opt-in. Do not change the production default in Task 9.
 The evidence supports the element-edge GSS/Laux support and source mapping as
 the correct Minimal6 avalanche-active diagnostic. It does not establish
 general-mesh production readiness, and it does not solve the upstream
-self-consistent QFP/current model difference. Task 10 must complete
-general-mesh tests, full Release regression, independent scientific and code
-review, and the final default decision.
+self-consistent QFP/current model difference. General-mesh tests, full Release
+regression, and independent scientific and code review therefore remain the
+final gates for the default decision.
