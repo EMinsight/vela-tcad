@@ -2,6 +2,10 @@
 
 Date: 2026-07-25
 
+> Corrigendum: the electric-field result below is the effective Minimal6
+> contact fallback, not the global Sentaurus default. See the
+> [default correction](pn2d_minimal6_sentaurus_avalanche_default_correction_2026-07-25.md).
+
 ## Outcome
 
 Task 8 passed for the exact 40-state matrix:
