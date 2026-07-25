@@ -910,6 +910,11 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
         detail::usesEdgeCurrentAvalancheSource(impactIonizationConfig_);
     const bool triangleGssAvalanche = sgCurrentAvalanche &&
         detail::usesTriangleGssAvalancheSource(impactIonizationConfig_);
+    const bool elementEdgeGssLauxAvalanche = sgCurrentAvalanche &&
+        detail::usesElementEdgeGssLauxAvalancheSource(
+            impactIonizationConfig_);
+    const bool cellLocalAvalanche =
+        triangleGssAvalanche || elementEdgeGssLauxAvalanche;
     const bool directionalEdgePartition =
         detail::usesDirectionalEdgeAvalancheSourcePartition(impactIonizationConfig_);
 
@@ -1507,7 +1512,7 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
             }
         }
 
-        if (sgCurrentAvalanche && !triangleGssAvalanche) {
+        if (sgCurrentAvalanche && !cellLocalAvalanche) {
             // Finite-difference the directionally partitioned nodal avalanche
             // source with respect to the six endpoint potentials. This captures
             // the flux (carrier density), driving-field (alpha), field-dependent
@@ -1614,10 +1619,10 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
         }
     }
 
-    if (triangleGssAvalanche) {
+    if (cellLocalAvalanche) {
         if (isSurfaceMobilityModel(mobilityConfig_)) {
             throw std::invalid_argument(
-                "triangle GSS avalanche source does not support surface mobility");
+                "cell-local avalanche source does not support surface mobility");
         }
         auto cellNodeSources = [&](Index cellId,
                                    const VectorXd& psiValues,
@@ -1627,6 +1632,21 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
                                    const VectorXd& pValues) {
             VectorXd sources = VectorXd::Zero(3);
             const Cell& cell = mesh_.getCell(cellId);
+            if (elementEdgeGssLauxAvalanche) {
+                const auto record =
+                    detail::elementEdgeGssLauxAvalancheSourceRecordForCell(
+                        impactIonizationConfig_, *impactIonization_,
+                        *mobility_,
+                        cellEdges.at(static_cast<std::size_t>(cellId)),
+                        mesh_, doping_, cellMaterials_, cellId, psiValues,
+                        phinValues, phipValues, nValues, pValues, ni_, Vt_,
+                        fieldFactor);
+                for (std::size_t localNode = 0; localNode < 3; ++localNode) {
+                    sources(static_cast<int>(localNode)) +=
+                        record.combinedSourceIntegrals[localNode];
+                }
+                return sources;
+            }
             const auto records = detail::triangleGssAvalancheSourceRecordsForCell(
                 impactIonizationConfig_, *impactIonization_, *mobility_,
                 cellEdges.at(static_cast<std::size_t>(cellId)),

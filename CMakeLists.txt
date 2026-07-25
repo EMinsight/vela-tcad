@@ -296,6 +296,9 @@ target_link_libraries(test_impact_ionization PRIVATE vela_core Catch2::Catch2Wit
 add_executable(test_cell_reconstructed_avalanche tests/test_cell_reconstructed_avalanche.cpp)
 target_link_libraries(test_cell_reconstructed_avalanche PRIVATE vela_core Catch2::Catch2WithMain)
 
+add_executable(test_element_edge_gss_laux_avalanche tests/test_element_edge_gss_laux_avalanche.cpp)
+target_link_libraries(test_element_edge_gss_laux_avalanche PRIVATE vela_core Catch2::Catch2WithMain)
+
 add_executable(test_fixed_state_operator_audit tests/test_fixed_state_operator_audit.cpp)
 target_link_libraries(test_fixed_state_operator_audit PRIVATE vela_core Catch2::Catch2WithMain)
 
@@ -374,6 +377,7 @@ add_test(NAME mos_mixed COMMAND test_mos_mixed_material [mos_mixed])
 vela_catch_discover_tests(test_mobility)
 vela_catch_discover_tests(test_impact_ionization)
 vela_catch_discover_tests(test_cell_reconstructed_avalanche)
+vela_catch_discover_tests(test_element_edge_gss_laux_avalanche)
 vela_catch_discover_tests(test_fixed_state_operator_audit)
 vela_catch_discover_tests(test_recombination)
 vela_catch_discover_tests(test_line_search_backtrack_failure)

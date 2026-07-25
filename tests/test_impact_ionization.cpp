@@ -739,6 +739,71 @@ TEST_CASE("Coupled DD SG edge-current avalanche Jacobian matches carrier finite 
     REQUIRE(maxAbsDiff / std::max<Real>(1.0, maxAbsRef) < 5.0e-5);
 }
 
+TEST_CASE("Coupled DD element-edge GSS Laux avalanche Jacobian matches finite differences",
+          "[impact][newton][element_edge_gss_laux]")
+{
+    DeviceMesh mesh = makePNMesh();
+    MaterialDatabase matdb;
+    const std::vector<RegionDopingSpec> specs = {
+        {"n_region", 5.0e22, 0.0},
+        {"p_region", 0.0, 5.0e22},
+    };
+    DopingModel doping = DopingModel::fromMeshAndRegions(mesh, specs);
+
+    const Real Vt = 0.025852;
+    CoupledDDState state;
+    state.psi =
+        (VectorXd(4) << 0.05, -0.30, -0.75, -0.10).finished();
+    state.phin =
+        (VectorXd(4) << 0.02, -0.65, -1.10, -0.08).finished();
+    state.phip =
+        (VectorXd(4) << -0.15, -0.35, -0.82, -0.60).finished();
+
+    ImpactIonizationModelConfig impactConfig;
+    impactConfig.model = "selberherr";
+    impactConfig.drivingForce = "quasi_fermi_gradient";
+    impactConfig.generation = "current_density";
+    impactConfig.currentApproximation = "element_edge_sg_gss_laux";
+    impactConfig.quasiFermiGradientDiscretization = "cell_gradient";
+    impactConfig.sourceMappingMode = "element_vertex_box_measure";
+    impactConfig.electronA = 1.0;
+    impactConfig.electronB = 1.0e-30;
+    impactConfig.holeA = 1.0;
+    impactConfig.holeB = 1.0e-30;
+
+    CoupledDDAssembler assembler(
+        mesh,
+        matdb,
+        doping,
+        Vt,
+        mobilityModelConfig("constant"),
+        recombinationModelConfig({"none"}),
+        BandgapNarrowingConfig{},
+        impactConfig);
+
+    const VectorXd x = assembler.pack(state);
+    const CoupledDDBoundaryConditions bcs;
+    const Eigen::MatrixXd analytic =
+        Eigen::MatrixXd(assembler.assembleJacobian(x, bcs));
+    const Eigen::MatrixXd finiteDifference =
+        Eigen::MatrixXd(assembler.finiteDifferenceJacobian(x, bcs, 1.0e-7));
+
+    const int N = static_cast<int>(mesh.numNodes());
+    Real maxAbsDiff = 0.0;
+    Real maxAbsRef = 0.0;
+    for (int row = N; row < 3 * N; ++row) {
+        for (int col = 0; col < 3 * N; ++col) {
+            maxAbsDiff = std::max(
+                maxAbsDiff,
+                std::abs(analytic(row, col) - finiteDifference(row, col)));
+            maxAbsRef =
+                std::max(maxAbsRef, std::abs(finiteDifference(row, col)));
+        }
+    }
+    REQUIRE(maxAbsRef > 0.0);
+    REQUIRE(maxAbsDiff / maxAbsRef < 5.0e-5);
+}
+
 TEST_CASE("Coupled DD psi-gradient avalanche Jacobian matches carrier finite differences",
           "[impact][newton][psi_gradient_proxy]")
 {

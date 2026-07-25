@@ -914,6 +914,152 @@ inline Real geniusTri3TruncatedPartialVolumeWithEdge(
            std::max(0.0, dt[static_cast<std::size_t>(localEdge)]);
 }
 
+inline std::array<Real, 3> tri3ElementEdgeBoxPartialVolumes(
+    const DeviceMesh& mesh,
+    const Cell&       cell)
+{
+    if (cell.type != CellType::Tri3 || cell.node_ids.size() != 3) {
+        throw std::invalid_argument(
+            "element-edge GSS/Laux reconstruction requires a Tri3 cell");
+    }
+    std::array<Real, 3> partialVolumes{};
+    for (int localEdge = 0; localEdge < 3; ++localEdge) {
+        const Index node0 =
+            cell.node_ids[static_cast<std::size_t>(localEdge)];
+        const Index node1 =
+            cell.node_ids[static_cast<std::size_t>((localEdge + 1) % 3)];
+        partialVolumes[static_cast<std::size_t>(localEdge)] =
+            geniusTri3TruncatedPartialVolumeWithEdge(
+                mesh, cell, node0, node1);
+    }
+    return partialVolumes;
+}
+
+inline std::array<Real, 3> tri3ElementVertexBoxMeasures(
+    const DeviceMesh& mesh,
+    const Cell&       cell)
+{
+    const auto edgePartialVolumes =
+        tri3ElementEdgeBoxPartialVolumes(mesh, cell);
+    std::array<Real, 3> vertexMeasures{};
+    for (int localEdge = 0; localEdge < 3; ++localEdge) {
+        const Real halfMeasure =
+            0.5 * edgePartialVolumes[static_cast<std::size_t>(localEdge)];
+        vertexMeasures[static_cast<std::size_t>(localEdge)] += halfMeasure;
+        vertexMeasures[static_cast<std::size_t>((localEdge + 1) % 3)] +=
+            halfMeasure;
+    }
+    return vertexMeasures;
+}
+
+inline Point2 solveTri3EdgeProjectionPair(
+    const Point2& tangentA,
+    Real          valueA,
+    const Point2& tangentB,
+    Real          valueB)
+{
+    const Real determinant =
+        tangentA.x() * tangentB.y() - tangentA.y() * tangentB.x();
+    if (std::abs(determinant) <= 1.0e-14) {
+        throw std::invalid_argument(
+            "parallel triangle edges cannot reconstruct a current vector");
+    }
+    return Point2{
+        (valueA * tangentB.y() - tangentA.y() * valueB) / determinant,
+        (tangentA.x() * valueB - valueA * tangentB.x()) / determinant};
+}
+
+inline Point2 gssLauxTri3CurrentVector(
+    const DeviceMesh&          mesh,
+    const Cell&                cell,
+    const std::array<Real, 3>& signedEdgeCurrent)
+{
+    if (cell.type != CellType::Tri3 || cell.node_ids.size() != 3) {
+        throw std::invalid_argument(
+            "element-edge GSS/Laux reconstruction requires a Tri3 cell");
+    }
+
+    std::array<Point2, 3> tangents{};
+    std::array<Real, 3> lengths{};
+    for (int localEdge = 0; localEdge < 3; ++localEdge) {
+        const Point2 delta =
+            meshPoint(
+                mesh,
+                cell.node_ids[static_cast<std::size_t>(
+                    (localEdge + 1) % 3)]) -
+            meshPoint(
+                mesh,
+                cell.node_ids[static_cast<std::size_t>(localEdge)]);
+        lengths[static_cast<std::size_t>(localEdge)] = delta.norm();
+        if (lengths[static_cast<std::size_t>(localEdge)] <= 1.0e-30) {
+            throw std::invalid_argument(
+                "degenerate triangle edge cannot reconstruct a current vector");
+        }
+        tangents[static_cast<std::size_t>(localEdge)] =
+            delta / lengths[static_cast<std::size_t>(localEdge)];
+    }
+
+    const std::array<Point2, 3> pairVectors = {
+        solveTri3EdgeProjectionPair(
+            tangents[0], signedEdgeCurrent[0],
+            tangents[1], signedEdgeCurrent[1]),
+        solveTri3EdgeProjectionPair(
+            tangents[0], signedEdgeCurrent[0],
+            tangents[2], signedEdgeCurrent[2]),
+        solveTri3EdgeProjectionPair(
+            tangents[1], signedEdgeCurrent[1],
+            tangents[2], signedEdgeCurrent[2])};
+    const auto pairIndex = [](int first, int second) {
+        const int low = std::min(first, second);
+        const int high = std::max(first, second);
+        return low == 0 ? high - 1 : 2;
+    };
+
+    const auto partialVolumes =
+        tri3ElementEdgeBoxPartialVolumes(mesh, cell);
+    std::array<Point2, 3> edgeVectors{};
+    for (int target = 0; target < 3; ++target) {
+        std::array<int, 2> others{};
+        int next = 0;
+        for (int candidate = 0; candidate < 3; ++candidate) {
+            if (candidate != target)
+                others[static_cast<std::size_t>(next++)] = candidate;
+        }
+        const int first = others[0];
+        const int second = others[1];
+        const Real firstWeight =
+            2.0 * partialVolumes[static_cast<std::size_t>(first)] /
+            lengths[static_cast<std::size_t>(first)];
+        const Real secondWeight =
+            2.0 * partialVolumes[static_cast<std::size_t>(second)] /
+            lengths[static_cast<std::size_t>(second)];
+        const Point2& firstPair =
+            pairVectors[static_cast<std::size_t>(pairIndex(target, first))];
+        const Point2& secondPair =
+            pairVectors[static_cast<std::size_t>(pairIndex(target, second))];
+        const Real weightSum = firstWeight + secondWeight;
+        if (weightSum > 0.0) {
+            edgeVectors[static_cast<std::size_t>(target)] =
+                (firstWeight * firstPair + secondWeight * secondPair) /
+                weightSum;
+        } else {
+            edgeVectors[static_cast<std::size_t>(target)] =
+                0.5 * (firstPair + secondPair);
+        }
+    }
+
+    const Real totalVolume =
+        partialVolumes[0] + partialVolumes[1] + partialVolumes[2];
+    if (totalVolume <= 1.0e-300) {
+        throw std::invalid_argument(
+            "triangle has no positive box partial volume");
+    }
+    return (
+        partialVolumes[0] * edgeVectors[0] +
+        partialVolumes[1] * edgeVectors[1] +
+        partialVolumes[2] * edgeVectors[2]) / totalVolume;
+}
+
 inline Real geniusTruncatedEdgeSourceVolume(
     const std::vector<std::vector<Index>>& edgeCells,
     const DeviceMesh&                      mesh,
@@ -984,13 +1130,15 @@ inline void validateImpactIonizationDrivingForce(const ImpactIonizationModelConf
         config.currentApproximation != "psi_gradient_proxy" &&
         config.currentApproximation != "cell_current_reconstructed" &&
         config.currentApproximation != "cell_vector_current_reconstructed" &&
+        config.currentApproximation != "element_edge_sg_gss_laux" &&
         config.currentApproximation != "conserved_total_current") {
         throw std::invalid_argument(
             std::string(context) +
             ": impact_ionization.current_approximation must be "
             "'mobility_density_gradient', 'density_gradient', 'grad_qf', "
             "'cell_reconstructed', 'psi_gradient_proxy', 'cell_current_reconstructed', "
-            "'cell_vector_current_reconstructed', or 'conserved_total_current'.");
+            "'cell_vector_current_reconstructed', 'element_edge_sg_gss_laux', "
+            "or 'conserved_total_current'.");
     }
     if (config.currentMagnitudeMode != "edge_scalar_abs" &&
         config.currentMagnitudeMode != "dual_face_vector_mag") {
@@ -1080,12 +1228,26 @@ inline void validateImpactIonizationDrivingForce(const ImpactIonizationModelConf
     if (config.sourceMappingMode != "node_F_node_alpha_node_G" &&
         config.sourceMappingMode != "edge_F_edge_alpha_edge_G_to_node" &&
         config.sourceMappingMode != "cell_F_cell_alpha_cell_G_to_node" &&
-        config.sourceMappingMode != "triangle_gss_gradqf_truncated") {
+        config.sourceMappingMode != "triangle_gss_gradqf_truncated" &&
+        config.sourceMappingMode != "element_vertex_box_measure") {
         throw std::invalid_argument(
             std::string(context) +
             ": impact_ionization.source_mapping_mode must be 'node_F_node_alpha_node_G', "
             "'edge_F_edge_alpha_edge_G_to_node', 'cell_F_cell_alpha_cell_G_to_node', "
-            "or 'triangle_gss_gradqf_truncated'.");
+            "'triangle_gss_gradqf_truncated', or 'element_vertex_box_measure'.");
+    }
+    const bool elementEdgeGssLauxRequested =
+        config.currentApproximation == "element_edge_sg_gss_laux" ||
+        config.sourceMappingMode == "element_vertex_box_measure";
+    if (elementEdgeGssLauxRequested &&
+        (config.generation != "current_density" ||
+         config.drivingForce != "quasi_fermi_gradient" ||
+         config.currentApproximation != "element_edge_sg_gss_laux" ||
+         config.quasiFermiGradientDiscretization != "cell_gradient" ||
+         config.sourceMappingMode != "element_vertex_box_measure")) {
+        throw std::invalid_argument(
+            std::string(context) +
+            ": element_edge_sg_gss_laux requires the canonical element-box configuration.");
     }
     if (config.sourceMappingMode == "triangle_gss_gradqf_truncated" &&
         (config.generation != "current_density" ||
@@ -1163,6 +1325,14 @@ inline bool usesTriangleGssAvalancheSource(
 {
     return config.generation == "current_density" &&
            config.sourceMappingMode == "triangle_gss_gradqf_truncated";
+}
+
+inline bool usesElementEdgeGssLauxAvalancheSource(
+    const ImpactIonizationModelConfig& config)
+{
+    return config.generation == "current_density" &&
+           config.currentApproximation == "element_edge_sg_gss_laux" &&
+           config.sourceMappingMode == "element_vertex_box_measure";
 }
 
 inline bool usesDensityGradientAvalancheCurrent(
@@ -1335,6 +1505,7 @@ inline bool usesEdgeCurrentAvalancheSource(
             config.currentApproximation == "psi_gradient_proxy" ||
             config.currentApproximation == "cell_current_reconstructed" ||
             config.currentApproximation == "cell_vector_current_reconstructed" ||
+            config.currentApproximation == "element_edge_sg_gss_laux" ||
             config.currentApproximation == "conserved_total_current");
 }
 
@@ -2070,6 +2241,205 @@ triangleGssAvalancheSourceRecords(
     return records;
 }
 
+struct ElementEdgeGssLauxAvalancheSourceRecord {
+    Index cellId = 0;
+    std::array<Index, 3> edgeIds{};
+    std::array<Real, 3> edgeLengths{};
+    std::array<Real, 3> edgePartialVolumes{};
+    std::array<Real, 3> vertexMeasures{};
+    std::array<Real, 3> electronMobilities{};
+    std::array<Real, 3> holeMobilities{};
+    std::array<Real, 3> electronSignedEdgeFlux{};
+    std::array<Real, 3> holeSignedEdgeFlux{};
+    Point2 electronCurrentVector = Point2::Zero();
+    Point2 holeCurrentVector = Point2::Zero();
+    Real electronCellQfField = 0.0;
+    Real holeCellQfField = 0.0;
+    Real electronAlpha = 0.0;
+    Real holeAlpha = 0.0;
+    std::array<Real, 3> electronSourceIntegrals{};
+    std::array<Real, 3> holeSourceIntegrals{};
+    std::array<Real, 3> combinedSourceIntegrals{};
+};
+
+inline ElementEdgeGssLauxAvalancheSourceRecord
+elementEdgeGssLauxAvalancheSourceRecordForCell(
+    const ImpactIonizationModelConfig& config,
+    const ImpactIonizationModel&       impact,
+    const MobilityModel&               mobility,
+    const std::vector<Index>&          cellEdgeIds,
+    const DeviceMesh&                  mesh,
+    const DopingModel&                 doping,
+    const std::vector<Material>&       cellMaterials,
+    Index                              cellId,
+    const VectorXd&                    psi,
+    const VectorXd&                    phin,
+    const VectorXd&                    phip,
+    const VectorXd&                    n,
+    const VectorXd&                    p,
+    const std::vector<Real>&           ni,
+    Real                               Vt,
+    Real                               fieldFactor = 1.0)
+{
+    if (!usesElementEdgeGssLauxAvalancheSource(config)) {
+        throw std::invalid_argument(
+            "element-edge GSS/Laux record requires its canonical configuration");
+    }
+    const Cell& cell = mesh.getCell(cellId);
+    if (cell.type != CellType::Tri3 || cell.node_ids.size() != 3) {
+        throw std::invalid_argument(
+            "element-edge GSS/Laux avalanche source requires Tri3 cells");
+    }
+
+    bool electronGradientValid = false;
+    bool holeGradientValid = false;
+    Real electronDoubleArea = 0.0;
+    Real holeDoubleArea = 0.0;
+    const Point2 electronGradient =
+        cellScalarGradient(mesh, cell, [&](Index node) {
+            return phin(static_cast<int>(node));
+        }, electronGradientValid, electronDoubleArea);
+    const Point2 holeGradient =
+        cellScalarGradient(mesh, cell, [&](Index node) {
+            return phip(static_cast<int>(node));
+        }, holeGradientValid, holeDoubleArea);
+    if (!electronGradientValid || !holeGradientValid) {
+        throw std::invalid_argument(
+            "degenerate triangle cannot evaluate avalanche driving fields");
+    }
+
+    ElementEdgeGssLauxAvalancheSourceRecord record;
+    record.cellId = cellId;
+    record.edgePartialVolumes =
+        tri3ElementEdgeBoxPartialVolumes(mesh, cell);
+    record.vertexMeasures =
+        tri3ElementVertexBoxMeasures(mesh, cell);
+    record.electronCellQfField =
+        electronGradient.norm() * fieldFactor;
+    record.holeCellQfField =
+        holeGradient.norm() * fieldFactor;
+    record.electronAlpha =
+        impact.electronCoefficient(record.electronCellQfField);
+    record.holeAlpha =
+        impact.holeCoefficient(record.holeCellQfField);
+
+    for (int localEdge = 0; localEdge < 3; ++localEdge) {
+        const std::size_t local = static_cast<std::size_t>(localEdge);
+        const Index node0 = cell.node_ids[local];
+        const Index node1 =
+            cell.node_ids[static_cast<std::size_t>((localEdge + 1) % 3)];
+        const Index edgeId =
+            edgeIdForNodePair(mesh, cellEdgeIds, node0, node1);
+        if (edgeId >= mesh.numEdges()) {
+            throw std::runtime_error(
+                "element-edge GSS/Laux source could not map a cell edge");
+        }
+        const Real edgeLength =
+            (meshPoint(mesh, node1) - meshPoint(mesh, node0)).norm();
+        if (edgeLength <= 1.0e-30) {
+            throw std::invalid_argument(
+                "degenerate triangle edge cannot evaluate an SG current");
+        }
+        record.edgeIds[local] = edgeId;
+        record.edgeLengths[local] = edgeLength;
+
+        const Real electronEdgeField =
+            std::abs(
+                phin(static_cast<int>(node1)) -
+                phin(static_cast<int>(node0))) /
+            edgeLength * fieldFactor;
+        const Real holeEdgeField =
+            std::abs(
+                phip(static_cast<int>(node1)) -
+                phip(static_cast<int>(node0))) /
+            edgeLength * fieldFactor;
+        const Real electronMobility =
+            triangleGssEndpointAveragedMobility(
+                mobility, mesh, doping, cellMaterials, n, p, cellId,
+                node0, node1, CarrierType::Electron, electronEdgeField);
+        const Real holeMobility =
+            triangleGssEndpointAveragedMobility(
+                mobility, mesh, doping, cellMaterials, n, p, cellId,
+                node0, node1, CarrierType::Hole, holeEdgeField);
+        record.electronMobilities[local] = electronMobility;
+        record.holeMobilities[local] = holeMobility;
+        record.electronSignedEdgeFlux[local] =
+            electronMobility > 0.0
+            ? sgElectronContinuityFluxFromQuasiFermiVariableNi(
+                ni.at(node0), ni.at(node1),
+                psi(static_cast<int>(node0)), psi(static_cast<int>(node1)),
+                phin(static_cast<int>(node0)), phin(static_cast<int>(node1)),
+                Vt, electronMobility * Vt * fieldFactor / edgeLength)
+            : 0.0;
+        record.holeSignedEdgeFlux[local] =
+            holeMobility > 0.0
+            ? sgHoleContinuityFluxFromQuasiFermiVariableNi(
+                ni.at(node0), ni.at(node1),
+                psi(static_cast<int>(node0)), psi(static_cast<int>(node1)),
+                phip(static_cast<int>(node0)), phip(static_cast<int>(node1)),
+                Vt, holeMobility * Vt * fieldFactor / edgeLength)
+            : 0.0;
+    }
+
+    record.electronCurrentVector = gssLauxTri3CurrentVector(
+        mesh, cell, record.electronSignedEdgeFlux);
+    record.holeCurrentVector = gssLauxTri3CurrentVector(
+        mesh, cell, record.holeSignedEdgeFlux);
+    const Real electronGeneration =
+        record.electronAlpha * record.electronCurrentVector.norm();
+    const Real holeGeneration =
+        record.holeAlpha * record.holeCurrentVector.norm();
+    for (std::size_t localNode = 0; localNode < 3; ++localNode) {
+        record.electronSourceIntegrals[localNode] =
+            electronGeneration * record.vertexMeasures[localNode] *
+            config.sourceGeometryScale;
+        record.holeSourceIntegrals[localNode] =
+            holeGeneration * record.vertexMeasures[localNode] *
+            config.sourceGeometryScale;
+        record.combinedSourceIntegrals[localNode] =
+            record.electronSourceIntegrals[localNode] +
+            record.holeSourceIntegrals[localNode];
+    }
+    return record;
+}
+
+inline std::vector<ElementEdgeGssLauxAvalancheSourceRecord>
+elementEdgeGssLauxAvalancheSourceRecords(
+    const ImpactIonizationModelConfig& config,
+    const ImpactIonizationModel&       impact,
+    const MobilityModelConfig&         mobilityConfig,
+    const MobilityModel&               mobility,
+    const std::vector<std::vector<Index>>& edgeCells,
+    const DeviceMesh&                  mesh,
+    const DopingModel&                 doping,
+    const std::vector<Material>&       cellMaterials,
+    const VectorXd&                    psi,
+    const VectorXd&                    phin,
+    const VectorXd&                    phip,
+    const VectorXd&                    n,
+    const VectorXd&                    p,
+    const std::vector<Real>&           ni,
+    Real                               Vt,
+    Real                               fieldFactor = 1.0)
+{
+    if (isSurfaceMobilityModel(mobilityConfig)) {
+        throw std::invalid_argument(
+            "element-edge GSS/Laux avalanche source does not support surface mobility");
+    }
+    const auto cellEdges = buildCellEdgeMap(edgeCells, mesh);
+    std::vector<ElementEdgeGssLauxAvalancheSourceRecord> records;
+    records.reserve(static_cast<std::size_t>(mesh.numCells()));
+    for (Index cellId = 0; cellId < mesh.numCells(); ++cellId) {
+        records.push_back(
+            elementEdgeGssLauxAvalancheSourceRecordForCell(
+                config, impact, mobility,
+                cellEdges.at(static_cast<std::size_t>(cellId)),
+                mesh, doping, cellMaterials, cellId, psi, phin, phip, n, p,
+                ni, Vt, fieldFactor));
+    }
+    return records;
+}
+
 struct SgEdgeCurrentAvalancheSourceRecord {
     Index edgeId = 0;
     Index node0 = 0;
@@ -2596,6 +2966,32 @@ currentDensityAvalancheSourceComponentIntegrals(
     Real                               Vt,
     Real                               fieldFactor = 1.0)
 {
+    if (usesElementEdgeGssLauxAvalancheSource(config)) {
+        SgAvalancheSourceComponentIntegrals source;
+        source.electron.assign(
+            static_cast<std::size_t>(mesh.numNodes()), 0.0);
+        source.hole.assign(
+            static_cast<std::size_t>(mesh.numNodes()), 0.0);
+        source.combined.assign(
+            static_cast<std::size_t>(mesh.numNodes()), 0.0);
+        const auto records = elementEdgeGssLauxAvalancheSourceRecords(
+            config, impact, mobilityConfig, mobility, edgeCells, mesh, doping,
+            cellMaterials, psi, phin, phip, n, p, ni, Vt, fieldFactor);
+        for (const auto& record : records) {
+            const Cell& cell = mesh.getCell(record.cellId);
+            for (std::size_t localNode = 0; localNode < 3; ++localNode) {
+                const Index node = cell.node_ids[localNode];
+                source.electron[node] +=
+                    record.electronSourceIntegrals[localNode];
+                source.hole[node] +=
+                    record.holeSourceIntegrals[localNode];
+                source.combined[node] +=
+                    record.combinedSourceIntegrals[localNode];
+            }
+        }
+        return source;
+    }
+
     if (!usesTriangleGssAvalancheSource(config)) {
         return sgEdgeCurrentAvalancheSourceComponentIntegrals(
             config, impact, mobilityConfig, mobility, edgeCells, mesh, doping,
