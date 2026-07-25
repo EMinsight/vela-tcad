@@ -16,6 +16,7 @@
 #include <iostream>
 #include <limits>
 #include <map>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -38,6 +39,7 @@ struct Arguments {
     std::filesystem::path nodeOut;
     std::filesystem::path edgeOut;
     std::filesystem::path triangleOut;
+    std::optional<std::filesystem::path> elementOut;
 };
 
 std::string usage()
@@ -46,7 +48,8 @@ std::string usage()
         "pn2d_minimal6_operator_audit "
         "--mesh mesh.json --doping doping.csv --state state.csv "
         "--config audit.json --node-out vela_node_state.csv "
-        "--edge-out vela_edge_audit.csv --triangle-out vela_triangle_audit.csv";
+        "--edge-out vela_edge_audit.csv --triangle-out vela_triangle_audit.csv "
+        "[--element-out vela_element_edge_gss_laux.csv]";
 }
 
 Arguments parseArguments(int argc, char** argv)
@@ -55,15 +58,16 @@ Arguments parseArguments(int argc, char** argv)
         std::cout << usage() << '\n';
         std::exit(0);
     }
-    if (argc != 15)
-        throw std::invalid_argument("expected seven option/value pairs; usage: " + usage());
+    if (argc != 15 && argc != 17)
+        throw std::invalid_argument("expected seven or eight option/value pairs; usage: " + usage());
 
     std::map<std::string, std::filesystem::path> values;
     for (int i = 1; i < argc; i += 2) {
         const std::string option = argv[i];
         if (option != "--mesh" && option != "--doping" && option != "--state" &&
             option != "--config" && option != "--node-out" &&
-            option != "--edge-out" && option != "--triangle-out") {
+            option != "--edge-out" && option != "--triangle-out" &&
+            option != "--element-out") {
             throw std::invalid_argument("unknown option '" + option + "'; usage: " + usage());
         }
         if (!values.emplace(option, argv[i + 1]).second)
@@ -75,6 +79,16 @@ Arguments parseArguments(int argc, char** argv)
             throw std::invalid_argument(std::string("missing required option ") + option);
         return it->second;
     };
+    const auto optional = [&](const char* option)
+        -> std::optional<std::filesystem::path> {
+        const auto it = values.find(option);
+        if (it == values.end())
+            return std::nullopt;
+        if (it->second.empty())
+            throw std::invalid_argument(
+                std::string("empty optional path ") + option);
+        return it->second;
+    };
     return {
         required("--mesh"),
         required("--doping"),
@@ -83,6 +97,7 @@ Arguments parseArguments(int argc, char** argv)
         required("--node-out"),
         required("--edge-out"),
         required("--triangle-out"),
+        optional("--element-out"),
     };
 }
 
@@ -375,6 +390,76 @@ void writeTriangles(const std::filesystem::path& path,
     }
 }
 
+void writeElementEdgeGssLaux(
+    const std::filesystem::path& path,
+    const std::vector<vela::ElementEdgeGssLauxAvalancheSourceRecord>& records,
+    const vela::DeviceMesh& mesh,
+    const vela::PhysicalUnitSystem& units)
+{
+    std::ofstream out = openOutput(path, "element-edge GSS/Laux output");
+    out << "cell_id,local_index,node_id,next_node_id,edge_id,"
+           "edge_length_m,edge_partial_volume_m2,vertex_measure_m2,"
+           "electron_mobility_m2_per_V_s,hole_mobility_m2_per_V_s,"
+           "electron_signed_edge_flux_per_m2_s,"
+           "hole_signed_edge_flux_per_m2_s,"
+           "electron_current_x_per_m2_s,electron_current_y_per_m2_s,"
+           "electron_current_magnitude_per_m2_s,"
+           "hole_current_x_per_m2_s,hole_current_y_per_m2_s,"
+           "hole_current_magnitude_per_m2_s,"
+           "electron_impact_field_V_per_m,hole_impact_field_V_per_m,"
+           "electron_alpha_per_m,hole_alpha_per_m,"
+           "electron_source_integral_per_m_s,"
+           "hole_source_integral_per_m_s,"
+           "combined_source_integral_per_m_s\n";
+
+    const Real lengthToSi = units.lengthMPerInternal();
+    const Real areaToSi = units.areaM2PerInternal();
+    const Real fluxToSi =
+        units.internalContinuityParticleFluxToPerM2PerS(1.0);
+    const Real sourceIntegralToSi =
+        fluxToSi * units.inverseLengthMInvPerInternal() * areaToSi;
+    const Real fieldToSi =
+        units.internalElectricFieldToVPerM(1.0);
+
+    for (const auto& record : records) {
+        const auto& cell = mesh.getCell(record.cellId);
+        if (cell.type != vela::CellType::Tri3 || cell.node_ids.size() != 3)
+            throw std::runtime_error(
+                "element-edge GSS/Laux output requires Tri3 cells");
+        for (std::size_t local = 0; local < 3; ++local) {
+            const Index node = cell.node_ids[local];
+            const Index next = cell.node_ids[(local + 1) % 3];
+            out << record.cellId << ',' << local << ',' << node << ','
+                << next << ',' << record.edgeIds[local] << ','
+                << record.edgeLengths[local] * lengthToSi << ','
+                << record.edgePartialVolumes[local] * areaToSi << ','
+                << record.vertexMeasures[local] * areaToSi << ','
+                << units.internalMobilityToM2PerVS(
+                       record.electronMobilities[local]) << ','
+                << units.internalMobilityToM2PerVS(
+                       record.holeMobilities[local]) << ','
+                << record.electronSignedEdgeFlux[local] * fluxToSi << ','
+                << record.holeSignedEdgeFlux[local] * fluxToSi << ','
+                << record.electronCurrentVector.x() * fluxToSi << ','
+                << record.electronCurrentVector.y() * fluxToSi << ','
+                << record.electronCurrentVector.norm() * fluxToSi << ','
+                << record.holeCurrentVector.x() * fluxToSi << ','
+                << record.holeCurrentVector.y() * fluxToSi << ','
+                << record.holeCurrentVector.norm() * fluxToSi << ','
+                << record.electronImpactField * fieldToSi << ','
+                << record.holeImpactField * fieldToSi << ','
+                << units.internalInverseLengthToMInv(record.electronAlpha)
+                << ','
+                << units.internalInverseLengthToMInv(record.holeAlpha) << ','
+                << record.electronSourceIntegrals[local] *
+                       sourceIntegralToSi << ','
+                << record.holeSourceIntegrals[local] *
+                       sourceIntegralToSi << ','
+                << record.combinedSourceIntegrals[local] *
+                       sourceIntegralToSi << '\n';
+        }
+    }
+}
 } // namespace
 
 int main(int argc, char** argv)
@@ -398,9 +483,17 @@ int main(int argc, char** argv)
             result.triangles.size() != 4) {
             throw std::runtime_error("fixed-state audit result counts are not exactly 6/9/4");
         }
+        if (args.elementOut &&
+            result.elementEdgeGssLauxTriangles.size() != 4) {
+            throw std::runtime_error(
+                "element-edge GSS/Laux audit result count is not exactly 4");
+        }
 
         const auto& units = config.inputScaling.unitSystem();
         writeNodes(args.nodeOut, result.nodes, units);
+        if (args.elementOut)
+            writeElementEdgeGssLaux(
+                *args.elementOut, result.elementEdgeGssLauxTriangles, mesh, units);
         writeEdges(args.edgeOut, result.edges, units);
         writeTriangles(args.triangleOut, result.triangles, units);
         return 0;

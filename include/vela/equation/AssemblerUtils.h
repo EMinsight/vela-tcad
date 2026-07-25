@@ -1241,9 +1241,11 @@ inline void validateImpactIonizationDrivingForce(const ImpactIonizationModelConf
         config.sourceMappingMode == "element_vertex_box_measure";
     if (elementEdgeGssLauxRequested &&
         (config.generation != "current_density" ||
-         config.drivingForce != "quasi_fermi_gradient" ||
+         (config.drivingForce != "quasi_fermi_gradient" &&
+          config.drivingForce != "electric_field") ||
          config.currentApproximation != "element_edge_sg_gss_laux" ||
-         config.quasiFermiGradientDiscretization != "cell_gradient" ||
+         (config.drivingForce == "quasi_fermi_gradient" &&
+          config.quasiFermiGradientDiscretization != "cell_gradient") ||
          config.sourceMappingMode != "element_vertex_box_measure")) {
         throw std::invalid_argument(
             std::string(context) +
@@ -2253,8 +2255,8 @@ struct ElementEdgeGssLauxAvalancheSourceRecord {
     std::array<Real, 3> holeSignedEdgeFlux{};
     Point2 electronCurrentVector = Point2::Zero();
     Point2 holeCurrentVector = Point2::Zero();
-    Real electronCellQfField = 0.0;
-    Real holeCellQfField = 0.0;
+    Real electronImpactField = 0.0;
+    Real holeImpactField = 0.0;
     Real electronAlpha = 0.0;
     Real holeAlpha = 0.0;
     std::array<Real, 3> electronSourceIntegrals{};
@@ -2291,6 +2293,12 @@ elementEdgeGssLauxAvalancheSourceRecordForCell(
             "element-edge GSS/Laux avalanche source requires Tri3 cells");
     }
 
+    bool electricGradientValid = false;
+    Real electricDoubleArea = 0.0;
+    const Point2 electricGradient =
+        cellScalarGradient(mesh, cell, [&](Index node) {
+            return psi(static_cast<int>(node));
+        }, electricGradientValid, electricDoubleArea);
     bool electronGradientValid = false;
     bool holeGradientValid = false;
     Real electronDoubleArea = 0.0;
@@ -2303,7 +2311,8 @@ elementEdgeGssLauxAvalancheSourceRecordForCell(
         cellScalarGradient(mesh, cell, [&](Index node) {
             return phip(static_cast<int>(node));
         }, holeGradientValid, holeDoubleArea);
-    if (!electronGradientValid || !holeGradientValid) {
+    if (!electricGradientValid || !electronGradientValid ||
+        !holeGradientValid) {
         throw std::invalid_argument(
             "degenerate triangle cannot evaluate avalanche driving fields");
     }
@@ -2314,14 +2323,20 @@ elementEdgeGssLauxAvalancheSourceRecordForCell(
         tri3ElementEdgeBoxPartialVolumes(mesh, cell);
     record.vertexMeasures =
         tri3ElementVertexBoxMeasures(mesh, cell);
-    record.electronCellQfField =
-        electronGradient.norm() * fieldFactor;
-    record.holeCellQfField =
-        holeGradient.norm() * fieldFactor;
+    const Point2& electronDrivingGradient =
+        config.drivingForce == "electric_field"
+        ? electricGradient : electronGradient;
+    const Point2& holeDrivingGradient =
+        config.drivingForce == "electric_field"
+        ? electricGradient : holeGradient;
+    record.electronImpactField =
+        electronDrivingGradient.norm() * fieldFactor;
+    record.holeImpactField =
+        holeDrivingGradient.norm() * fieldFactor;
     record.electronAlpha =
-        impact.electronCoefficient(record.electronCellQfField);
+        impact.electronCoefficient(record.electronImpactField);
     record.holeAlpha =
-        impact.holeCoefficient(record.holeCellQfField);
+        impact.holeCoefficient(record.holeImpactField);
 
     for (int localEdge = 0; localEdge < 3; ++localEdge) {
         const std::size_t local = static_cast<std::size_t>(localEdge);

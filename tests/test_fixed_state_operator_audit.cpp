@@ -204,6 +204,30 @@ TEST_CASE("fixed-state audit zeroes right-triangle hypotenuse support",
     REQUIRE(result.triangles[3].localEdges[0].truncatedPartialVolume == 0.0);
 }
 
+TEST_CASE("fixed-state audit exposes opt-in element-edge GSS Laux records",
+          "[minimal6][fixed-state][element-edge]")
+{
+    GummelConfig config = makeConfig();
+    config.impactIonization.currentApproximation =
+        "element_edge_sg_gss_laux";
+    config.impactIonization.sourceMappingMode =
+        "element_vertex_box_measure";
+    const auto result = evaluateFixedStateOperators(
+        makeMinimal6Mesh(), makeDoping(), makeState(), config);
+
+    REQUIRE(result.elementEdgeGssLauxTriangles.size() == 4);
+    for (const auto& record : result.elementEdgeGssLauxTriangles) {
+        REQUIRE(record.cellId < 4);
+        REQUIRE(record.electronCurrentVector.allFinite());
+        REQUIRE(record.holeCurrentVector.allFinite());
+        REQUIRE(record.vertexMeasures[0] + record.vertexMeasures[1] +
+                    record.vertexMeasures[2] ==
+                Catch::Approx(0.25e-12).epsilon(1.0e-13));
+        REQUIRE(record.electronSourceIntegrals[0] >= 0.0);
+        REQUIRE(record.holeSourceIntegrals[0] >= 0.0);
+    }
+}
+
 TEST_CASE("fixed-state audit rejects invalid contracts", "[minimal6][fixed-state]")
 {
     const DeviceMesh mesh = makeMinimal6Mesh();

@@ -463,6 +463,16 @@ FixedStateOperatorAuditResult evaluateFixedStateOperators(
         result.triangles.push_back(std::move(record));
     }
 
+    if (detail::usesElementEdgeGssLauxAvalancheSource(
+            config.impactIonization)) {
+        result.elementEdgeGssLauxTriangles =
+            detail::elementEdgeGssLauxAvalancheSourceRecords(
+                config.impactIonization, *impact, config.mobility, *mobility,
+                edgeCells, mesh, dopingModel, cellMaterials, state.psi,
+                state.phin, state.phip, state.n, state.p, ni,
+                thermalVoltage, fieldFactor);
+    }
+
     requireUnchanged(state, before, beforeIters, beforeConverged);
     return result;
 }

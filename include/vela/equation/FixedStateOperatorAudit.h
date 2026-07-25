@@ -10,6 +10,8 @@
 namespace vela {
 
 using TriangleGssAvalancheSourceRecord = detail::TriangleGssAvalancheSourceRecord;
+using ElementEdgeGssLauxAvalancheSourceRecord =
+    detail::ElementEdgeGssLauxAvalancheSourceRecord;
 
 struct FixedStateNodeRecord {
     Index nodeId;
@@ -36,6 +38,8 @@ struct FixedStateOperatorAuditResult {
     std::vector<FixedStateNodeRecord> nodes;
     std::vector<FixedStateEdgeRecord> edges;
     std::vector<FixedStateTriangleRecord> triangles;
+    std::vector<ElementEdgeGssLauxAvalancheSourceRecord>
+        elementEdgeGssLauxTriangles;
 };
 
 FixedStateOperatorAuditResult evaluateFixedStateOperators(

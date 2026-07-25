@@ -70,6 +70,10 @@ TEST_CASE("Element-edge GSS Laux mode has an explicit canonical contract",
     REQUIRE_NOTHROW(
         detail::validateImpactIonizationDrivingForce(config, "test"));
     REQUIRE(detail::usesElementEdgeGssLauxAvalancheSource(config));
+    config.drivingForce = "electric_field";
+    config.quasiFermiGradientDiscretization = "edge_difference";
+    REQUIRE_NOTHROW(
+        detail::validateImpactIonizationDrivingForce(config, "test"));
 
     config.sourceMappingMode = "node_F_node_alpha_node_G";
     REQUIRE_THROWS_WITH(
@@ -209,4 +213,16 @@ TEST_CASE("Element-edge GSS Laux records use exact SG currents and box measures"
                 Catch::Approx(components.combined[node])
                     .epsilon(1.0e-13));
     }
+    impactConfig.drivingForce = "electric_field";
+    const auto electricRecord =
+        detail::elementEdgeGssLauxAvalancheSourceRecordForCell(
+            impactConfig, *impact, *mobility, cellEdges.at(0), mesh, doping,
+            cellMaterials, 0, psi, phin, phip, n, p, ni, Vt);
+    const Real expectedElectricField = std::hypot(2.0e5, 1.6e5);
+    REQUIRE(electricRecord.electronImpactField ==
+            Catch::Approx(expectedElectricField).epsilon(1.0e-13));
+    REQUIRE(electricRecord.holeImpactField ==
+            Catch::Approx(expectedElectricField).epsilon(1.0e-13));
+    REQUIRE(electricRecord.electronImpactField !=
+            Catch::Approx(record.electronImpactField));
 }
