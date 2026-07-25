@@ -120,38 +120,38 @@ SelberherrImpactIonization::SelberherrImpactIonization(ImpactIonizationModelConf
     }
 }
 
-Real SelberherrImpactIonization::coefficient(Real electricField,
+Real SelberherrImpactIonization::coefficient(Real ionizationDrivingField,
                                              Real prefactor,
                                              Real criticalField)
 {
-    const Real field = std::abs(electricField);
+    const Real field = std::abs(ionizationDrivingField);
     if (field <= 0.0 || prefactor <= 0.0)
         return 0.0;
     const Real exponent = std::clamp(-criticalField / field, -700.0, 0.0);
     return prefactor * std::exp(exponent);
 }
 
-Real SelberherrImpactIonization::electronCoefficient(Real electricField) const
+Real SelberherrImpactIonization::electronCoefficient(Real ionizationDrivingField) const
 {
-    if (std::abs(electricField) < config_.minimumField)
+    if (std::abs(ionizationDrivingField) < config_.minimumField)
         return 0.0;
-    return coefficient(electricField, config_.electronA, config_.electronB);
+    return coefficient(ionizationDrivingField, config_.electronA, config_.electronB);
 }
 
-Real SelberherrImpactIonization::holeCoefficient(Real electricField) const
+Real SelberherrImpactIonization::holeCoefficient(Real ionizationDrivingField) const
 {
-    if (std::abs(electricField) < config_.minimumField)
+    if (std::abs(ionizationDrivingField) < config_.minimumField)
         return 0.0;
-    return coefficient(electricField, config_.holeA, config_.holeB);
+    return coefficient(ionizationDrivingField, config_.holeA, config_.holeB);
 }
 
-Real SelberherrImpactIonization::generationRate(Real electricField, Real n, Real p) const
+Real SelberherrImpactIonization::generationRate(Real ionizationDrivingField, Real n, Real p) const
 {
     if (config_.carrierVelocity <= 0.0)
         return 0.0;
     return config_.carrierVelocity *
-           (electronCoefficient(electricField) * std::max(n, 0.0) +
-            holeCoefficient(electricField) * std::max(p, 0.0));
+           (electronCoefficient(ionizationDrivingField) * std::max(n, 0.0) +
+            holeCoefficient(ionizationDrivingField) * std::max(p, 0.0));
 }
 
 VanOverstraetenImpactIonization::VanOverstraetenImpactIonization(
@@ -204,7 +204,7 @@ Real VanOverstraetenImpactIonization::gamma() const
     return std::tanh(refArg) / denominator;
 }
 
-Real VanOverstraetenImpactIonization::coefficient(Real electricField,
+Real VanOverstraetenImpactIonization::coefficient(Real ionizationDrivingField,
                                                   Real switchField,
                                                   Real lowPrefactor,
                                                   Real highPrefactor,
@@ -212,7 +212,7 @@ Real VanOverstraetenImpactIonization::coefficient(Real electricField,
                                                   Real highCriticalField,
                                                   Real gamma)
 {
-    const Real field = std::abs(electricField);
+    const Real field = std::abs(ionizationDrivingField);
     if (field <= 0.0 || gamma <= 0.0)
         return 0.0;
     const bool lowField = field < switchField;
@@ -224,12 +224,12 @@ Real VanOverstraetenImpactIonization::coefficient(Real electricField,
     return gamma * prefactor * std::exp(exponent);
 }
 
-Real VanOverstraetenImpactIonization::electronCoefficient(Real electricField) const
+Real VanOverstraetenImpactIonization::electronCoefficient(Real ionizationDrivingField) const
 {
-    if (!config_.debugRawVanOverstraeten && std::abs(electricField) < config_.minimumField)
+    if (!config_.debugRawVanOverstraeten && std::abs(ionizationDrivingField) < config_.minimumField)
         return 0.0;
     return coefficient(
-        electricField,
+        ionizationDrivingField,
         config_.switchField,
         config_.electronALow,
         config_.electronAHigh,
@@ -238,12 +238,12 @@ Real VanOverstraetenImpactIonization::electronCoefficient(Real electricField) co
         gamma());
 }
 
-Real VanOverstraetenImpactIonization::holeCoefficient(Real electricField) const
+Real VanOverstraetenImpactIonization::holeCoefficient(Real ionizationDrivingField) const
 {
-    if (!config_.debugRawVanOverstraeten && std::abs(electricField) < config_.minimumField)
+    if (!config_.debugRawVanOverstraeten && std::abs(ionizationDrivingField) < config_.minimumField)
         return 0.0;
     return coefficient(
-        electricField,
+        ionizationDrivingField,
         config_.switchField,
         config_.holeALow,
         config_.holeAHigh,
@@ -252,13 +252,13 @@ Real VanOverstraetenImpactIonization::holeCoefficient(Real electricField) const
         gamma());
 }
 
-Real VanOverstraetenImpactIonization::generationRate(Real electricField, Real n, Real p) const
+Real VanOverstraetenImpactIonization::generationRate(Real ionizationDrivingField, Real n, Real p) const
 {
     if (config_.carrierVelocity <= 0.0)
         return 0.0;
     return config_.carrierVelocity *
-           (electronCoefficient(electricField) * std::max(n, 0.0) +
-            holeCoefficient(electricField) * std::max(p, 0.0));
+           (electronCoefficient(ionizationDrivingField) * std::max(n, 0.0) +
+            holeCoefficient(ionizationDrivingField) * std::max(p, 0.0));
 }
 
 ImpactIonizationModelConfig impactIonizationModelConfig(std::string modelName,

@@ -53,39 +53,41 @@ struct ImpactIonizationModelConfig {
 class ImpactIonizationModel {
 public:
     virtual ~ImpactIonizationModel() = default;
-    virtual Real electronCoefficient(Real electricField) const = 0;
-    virtual Real holeCoefficient(Real electricField) const = 0;
-    virtual Real generationRate(Real electricField, Real n, Real p) const = 0;
+    /// Magnitude-like coefficient drive [V/m]. The assembler selects whether
+    /// this is the electrostatic field or a quasi-Fermi-potential gradient.
+    virtual Real electronCoefficient(Real ionizationDrivingField) const = 0;
+    virtual Real holeCoefficient(Real ionizationDrivingField) const = 0;
+    virtual Real generationRate(Real ionizationDrivingField, Real n, Real p) const = 0;
 };
 
 class NoImpactIonization final : public ImpactIonizationModel {
 public:
-    Real electronCoefficient(Real electricField) const override;
-    Real holeCoefficient(Real electricField) const override;
-    Real generationRate(Real electricField, Real n, Real p) const override;
+    Real electronCoefficient(Real ionizationDrivingField) const override;
+    Real holeCoefficient(Real ionizationDrivingField) const override;
+    Real generationRate(Real ionizationDrivingField, Real n, Real p) const override;
 };
 
 class SelberherrImpactIonization final : public ImpactIonizationModel {
 public:
     explicit SelberherrImpactIonization(ImpactIonizationModelConfig config = {});
-    Real electronCoefficient(Real electricField) const override;
-    Real holeCoefficient(Real electricField) const override;
-    Real generationRate(Real electricField, Real n, Real p) const override;
+    Real electronCoefficient(Real ionizationDrivingField) const override;
+    Real holeCoefficient(Real ionizationDrivingField) const override;
+    Real generationRate(Real ionizationDrivingField, Real n, Real p) const override;
 
 private:
-    static Real coefficient(Real electricField, Real prefactor, Real criticalField);
+    static Real coefficient(Real ionizationDrivingField, Real prefactor, Real criticalField);
     ImpactIonizationModelConfig config_;
 };
 
 class VanOverstraetenImpactIonization final : public ImpactIonizationModel {
 public:
     explicit VanOverstraetenImpactIonization(ImpactIonizationModelConfig config = {});
-    Real electronCoefficient(Real electricField) const override;
-    Real holeCoefficient(Real electricField) const override;
-    Real generationRate(Real electricField, Real n, Real p) const override;
+    Real electronCoefficient(Real ionizationDrivingField) const override;
+    Real holeCoefficient(Real ionizationDrivingField) const override;
+    Real generationRate(Real ionizationDrivingField, Real n, Real p) const override;
 
 private:
-    static Real coefficient(Real electricField,
+    static Real coefficient(Real ionizationDrivingField,
                             Real switchField,
                             Real lowPrefactor,
                             Real highPrefactor,
