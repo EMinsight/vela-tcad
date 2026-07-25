@@ -56,7 +56,10 @@ def typed_row(tokens: dict[str, str], integer_keys: set[str]) -> dict[str, Any]:
     return row
 
 
-def parse_log(path: Path) -> dict[str, list[dict[str, Any]]]:
+def parse_log(
+    path: Path,
+    target_biases: tuple[float, ...] = TARGET_BIASES,
+) -> dict[str, list[dict[str, Any]]]:
     groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     prefixes = {
         "AVAL_PROBE_VERTEX ": ("vertices", {"bias_V", "vertex"}),
@@ -86,17 +89,24 @@ def parse_log(path: Path) -> dict[str, list[dict[str, Any]]]:
                     typed_row(parse_tokens(line[len(prefix) :]), integer_keys)
                 )
                 break
+    state_count = len(target_biases)
     expected = {
-        "vertices": 3 * 10,
-        "elements": 3 * 4,
-        "measures": 3 * 12,
-        "edges": 3 * 12,
-        "integrals": 3,
+        "vertices": state_count * 10,
+        "elements": state_count * 4,
+        "measures": state_count * 12,
+        "edges": state_count * 12,
+        "integrals": state_count,
     }
     for group, count in expected.items():
         if len(groups[group]) != count:
             raise ValueError(
                 f"{path}: expected {count} {group}, got {len(groups[group])}"
+            )
+        observed_biases = {float(row["bias_V"]) for row in groups[group]}
+        if observed_biases != set(target_biases):
+            raise ValueError(
+                f"{path}: {group} bias matrix mismatch: "
+                f"expected {sorted(target_biases)}, got {sorted(observed_biases)}"
             )
     return groups
 
@@ -123,7 +133,10 @@ def parse_plt(path: Path) -> tuple[list[str], list[dict[str, float]]]:
     return names, rows
 
 
-def currentplot_targets(path: Path) -> list[dict[str, float]]:
+def currentplot_targets(
+    path: Path,
+    target_biases: tuple[float, ...] = TARGET_BIASES,
+) -> list[dict[str, float]]:
     names, rows = parse_plt(path)
     voltage_name = next(
         name
@@ -131,7 +144,7 @@ def currentplot_targets(path: Path) -> list[dict[str, float]]:
         if name.endswith("Anode OuterVoltage") or name == "Anode OuterVoltage"
     )
     result = []
-    for bias in TARGET_BIASES:
+    for bias in target_biases:
         match = min(rows, key=lambda row: abs(row[voltage_name] - bias))
         if abs(match[voltage_name] - bias) > 1.0e-8:
             raise ValueError(f"{path}: missing CurrentPlot bias {bias:g}")
@@ -353,25 +366,39 @@ def find_integral_name(names: Iterable[str], token: str) -> str:
     return matches[0]
 
 
-def load_vela_state_sources(path: Path) -> dict[tuple[str, float], float]:
+def load_vela_state_sources(
+    path: Path,
+    target_biases: tuple[float, ...] = TARGET_BIASES,
+) -> dict[tuple[str, float], float]:
     result = {}
     with path.open(newline="", encoding="ascii") as handle:
         for row in csv.DictReader(handle):
             bias = float(row["bias_V"])
-            if row["topology"] in TOPOLOGIES and bias in TARGET_BIASES:
+            if row["topology"] in TOPOLOGIES and bias in target_biases:
                 result[(row["topology"], bias)] = float(
                     row["vela_candidate_source_per_cm_s"]
                 )
-    if len(result) != len(TOPOLOGIES) * len(TARGET_BIASES):
+    if len(result) != len(TOPOLOGIES) * len(target_biases):
         raise ValueError("Vela factorization lacks selected topology/bias states")
     return result
 
 
-def run(raw_root: Path, vela_factorization: Path, output: Path) -> dict[str, Any]:
+def run(
+    raw_root: Path,
+    vela_factorization: Path,
+    output: Path,
+    *,
+    target_biases: tuple[float, ...] = TARGET_BIASES,
+    log_relative: Path = Path("default/run_default.out"),
+    plt_relative: Path = Path(
+        "default/runtime_element_avalanche_probe_default.plt"
+    ),
+    experiment: str = "pn2d_minimal6_element_avalanche_replay",
+) -> dict[str, Any]:
     raw_root = raw_root.resolve()
     output = output.resolve()
     output.mkdir(parents=True, exist_ok=True)
-    vela_sources = load_vela_state_sources(vela_factorization)
+    vela_sources = load_vela_state_sources(vela_factorization, target_biases)
 
     all_vertices: list[dict[str, Any]] = []
     all_elements: list[dict[str, Any]] = []
@@ -385,15 +412,10 @@ def run(raw_root: Path, vela_factorization: Path, output: Path) -> dict[str, Any
     raw_hashes: dict[str, str] = {}
 
     for topology in TOPOLOGIES:
-        log_path = raw_root / topology / "default" / "run_default.out"
-        plt_path = (
-            raw_root
-            / topology
-            / "default"
-            / "runtime_element_avalanche_probe_default.plt"
-        )
-        groups = parse_log(log_path)
-        plt_targets = currentplot_targets(plt_path)
+        log_path = raw_root / topology / log_relative
+        plt_path = raw_root / topology / plt_relative
+        groups = parse_log(log_path, target_biases)
+        plt_targets = currentplot_targets(plt_path, target_biases)
         names, _ = parse_plt(plt_path)
         e_integral_name = find_integral_name(names, "eAvalancheIntegral")
         h_integral_name = find_integral_name(names, "hAvalancheIntegral")
@@ -446,7 +468,7 @@ def run(raw_root: Path, vela_factorization: Path, output: Path) -> dict[str, Any
             current_rows.append(normalized)
             current_by_bias[row["bias_V"]] = normalized
 
-        for bias in TARGET_BIASES:
+        for bias in target_biases:
             vertices = [
                 row for row in groups["vertices"] if row["bias_V"] == int(bias)
             ]
@@ -704,10 +726,10 @@ def run(raw_root: Path, vela_factorization: Path, output: Path) -> dict[str, Any
     manifest = {
         "schema_version": 1,
         "status": "valid_diagnostic_replay",
-        "experiment": "pn2d_minimal6_element_avalanche_replay",
+        "experiment": experiment,
         "scope": {
             "topologies": list(TOPOLOGIES),
-            "biases_V": list(TARGET_BIASES),
+            "biases_V": list(target_biases),
             "production_formula_changed": False,
             "native_edge_current_observed": False,
             "element_edge_sg_status": "documented_operator_reconstruction",

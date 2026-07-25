@@ -4,12 +4,15 @@
 from __future__ import annotations
 
 import math
+import tempfile
 import unittest
+from pathlib import Path
 
 from scripts.diagnose_pn2d_minimal6_element_avalanche_replay import (
     charon_whitney_vector,
     gss_laux_vector,
     least_squares,
+    parse_log,
     solve_pair,
 )
 
@@ -90,6 +93,61 @@ class ElementAvalancheReplayTest(unittest.TestCase):
         self.assertAlmostEqual(recovered[0], vector[0], places=13)
         self.assertAlmostEqual(recovered[1], vector[1], places=13)
 
+    def test_parser_accepts_exact_caller_selected_bias_matrix(self) -> None:
+        biases = (-1, -2)
+        lines = []
+        for bias in biases:
+            lines.extend(
+                f"AVAL_PROBE_VERTEX bias_V={bias} vertex={vertex} x_um=0"
+                for vertex in range(10)
+            )
+            lines.extend(
+                f"AVAL_PROBE_ELEMENT bias_V={bias} element={element} x=0"
+                for element in range(4)
+            )
+            lines.extend(
+                "AVAL_PROBE_MEASURE "
+                f"bias_V={bias} element={index // 3} "
+                f"local_vertex={index % 3} vertex={index % 6} x=0"
+                for index in range(12)
+            )
+            lines.extend(
+                "AVAL_PROBE_EDGE "
+                f"bias_V={bias} element={index // 3} "
+                f"local_edge={index % 3} edge={index} "
+                f"start={index % 6} end={(index + 1) % 6} x=0"
+                for index in range(12)
+            )
+            lines.append(f"AVAL_PROBE_INTEGRAL bias_V={bias} x=0")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "runtime.out"
+            path.write_text("\n".join(lines) + "\n", encoding="ascii")
+            groups = parse_log(path, tuple(float(item) for item in biases))
+        self.assertEqual(len(groups["vertices"]), 20)
+        self.assertEqual(len(groups["elements"]), 8)
+        self.assertEqual(len(groups["measures"]), 24)
+        self.assertEqual(len(groups["edges"]), 24)
+        self.assertEqual(len(groups["integrals"]), 2)
+
+    def test_parser_rejects_count_correct_wrong_bias_matrix(self) -> None:
+        lines = (
+            ["AVAL_PROBE_VERTEX bias_V=-1 vertex=0 x=0"] * 10
+            + ["AVAL_PROBE_ELEMENT bias_V=-1 element=0 x=0"] * 4
+            + [
+                "AVAL_PROBE_MEASURE "
+                "bias_V=-1 element=0 local_vertex=0 vertex=0 x=0"
+            ] * 12
+            + [
+                "AVAL_PROBE_EDGE bias_V=-1 element=0 local_edge=0 "
+                "edge=0 start=0 end=1 x=0"
+            ] * 12
+            + ["AVAL_PROBE_INTEGRAL bias_V=-1 x=0"]
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "runtime.out"
+            path.write_text("\n".join(lines) + "\n", encoding="ascii")
+            with self.assertRaisesRegex(ValueError, "bias matrix mismatch"):
+                parse_log(path, (-2.0,))
 
 if __name__ == "__main__":
     unittest.main()

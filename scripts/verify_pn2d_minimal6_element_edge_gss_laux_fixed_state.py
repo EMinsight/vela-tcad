@@ -59,30 +59,39 @@ def finite_summary(values: list[float | None]) -> dict[str, float | int]:
 
 def main() -> int:
     root = parse_args().root.resolve()
+    with (root / "manifest.json").open(encoding="ascii") as stream:
+        manifest = json.load(stream)
+    topologies = tuple(manifest["scope"]["topologies"])
+    biases = tuple(int(value) for value in manifest["scope"]["biases_V"])
     rows = read_csv(root / "fixed_state_comparison.csv")
     failures: list[str] = []
-    if len(rows) != 72:
-        failures.append(f"expected 72 element-vertex rows, got {len(rows)}")
+    expected_row_count = len(topologies) * len(biases) * 12
+    if len(rows) != expected_row_count:
+        failures.append(
+            f"expected {expected_row_count} element-vertex rows, got {len(rows)}"
+        )
 
     states = defaultdict(list)
     for row in rows:
         states[(row["topology"], int(row["bias_V"]))].append(row)
     expected_states = {
         (topology, bias)
-        for topology in ("mirror", "sketch")
-        for bias in (-1, -10, -20)
+        for topology in topologies
+        for bias in biases
     }
     if set(states) != expected_states:
-        failures.append("state lattice is not exactly 2 topologies x 3 biases")
+        failures.append("state lattice does not match manifest scope")
     if any(len(state_rows) != 12 for state_rows in states.values()):
         failures.append("a state does not have exactly 12 element-vertex rows")
 
     zero_partial_volume_count = sum(
         float(row["edge_partial_volume_m2"]) == 0.0 for row in rows
     )
-    if zero_partial_volume_count != 24:
+    expected_zero_partial_volumes = 4 * len(expected_states)
+    if zero_partial_volume_count != expected_zero_partial_volumes:
         failures.append(
-            f"expected 24 zero diagonal partial volumes, got "
+            f"expected {expected_zero_partial_volumes} zero diagonal "
+            f"partial volumes, got "
             f"{zero_partial_volume_count}"
         )
 

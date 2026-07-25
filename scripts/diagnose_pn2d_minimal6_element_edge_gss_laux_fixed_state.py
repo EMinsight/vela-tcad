@@ -66,6 +66,12 @@ def parse_args() -> argparse.Namespace:
             "pn2d-minimal6-element-edge-gss-laux-fixed-state-20260725"
         ),
     )
+    parser.add_argument(
+        "--magnitudes",
+        type=int,
+        nargs="+",
+        default=(1, 10, 20),
+    )
     return parser.parse_args()
 
 
@@ -127,6 +133,12 @@ def configure(base: dict[str, object]) -> dict[str, object]:
 
 def main() -> int:
     args = parse_args()
+    magnitudes = tuple(args.magnitudes)
+    if (
+        len(set(magnitudes)) != len(magnitudes)
+        or any(item < 1 or item > 20 for item in magnitudes)
+    ):
+        raise ValueError("magnitudes must be unique integers in [1, 20]")
     binary = args.binary.resolve()
     state_root = args.state_root.resolve()
     reference_root = args.reference_root.resolve()
@@ -191,7 +203,7 @@ def main() -> int:
     detail_rows: list[dict[str, object]] = []
     generated: list[Path] = []
     for topology in ("mirror", "sketch"):
-        for magnitude in (1, 10, 20):
+        for magnitude in magnitudes:
             bias = -magnitude
             state_dir = state_root / "states" / topology / f"m{magnitude}V" / "export"
             config_dir = config_root / topology / f"m{magnitude}V"
@@ -358,7 +370,7 @@ def main() -> int:
         "status": "valid_diagnostic_replay",
         "scope": {
             "topologies": ["mirror", "sketch"],
-            "biases_V": [-1, -10, -20],
+            "biases_V": [-magnitude for magnitude in magnitudes],
             "state_semantics": (
                 "Sentaurus psi/phin/phip imported; Vela n/p, mobility, SG, "
                 "GSS/Laux vector, alpha, and source recomputed"
