@@ -91,6 +91,43 @@ DeviceMesh makeSingleAcuteScaleneTriangle(bool reverse)
     return mesh;
 }
 
+DeviceMesh makeSingleObtuseTriangle(bool reverse)
+{
+    DeviceMesh mesh;
+    Node n0;
+    n0.id = 0;
+    n0.x = 0.0;
+    n0.y = 0.0;
+    mesh.addNode(n0);
+    Node n1;
+    n1.id = 1;
+    n1.x = 2.0e-6;
+    n1.y = 0.0;
+    mesh.addNode(n1);
+    Node n2;
+    n2.id = 2;
+    n2.x = 0.2e-6;
+    n2.y = 0.1e-6;
+    mesh.addNode(n2);
+
+    Cell cell;
+    cell.id = 0;
+    cell.type = CellType::Tri3;
+    cell.region_id = 0;
+    cell.node_ids = reverse ? std::vector<Index>{0, 2, 1}
+                            : std::vector<Index>{0, 1, 2};
+    mesh.addCell(cell);
+
+    Region region;
+    region.id = 0;
+    region.name = "si";
+    region.material = "Si";
+    region.cell_ids = {0};
+    mesh.addRegion(region);
+
+    mesh.buildEdges();
+    return mesh;
+}
 } // namespace
 
 TEST_CASE("Element-edge GSS Laux mode has an explicit canonical contract",
@@ -220,6 +257,34 @@ TEST_CASE("GSS Laux reconstruction is orientation invariant on a scalene triangl
         REQUIRE(partialVolumes[0] + partialVolumes[1] +
                     partialVolumes[2] ==
                 Catch::Approx(0.4e-12).epsilon(1.0e-13));
+    }
+}
+
+TEST_CASE("Obtuse element-edge box support is nonnegative and area conservative",
+          "[impact][element_edge_gss_laux][geometry][general_mesh][obtuse]")
+{
+    constexpr Real expectedArea = 0.1e-12;
+    for (const bool reverse : {false, true}) {
+        DeviceMesh mesh = makeSingleObtuseTriangle(reverse);
+        const Cell& cell = mesh.getCell(0);
+        const auto partialVolumes =
+            detail::tri3ElementEdgeBoxPartialVolumes(mesh, cell);
+        const auto vertexMeasures =
+            detail::tri3ElementVertexBoxMeasures(mesh, cell);
+
+        for (const Real partialVolume : partialVolumes)
+            REQUIRE(partialVolume >= 0.0);
+        for (const Real vertexMeasure : vertexMeasures)
+            REQUIRE(vertexMeasure >= 0.0);
+
+        const Real partialVolumeSum =
+            partialVolumes[0] + partialVolumes[1] + partialVolumes[2];
+        const Real vertexMeasureSum =
+            vertexMeasures[0] + vertexMeasures[1] + vertexMeasures[2];
+        REQUIRE(partialVolumeSum ==
+                Catch::Approx(expectedArea).epsilon(1.0e-12));
+        REQUIRE(vertexMeasureSum ==
+                Catch::Approx(expectedArea).epsilon(1.0e-12));
     }
 }
 
