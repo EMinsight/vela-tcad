@@ -1,0 +1,211 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "vela.pn2d_high_bias_process_jacobian.v1",
+  "type": "object",
+  "required": [
+    "schema",
+    "status",
+    "sentaurus_release",
+    "exact_biases_V",
+    "input_hashes",
+    "residual_config_sha256",
+    "jacobian_config_sha256",
+    "records"
+  ],
+  "properties": {
+    "schema": {
+      "const": "vela.pn2d_high_bias_process_jacobian.v1"
+    },
+    "status": {
+      "enum": [
+        "red_contract_frozen",
+        "diagnostic_complete",
+        "gate_passed",
+        "gate_failed"
+      ]
+    },
+    "sentaurus_release": {
+      "const": "O-2018.06-SP2"
+    },
+    "exact_biases_V": {
+      "type": "array",
+      "minItems": 8,
+      "maxItems": 8,
+      "uniqueItems": true,
+      "items": {
+        "type": "number"
+      }
+    },
+    "input_hashes": {
+      "type": "object",
+      "required": [
+        "deck",
+        "tdr",
+        "mesh",
+        "parameters",
+        "state"
+      ],
+      "properties": {
+        "deck": {"$ref": "#/$defs/sha256"},
+        "tdr": {"$ref": "#/$defs/sha256"},
+        "mesh": {"$ref": "#/$defs/sha256"},
+        "parameters": {"$ref": "#/$defs/sha256"},
+        "state": {"$ref": "#/$defs/sha256"}
+      },
+      "additionalProperties": false
+    },
+    "residual_config_sha256": {"$ref": "#/$defs/sha256"},
+    "jacobian_config_sha256": {"$ref": "#/$defs/sha256"},
+    "records": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/processRecord"}
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "processRecord": {
+      "type": "object",
+      "required": [
+        "schema",
+        "topology",
+        "bias_V",
+        "carrier",
+        "residual_variable",
+        "state_variable",
+        "process_stage",
+        "analytic_contribution",
+        "fd_contribution",
+        "analytic_total",
+        "fd_total",
+        "derivative_status",
+        "observation_label",
+        "observation_provenance",
+        "support_status",
+        "error_dex",
+        "unit",
+        "fd_steps_V",
+        "residual_config_sha256",
+        "jacobian_config_sha256",
+        "state_sha256",
+        "deck_sha256",
+        "tdr_sha256",
+        "mesh_sha256",
+        "parameters_sha256",
+        "sentaurus_release"
+      ],
+      "properties": {
+        "schema": {
+          "const": "vela.pn2d_high_bias_process_jacobian.v1"
+        },
+        "topology": {
+          "enum": [
+            "minimal6_mirror",
+            "minimal6_sketch",
+            "coarse7x3",
+            "skewed_tri3",
+            "constrained_obtuse",
+            "fine_pn2d"
+          ]
+        },
+        "bias_V": {"type": "number"},
+        "carrier": {"enum": ["electron", "hole"]},
+        "residual_variable": {
+          "enum": [
+            "poisson",
+            "electron_continuity",
+            "hole_continuity"
+          ]
+        },
+        "state_variable": {
+          "enum": ["psi", "electron_qfp", "hole_qfp"]
+        },
+        "process_stage": {
+          "enum": [
+            "carrier_statistics",
+            "sg_bernoulli",
+            "low_field_mobility",
+            "high_field_mobility",
+            "current_vector_reconstruction",
+            "current_abs_branch",
+            "avalanche_alpha",
+            "element_source_distribution",
+            "node_accumulation",
+            "continuity_scaling"
+          ]
+        },
+        "analytic_contribution": {"type": "number"},
+        "fd_contribution": {"type": "number"},
+        "analytic_total": {"type": "number"},
+        "fd_total": {"type": "number"},
+        "derivative_status": {
+          "enum": [
+            "finite",
+            "zero",
+            "below_floor",
+            "nonsmooth",
+            "unsupported",
+            "invalid"
+          ]
+        },
+        "observation_label": {
+          "enum": [
+            "native_node",
+            "native_element",
+            "native_currentplot_integral",
+            "native_directed_edge",
+            "operator_replay",
+            "box_operator_reconstruction",
+            "unsupported_native_edge",
+            "unsupported"
+          ]
+        },
+        "observation_provenance": {
+          "enum": ["native", "reconstructed", "unsupported"]
+        },
+        "support_status": {
+          "enum": [
+            "valid",
+            "finite",
+            "zero",
+            "below_floor",
+            "nonsmooth",
+            "unsupported",
+            "invalid"
+          ]
+        },
+        "error_dex": {
+          "type": ["number", "null"]
+        },
+        "unit": {
+          "type": "string",
+          "minLength": 1
+        },
+        "fd_steps_V": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          }
+        },
+        "residual_config_sha256": {"$ref": "#/$defs/sha256"},
+        "jacobian_config_sha256": {"$ref": "#/$defs/sha256"},
+        "state_sha256": {"$ref": "#/$defs/sha256"},
+        "deck_sha256": {"$ref": "#/$defs/sha256"},
+        "tdr_sha256": {"$ref": "#/$defs/sha256"},
+        "mesh_sha256": {"$ref": "#/$defs/sha256"},
+        "parameters_sha256": {"$ref": "#/$defs/sha256"},
+        "sentaurus_release": {
+          "const": "O-2018.06-SP2"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
