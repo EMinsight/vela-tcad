@@ -128,6 +128,53 @@ DeviceMesh makeSingleObtuseTriangle(bool reverse)
     mesh.buildEdges();
     return mesh;
 }
+
+DeviceMesh makeContactAndInteriorTriangles()
+{
+    DeviceMesh mesh;
+    const std::array<Point2, 4> points = {
+        Point2{0.0, 0.0}, Point2{1.0e-6, 0.0},
+        Point2{0.0, 1.0e-6}, Point2{1.0e-6, 1.0e-6}};
+    for (Index id = 0; id < points.size(); ++id) {
+        Node node;
+        node.id = id;
+        node.x = points[id].x();
+        node.y = points[id].y();
+        mesh.addNode(node);
+    }
+
+    Cell contactCell;
+    contactCell.id = 0;
+    contactCell.type = CellType::Tri3;
+    contactCell.region_id = 0;
+    contactCell.node_ids = {0, 1, 2};
+    mesh.addCell(contactCell);
+
+    Cell interiorCell;
+    interiorCell.id = 1;
+    interiorCell.type = CellType::Tri3;
+    interiorCell.region_id = 0;
+    interiorCell.node_ids = {1, 3, 2};
+    mesh.addCell(interiorCell);
+
+    Region region;
+    region.id = 0;
+    region.name = "si";
+    region.material = "Si";
+    region.cell_ids = {0, 1};
+    mesh.addRegion(region);
+
+    Contact contact;
+    contact.id = 0;
+    contact.name = "contact";
+    contact.region_id = 0;
+    contact.node_ids = {0};
+    mesh.addContact(contact);
+
+    mesh.buildEdges();
+    return mesh;
+}
+
 } // namespace
 
 TEST_CASE("Element-edge GSS Laux mode has an explicit canonical contract",
@@ -285,6 +332,70 @@ TEST_CASE("Obtuse element-edge box support is nonnegative and area conservative"
                 Catch::Approx(expectedArea).epsilon(1.0e-12));
         REQUIRE(vertexMeasureSum ==
                 Catch::Approx(expectedArea).epsilon(1.0e-12));
+    }
+}
+
+TEST_CASE("Element-edge QFP driver remains global in contact and interior cells",
+          "[impact][element_edge_gss_laux][driver][contact][interior]")
+{
+    DeviceMesh mesh = makeContactAndInteriorTriangles();
+    const auto edgeCells = detail::buildEdgeCellMap(mesh);
+    const auto cellEdges = detail::buildCellEdgeMap(edgeCells, mesh);
+    MaterialDatabase matdb;
+    const auto doping = DopingModel::fromMeshAndRegions(
+        mesh, {RegionDopingSpec{"si", 1.0e21, 0.0}});
+    const auto cellMaterials =
+        detail::buildCellMaterials(mesh, matdb, constants::T0);
+
+    ImpactIonizationModelConfig impactConfig;
+    impactConfig.model = "selberherr";
+    impactConfig.electronA = 1.0;
+    impactConfig.electronB = 1.0e-30;
+    impactConfig.holeA = 1.0;
+    impactConfig.holeB = 1.0e-30;
+    impactConfig.drivingForce = "quasi_fermi_gradient";
+    impactConfig.generation = "current_density";
+    impactConfig.currentApproximation = "element_edge_sg_gss_laux";
+    impactConfig.quasiFermiGradientDiscretization = "cell_gradient";
+    impactConfig.sourceMappingMode = "element_vertex_box_measure";
+    const auto impact = makeImpactIonizationModel(impactConfig);
+    const MobilityModelConfig mobilityConfig = mobilityModelConfig("constant");
+    const auto mobility = makeMobilityModel(mobilityConfig);
+
+    VectorXd psi(mesh.numNodes());
+    VectorXd phin(mesh.numNodes());
+    VectorXd phip(mesh.numNodes());
+    for (Index node = 0; node < mesh.numNodes(); ++node) {
+        const Node& point = mesh.getNode(node);
+        psi(static_cast<int>(node)) = point.x * 1.0e6;
+        phin(static_cast<int>(node)) =
+            point.x * 3.0e6 + point.y * 4.0e6;
+        phip(static_cast<int>(node)) =
+            point.x * -2.0e6 + point.y * 5.0e6;
+    }
+    const std::vector<Real> ni(
+        static_cast<std::size_t>(mesh.numNodes()), 1.0e16);
+    const Real Vt = constants::kb * constants::T0 / constants::q;
+    VectorXd n(mesh.numNodes());
+    VectorXd p(mesh.numNodes());
+    for (Index node = 0; node < mesh.numNodes(); ++node) {
+        const int index = static_cast<int>(node);
+        n(index) = ni[node] * std::exp((psi(index) - phin(index)) / Vt);
+        p(index) = ni[node] * std::exp((phip(index) - psi(index)) / Vt);
+    }
+
+    for (Index cellId = 0; cellId < mesh.numCells(); ++cellId) {
+        const auto record =
+            detail::elementEdgeGssLauxAvalancheSourceRecordForCell(
+                impactConfig, *impact, mobilityConfig, *mobility,
+                cellEdges.at(static_cast<std::size_t>(cellId)), mesh, doping,
+                cellMaterials, cellId, psi, phin, phip, n, p, ni, Vt);
+        REQUIRE(record.electronImpactField ==
+                Catch::Approx(5.0e6).epsilon(1.0e-13));
+        REQUIRE(record.holeImpactField ==
+                Catch::Approx(std::sqrt(29.0) * 1.0e6).epsilon(1.0e-13));
+        REQUIRE(record.electronImpactField != Catch::Approx(1.0e6));
+        REQUIRE(record.holeImpactField != Catch::Approx(1.0e6));
     }
 }
 

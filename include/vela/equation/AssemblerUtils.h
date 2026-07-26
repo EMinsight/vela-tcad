@@ -932,6 +932,20 @@ inline std::array<Real, 3> tri3ElementEdgeBoxPartialVolumes(
             geniusTri3TruncatedPartialVolumeWithEdge(
                 mesh, cell, node0, node1);
     }
+    const Real exactArea = 0.5 * std::abs(triangleSignedDoubleArea(
+        meshPoint(mesh, cell.node_ids[0]),
+        meshPoint(mesh, cell.node_ids[1]),
+        meshPoint(mesh, cell.node_ids[2])));
+    const Real truncatedArea =
+        partialVolumes[0] + partialVolumes[1] + partialVolumes[2];
+    const Real closureTolerance =
+        128.0 * std::numeric_limits<Real>::epsilon() * exactArea;
+    if (exactArea > 0.0 && truncatedArea > 0.0 &&
+        std::abs(truncatedArea - exactArea) > closureTolerance) {
+        const Real conservativeScale = exactArea / truncatedArea;
+        for (Real& partialVolume : partialVolumes)
+            partialVolume *= conservativeScale;
+    }
     return partialVolumes;
 }
 

@@ -770,23 +770,93 @@ TEST_CASE("Coupled DD element-edge GSS Laux avalanche Jacobian matches finite di
     impactConfig.electronB = 1.0e-30;
     impactConfig.holeA = 1.0;
     impactConfig.holeB = 1.0e-30;
+    const MobilityModelConfig constantMobilityConfig =
+        mobilityModelConfig("constant");
+    const auto mobility = makeMobilityModel(constantMobilityConfig);
+    const auto impact = makeImpactIonizationModel(impactConfig);
+    const auto edgeCells = detail::buildEdgeCellMap(mesh);
+    const Real temperature_K = Vt * constants::q / constants::kb;
+    const auto cellMaterials = detail::buildCellMaterials(mesh, matdb, temperature_K);
 
     CoupledDDAssembler assembler(
         mesh,
         matdb,
         doping,
         Vt,
-        mobilityModelConfig("constant"),
+        constantMobilityConfig,
         recombinationModelConfig({"none"}),
         BandgapNarrowingConfig{},
         impactConfig);
+    CoupledDDAssembler baselineAssembler(
+        mesh,
+        matdb,
+        doping,
+        Vt,
+        constantMobilityConfig,
+        recombinationModelConfig({"none"}),
+        BandgapNarrowingConfig{},
+        ImpactIonizationModelConfig{});
 
     const VectorXd x = assembler.pack(state);
     const CoupledDDBoundaryConditions bcs;
     const Eigen::MatrixXd analytic =
         Eigen::MatrixXd(assembler.assembleJacobian(x, bcs));
-    const Eigen::MatrixXd finiteDifference =
-        Eigen::MatrixXd(assembler.finiteDifferenceJacobian(x, bcs, 1.0e-7));
+    const auto sourceResidual = [&](const VectorXd& values) {
+        const CoupledDDState replayState = assembler.unpack(values);
+        const auto components =
+            detail::currentDensityAvalancheSourceComponentIntegrals(
+                impactConfig,
+                *impact,
+                constantMobilityConfig,
+                *mobility,
+                edgeCells,
+                mesh,
+                doping,
+                cellMaterials,
+                replayState.psi,
+                replayState.phin,
+                replayState.phip,
+                assembler.electronDensity(values),
+                assembler.holeDensity(values),
+                assembler.intrinsicDensity(),
+                Vt);
+        const int nodeCount = static_cast<int>(mesh.numNodes());
+        VectorXd replayResidual = VectorXd::Zero(values.size());
+        for (int node = 0; node < nodeCount; ++node) {
+            const Real source =
+                components.combined[static_cast<std::size_t>(node)];
+            replayResidual(nodeCount + node) = -source;
+            replayResidual(2 * nodeCount + node) = -source;
+        }
+        return replayResidual;
+    };
+    const auto diagnosticTerms =
+        assembler.carrierContinuityTermDiagnostics(x, bcs);
+    VectorXd diagnosticSourceResidual = VectorXd::Zero(x.size());
+    for (int node = 0; node < static_cast<int>(mesh.numNodes()); ++node) {
+        const Real source =
+            diagnosticTerms[static_cast<std::size_t>(node)].impactCombinedSource;
+        diagnosticSourceResidual(static_cast<int>(mesh.numNodes()) + node) = -source;
+        diagnosticSourceResidual(2 * static_cast<int>(mesh.numNodes()) + node) = -source;
+    }
+    const VectorXd replaySourceResidual = sourceResidual(x);
+    REQUIRE((diagnosticSourceResidual - replaySourceResidual).norm() /
+            std::max<Real>(1.0, diagnosticSourceResidual.norm()) <= 1.0e-12);
+
+    constexpr Real relativeStep = 1.0e-7;
+    const int M = static_cast<int>(x.size());
+    Eigen::MatrixXd finiteDifference = Eigen::MatrixXd::Zero(M, M);
+    for (int col = 0; col < M; ++col) {
+        const Real step =
+            relativeStep * std::max<Real>(1.0, std::abs(x(col)));
+        VectorXd plus = x;
+        VectorXd minus = x;
+        plus(col) += step;
+        minus(col) -= step;
+        finiteDifference.col(col) =
+            (assembler.residual(plus, bcs) - assembler.residual(minus, bcs)) /
+            (2.0 * step);
+    }
 
     const int N = static_cast<int>(mesh.numNodes());
     Real maxAbsDiff = 0.0;
@@ -801,7 +871,52 @@ TEST_CASE("Coupled DD element-edge GSS Laux avalanche Jacobian matches finite di
         }
     }
     REQUIRE(maxAbsRef > 0.0);
-    REQUIRE(maxAbsDiff / maxAbsRef < 5.0e-5);
+    REQUIRE(maxAbsDiff / maxAbsRef <= 1.0e-8);
+
+    constexpr Real nearZeroAbsoluteTolerance = 1.0e-12;
+    ImpactIonizationModelConfig nearZeroImpactConfig =
+        impactIonizationModelConfig("van_overstraeten");
+    nearZeroImpactConfig.drivingForce = "quasi_fermi_gradient";
+    nearZeroImpactConfig.generation = "current_density";
+    nearZeroImpactConfig.currentApproximation = "element_edge_sg_gss_laux";
+    nearZeroImpactConfig.quasiFermiGradientDiscretization = "cell_gradient";
+    nearZeroImpactConfig.sourceMappingMode = "element_vertex_box_measure";
+    CoupledDDAssembler nearZeroAssembler(
+        mesh, matdb, doping, Vt, constantMobilityConfig,
+        recombinationModelConfig({"none"}), BandgapNarrowingConfig{},
+        nearZeroImpactConfig);
+    CoupledDDState zeroSourceState = state;
+    zeroSourceState.psi.setConstant(0.0);
+    zeroSourceState.phin.setConstant(0.0);
+    zeroSourceState.phip.setConstant(0.0);
+    const VectorXd zeroSourceX = nearZeroAssembler.pack(zeroSourceState);
+    const auto zeroSourceTerms =
+        nearZeroAssembler.carrierContinuityTermDiagnostics(zeroSourceX, bcs);
+    for (const auto& term : zeroSourceTerms)
+        REQUIRE(std::abs(term.impactCombinedSource) <= nearZeroAbsoluteTolerance);
+    const Eigen::MatrixXd zeroSourceAnalytic =
+        Eigen::MatrixXd(nearZeroAssembler.assembleJacobian(zeroSourceX, bcs)) -
+        Eigen::MatrixXd(baselineAssembler.assembleJacobian(zeroSourceX, bcs));
+    Eigen::MatrixXd zeroSourceFiniteDifference = Eigen::MatrixXd::Zero(M, M);
+    for (int col = 0; col < M; ++col) {
+        const Real step =
+            relativeStep * std::max<Real>(1.0, std::abs(zeroSourceX(col)));
+        VectorXd plus = zeroSourceX;
+        VectorXd minus = zeroSourceX;
+        plus(col) += step;
+        minus(col) -= step;
+        const VectorXd plusSource =
+            nearZeroAssembler.residual(plus, bcs) -
+            baselineAssembler.residual(plus, bcs);
+        const VectorXd minusSource =
+            nearZeroAssembler.residual(minus, bcs) -
+            baselineAssembler.residual(minus, bcs);
+        zeroSourceFiniteDifference.col(col) =
+            (plusSource - minusSource) / (2.0 * step);
+    }
+    REQUIRE((zeroSourceAnalytic - zeroSourceFiniteDifference)
+                .cwiseAbs()
+                .maxCoeff() <= nearZeroAbsoluteTolerance);
 }
 
 TEST_CASE("Coupled DD psi-gradient avalanche Jacobian matches carrier finite differences",
