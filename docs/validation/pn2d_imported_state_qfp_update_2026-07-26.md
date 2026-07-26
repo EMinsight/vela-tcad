@@ -2,81 +2,92 @@
 
 Date: 2026-07-26
 
-Status: Task 7 complete; Task 8 not authorized.
+Status: Task 7 evidence complete with failed Task 6 Jacobian and Task 7 cross-topology entry gates; Tasks 8-9 not entered.
 
 ## Decision
 
-The typed outcome is `operator_improvement_without_qfp_causality`.
+The typed outcome is `operator_improvement_without_qfp_causality`. Task 8 is not authorized for two independent reasons:
 
-The opt-in element-edge source strongly reduces the high-field residual and first update at `-20 V` on both Minimal6 and coarse7x3, and it strongly improves coarse7x3 at `-10 V`. However, at the first non-negligible Minimal6 source difference (`-10 V`) it worsens both carrier residual norms by about `2.7%` and all carrier-only/coupled QFP-update norms by about `2.4%`, while coarse7x3 improves by orders of magnitude. Therefore the source-operator change does not improve the same residual and first-update QFP error across both topology classes at the first departure. Task 7 does not authorize Task 8.
+1. At the first material source-support departure (`-10 V`), Minimal6 worsens while coarse7x3 improves, so the same residual and first-update QFP error do not improve across topology classes.
+2. The true source-isolated real-state `sg_avalanche` analytic/central-FD block has maximum nonzero relative difference `0.9640948767506723`, above the frozen `1e-8` gate.
 
-Tasks 8 and 9 are not entered. The production default remains unchanged; `element_edge_sg_gss_laux` remains opt-in. No field, mobility, alpha, or geometry scale was fitted. Van Overstraeten, QFP-gradient driving force, and Masetti plus QFP-gradient high-field mobility remain unchanged.
+The original Task 6 focused test compared full continuity matrices and could be dominated by SG transport. Review replaced it with an impact-only analytic difference and central FD of independently replayed source terms. A second review then caught that `rel_diff` used `max(1, fd_norm)`, turning small-source comparisons into absolute rather than relative errors. It now divides by the larger analytic/FD norm (and treats exact zero separately). The production block diagnostic also passes already isolated source/recombination pairs without subtracting the baseline twice. Fresh Van Overstraeten/Masetti/QFP evidence is therefore genuinely source-only but fails the required relative gate; no tolerance was changed.
 
-## Frozen inputs and topology gate
+Tasks 8 and 9 are recorded `not_entered_task6_jacobian_and_task7_causality_gates_failed`. The production default remains unchanged. `element_edge_sg_gss_laux` remains opt-in. No field, mobility, alpha, or geometry scale was fitted.
 
-The audit uses exact imported `psi`, electron QFP, and hole QFP at `-1`, `-10`, and `-20 V` for:
+## Frozen inputs and topology provenance
 
-- Minimal6 `mirror` and `sketch`;
-- the regenerated coarse7x3 semiconductor mesh from the frozen explicit-GradQF Sentaurus root.
+The audit covers exact imported `psi`, electron QFP, and hole QFP at `-1`, `-10`, and `-20 V` for Minimal6 mirror/sketch and regenerated coarse7x3.
 
-The coarse probe contains 33 raw vertices, of which 27 are semiconductor mesh vertices. All 27 Vela node IDs and coordinates match exactly (`0` maximum coordinate error), and all 32 element IDs and local Tri3 vertex permutations match exactly. The six non-semiconductor probe vertices are excluded. This avoids the older 21-node/24-cell coarse export, which is not topology-identical to the frozen 27-node/32-cell oracle.
+- All 27 coarse semiconductor node IDs and coordinates match the frozen probe exactly.
+- All 32 coarse element IDs and local Tri3 vertex permutations match exactly.
+- The six non-semiconductor probe vertices are excluded.
+- Minimal6 and coarse contact-node sets and every imported field node ID are independently checked against each configured mesh.
+- The runner, coarse log/mesh/doping/materials, every Minimal6 source config plus its directly referenced mesh/doping, and all imported Minimal6 fields are hash-sealed in each manifest.
 
-The Task 6 area-conservation normalization is causal on the constrained-obtuse RED mesh. Minimal6 and the regenerated coarse mesh are right-triangle controls with no pre-fix truncated-area closure defect, so that normalization itself cannot explain their QFP updates. Task 7 compares the current canonical triangle source with the full opt-in element-edge source; it does not call box reconstruction a native directed edge current.
+The older 21-node/24-cell coarse export is not used. The matching frozen topology is 27 nodes/32 cells.
 
-## Configurations
+## Geometry scope
 
-The production-triangle branch is the canonical configuration:
+Task 6's constrained-obtuse RED proves that clipped circumcentric support was nonconservative. The opt-in helper now preserves nonnegative partials and exact total triangle area by uniform normalization. The patch does not have a native obtuse current/source oracle for the local vertex partition, so it is kept diagnostic and is not described as general operator parity.
 
-- `model: van_overstraeten`;
-- `driving_force: quasi_fermi_gradient`;
-- `generation: current_density`;
-- `current_approximation: cell_reconstructed`;
-- `cell_reconstructed_midpoint_density: gss_logistic`;
-- `source_mapping_mode: triangle_gss_gradqf_truncated`.
+Minimal6 and regenerated coarse7x3 are right-triangle controls without the pre-fix area-closure defect. The obtuse normalization therefore cannot itself explain their QFP updates.
 
-The candidate is explicitly opt-in:
+## Frozen configurations
 
-- `current_approximation: element_edge_sg_gss_laux`;
-- `source_mapping_mode: element_vertex_box_measure`;
-- `quasi_fermi_gradient_discretization: cell_gradient`.
+Production triangle:
 
-Both branches use unchanged Vela Masetti mobility with QFP-gradient high-field driving. Separate avalanche-off and SRH-off probes change only the requested term family. Native C++ SG edge diagnostics provide the box-flux reconstruction and incident row scale.
+- Van Overstraeten;
+- QFP-gradient driving force;
+- `cell_reconstructed` plus `gss_logistic`;
+- `triangle_gss_gradqf_truncated`.
 
-## Sealed evidence
+Opt-in candidate:
 
-Two independently generated roots have byte-identical hashes for all five sealed CSVs:
+- Van Overstraeten;
+- QFP-gradient driving force with `cell_gradient`;
+- `element_edge_sg_gss_laux`;
+- `element_vertex_box_measure`.
+
+Both use unchanged Vela Masetti mobility with QFP-gradient high-field driving. No A/B or geometry scale is present. Box edge fluxes are a native-mobility reconstruction diagnostic, not a native Sentaurus directed edge-current observation and not a third first-update branch.
+
+## Sealed v2 evidence
+
+Two fresh roots are generated independently:
 
 - `build-release/pn2d-imported-state-qfp-update-20260726-a`;
 - `build-release/pn2d-imported-state-qfp-update-20260726-b`.
 
 | Evidence | Rows |
 |---|---:|
-| topology gate | 9 |
+| topology/contact/state gate | 9 |
 | residual decomposition | 468 |
 | carrier-only and coupled first QFP updates | 600 |
-| analytic/FD Jacobian blocks | 90 |
-| avalanche-off and SRH-off controls | 468 |
+| analytic/central-FD Jacobian blocks | 90 |
+| paired avalanche-off and SRH-off controls | 936 |
+| independently reproducible causality groups | 54 |
 
-The independent verifier does not import analyzer calculations. It confirms:
+The v2 verifier does not import analyzer calculations. It independently checks the complete 117-JSON generated configuration lattice, frozen mobility/impact/contact/tolerance contracts, exact coarse `psi/eQFP/hQFP` values at all three biases, topology/contact mapping, the complete expected input-hash key set, paired controls, residual closure, causality directions, Jacobian gates, authorization, and typed outcome.
+
+Its expected status is `pass: false` with the typed error `source-specific Jacobian gate failed`. A/B sealed outputs are byte-identical, complete provenance hashes validate, and both roots pass the full configuration/topology/path-binding checks. The false verifier result is the intended enforcement of the scientific gate, not a verifier malfunction.
 
 | Gate | Result |
 |---|---:|
-| sealed A/B hashes | identical |
-| residual decomposition maximum relative error | `1.6654229802532582e-16` |
+| A/B sealed hashes | identical |
+| input hashes | verified |
+| residual closure maximum relative | `1.6654229802532582e-16` |
 | boundary branch maximum absolute difference | `0` |
-| topology maximum coordinate error | `0 um` |
-| exact biases present | `-1, -10, -20 V` |
-| update modes present | carrier-only, coupled |
-| non-improved topology/bias/mode/carrier groups | present in Minimal6 and coarse7x3 |
+| avalanche-off branch maximum absolute difference | `0` |
+| nonzero source Jacobian maximum relative | `0.9640948767506723` (fail) |
+| near-zero source Jacobian maximum absolute | `4.6780474445207e-17` (pass) |
+| cross-topology first-material causality | `false` |
 | Task 8 authorized | `false` |
 
-Normalized residual terms are direct C++ carrier-term diagnostics. Physical residual and row-scale columns multiply the unit-scaled residuals by `C0*D0`, with the same unit-scaling constants used by the assembler. The residual rows record SG divergence, SRH, avalanche, gauge, boundary/Dirichlet, incident row scale, normalized residual, physical residual, and final assembled residual.
+## Residual and first-update causality
 
-## Residual and update causality
+Candidate/production L2 ratios below one improve.
 
-The table gives candidate/production L2 ratios. Values below one improve.
-
-| Topology | Bias | electron residual | hole residual | carrier-only electron update | carrier-only hole update | coupled electron update | coupled hole update |
+| Topology | Bias | electron residual | hole residual | carrier-only electron | carrier-only hole | coupled electron | coupled hole |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | Minimal6 mirror/sketch | -1 | `1.000000` | `1.000000` | `1.000000` | `1.000000` | `1.000000` | `1.000000` |
 | Minimal6 mirror/sketch | -10 | `1.027156` | `1.027976` | `1.023601` | `1.024308` | `1.023601` | `1.024308` |
@@ -85,37 +96,35 @@ The table gives candidate/production L2 ratios. Values below one improve.
 | coarse7x3 | -10 | `1.099286e-7` | `1.099887e-7` | `0.00158892` | `0.0140316` | `0.00106766` | `0.00924058` |
 | coarse7x3 | -20 | `0.0180704` | `0.0181181` | `0.0120429` | `0.00857828` | `0.00891144` | `0.00639328` |
 
-Because each initial state is the exact Sentaurus QFP state, the pre-update QFP error is zero and the post-update error is `abs(delta_qfp)`. Thus a smaller first update is the direct first-step error metric; no target fitting is involved.
+Exact equality at low-signal `-1 V` is classified `equal`, not as a failure. The independent rule identifies the first non-equal bias for every topology (`-10 V`) and then compares directions. Coarse improves in every residual/update group; Minimal6 worsens in every group. This is the decisive cross-topology contradiction.
 
-The first material source-support departure is `-10 V`. Minimal6 and coarse7x3 move in opposite causal directions there. Avalanche-off controls remove the branch difference, while SRH-off controls retain the source-support difference, locating the discriminator in avalanche current/source support rather than SRH, boundary conditions, or mobility configuration. Boundary rows remain bitwise identical between source branches.
+The first maximum term departures are all avalanche terms:
 
-## Jacobian evidence
+- coarse7x3: `-10 V`, hole, node 10;
+- Minimal6 mirror: `-10 V`, hole, node 1;
+- Minimal6 sketch: `-10 V`, hole, node 5.
 
-Task 6's focused central-FD test remains the release gate and passes at `<=1e-8` nonzero relative error, with a frozen absolute gate for near-zero sources. Its diagnostic replay and assembled residual use identical mobility and driver configuration.
+Paired avalanche-off branches are identical. Paired SRH-off branches retain the source-operator difference. Boundary rows are identical. This locates the first discriminator in avalanche source/current support, not SRH, contacts, or changed mobility configuration.
 
-The broader imported-state matrix probe exposes an additional unresolved diagnostic: for non-negligible `sg_avalanche` blocks its maximum reported relative difference is `0.004877997535809977`, above `1e-8`. The largest row is coarse7x3, `-10 V`, opt-in. This is reported as a failed imported-state diagnostic gate, not hidden as a near-zero case and not used to weaken the Task 6 threshold. It must be resolved before any future authorization, but the cross-topology QFP causality failure already blocks Task 8 independently.
+Because the initial state is exactly Sentaurus QFP, the Sentaurus-to-Vela reference vector is zero. Update direction relative to that zero vector is recorded `undefined_zero_reference`; `abs(delta_qfp)` is retained only as the post-update error magnitude.
 
-## Task 10 decision ledger
+## Residual units and scales
 
-The applicable decision-matrix row is: general fixed-state operator evidence exists, but the first QFP update does not improve consistently across topologies. Allowed action: keep the operator opt-in as a diagnostic and investigate the QFP/source-support branch. No default-change proposal is made.
+Normalized carrier terms come directly from C++ diagnostics. Physical columns multiply by the assembler continuity unit scale `C0*D0`. The analyzer-derived maximum of incident absolute SG flux, SRH, and avalanche is explicitly named `diagnostic_incident_term_scale`; it is not claimed to be an exported solver row scale. The runner currently does not export a separate solver row-scaling factor for this probe.
 
-Tasks 8 and 9 are recorded as `not_entered_task7_gate_failed`; no Minimal6 curve is labeled a physical BV curve, and no fine PN2D knee claim is made.
+## Review disposition and Task 10 decision
 
-## Reproduction
+Independent scientific and code reviews both found the masked Jacobian test blocking. The response is:
 
-```powershell
-$env:Path = "D:\msys64\ucrt64\bin;D:\msys64\usr\bin;$env:Path"
-$env:PYTHONPATH = "."
-python scripts\diagnose_pn2d_imported_state_qfp_update.py `
-  --runner build-release\vela_example_runner.exe `
-  --minimal-phase-e-root build-release\pn2d-minimal6-phase-e-continuity-sourcefix2-20260724-a `
-  --coarse-log build-release\pn2d-general-tri3-sentaurus-avalanche-controls-20260725-a\coarse7x3\explicit_grad_qf\fetched\run_explicit_grad_qf.out `
-  --coarse-mesh-root build-release\pn2d-general-tri3-task7-imported-mesh-20260726\vela `
-  --output-root build-release\pn2d-imported-state-qfp-update-20260726-a
-python scripts\verify_pn2d_imported_state_qfp_update.py `
-  --root-a build-release\pn2d-imported-state-qfp-update-20260726-a `
-  --root-b build-release\pn2d-imported-state-qfp-update-20260726-b `
-  --output build-release\pn2d-imported-state-qfp-update-20260726-a\independent_verification.json
-```
+- source-only focused central FD added;
+- real-state source/recombination block audit changed from subtracting full forward-FD matrices to direct isolated-term central FD;
+- paired controls added for both variants;
+- circular authorization removed;
+- verifier independently derives the gate/outcome, validates both full configuration/provenance lattices, and intentionally fails the rejected source-Jacobian gate;
+- input/topology/contact/state provenance sealed and independently checked;
+- zero-reference QFP direction and first causal node/term recorded;
+- analyzer-defined scale renamed honestly.
 
-Generated `build-release` roots are validation artifacts and are not committed.
+The applicable production decision remains: keep the candidate opt-in as a diagnostic; no default change and no self-consistent or fine-BV claim.
+
+Generated `build-release` roots are not committed.

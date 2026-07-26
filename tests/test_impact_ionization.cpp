@@ -800,7 +800,8 @@ TEST_CASE("Coupled DD element-edge GSS Laux avalanche Jacobian matches finite di
     const VectorXd x = assembler.pack(state);
     const CoupledDDBoundaryConditions bcs;
     const Eigen::MatrixXd analytic =
-        Eigen::MatrixXd(assembler.assembleJacobian(x, bcs));
+        Eigen::MatrixXd(assembler.assembleJacobian(x, bcs)) -
+        Eigen::MatrixXd(baselineAssembler.assembleJacobian(x, bcs));
     const auto sourceResidual = [&](const VectorXd& values) {
         const CoupledDDState replayState = assembler.unpack(values);
         const auto components =
@@ -853,9 +854,10 @@ TEST_CASE("Coupled DD element-edge GSS Laux avalanche Jacobian matches finite di
         VectorXd minus = x;
         plus(col) += step;
         minus(col) -= step;
+        const VectorXd plusSource = sourceResidual(plus);
+        const VectorXd minusSource = sourceResidual(minus);
         finiteDifference.col(col) =
-            (assembler.residual(plus, bcs) - assembler.residual(minus, bcs)) /
-            (2.0 * step);
+            (plusSource - minusSource) / (2.0 * step);
     }
 
     const int N = static_cast<int>(mesh.numNodes());
@@ -871,6 +873,7 @@ TEST_CASE("Coupled DD element-edge GSS Laux avalanche Jacobian matches finite di
         }
     }
     REQUIRE(maxAbsRef > 0.0);
+    CAPTURE(maxAbsDiff, maxAbsRef, maxAbsDiff / maxAbsRef);
     REQUIRE(maxAbsDiff / maxAbsRef <= 1.0e-8);
 
     constexpr Real nearZeroAbsoluteTolerance = 1.0e-12;

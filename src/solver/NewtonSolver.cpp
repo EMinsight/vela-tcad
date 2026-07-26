@@ -303,7 +303,8 @@ NewtonJacobianBlockAuditRow jacobianAuditRow(
     row.analyticNorm = restrictedSparseNorm(analytic, rows);
     row.fdNorm = restrictedSparseNorm(fd, rows);
     row.diffNorm = restrictedSparseNorm(diff, rows);
-    row.relDiff = row.diffNorm / std::max<Real>(1.0, row.fdNorm);
+    const Real referenceNorm = std::max(row.analyticNorm, row.fdNorm);
+    row.relDiff = referenceNorm > 0.0 ? row.diffNorm / referenceNorm : 0.0;
     return row;
 }
 
@@ -2281,6 +2282,78 @@ std::vector<NewtonJacobianBlockAuditRow> NewtonSolver::evaluateJacobianBlockAudi
                 assembler.finiteDifferenceJacobian(x, bcs, finiteDifferenceStep),
             };
         };
+    const auto matrixDifferencePair =
+        [&](CoupledDDAssembler& withTerm,
+            CoupledDDAssembler& withoutTerm,
+            const std::string& termName) {
+            SparseMatrixd analytic =
+                withTerm.assembleJacobian(x, bcs) -
+                withoutTerm.assembleJacobian(x, bcs);
+            const int unknowns = static_cast<int>(x.size());
+            auto diagnosticResidual =
+                [&](CoupledDDAssembler& assembler,
+                    const VectorXd& values,
+                    const std::string& selectedTerm) {
+                    const auto terms =
+                        assembler.carrierContinuityTermDiagnostics(values, bcs);
+                    VectorXd residual = VectorXd::Zero(unknowns);
+                    for (int node = 0; node < N; ++node) {
+                        const auto& term = terms[static_cast<std::size_t>(node)];
+                        if (selectedTerm == "sg_avalanche") {
+                            residual(N + node) = term.electronImpact;
+                            residual(2 * N + node) = term.holeImpact;
+                        } else if (selectedTerm == "srh_auger") {
+                            residual(N + node) = term.electronRecombination;
+                            residual(2 * N + node) = term.holeRecombination;
+                        } else {
+                            residual(N + node) = term.electronGauge;
+                            residual(2 * N + node) = term.holeGauge;
+                        }
+                    }
+                    return residual;
+                };
+            std::vector<Eigen::Triplet<double>> termTriplets;
+            std::vector<Eigen::Triplet<double>> gaugeTriplets;
+            termTriplets.reserve(static_cast<std::size_t>(unknowns) * 7);
+            gaugeTriplets.reserve(static_cast<std::size_t>(unknowns));
+            for (int col = 0; col < unknowns; ++col) {
+                const Real step = finiteDifferenceStep *
+                    std::max<Real>(1.0, std::abs(x(col)));
+                VectorXd plus = x;
+                VectorXd minus = x;
+                plus(col) += step;
+                minus(col) -= step;
+                const VectorXd plusTerm =
+                    diagnosticResidual(withTerm, plus, termName);
+                const VectorXd minusTerm =
+                    diagnosticResidual(withTerm, minus, termName);
+                const VectorXd termDerivative =
+                    (plusTerm - minusTerm) / (2.0 * step);
+                const VectorXd plusGauge =
+                    diagnosticResidual(withTerm, plus, "gauge") -
+                    diagnosticResidual(withoutTerm, plus, "gauge");
+                const VectorXd minusGauge =
+                    diagnosticResidual(withTerm, minus, "gauge") -
+                    diagnosticResidual(withoutTerm, minus, "gauge");
+                const VectorXd gaugeDerivative =
+                    (plusGauge - minusGauge) / (2.0 * step);
+                for (int row = 0; row < unknowns; ++row) {
+                    if (termDerivative(row) != 0.0)
+                        termTriplets.emplace_back(row, col, termDerivative(row));
+                    if (gaugeDerivative(row) != 0.0)
+                        gaugeTriplets.emplace_back(row, col, gaugeDerivative(row));
+                }
+            }
+            SparseMatrixd finiteDifference(unknowns, unknowns);
+            finiteDifference.setFromTriplets(
+                termTriplets.begin(), termTriplets.end());
+            SparseMatrixd gaugeDifference(unknowns, unknowns);
+            gaugeDifference.setFromTriplets(
+                gaugeTriplets.begin(), gaugeTriplets.end());
+            analytic -= gaugeDifference;
+            return std::pair<SparseMatrixd, SparseMatrixd>{
+                analytic, finiteDifference};
+        };
 
     const std::vector<std::string> defaultBlocks = {
         "poisson",
@@ -2309,12 +2382,14 @@ std::vector<NewtonJacobianBlockAuditRow> NewtonSolver::evaluateJacobianBlockAudi
     if (needsRecombination) {
         CoupledDDAssembler recombinationAssembler =
             makeAssembler(recombinationConfig, noImpactConfig);
-        withRecombination = matrixPair(recombinationAssembler);
+        withRecombination = matrixDifferencePair(
+            recombinationAssembler, baseAssembler, "srh_auger");
     }
     if (needsImpact) {
         CoupledDDAssembler impactAssembler =
             makeAssembler(noRecombinationConfig, cfg_.impactIonization);
-        withImpact = matrixPair(impactAssembler);
+        withImpact = matrixDifferencePair(
+            impactAssembler, baseAssembler, "sg_avalanche");
     }
 
     std::vector<NewtonJacobianBlockAuditRow> rows;
@@ -2329,14 +2404,14 @@ std::vector<NewtonJacobianBlockAuditRow> NewtonSolver::evaluateJacobianBlockAudi
         } else if (block == "srh_auger") {
             rows.push_back(jacobianAuditRow(
                 block,
-                withRecombination->first - base->first,
-                withRecombination->second - base->second,
+                withRecombination->first,
+                withRecombination->second,
                 jacobianAuditRows(block, N)));
         } else if (block == "sg_avalanche") {
             rows.push_back(jacobianAuditRow(
                 block,
-                withImpact->first - base->first,
-                withImpact->second - base->second,
+                withImpact->first,
+                withImpact->second,
                 jacobianAuditRows(block, N)));
         } else if (block == "dirichlet_or_gauge") {
             rows.push_back(jacobianAuditRow(

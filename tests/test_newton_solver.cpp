@@ -1299,6 +1299,52 @@ TEST_CASE("NewtonSolver: evaluateJacobianBlockAudit can restrict expensive block
 }
 
 
+TEST_CASE("NewtonSolver: element-edge avalanche block audit is independently source-only",
+          "[newton][diagnostics][impact][element_edge]")
+{
+    DeviceMesh mesh = makePNMesh();
+    MaterialDatabase matdb;
+    DopingModel doping = makePNDoping(mesh);
+    std::unordered_map<std::string, Real> biases = {
+        {"anode", -1.0},
+        {"cathode", 0.0},
+    };
+
+    NewtonConfig cfg;
+    cfg.inputScaling.mode = UnitScalingMode::UnitScaling;
+    cfg.recombination = {"none"};
+    cfg.warmStart = true;
+    cfg.mobility.model = "constant";
+    cfg.mobility.highFieldDrivingForce = "quasi_fermi_gradient";
+    cfg.impactIonization.model = "selberherr";
+    cfg.impactIonization.drivingForce = "quasi_fermi_gradient";
+    cfg.impactIonization.generation = "current_density";
+    cfg.impactIonization.currentApproximation = "element_edge_sg_gss_laux";
+    cfg.impactIonization.sourceMappingMode = "element_vertex_box_measure";
+    cfg.impactIonization.electronA = 1.0;
+    cfg.impactIonization.electronB = 1.0e-30;
+    cfg.impactIonization.holeA = 1.0;
+    cfg.impactIonization.holeB = 1.0e-30;
+
+    DDSolution state;
+    state.psi = (VectorXd(5) << 0.05, -0.30, -0.75, -0.10, -0.42).finished();
+    state.phin = (VectorXd(5) << 0.02, -0.65, -1.10, -0.08, -0.27).finished();
+    state.phip = (VectorXd(5) << -0.15, -0.35, -0.82, -0.60, -0.24).finished();
+
+    NewtonSolver solver(mesh, matdb, doping, biases, cfg);
+    const auto sourceRows = solver.evaluateJacobianBlockAudit(
+        state, 1.0e-7, std::vector<std::string>{"sg_avalanche"});
+    const auto transportRows = solver.evaluateJacobianBlockAudit(
+        state, 1.0e-7, std::vector<std::string>{"transport"});
+
+    REQUIRE(sourceRows.size() == 1);
+    REQUIRE(transportRows.size() == 1);
+    REQUIRE(sourceRows.front().analyticNorm > 0.0);
+    REQUIRE(sourceRows.front().fdNorm > 0.0);
+    REQUIRE(sourceRows.front().relDiff <= 1.0e-8);
+    REQUIRE(sourceRows.front().analyticNorm != Catch::Approx(transportRows.front().analyticNorm));
+    REQUIRE(sourceRows.front().fdNorm != Catch::Approx(transportRows.front().fdNorm));
+}
 TEST_CASE("NewtonSolver: cell-reconstructed SG avalanche Jacobian matches midpoint residual",
           "[newton][diagnostics][impact]")
 {

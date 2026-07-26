@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 
 from scripts.diagnose_pn2d_imported_state_qfp_update import deck, impact_config, internal_nodes
+from scripts.verify_pn2d_imported_state_qfp_update import derive_causality
 
 
 class ImportedStateQfpUpdateContractTest(unittest.TestCase):
@@ -60,6 +61,47 @@ class ImportedStateQfpUpdateContractTest(unittest.TestCase):
             path = Path(temporary) / "mesh.json"
             path.write_text(json.dumps(mesh), encoding="utf-8")
             self.assertEqual(internal_nodes({"mesh_file": str(path)}), {2, 3})
+
+
+    def test_independent_causality_ignores_equal_low_signal_then_rejects_opposite_directions(self) -> None:
+        residuals = []
+        updates = []
+        topologies = ("minimal6_mirror", "minimal6_sketch", "coarse7x3")
+        for topology in topologies:
+            for bias in (1, 10, 20):
+                for carrier in ("electron", "hole"):
+                    baseline = 1.0
+                    if bias == 1:
+                        candidate = baseline
+                    elif topology == "coarse7x3":
+                        candidate = 0.5
+                    else:
+                        candidate = 1.5
+                    for variant, value in (
+                        ("production_triangle", baseline),
+                        ("element_edge_opt_in", candidate),
+                    ):
+                        residuals.append({
+                            "topology": topology, "bias_V": str(-bias),
+                            "variant": variant, "carrier": carrier,
+                            "is_boundary": "0",
+                            "final_residual_normalized": str(value),
+                        })
+                        for mode in ("carrier_only", "coupled"):
+                            updates.append({
+                                "topology": topology, "bias_V": str(-bias),
+                                "variant": variant, "mode": mode,
+                                "carrier": carrier, "delta_qfp_V": str(value),
+                            })
+        groups, authorized = derive_causality(residuals, updates)
+        self.assertFalse(authorized)
+        first_bias_directions = {
+            (row["topology"], row["direction"])
+            for row in groups if row["bias_V"] == -10
+        }
+        self.assertIn(("coarse7x3", "improved"), first_bias_directions)
+        self.assertIn(("minimal6_mirror", "worsened"), first_bias_directions)
+        self.assertTrue(all(row["direction"] == "equal" for row in groups if row["bias_V"] == -1))
 
 
 if __name__ == "__main__":
