@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-import json
 import math
 import re
 import sys
@@ -20,7 +19,12 @@ from scripts.diagnose_pn2d_minimal6_element_avalanche_replay import (
     currentplot_targets,
 )
 from scripts.pn2d_high_bias_process_contract import EXACT_HIGH_BIAS_V
-from scripts.run_pn2d_high_bias_oracle_variant_vm import ORACLE_VARIANTS
+from scripts.pn2d_sentaurus_process_run_contract import validate_case
+from scripts.run_pn2d_high_bias_oracle_variant_vm import (
+    ORACLE_VARIANTS,
+    oracle_deck,
+)
+from scripts.run_pn2d_high_bias_process_probe_vm import PROCESS_FIELDS
 
 
 NUMBER = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[Ee][-+]?\d+)?"
@@ -73,6 +77,88 @@ def variant_files(root: Path, variant: str) -> tuple[Path, Path, Path]:
     run = fetched / f"run_{variant}.out"
     plt = fetched / f"runtime_general_tri3_avalanche_probe_{variant}.plt"
     return manifest, run, plt
+
+
+def variant_deck(root: Path, variant: str) -> Path:
+    return (
+        root
+        / variant
+        / "bundle"
+        / f"runtime_general_tri3_avalanche_probe_{variant}.cmd"
+    )
+
+
+def implicit_template(root: Path) -> str:
+    deck = variant_deck(root, "implicit_default").read_text(encoding="ascii")
+    stem = "runtime_general_tri3_avalanche_probe_implicit_default"
+    if deck.count(stem) != 3:
+        raise ValueError(f"{root}: implicit output stem count mismatch")
+    deck = deck.replace(stem, "runtime_element_avalanche_probe_default")
+    if deck.count("pn2d_msh.tdr") != 2:
+        raise ValueError(f"{root}: implicit mesh reference count mismatch")
+    deck = deck.replace("pn2d_msh.tdr", "pn2d_minimal6.tdr")
+    expanded = "\n".join(
+        ("  hAlphaAvalanche", *("  " + name for name in PROCESS_FIELDS), "}")
+    )
+    if deck.count(expanded) != 1:
+        raise ValueError(f"{root}: process Plot field block mismatch")
+    return deck.replace(expanded, "  hAlphaAvalanche\n}", 1)
+
+
+def validate_variant_bundle_contract(
+    roots: tuple[Path, Path],
+    manifests: dict[tuple[Path, str], dict[str, Any]],
+) -> None:
+    common_files = (
+        "pn2d_msh.tdr",
+        "models.par",
+        "runtime_element_avalanche_probe.tcl",
+    )
+    for root in roots:
+        baseline_hashes = manifests[(root, "implicit_default")]["bundle_sha256"]
+        template = implicit_template(root)
+        for variant in ORACLE_VARIANTS:
+            hashes = manifests[(root, variant)]["bundle_sha256"]
+            for name in common_files:
+                if (
+                    name not in hashes
+                    or name not in baseline_hashes
+                    or hashes[name] != baseline_hashes[name]
+                ):
+                    raise ValueError(
+                        f"{root}/{variant}: uncontrolled common input difference: {name}"
+                    )
+            actual = variant_deck(root, variant).read_text(encoding="ascii")
+            expected = oracle_deck(template, variant, EXACT_HIGH_BIAS_V)
+            if actual != expected:
+                raise ValueError(
+                    f"{root}/{variant}: deck differs beyond declared variant controls"
+                )
+
+
+def reproducibility_row(
+    variant: str,
+    bundle_a: dict[str, str],
+    bundle_b: dict[str, str],
+    records_a: list[dict[str, Any]],
+    records_b: list[dict[str, Any]],
+    currents_a: list[dict[str, float]],
+    currents_b: list[dict[str, float]],
+) -> dict[str, Any]:
+    if bundle_a != bundle_b:
+        raise ValueError(f"{variant}: paired bundle hashes differ")
+    normalized_a = [row for row in records_a if row["kind"] != "begin"]
+    normalized_b = [row for row in records_b if row["kind"] != "begin"]
+    if normalized_a != normalized_b:
+        raise ValueError(f"{variant}: paired runtime records differ")
+    if currents_a != currents_b:
+        raise ValueError(f"{variant}: paired CurrentPlot rows differ")
+    return {
+        "variant": variant,
+        "runtime_records_equal": 1,
+        "currentplot_rows_equal": 1,
+        "bundle_hashes_equal": 1,
+    }
 
 
 def process_summary(
@@ -197,34 +283,37 @@ def main() -> int:
     all_summary: list[dict[str, Any]] = []
     all_adjacent: list[dict[str, Any]] = []
     reproducibility: list[dict[str, Any]] = []
+    manifests: dict[tuple[Path, str], dict[str, Any]] = {}
     for variant in ORACLE_VARIANTS:
         root_records = []
         root_currents = []
         for root in roots:
-            manifest_path, run_path, plt_path = variant_files(root, variant)
-            manifest = json.loads(manifest_path.read_text(encoding="ascii"))
-            if manifest["status"] != "passed":
-                raise ValueError(f"{manifest_path}: non-passed manifest")
-            if tuple(manifest["observed_biases_V"]) != EXACT_HIGH_BIAS_V:
-                raise ValueError(f"{manifest_path}: exact lattice mismatch")
+            case = root / variant
+            manifest = validate_case(
+                case,
+                experiment="pn2d_exact_high_bias_oracle_variant",
+                variant=variant,
+                exact_biases=EXACT_HIGH_BIAS_V,
+            )
+            manifests[(root, variant)] = manifest
+            _, run_path, plt_path = variant_files(root, variant)
             root_records.append(records(run_path))
             root_currents.append(currentplot_targets(plt_path, EXACT_HIGH_BIAS_V))
-        normalized_a = [
-            row for row in root_records[0] if row["kind"] != "begin"
-        ]
-        normalized_b = [
-            row for row in root_records[1] if row["kind"] != "begin"
-        ]
         reproducibility.append(
-            {
-                "variant": variant,
-                "runtime_records_equal": int(normalized_a == normalized_b),
-                "currentplot_rows_equal": int(root_currents[0] == root_currents[1]),
-            }
+            reproducibility_row(
+                variant,
+                manifests[(roots[0], variant)]["bundle_sha256"],
+                manifests[(roots[1], variant)]["bundle_sha256"],
+                root_records[0],
+                root_records[1],
+                root_currents[0],
+                root_currents[1],
+            )
         )
         summary = process_summary(variant, root_records[0], root_currents[0])
         all_summary.extend(summary)
         all_adjacent.extend(adjacent(summary))
+    validate_variant_bundle_contract(roots, manifests)
     write_csv(output / "process_summary.csv", all_summary)
     write_csv(output / "adjacent_growth.csv", all_adjacent)
     write_csv(output / "reproducibility.csv", reproducibility)

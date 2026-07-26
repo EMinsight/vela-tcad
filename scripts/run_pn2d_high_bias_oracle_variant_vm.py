@@ -18,6 +18,7 @@ from scripts.pn2d_high_bias_process_contract import (
     EXACT_HIGH_BIAS_V,
     SENTAURUS_RELEASE,
 )
+from scripts.pn2d_sentaurus_process_run_contract import build_run_manifest
 from scripts.run_pn2d_general_tri3_sentaurus_avalanche_controls_vm import (
     VARIANTS,
     make_general_tcl,
@@ -27,7 +28,6 @@ from scripts.run_pn2d_high_bias_process_probe_vm import (
     PROCESS_FIELDS,
     run,
     sentaurus_release,
-    sha256,
     write_ascii,
 )
 from scripts.run_pn2d_minimal6_sentaurus_avalanche_drive_controls_vm import (
@@ -231,22 +231,16 @@ def main() -> int:
         )
     )
     exact = observed == biases
-    manifest = {
-        "schema": "vela.pn2d_high_bias_process_jacobian.v1",
-        "status": "passed" if exact else "failed",
-        "experiment": "pn2d_exact_high_bias_oracle_variant",
-        "sentaurus_release": release,
-        "exact_biases_V": list(biases),
-        "observed_biases_V": list(observed),
-        "variant": variant,
-        "remote_root": remote_root,
-        "bundle_sha256": {
-            path.name: sha256(path) for path in sorted(bundle.iterdir())
-        },
-        "output_sha256": {
-            path.name: sha256(path) for path in sorted(fetched.iterdir())
-        },
-    }
+    manifest = build_run_manifest(
+        status="passed" if exact else "failed",
+        experiment="pn2d_exact_high_bias_oracle_variant",
+        variant=variant,
+        exact_biases=biases,
+        observed_biases=observed,
+        remote_root=remote_root,
+        bundle=bundle,
+        fetched=fetched,
+    )
     write_ascii(
         output / "manifest.json",
         json.dumps(manifest, indent=2, sort_keys=True) + "\n",

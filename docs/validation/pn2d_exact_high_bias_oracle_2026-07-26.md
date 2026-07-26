@@ -7,10 +7,13 @@ Plan task: Task 14 of
 
 ## Outcome
 
-Typed outcome: `exact_high_bias_oracle_available`
+Typed outcome: `partial_high_bias_oracle`
 
-The exact coarse7x3 Sentaurus high-bias oracle is accepted. It does not
-authorize Task 15 or any Vela nonlinear candidate because Task 12 stopped with
+The exact paired branch/state matrix and its native observations are accepted,
+but Task 14's first-material-process-departure exit gate is not closed. The
+current analysis compares global maxima on different supports and cannot identify
+the first local dependency stage. Task 15 and every Vela nonlinear candidate also
+remain independently blocked because Task 12 stopped with
 `incomplete_analytic_derivative`.
 
 ## Exact paired matrix
@@ -72,7 +75,7 @@ monotonically across the refined exact lattice:
 Thus the remembered coarse7x3 knee is present: the same voltage-normalized
 current growth becomes much steeper as the state approaches -20 V.
 
-## First accelerating process stage
+## Global-maximum process diagnostic
 
 For the implicit branch, exact -19 to -20 V growth is:
 
@@ -88,17 +91,18 @@ For the implicit branch, exact -19 to -20 V growth is:
 | source integral | 8.13093e-17 | 3.82315e-16 | 4.70198 |
 | Anode total current | 1.12586e-16 | 4.33747e-16 | 3.85258 |
 
-The first strong acceleration in the exported dependency order is therefore
-the velocity/current layer. Maximum field and QFP-gradient change by about
-3%, the maximum mobility does not change, and maximum alpha changes by about
-14%; velocity doubles and element current increases by about 3.86x before
-generation/source increases by about 4.70x and terminal current by about
-3.85x.
+The global maxima show that velocity, element current, generation/source, and
+terminal current increase much faster than the global maxima of field,
+QFP-gradient, mobility, and alpha. This is a useful process diagnostic, but it
+is not a stage-order result: the maxima can occur at different locations, the
+maximum density is contact-dominated, and vertex velocity is not spatially
+aligned with element current.
 
-This is a stage-order observation, not a proof of a proprietary local
-constitutive formula. Task 15 would still be required to distinguish density,
-velocity, mobility-support, current-support, and source-mapping effects at
-matching local support.
+The required contact/interior split, active-region restriction, and
+hotspot-coincident same-support comparison were not produced. The first
+material process departure is therefore unresolved, which is why the typed
+outcome is `partial_high_bias_oracle`. Task 15 remains blocked rather than
+being used to fill that gap.
 
 Native electron, hole, and mean ionization-integral fields are present but
 are exactly zero on this accepted run. They remain native-zero observations
@@ -125,8 +129,12 @@ the complete summarized lattice. The global QFP-gradient default is therefore
 retained. Electric-field drive is a materially different, much stronger
 branch and is not substituted. The contact selector changes the -20 V
 results by less than 0.04% and is not the knee cause. Removing avalanche
-reduces the -20 V terminal current to about 11.9% of the implicit result,
-which directly confirms that avalanche feedback is essential to the turn.
+reduces the -20 V terminal current to about 11.9% of the implicit result. The
+avalanche-off branch nevertheless still steepens toward -20 V, with terminal
+current log slopes of 1.5006, 1.9646, and 2.1005 per V over the final three
+intervals. Avalanche therefore materially amplifies and dominates the -20 V
+current magnitude and steepening, but the existence of a high-bias turn is not
+avalanche-exclusive.
 
 ## Preserved observation boundary
 
@@ -150,5 +158,9 @@ The independent analyzer writes:
 under
 `build-release/pn2d-task14-high-bias-oracle-analysis-20260726`.
 
-All nine reproducibility rows pass both normalized runtime-record equality and
-CurrentPlot exact-row equality.
+All nine reproducibility rows pass normalized runtime-record equality,
+CurrentPlot exact-row equality, and paired bundle-hash equality. The analyzer
+now fails closed on any mismatch, validates every run manifest against
+`vela.pn2d_sentaurus_process_run.v1`, recomputes bundle/output file hashes,
+and reconstructs every variant deck from the implicit deck to verify that only
+the declared drive, contact, HFS, density-gradient, or avalanche selector differs.

@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import re
 import shutil
@@ -16,6 +15,7 @@ if not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.pn2d_high_bias_process_contract import SENTAURUS_RELEASE
+from scripts.pn2d_sentaurus_process_run_contract import build_run_manifest
 from scripts.run_pn2d_general_tri3_sentaurus_avalanche_controls_vm import (
     make_general_tcl,
     make_variant_deck,
@@ -72,14 +72,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--remote-root", required=True)
     return parser.parse_args()
-
-
-def sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for block in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
 
 
 def write_ascii(path: Path, text: str) -> None:
@@ -194,22 +186,16 @@ def main() -> int:
         )
     ]
     exact = len(observed) == 1 and abs(observed[0] - BIAS_V) <= 1.0e-12
-    manifest = {
-        "schema": "vela.pn2d_high_bias_process_jacobian.v1",
-        "status": "passed" if exact else "failed",
-        "experiment": "pn2d_high_bias_process_probe",
-        "sentaurus_release": release,
-        "bias_V": BIAS_V,
-        "observed_biases_V": observed,
-        "variant": VARIANT,
-        "remote_root": remote_root,
-        "bundle_sha256": {
-            path.name: sha256(path) for path in sorted(bundle.iterdir())
-        },
-        "output_sha256": {
-            path.name: sha256(path) for path in sorted(fetched.iterdir())
-        },
-    }
+    manifest = build_run_manifest(
+        status="passed" if exact else "failed",
+        experiment="pn2d_high_bias_process_probe",
+        variant=VARIANT,
+        exact_biases=(BIAS_V,),
+        observed_biases=observed,
+        remote_root=remote_root,
+        bundle=bundle,
+        fetched=fetched,
+    )
     write_ascii(
         output / "manifest.json",
         json.dumps(manifest, indent=2, sort_keys=True) + "\n",

@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "vela.pn2d_sentaurus_process_run.v1",
+  "type": "object",
+  "required": [
+    "schema",
+    "status",
+    "experiment",
+    "sentaurus_release",
+    "exact_biases_V",
+    "observed_biases_V",
+    "variant",
+    "remote_root",
+    "bundle_sha256",
+    "output_sha256"
+  ],
+  "properties": {
+    "schema": {
+      "const": "vela.pn2d_sentaurus_process_run.v1"
+    },
+    "status": {
+      "enum": ["passed", "failed"]
+    },
+    "experiment": {
+      "enum": [
+        "pn2d_high_bias_process_probe",
+        "pn2d_exact_high_bias_oracle_variant"
+      ]
+    },
+    "sentaurus_release": {
+      "const": "O-2018.06-SP2"
+    },
+    "exact_biases_V": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"type": "number"}
+    },
+    "observed_biases_V": {
+      "type": "array",
+      "minItems": 0,
+      "uniqueItems": true,
+      "items": {"type": "number"}
+    },
+    "variant": {
+      "type": "string",
+      "minLength": 1
+    },
+    "remote_root": {
+      "type": "string",
+      "minLength": 1
+    },
+    "bundle_sha256": {
+      "$ref": "#/$defs/hashMap"
+    },
+    "output_sha256": {
+      "$ref": "#/$defs/hashMap"
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "hashMap": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {"$ref": "#/$defs/sha256"}
+    }
+  },
+  "additionalProperties": false
+}

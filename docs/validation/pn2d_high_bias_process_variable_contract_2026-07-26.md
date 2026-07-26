@@ -19,9 +19,11 @@ a Vela self-consistent candidate.
 - `build-release/pn2d-task13-process-probe-20260726-a`
 - `build-release/pn2d-task13-process-probe-20260726-b`
 
-Both roots observed exactly one runtime callback at `-19.95 V`. Their deck,
-mesh, parameter, and Tcl bundle SHA-256 values are identical. Their CurrentPlot
-`.plt` files are byte-identical.
+Both roots observed exactly one runtime callback at `-19.95 V`. Their run
+manifests validate against `vela.pn2d_sentaurus_process_run.v1`; recomputed
+bundle/output hashes close against every local file. Their deck, mesh, parameter,
+and Tcl bundle SHA-256 values are identical. Their CurrentPlot `.plt` files are
+byte-identical.
 
 The raw TDR and solver logs contain run-path metadata and therefore have
 different raw hashes. After local TDR parsing:

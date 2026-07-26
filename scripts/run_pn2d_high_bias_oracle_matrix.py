@@ -12,6 +12,8 @@ from pathlib import Path
 if not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from scripts.pn2d_high_bias_process_contract import EXACT_HIGH_BIAS_V
+from scripts.pn2d_sentaurus_process_run_contract import validate_case
 from scripts.run_pn2d_high_bias_oracle_variant_vm import ORACLE_VARIANTS
 
 
@@ -29,11 +31,17 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def passed(path: Path) -> bool:
-    manifest = path / "manifest.json"
-    if not manifest.is_file():
+def passed(path: Path, variant: str) -> bool:
+    try:
+        validate_case(
+            path,
+            experiment="pn2d_exact_high_bias_oracle_variant",
+            variant=variant,
+            exact_biases=EXACT_HIGH_BIAS_V,
+        )
+    except (OSError, ValueError, KeyError, json.JSONDecodeError):
         return False
-    return json.loads(manifest.read_text(encoding="ascii")).get("status") == "passed"
+    return True
 
 
 def main() -> int:
@@ -47,7 +55,7 @@ def main() -> int:
         remote_root = args.remote_prefix + f"-{root}"
         for variant in ORACLE_VARIANTS:
             destination = output_root / variant
-            if not passed(destination):
+            if not passed(destination, variant):
                 subprocess.run(
                     [
                         sys.executable,

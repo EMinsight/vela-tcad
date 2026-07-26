@@ -7,7 +7,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.analyze_pn2d_high_bias_oracle import adjacent, records
+from scripts.analyze_pn2d_high_bias_oracle import (
+    adjacent,
+    records,
+    reproducibility_row,
+)
 
 
 class HighBiasOracleAnalysisTest(unittest.TestCase):
@@ -40,6 +44,40 @@ class HighBiasOracleAnalysisTest(unittest.TestCase):
             result[0]["log_slope_per_V"],
             math.log(1.5) / 0.05,
         )
+
+    def test_reproducibility_gate_fails_closed(self) -> None:
+        records_a = [{"kind": "vertex", "value": 1.0}]
+        currents_a = [{"bias_V": -20.0, "current": 2.0}]
+        with self.assertRaisesRegex(ValueError, "bundle hashes differ"):
+            reproducibility_row(
+                "implicit_default",
+                {"deck": "a"},
+                {"deck": "b"},
+                records_a,
+                records_a,
+                currents_a,
+                currents_a,
+            )
+        with self.assertRaisesRegex(ValueError, "runtime records differ"):
+            reproducibility_row(
+                "implicit_default",
+                {"deck": "a"},
+                {"deck": "a"},
+                records_a,
+                [{"kind": "vertex", "value": 2.0}],
+                currents_a,
+                currents_a,
+            )
+        with self.assertRaisesRegex(ValueError, "CurrentPlot rows differ"):
+            reproducibility_row(
+                "implicit_default",
+                {"deck": "a"},
+                {"deck": "a"},
+                records_a,
+                records_a,
+                currents_a,
+                [{"bias_V": -20.0, "current": 3.0}],
+            )
 
 
 if __name__ == "__main__":
