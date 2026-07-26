@@ -922,6 +922,19 @@ TEST_CASE("Coupled DD element-edge GSS Laux avalanche Jacobian matches finite di
                 .maxCoeff() <= nearZeroAbsoluteTolerance);
 }
 
+TEST_CASE("Scaled source Jacobian perturbation matches scaled coordinates",
+          "[impact][newton][element_edge_gss_laux][scaling]")
+{
+    constexpr Real relativeStep = 1.0e-7;
+    constexpr Real potentialScale = 0.025852;
+    REQUIRE(detail::physicalPotentialCentralDifferenceStep(
+                0.0, potentialScale, relativeStep) ==
+            Catch::Approx(relativeStep * potentialScale));
+    REQUIRE(detail::physicalPotentialCentralDifferenceStep(
+                20.0, potentialScale, relativeStep) ==
+            Catch::Approx(relativeStep * 20.0));
+}
+
 TEST_CASE("Coupled DD psi-gradient avalanche Jacobian matches carrier finite differences",
           "[impact][newton][psi_gradient_proxy]")
 {

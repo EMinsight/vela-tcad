@@ -34,6 +34,12 @@
 
 namespace vela::detail {
 
+inline Real physicalPotentialCentralDifferenceStep(
+    Real physicalValue, Real potentialScale, Real relativeStep)
+{
+    return relativeStep * std::max(potentialScale, std::abs(physicalValue));
+}
+
 
 // ---------------------------------------------------------------------------
 // Fixed and interface charge helpers

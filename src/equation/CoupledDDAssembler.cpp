@@ -1678,8 +1678,11 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
                     const Real value = variableBlock == 0 ? psi(nodeIndex)
                         : (variableBlock == 1 ? phinState(nodeIndex)
                                               : phipState(nodeIndex));
+                    // Match the assembler-level relative perturbation in scaled
+                    // coordinates: dV = relativeStep * max(V0, |V|).
                     const Real step =
-                        1.0e-7 * std::max(1.0, std::abs(value));
+                        detail::physicalPotentialCentralDifferenceStep(
+                            value, potentialScale, 1.0e-7);
                     VectorXd psiPlus = psi;
                     VectorXd psiMinus = psi;
                     VectorXd phinPlus = phinState;

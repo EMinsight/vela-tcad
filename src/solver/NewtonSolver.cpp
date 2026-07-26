@@ -271,18 +271,25 @@ std::vector<int> jacobianAuditRows(const std::string& block,
 }
 
 Real restrictedSparseNorm(const SparseMatrixd& matrix,
-                          const std::vector<int>& rows)
+                          const std::vector<int>& rows,
+                          int columnStart = 0,
+                          int columnCount = -1)
 {
     std::vector<char> rowMask(static_cast<std::size_t>(matrix.rows()), 0);
     for (int row : rows) {
         if (row >= 0 && row < matrix.rows())
             rowMask[static_cast<std::size_t>(row)] = 1;
     }
+    const int matrixColumns = static_cast<int>(matrix.cols());
+    const int columnEnd = columnCount < 0
+        ? matrixColumns
+        : std::min(matrixColumns, columnStart + columnCount);
 
     Real sum = 0.0;
     for (int outer = 0; outer < matrix.outerSize(); ++outer) {
         for (SparseMatrixd::InnerIterator it(matrix, outer); it; ++it) {
-            if (rowMask[static_cast<std::size_t>(it.row())]) {
+            if (it.col() >= columnStart && it.col() < columnEnd &&
+                rowMask[static_cast<std::size_t>(it.row())]) {
                 const Real value = it.value();
                 sum += value * value;
             }
@@ -305,6 +312,26 @@ NewtonJacobianBlockAuditRow jacobianAuditRow(
     row.diffNorm = restrictedSparseNorm(diff, rows);
     const Real referenceNorm = std::max(row.analyticNorm, row.fdNorm);
     row.relDiff = referenceNorm > 0.0 ? row.diffNorm / referenceNorm : 0.0;
+
+    const int nodeCount = analytic.cols() / 3;
+    auto setColumnBlock = [&](int blockIndex,
+                              Real& analyticNorm,
+                              Real& fdNorm,
+                              Real& diffNorm,
+                              Real& relativeDiff) {
+        const int start = blockIndex * nodeCount;
+        analyticNorm = restrictedSparseNorm(analytic, rows, start, nodeCount);
+        fdNorm = restrictedSparseNorm(fd, rows, start, nodeCount);
+        diffNorm = restrictedSparseNorm(diff, rows, start, nodeCount);
+        const Real blockReference = std::max(analyticNorm, fdNorm);
+        relativeDiff = blockReference > 0.0 ? diffNorm / blockReference : 0.0;
+    };
+    setColumnBlock(0, row.analyticPsiColumnNorm, row.fdPsiColumnNorm,
+                   row.diffPsiColumnNorm, row.relPsiColumnDiff);
+    setColumnBlock(1, row.analyticPhinColumnNorm, row.fdPhinColumnNorm,
+                   row.diffPhinColumnNorm, row.relPhinColumnDiff);
+    setColumnBlock(2, row.analyticPhipColumnNorm, row.fdPhipColumnNorm,
+                   row.diffPhipColumnNorm, row.relPhipColumnDiff);
     return row;
 }
 

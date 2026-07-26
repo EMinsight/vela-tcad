@@ -1485,14 +1485,29 @@ nlohmann::json runNewtonJacobianBlockProbe(const std::string& configFile,
     std::ofstream out(outputPath);
     if (!out.is_open())
         throw std::runtime_error("Cannot write jacobian block probe CSV: " + outputPath.string());
-    out << "block,analytic_norm,fd_norm,diff_norm,rel_diff\n";
+    out << "block,analytic_norm,fd_norm,diff_norm,rel_diff,"
+        << "analytic_psi_column_norm,fd_psi_column_norm,diff_psi_column_norm,rel_psi_column_diff,"
+        << "analytic_phin_column_norm,fd_phin_column_norm,diff_phin_column_norm,rel_phin_column_diff,"
+        << "analytic_phip_column_norm,fd_phip_column_norm,diff_phip_column_norm,rel_phip_column_diff\n";
     out << std::setprecision(17);
     for (const auto& row : rows) {
         out << row.block << ','
             << row.analyticNorm << ','
             << row.fdNorm << ','
             << row.diffNorm << ','
-            << row.relDiff << '\n';
+            << row.relDiff << ','
+            << row.analyticPsiColumnNorm << ','
+            << row.fdPsiColumnNorm << ','
+            << row.diffPsiColumnNorm << ','
+            << row.relPsiColumnDiff << ','
+            << row.analyticPhinColumnNorm << ','
+            << row.fdPhinColumnNorm << ','
+            << row.diffPhinColumnNorm << ','
+            << row.relPhinColumnDiff << ','
+            << row.analyticPhipColumnNorm << ','
+            << row.fdPhipColumnNorm << ','
+            << row.diffPhipColumnNorm << ','
+            << row.relPhipColumnDiff << '\n';
     }
 
     return {

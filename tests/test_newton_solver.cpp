@@ -1249,7 +1249,19 @@ TEST_CASE("NewtonSolver: evaluateJacobianBlockAudit reports finite block rows",
                    std::isfinite(row.analyticNorm) &&
                    std::isfinite(row.fdNorm) &&
                    std::isfinite(row.diffNorm) &&
-                   std::isfinite(row.relDiff);
+                   std::isfinite(row.relDiff) &&
+                   std::isfinite(row.analyticPsiColumnNorm) &&
+                   std::isfinite(row.fdPsiColumnNorm) &&
+                   std::isfinite(row.diffPsiColumnNorm) &&
+                   std::isfinite(row.relPsiColumnDiff) &&
+                   std::isfinite(row.analyticPhinColumnNorm) &&
+                   std::isfinite(row.fdPhinColumnNorm) &&
+                   std::isfinite(row.diffPhinColumnNorm) &&
+                   std::isfinite(row.relPhinColumnDiff) &&
+                   std::isfinite(row.analyticPhipColumnNorm) &&
+                   std::isfinite(row.fdPhipColumnNorm) &&
+                   std::isfinite(row.diffPhipColumnNorm) &&
+                   std::isfinite(row.relPhipColumnDiff);
         });
     };
 
