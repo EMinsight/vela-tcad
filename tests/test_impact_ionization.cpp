@@ -753,25 +753,22 @@ TEST_CASE("Coupled DD element-edge GSS Laux avalanche Jacobian matches finite di
     const Real Vt = 0.025852;
     CoupledDDState state;
     state.psi =
-        (VectorXd(4) << 0.05, -0.30, -0.75, -0.10).finished();
+        (VectorXd(4) << 0.0, -5.0, -20.0, -2.0).finished();
     state.phin =
-        (VectorXd(4) << 0.02, -0.65, -1.10, -0.08).finished();
+        (VectorXd(4) << 0.02, -5.05, -20.10, -2.08).finished();
     state.phip =
-        (VectorXd(4) << -0.15, -0.35, -0.82, -0.60).finished();
+        (VectorXd(4) << -0.15, -5.35, -20.82, -2.60).finished();
 
-    ImpactIonizationModelConfig impactConfig;
-    impactConfig.model = "selberherr";
+    ImpactIonizationModelConfig impactConfig =
+        impactIonizationModelConfig("van_overstraeten");
     impactConfig.drivingForce = "quasi_fermi_gradient";
     impactConfig.generation = "current_density";
     impactConfig.currentApproximation = "element_edge_sg_gss_laux";
     impactConfig.quasiFermiGradientDiscretization = "cell_gradient";
     impactConfig.sourceMappingMode = "element_vertex_box_measure";
-    impactConfig.electronA = 1.0;
-    impactConfig.electronB = 1.0e-30;
-    impactConfig.holeA = 1.0;
-    impactConfig.holeB = 1.0e-30;
-    const MobilityModelConfig constantMobilityConfig =
-        mobilityModelConfig("constant");
+    MobilityModelConfig constantMobilityConfig =
+        mobilityModelConfig("caughey_thomas_field");
+    constantMobilityConfig.highFieldDrivingForce = "quasi_fermi_gradient";
     const auto mobility = makeMobilityModel(constantMobilityConfig);
     const auto impact = makeImpactIonizationModel(impactConfig);
     const auto edgeCells = detail::buildEdgeCellMap(mesh);
@@ -802,6 +799,104 @@ TEST_CASE("Coupled DD element-edge GSS Laux avalanche Jacobian matches finite di
     const Eigen::MatrixXd analytic =
         Eigen::MatrixXd(assembler.assembleJacobian(x, bcs)) -
         Eigen::MatrixXd(baselineAssembler.assembleJacobian(x, bcs));
+
+    // Independently scatter the shared local-AD derivatives. This fails if the
+    // assembler regresses to its former cell-local finite-difference surrogate,
+    // even when both external and internal FD steps happen to be 1e-7.
+    const int nodeCount = static_cast<int>(mesh.numNodes());
+    Eigen::MatrixXd scatteredLocalAd = Eigen::MatrixXd::Zero(x.size(), x.size());
+    const auto cellEdges = detail::buildCellEdgeMap(edgeCells, mesh);
+    const auto& intrinsicDensity = assembler.intrinsicDensity();
+    for (Index cellId = 0; cellId < mesh.numCells(); ++cellId) {
+        const Cell& cell = mesh.getCell(cellId);
+        std::array<detail::Tri3LocalForwardDual, 3> psiAd{};
+        std::array<detail::Tri3LocalForwardDual, 3> phinAd{};
+        std::array<detail::Tri3LocalForwardDual, 3> phipAd{};
+        std::array<detail::Tri3LocalForwardDual, 3> nAd{};
+        std::array<detail::Tri3LocalForwardDual, 3> pAd{};
+        std::array<Real, 3> niLocal{};
+        for (std::size_t local = 0; local < 3; ++local) {
+            const int node = static_cast<int>(cell.node_ids[local]);
+            psiAd[local] = detail::Tri3LocalForwardDual::variable(
+                state.psi(node), local);
+            phinAd[local] = detail::Tri3LocalForwardDual::variable(
+                state.phin(node), 3 + local);
+            phipAd[local] = detail::Tri3LocalForwardDual::variable(
+                state.phip(node), 6 + local);
+            niLocal[local] = intrinsicDensity[static_cast<std::size_t>(node)];
+            nAd[local] = detail::Tri3LocalForwardDual(niLocal[local]) *
+                detail::localAdLimitedExp(
+                    (psiAd[local] - phinAd[local]) /
+                    detail::Tri3LocalForwardDual(Vt));
+            pAd[local] = detail::Tri3LocalForwardDual(niLocal[local]) *
+                detail::localAdLimitedExp(
+                    (phipAd[local] - psiAd[local]) /
+                    detail::Tri3LocalForwardDual(Vt));
+        }
+        const auto sourceAd =
+            detail::elementEdgeGssLauxAvalancheSourceIntegralsLocal<
+                detail::Tri3LocalForwardDual>(
+                impactConfig, constantMobilityConfig, *mobility,
+                cellEdges.at(static_cast<std::size_t>(cellId)), mesh, doping,
+                cellMaterials, cellId, psiAd, phinAd, phipAd, nAd, pAd,
+                niLocal, Vt, 1.0).combined;
+        for (std::size_t localRow = 0; localRow < 3; ++localRow) {
+            const int rowNode = static_cast<int>(cell.node_ids[localRow]);
+            for (std::size_t localDof = 0;
+                 localDof < detail::Tri3LocalPotentialDofCount; ++localDof) {
+                const int block = static_cast<int>(localDof / 3);
+                const int localColumn = static_cast<int>(localDof % 3);
+                const int columnNode = static_cast<int>(
+                    cell.node_ids[static_cast<std::size_t>(localColumn)]);
+                const int column = block == 0 ? columnNode
+                    : (block == 1 ? nodeCount + columnNode
+                                  : 2 * nodeCount + columnNode);
+                const Real derivative =
+                    sourceAd[localRow].derivative[localDof];
+                scatteredLocalAd(nodeCount + rowNode, column) -= derivative;
+                scatteredLocalAd(2 * nodeCount + rowNode, column) -= derivative;
+            }
+        }
+    }
+    const Real scatterReference = std::max<Real>(1.0, analytic.norm());
+    REQUIRE((analytic - scatteredLocalAd).norm() / scatterReference <= 1.0e-12);
+
+    DDScalingSpec scaling;
+    scaling.enabled = true;
+    scaling.V0 = Vt;
+    scaling.C0 = 2.0;
+    scaling.mu0 = 1.0;
+    scaling.D0 = 3.0;
+    scaling.L0 = 1.0;
+    scaling.permittivityReference_F_per_m = constants::eps0 * 11.7;
+    scaling.fieldFromCoordinateDeltaFactor = 1.0;
+    CoupledDDAssembler scaledAssembler(
+        mesh, matdb, doping, Vt, constantMobilityConfig,
+        recombinationModelConfig({"none"}), BandgapNarrowingConfig{},
+        impactConfig, {}, {}, scaling);
+    CoupledDDAssembler scaledBaselineAssembler(
+        mesh, matdb, doping, Vt, constantMobilityConfig,
+        recombinationModelConfig({"none"}), BandgapNarrowingConfig{},
+        ImpactIonizationModelConfig{}, {}, {}, scaling);
+    CoupledDDState scaledState = state;
+    scaledState.psi /= scaling.V0;
+    scaledState.phin /= scaling.V0;
+    scaledState.phip /= scaling.V0;
+    const VectorXd scaledX = scaledAssembler.pack(scaledState);
+    const Eigen::MatrixXd scaledAnalytic =
+        Eigen::MatrixXd(scaledAssembler.assembleJacobian(scaledX, bcs)) -
+        Eigen::MatrixXd(scaledBaselineAssembler.assembleJacobian(scaledX, bcs));
+    const Real sourceIntegralFactor =
+        scaling.unitSystem.continuitySourceIntegralFactor();
+    const Real scaledScatterFactor =
+        sourceIntegralFactor * scaling.V0 / (scaling.C0 * scaling.D0);
+    const Eigen::MatrixXd scaledScatteredLocalAd =
+        scatteredLocalAd * scaledScatterFactor;
+    const Real scaledScatterReference =
+        std::max<Real>(1.0, scaledAnalytic.norm());
+    REQUIRE((scaledAnalytic - scaledScatteredLocalAd).norm() /
+            scaledScatterReference <= 1.0e-12);
+
     const auto sourceResidual = [&](const VectorXd& values) {
         const CoupledDDState replayState = assembler.unpack(values);
         const auto components =
@@ -844,6 +939,8 @@ TEST_CASE("Coupled DD element-edge GSS Laux avalanche Jacobian matches finite di
     REQUIRE((diagnosticSourceResidual - replaySourceResidual).norm() /
             std::max<Real>(1.0, diagnosticSourceResidual.norm()) <= 1.0e-12);
 
+    // Keep the strict assembled gate at the validated 1e-7 scale. Independent
+    // three-step convergence is covered by the shared local-source AD test.
     constexpr Real relativeStep = 1.0e-7;
     const int M = static_cast<int>(x.size());
     Eigen::MatrixXd finiteDifference = Eigen::MatrixXd::Zero(M, M);

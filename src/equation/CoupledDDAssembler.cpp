@@ -1624,116 +1624,190 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
             throw std::invalid_argument(
                 "cell-local avalanche source does not support surface mobility");
         }
-        auto cellNodeSources = [&](Index cellId,
-                                   const VectorXd& psiValues,
-                                   const VectorXd& phinValues,
-                                   const VectorXd& phipValues,
-                                   const VectorXd& nValues,
-                                   const VectorXd& pValues) {
-            VectorXd sources = VectorXd::Zero(3);
-            const Cell& cell = mesh_.getCell(cellId);
-            if (elementEdgeGssLauxAvalanche) {
-                const auto record =
-                    detail::elementEdgeGssLauxAvalancheSourceRecordForCell(
-                        impactIonizationConfig_, *impactIonization_,
-                        mobilityConfig_, *mobility_,
-                        cellEdges.at(static_cast<std::size_t>(cellId)),
-                        mesh_, doping_, cellMaterials_, cellId, psiValues,
-                        phinValues, phipValues, nValues, pValues, ni_, Vt_,
-                        fieldFactor);
+        if (elementEdgeGssLauxAvalanche) {
+            for (Index cellId = 0; cellId < mesh_.numCells(); ++cellId) {
+                const Cell& cell = mesh_.getCell(cellId);
+                std::array<detail::Tri3LocalForwardDual, 3> localPsi{};
+                std::array<detail::Tri3LocalForwardDual, 3> localPhin{};
+                std::array<detail::Tri3LocalForwardDual, 3> localPhip{};
+                std::array<detail::Tri3LocalForwardDual, 3> localElectronDensity{};
+                std::array<detail::Tri3LocalForwardDual, 3> localHoleDensity{};
+                std::array<Real, 3> localIntrinsicDensity{};
                 for (std::size_t localNode = 0; localNode < 3; ++localNode) {
-                    sources(static_cast<int>(localNode)) +=
-                        record.combinedSourceIntegrals[localNode];
+                    const Index node = cell.node_ids[localNode];
+                    const int nodeIndex = static_cast<int>(node);
+                    localPsi[localNode] = detail::Tri3LocalForwardDual::variable(
+                        psi(nodeIndex), localNode);
+                    localPhin[localNode] = detail::Tri3LocalForwardDual::variable(
+                        phinState(nodeIndex), 3 + localNode);
+                    localPhip[localNode] = detail::Tri3LocalForwardDual::variable(
+                        phipState(nodeIndex), 6 + localNode);
+                    localIntrinsicDensity[localNode] = ni_[node];
+                    localElectronDensity[localNode] =
+                        detail::Tri3LocalForwardDual(ni_[node]) *
+                        detail::localAdLimitedExp(
+                            (localPsi[localNode] - localPhin[localNode]) /
+                            detail::Tri3LocalForwardDual(Vt_));
+                    localHoleDensity[localNode] =
+                        detail::Tri3LocalForwardDual(ni_[node]) *
+                        detail::localAdLimitedExp(
+                            (localPhip[localNode] - localPsi[localNode]) /
+                            detail::Tri3LocalForwardDual(Vt_));
+                }
+                const auto sources =
+                    detail::elementEdgeGssLauxAvalancheSourceIntegralsLocal<
+                        detail::Tri3LocalForwardDual>(
+                        impactIonizationConfig_, mobilityConfig_, *mobility_,
+                        cellEdges.at(static_cast<std::size_t>(cellId)),
+                        mesh_, doping_, cellMaterials_, cellId, localPsi,
+                        localPhin, localPhip, localElectronDensity,
+                        localHoleDensity, localIntrinsicDensity, Vt_, fieldFactor);
+
+                bool anySourceOrDerivative = false;
+                for (int localRow = 0; localRow < 3; ++localRow) {
+                    const auto& source =
+                        sources.combined[static_cast<std::size_t>(localRow)];
+                    anySourceOrDerivative = anySourceOrDerivative || source.value != 0.0;
+                    const int rowNode = static_cast<int>(
+                        cell.node_ids[static_cast<std::size_t>(localRow)]);
+                    for (std::size_t localDof = 0;
+                         localDof < detail::Tri3LocalPotentialDofCount; ++localDof) {
+                        const int variableBlock = static_cast<int>(localDof / 3);
+                        const int localColumn = static_cast<int>(localDof % 3);
+                        const int columnNode = static_cast<int>(
+                            cell.node_ids[static_cast<std::size_t>(localColumn)]);
+                        const int columnOffset = variableBlock == 0
+                            ? psiOffset()
+                            : (variableBlock == 1 ? phinOffset() : phipOffset());
+                        const Real derivative =
+                            source.derivative[localDof] * sourceIntegralFactor;
+                        anySourceOrDerivative =
+                            anySourceOrDerivative || derivative != 0.0;
+                        add(phinOffset() + rowNode, columnOffset + columnNode,
+                            -derivative);
+                        add(phipOffset() + rowNode, columnOffset + columnNode,
+                            -derivative);
+                    }
+                }
+                if (anySourceOrDerivative) {
+                    for (const Index node : cell.node_ids) {
+                        hasElectronContribution[static_cast<std::size_t>(node)] = true;
+                        hasHoleContribution[static_cast<std::size_t>(node)] = true;
+                    }
+                }
+            }
+        } else {
+            auto cellNodeSources = [&](Index cellId,
+                                       const VectorXd& psiValues,
+                                       const VectorXd& phinValues,
+                                       const VectorXd& phipValues,
+                                       const VectorXd& nValues,
+                                       const VectorXd& pValues) {
+                VectorXd sources = VectorXd::Zero(3);
+                const Cell& cell = mesh_.getCell(cellId);
+                if (elementEdgeGssLauxAvalanche) {
+                    const auto record =
+                        detail::elementEdgeGssLauxAvalancheSourceRecordForCell(
+                            impactIonizationConfig_, *impactIonization_,
+                            mobilityConfig_, *mobility_,
+                            cellEdges.at(static_cast<std::size_t>(cellId)),
+                            mesh_, doping_, cellMaterials_, cellId, psiValues,
+                            phinValues, phipValues, nValues, pValues, ni_, Vt_,
+                            fieldFactor);
+                    for (std::size_t localNode = 0; localNode < 3; ++localNode) {
+                        sources(static_cast<int>(localNode)) +=
+                            record.combinedSourceIntegrals[localNode];
+                    }
+                    return sources;
+                }
+                const auto records = detail::triangleGssAvalancheSourceRecordsForCell(
+                    impactIonizationConfig_, *impactIonization_, *mobility_,
+                    cellEdges.at(static_cast<std::size_t>(cellId)),
+                    mesh_, doping_, cellMaterials_, cellId, psiValues, phinValues,
+                    phipValues, nValues, pValues, Vt_, fieldFactor);
+                for (const auto& record : records) {
+                    for (int localNode = 0; localNode < 3; ++localNode) {
+                        const Index node =
+                            cell.node_ids[static_cast<std::size_t>(localNode)];
+                        if (node == record.node0)
+                            sources(localNode) += record.node0SourceIntegral;
+                        if (node == record.node1)
+                            sources(localNode) += record.node1SourceIntegral;
+                    }
                 }
                 return sources;
-            }
-            const auto records = detail::triangleGssAvalancheSourceRecordsForCell(
-                impactIonizationConfig_, *impactIonization_, *mobility_,
-                cellEdges.at(static_cast<std::size_t>(cellId)),
-                mesh_, doping_, cellMaterials_, cellId, psiValues, phinValues,
-                phipValues, nValues, pValues, Vt_, fieldFactor);
-            for (const auto& record : records) {
-                for (int localNode = 0; localNode < 3; ++localNode) {
-                    const Index node =
-                        cell.node_ids[static_cast<std::size_t>(localNode)];
-                    if (node == record.node0)
-                        sources(localNode) += record.node0SourceIntegral;
-                    if (node == record.node1)
-                        sources(localNode) += record.node1SourceIntegral;
-                }
-            }
-            return sources;
-        };
+            };
 
-        for (Index cellId = 0; cellId < mesh_.numCells(); ++cellId) {
-            const Cell& cell = mesh_.getCell(cellId);
-            const VectorXd baseSources =
-                cellNodeSources(cellId, psi, phinState, phipState, n, p);
+            for (Index cellId = 0; cellId < mesh_.numCells(); ++cellId) {
+                const Cell& cell = mesh_.getCell(cellId);
+                const VectorXd baseSources =
+                    cellNodeSources(cellId, psi, phinState, phipState, n, p);
 
-            for (int variableBlock = 0; variableBlock < 3; ++variableBlock) {
-                for (int localColumn = 0; localColumn < 3; ++localColumn) {
-                    const Index node =
-                        cell.node_ids[static_cast<std::size_t>(localColumn)];
-                    const int nodeIndex = static_cast<int>(node);
-                    const Real value = variableBlock == 0 ? psi(nodeIndex)
-                        : (variableBlock == 1 ? phinState(nodeIndex)
-                                              : phipState(nodeIndex));
-                    // Match the assembler-level relative perturbation in scaled
-                    // coordinates: dV = relativeStep * max(V0, |V|).
-                    const Real step =
-                        detail::physicalPotentialCentralDifferenceStep(
-                            value, potentialScale, 1.0e-7);
-                    VectorXd psiPlus = psi;
-                    VectorXd psiMinus = psi;
-                    VectorXd phinPlus = phinState;
-                    VectorXd phinMinus = phinState;
-                    VectorXd phipPlus = phipState;
-                    VectorXd phipMinus = phipState;
-                    if (variableBlock == 0) {
-                        psiPlus(nodeIndex) += step;
-                        psiMinus(nodeIndex) -= step;
-                    } else if (variableBlock == 1) {
-                        phinPlus(nodeIndex) += step;
-                        phinMinus(nodeIndex) -= step;
-                    } else {
-                        phipPlus(nodeIndex) += step;
-                        phipMinus(nodeIndex) -= step;
-                    }
+                for (int variableBlock = 0; variableBlock < 3; ++variableBlock) {
+                    for (int localColumn = 0; localColumn < 3; ++localColumn) {
+                        const Index node =
+                            cell.node_ids[static_cast<std::size_t>(localColumn)];
+                        const int nodeIndex = static_cast<int>(node);
+                        const Real value = variableBlock == 0 ? psi(nodeIndex)
+                            : (variableBlock == 1 ? phinState(nodeIndex)
+                                                  : phipState(nodeIndex));
+                        // Match the assembler-level relative perturbation in scaled
+                        // coordinates: dV = relativeStep * max(V0, |V|).
+                        const Real step =
+                            detail::physicalPotentialCentralDifferenceStep(
+                                value, potentialScale, 1.0e-7);
+                        VectorXd psiPlus = psi;
+                        VectorXd psiMinus = psi;
+                        VectorXd phinPlus = phinState;
+                        VectorXd phinMinus = phinState;
+                        VectorXd phipPlus = phipState;
+                        VectorXd phipMinus = phipState;
+                        if (variableBlock == 0) {
+                            psiPlus(nodeIndex) += step;
+                            psiMinus(nodeIndex) -= step;
+                        } else if (variableBlock == 1) {
+                            phinPlus(nodeIndex) += step;
+                            phinMinus(nodeIndex) -= step;
+                        } else {
+                            phipPlus(nodeIndex) += step;
+                            phipMinus(nodeIndex) -= step;
+                        }
 
-                    VectorXd nPlus = n;
-                    VectorXd nMinus = n;
-                    VectorXd pPlus = p;
-                    VectorXd pMinus = p;
-                    nPlus(nodeIndex) = ni_[node] * limitedExp(
-                        (psiPlus(nodeIndex) - phinPlus(nodeIndex)) / Vt_);
-                    nMinus(nodeIndex) = ni_[node] * limitedExp(
-                        (psiMinus(nodeIndex) - phinMinus(nodeIndex)) / Vt_);
-                    pPlus(nodeIndex) = ni_[node] * limitedExp(
-                        (phipPlus(nodeIndex) - psiPlus(nodeIndex)) / Vt_);
-                    pMinus(nodeIndex) = ni_[node] * limitedExp(
-                        (phipMinus(nodeIndex) - psiMinus(nodeIndex)) / Vt_);
-                    const VectorXd plusSources = cellNodeSources(
-                        cellId, psiPlus, phinPlus, phipPlus, nPlus, pPlus);
-                    const VectorXd minusSources = cellNodeSources(
-                        cellId, psiMinus, phinMinus, phipMinus, nMinus, pMinus);
-                    const VectorXd derivative =
-                        (plusSources - minusSources) * sourceIntegralFactor /
-                        (2.0 * step);
-                    const int column = (variableBlock == 0 ? psiOffset()
-                        : (variableBlock == 1 ? phinOffset() : phipOffset())) +
-                        nodeIndex;
-                    for (int localRow = 0; localRow < 3; ++localRow) {
-                        const int rowNode = static_cast<int>(
-                            cell.node_ids[static_cast<std::size_t>(localRow)]);
-                        add(phinOffset() + rowNode, column, -derivative(localRow));
-                        add(phipOffset() + rowNode, column, -derivative(localRow));
+                        VectorXd nPlus = n;
+                        VectorXd nMinus = n;
+                        VectorXd pPlus = p;
+                        VectorXd pMinus = p;
+                        nPlus(nodeIndex) = ni_[node] * limitedExp(
+                            (psiPlus(nodeIndex) - phinPlus(nodeIndex)) / Vt_);
+                        nMinus(nodeIndex) = ni_[node] * limitedExp(
+                            (psiMinus(nodeIndex) - phinMinus(nodeIndex)) / Vt_);
+                        pPlus(nodeIndex) = ni_[node] * limitedExp(
+                            (phipPlus(nodeIndex) - psiPlus(nodeIndex)) / Vt_);
+                        pMinus(nodeIndex) = ni_[node] * limitedExp(
+                            (phipMinus(nodeIndex) - psiMinus(nodeIndex)) / Vt_);
+                        const VectorXd plusSources = cellNodeSources(
+                            cellId, psiPlus, phinPlus, phipPlus, nPlus, pPlus);
+                        const VectorXd minusSources = cellNodeSources(
+                            cellId, psiMinus, phinMinus, phipMinus, nMinus, pMinus);
+                        const VectorXd derivative =
+                            (plusSources - minusSources) * sourceIntegralFactor /
+                            (2.0 * step);
+                        const int column = (variableBlock == 0 ? psiOffset()
+                            : (variableBlock == 1 ? phinOffset() : phipOffset())) +
+                            nodeIndex;
+                        for (int localRow = 0; localRow < 3; ++localRow) {
+                            const int rowNode = static_cast<int>(
+                                cell.node_ids[static_cast<std::size_t>(localRow)]);
+                            add(phinOffset() + rowNode, column, -derivative(localRow));
+                            add(phipOffset() + rowNode, column, -derivative(localRow));
+                        }
                     }
                 }
-            }
-            if (baseSources.squaredNorm() > 0.0) {
-                for (const Index node : cell.node_ids) {
-                    hasElectronContribution[static_cast<std::size_t>(node)] = true;
-                    hasHoleContribution[static_cast<std::size_t>(node)] = true;
+                if (baseSources.squaredNorm() > 0.0) {
+                    for (const Index node : cell.node_ids) {
+                        hasElectronContribution[static_cast<std::size_t>(node)] = true;
+                        hasHoleContribution[static_cast<std::size_t>(node)] = true;
+                    }
                 }
             }
         }

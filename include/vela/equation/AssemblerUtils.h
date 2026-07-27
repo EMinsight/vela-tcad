@@ -12,6 +12,7 @@
 #include "vela/core/Types.h"
 #include "vela/core/PhysicalConstants.h"
 #include "vela/equation/ChargeSpec.h"
+#include "vela/equation/Tri3LocalForwardAD.h"
 #include "vela/discretization/ScharfetterGummel.h"
 #include "vela/mesh/DeviceMesh.h"
 #include "vela/material/Material.h"
@@ -31,6 +32,7 @@
 #include <limits>
 #include <string>
 #include <utility>
+#include <type_traits>
 
 namespace vela::detail {
 
@@ -2263,6 +2265,8 @@ triangleGssAvalancheSourceRecords(
     return records;
 }
 
+#include "vela/equation/ElementEdgeGssLauxAD.inl"
+
 struct ElementEdgeGssLauxAvalancheSourceRecord {
     Index cellId = 0;
     std::array<Index, 3> edgeIds{};
@@ -2430,20 +2434,34 @@ elementEdgeGssLauxAvalancheSourceRecordForCell(
         mesh, cell, record.electronSignedEdgeFlux);
     record.holeCurrentVector = gssLauxTri3CurrentVector(
         mesh, cell, record.holeSignedEdgeFlux);
-    const Real electronGeneration =
-        record.electronAlpha * record.electronCurrentVector.norm();
-    const Real holeGeneration =
-        record.holeAlpha * record.holeCurrentVector.norm();
+    std::array<Real, 3> localPsi{};
+    std::array<Real, 3> localPhin{};
+    std::array<Real, 3> localPhip{};
+    std::array<Real, 3> localElectronDensity{};
+    std::array<Real, 3> localHoleDensity{};
+    std::array<Real, 3> localIntrinsicDensity{};
+    for (std::size_t localNode = 0; localNode < 3; ++localNode) {
+        const Index node = cell.node_ids[localNode];
+        localPsi[localNode] = psi(static_cast<int>(node));
+        localPhin[localNode] = phin(static_cast<int>(node));
+        localPhip[localNode] = phip(static_cast<int>(node));
+        localElectronDensity[localNode] = n(static_cast<int>(node));
+        localHoleDensity[localNode] = p(static_cast<int>(node));
+        localIntrinsicDensity[localNode] = ni.at(node);
+    }
+    const auto sharedSourceIntegrals =
+        elementEdgeGssLauxAvalancheSourceIntegralsLocal<Real>(
+            config, mobilityConfig, mobility, cellEdgeIds, mesh, doping,
+            cellMaterials, cellId, localPsi, localPhin, localPhip,
+            localElectronDensity, localHoleDensity, localIntrinsicDensity,
+            Vt, fieldFactor);
     for (std::size_t localNode = 0; localNode < 3; ++localNode) {
         record.electronSourceIntegrals[localNode] =
-            electronGeneration * record.vertexMeasures[localNode] *
-            config.sourceGeometryScale;
+            sharedSourceIntegrals.electron[localNode];
         record.holeSourceIntegrals[localNode] =
-            holeGeneration * record.vertexMeasures[localNode] *
-            config.sourceGeometryScale;
+            sharedSourceIntegrals.hole[localNode];
         record.combinedSourceIntegrals[localNode] =
-            record.electronSourceIntegrals[localNode] +
-            record.holeSourceIntegrals[localNode];
+            sharedSourceIntegrals.combined[localNode];
     }
     return record;
 }

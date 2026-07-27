@@ -530,3 +530,130 @@ TEST_CASE("Element-edge GSS Laux records use exact SG currents and box measures"
     REQUIRE(electricMobilityRecord.holeSignedEdgeFlux[0] !=
             Catch::Approx(qfMobilityRecord.holeSignedEdgeFlux[0]));
 }
+
+TEST_CASE("Local forward AD source derivatives converge independently",
+          "[impact][element_edge_gss_laux][ad]")
+{
+    DeviceMesh mesh = makeSingleRightTriangle();
+    const auto edgeCells = detail::buildEdgeCellMap(mesh);
+    const auto cellEdges = detail::buildCellEdgeMap(edgeCells, mesh);
+    MaterialDatabase matdb;
+    const auto doping = DopingModel::fromMeshAndRegions(
+        mesh, {RegionDopingSpec{"si", 1.0e21, 0.0}});
+    const auto cellMaterials =
+        detail::buildCellMaterials(mesh, matdb, constants::T0);
+
+    ImpactIonizationModelConfig impactConfig =
+        impactIonizationModelConfig("van_overstraeten");
+    impactConfig.drivingForce = "quasi_fermi_gradient";
+    impactConfig.generation = "current_density";
+    impactConfig.currentApproximation = "element_edge_sg_gss_laux";
+    impactConfig.quasiFermiGradientDiscretization = "cell_gradient";
+    impactConfig.sourceMappingMode = "element_vertex_box_measure";
+    MobilityModelConfig mobilityConfig = mobilityModelConfig("masetti_field");
+    mobilityConfig.highFieldDrivingForce = "quasi_fermi_gradient";
+    const auto mobility = makeMobilityModel(mobilityConfig);
+
+    constexpr Real Vt = 0.025852;
+    constexpr Real fieldFactor = 100.0;
+    const std::array<Real, 3> basePsi{0.0, -0.10, 0.04};
+    // Edge 0 is exactly flat in both QFPs; the third vertex keeps the cell
+    // QFP-gradient drive active and verifies that AD does not lose the
+    // derivative at the production value short-circuit.
+    const std::array<Real, 3> basePhin{0.01, 0.01, 0.20};
+    const std::array<Real, 3> basePhip{-0.01, -0.01, -0.20};
+    const std::array<Real, 3> intrinsicDensity{1.0e16, 1.0e16, 1.0e16};
+
+    const auto evaluateReal = [&](const std::array<Real, 3>& psi,
+                                  const std::array<Real, 3>& phin,
+                                  const std::array<Real, 3>& phip) {
+        std::array<Real, 3> n{};
+        std::array<Real, 3> p{};
+        for (std::size_t local = 0; local < 3; ++local) {
+            n[local] = intrinsicDensity[local] *
+                std::exp((psi[local] - phin[local]) / Vt);
+            p[local] = intrinsicDensity[local] *
+                std::exp((phip[local] - psi[local]) / Vt);
+        }
+        return detail::elementEdgeGssLauxAvalancheSourceIntegralsLocal<Real>(
+            impactConfig, mobilityConfig, *mobility, cellEdges.at(0), mesh,
+            doping, cellMaterials, 0, psi, phin, phip, n, p,
+            intrinsicDensity, Vt, fieldFactor).combined;
+    };
+
+    std::array<detail::Tri3LocalForwardDual, 3> psi{};
+    std::array<detail::Tri3LocalForwardDual, 3> phin{};
+    std::array<detail::Tri3LocalForwardDual, 3> phip{};
+    std::array<detail::Tri3LocalForwardDual, 3> n{};
+    std::array<detail::Tri3LocalForwardDual, 3> p{};
+    for (std::size_t local = 0; local < 3; ++local) {
+        psi[local] = detail::Tri3LocalForwardDual::variable(basePsi[local], local);
+        phin[local] =
+            detail::Tri3LocalForwardDual::variable(basePhin[local], 3 + local);
+        phip[local] =
+            detail::Tri3LocalForwardDual::variable(basePhip[local], 6 + local);
+        n[local] = detail::Tri3LocalForwardDual(intrinsicDensity[local]) *
+            detail::localAdLimitedExp(
+                (psi[local] - phin[local]) /
+                detail::Tri3LocalForwardDual(Vt));
+        p[local] = detail::Tri3LocalForwardDual(intrinsicDensity[local]) *
+            detail::localAdLimitedExp(
+                (phip[local] - psi[local]) /
+                detail::Tri3LocalForwardDual(Vt));
+    }
+    const auto adSource =
+        detail::elementEdgeGssLauxAvalancheSourceIntegralsLocal<
+            detail::Tri3LocalForwardDual>(
+            impactConfig, mobilityConfig, *mobility, cellEdges.at(0), mesh,
+            doping, cellMaterials, 0, psi, phin, phip, n, p,
+            intrinsicDensity, Vt, fieldFactor).combined;
+
+    const auto baseSource = evaluateReal(basePsi, basePhin, basePhip);
+    for (std::size_t localRow = 0; localRow < 3; ++localRow) {
+        REQUIRE(adSource[localRow].value ==
+                Catch::Approx(baseSource[localRow]).epsilon(1.0e-13));
+    }
+
+    const auto errorAt = [&](Real relativeStep) {
+        Real maxDifference = 0.0;
+        Real maxReference = 0.0;
+        for (std::size_t localDof = 0;
+             localDof < detail::Tri3LocalPotentialDofCount; ++localDof) {
+            std::array<Real, 3> plusPsi = basePsi;
+            std::array<Real, 3> minusPsi = basePsi;
+            std::array<Real, 3> plusPhin = basePhin;
+            std::array<Real, 3> minusPhin = basePhin;
+            std::array<Real, 3> plusPhip = basePhip;
+            std::array<Real, 3> minusPhip = basePhip;
+            const std::size_t block = localDof / 3;
+            const std::size_t local = localDof % 3;
+            const Real value = block == 0 ? basePsi[local]
+                : (block == 1 ? basePhin[local] : basePhip[local]);
+            const Real step = relativeStep * std::max<Real>(1.0, std::abs(value));
+            auto* plus = block == 0 ? &plusPsi : (block == 1 ? &plusPhin : &plusPhip);
+            auto* minus = block == 0 ? &minusPsi : (block == 1 ? &minusPhin : &minusPhip);
+            (*plus)[local] += step;
+            (*minus)[local] -= step;
+            const auto plusSource = evaluateReal(plusPsi, plusPhin, plusPhip);
+            const auto minusSource = evaluateReal(minusPsi, minusPhin, minusPhip);
+            for (std::size_t localRow = 0; localRow < 3; ++localRow) {
+                const Real finiteDifference =
+                    (plusSource[localRow] - minusSource[localRow]) /
+                    (2.0 * step);
+                const Real analytic = adSource[localRow].derivative[localDof];
+                maxDifference = std::max(
+                    maxDifference, std::abs(analytic - finiteDifference));
+                maxReference = std::max(maxReference, std::abs(finiteDifference));
+            }
+        }
+        return maxDifference / maxReference;
+    };
+
+    const Real coarseError = errorAt(1.0e-6);
+    const Real mediumError = errorAt(3.0e-7);
+    const Real fineError = errorAt(1.0e-7);
+    CAPTURE(coarseError, mediumError, fineError);
+    REQUIRE(coarseError > mediumError);
+    REQUIRE(mediumError > fineError);
+    REQUIRE(fineError <= 1.0e-8);
+}
