@@ -2610,9 +2610,14 @@ std::vector<NewtonJacobianBlockAuditRow> NewtonSolver::evaluateJacobianBlockAudi
                         VectorXd minus = x;
                         plus(col) += step;
                         minus(col) -= step;
+                        // Materialize both residuals before subtracting them.
+                        // Some evaluators combine temporary Eigen vectors; keeping
+                        // their results alive here prevents a returned lazy
+                        // expression from retaining dangling references.
+                        const VectorXd plusResidual = residualEvaluator(plus);
+                        const VectorXd minusResidual = residualEvaluator(minus);
                         const VectorXd derivative =
-                            (residualEvaluator(plus) - residualEvaluator(minus)) /
-                            (2.0 * step);
+                            (plusResidual - minusResidual) / (2.0 * step);
                         for (int row = 0; row < unknowns; ++row) {
                             if (derivative(row) != 0.0)
                                 triplets.emplace_back(row, col, derivative(row));
@@ -2627,9 +2632,12 @@ std::vector<NewtonJacobianBlockAuditRow> NewtonSolver::evaluateJacobianBlockAudi
             };
             SparseMatrixd finiteDifference =
                 centralDifference(termResidual, finiteDifferenceStep);
-            auto gaugeResidual = [&](const VectorXd& values) {
-                return diagnosticResidual(withTerm, values, "gauge") -
-                    diagnosticResidual(withoutTerm, values, "gauge");
+            auto gaugeResidual = [&](const VectorXd& values) -> VectorXd {
+                VectorXd residual =
+                    diagnosticResidual(withTerm, values, "gauge");
+                residual -= diagnosticResidual(
+                    withoutTerm, values, "gauge");
+                return residual;
             };
             analytic -= centralDifference(gaugeResidual, finiteDifferenceStep);
             return std::pair<SparseMatrixd, SparseMatrixd>{
