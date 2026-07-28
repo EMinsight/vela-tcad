@@ -63,7 +63,15 @@ Real PhysicalUnitSystem::fieldFromCoordinateDeltaFactor() const
 
 Real PhysicalUnitSystem::continuitySourceIntegralFactor() const
 {
-    return areaM2PerInternal() / mobilityM2PerVSPerInternal_;
+    // Match a volumetric particle source integrated over a 2-D control area
+    // to the native SG edge-flux line integral.  The latter is converted to
+    // physical current per device depth by
+    //   currentDensityAM2PerInternal * lengthMPerInternal,
+    // with q applied by the caller.  The previous area/mobility expression
+    // omitted the concentration and field/current-density unit scales; in the
+    // TCAD cm/um convention it understated every continuity source by 1e4.
+    return concentrationM3PerInternal_ * areaM2PerInternal()
+         / (currentDensityAM2PerInternal_ * lengthMPerInternal_);
 }
 
 Real PhysicalUnitSystem::currentPerInternalDepthFactor() const

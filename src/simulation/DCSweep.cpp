@@ -2294,6 +2294,8 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
         sweep.continuation.branchAcceptance.psiPhinJump ||
         sweep.continuation.branchAcceptance.carrierDensityJump ||
         sweep.continuation.arclength.enabled;
+    const bool globalContinuityClosureDiagnosticsEnabled =
+        newton.globalContinuityClosure.mode != "off";
 
     CSVWriter csv(sweep.csvFile);
     std::vector<std::string> header = {"mode", "bias_contact", "bias_V",
@@ -2310,6 +2312,15 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
         "step_diagnostics",
         "validation_diagnostics", "qf_bounds_violations", "failure_reason", "newton_failure_class",
         "newton_failure_diagnostics_json"};
+    if (globalContinuityClosureDiagnosticsEnabled) {
+        header.push_back("global_continuity_closure_satisfied");
+        header.push_back("global_electron_continuity_closure_ratio");
+        header.push_back("global_hole_continuity_closure_ratio");
+        header.push_back("global_electron_contact_flux");
+        header.push_back("global_hole_contact_flux");
+        header.push_back("global_electron_integrated_source");
+        header.push_back("global_hole_integrated_source");
+    }
     const bool writeUnitScaledColumns = sweep.scaling.isUnitScaling();
     if (writeUnitScaledColumns) {
         header.push_back("current_total_A_per_um");
@@ -2803,6 +2814,7 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
         std::string newtonConvergenceReason;
         int carrierRowViolations = 0;
         Real carrierRowMaxRatio = 0.0;
+        NewtonGlobalContinuityClosureEvaluation globalContinuityClosure;
         bool carrierRowRecoveryAttempted = false;
         int carrierRowRecoveryElectronRows = 0;
         int carrierRowRecoveryHoleRows = 0;
@@ -2875,6 +2887,7 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                 attempt.carrierRowViolations = static_cast<int>(
                     result.finalCarrierRowConvergence.violations.size());
                 attempt.carrierRowMaxRatio = result.finalCarrierRowConvergence.maxRatio;
+                attempt.globalContinuityClosure = result.finalGlobalContinuityClosure;
                 attempt.carrierRowRecoveryAttempted = result.carrierRowRecovery.attempted;
                 attempt.carrierRowRecoveryElectronRows = result.carrierRowRecovery.electronRowsUpdated;
                 attempt.carrierRowRecoveryHoleRows = result.carrierRowRecovery.holeRowsUpdated;
@@ -2917,6 +2930,7 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                     attempt.carrierRowViolations = static_cast<int>(
                         result.finalCarrierRowConvergence.violations.size());
                     attempt.carrierRowMaxRatio = result.finalCarrierRowConvergence.maxRatio;
+                    attempt.globalContinuityClosure = result.finalGlobalContinuityClosure;
                 attempt.carrierRowRecoveryAttempted = result.carrierRowRecovery.attempted;
                 attempt.carrierRowRecoveryElectronRows = result.carrierRowRecovery.electronRowsUpdated;
                 attempt.carrierRowRecoveryHoleRows = result.carrierRowRecovery.holeRowsUpdated;
@@ -2962,6 +2976,7 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                     attempt.carrierRowViolations = static_cast<int>(
                         result.finalCarrierRowConvergence.violations.size());
                     attempt.carrierRowMaxRatio = result.finalCarrierRowConvergence.maxRatio;
+                    attempt.globalContinuityClosure = result.finalGlobalContinuityClosure;
                 attempt.carrierRowRecoveryAttempted = result.carrierRowRecovery.attempted;
                 attempt.carrierRowRecoveryElectronRows = result.carrierRowRecovery.electronRowsUpdated;
                 attempt.carrierRowRecoveryHoleRows = result.carrierRowRecovery.holeRowsUpdated;
@@ -3326,6 +3341,20 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
         point.newtonConvergenceReason = attempt.newtonConvergenceReason;
         point.carrierRowViolations = attempt.carrierRowViolations;
         point.carrierRowMaxRatio = attempt.carrierRowMaxRatio;
+        point.globalContinuityClosureSatisfied =
+            attempt.globalContinuityClosure.satisfied;
+        point.globalElectronContinuityClosureRatio =
+            attempt.globalContinuityClosure.electron.ratio;
+        point.globalHoleContinuityClosureRatio =
+            attempt.globalContinuityClosure.hole.ratio;
+        point.globalElectronContactFlux =
+            attempt.globalContinuityClosure.electron.contactFlux;
+        point.globalHoleContactFlux =
+            attempt.globalContinuityClosure.hole.contactFlux;
+        point.globalElectronIntegratedSource =
+            attempt.globalContinuityClosure.electron.integratedSource;
+        point.globalHoleIntegratedSource =
+            attempt.globalContinuityClosure.hole.integratedSource;
         point.carrierRowRecoveryAttempted = attempt.carrierRowRecoveryAttempted;
         point.carrierRowRecoveryElectronRows = attempt.carrierRowRecoveryElectronRows;
         point.carrierRowRecoveryHoleRows = attempt.carrierRowRecoveryHoleRows;
@@ -3537,6 +3566,15 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
             point.failureReason,
             point.newtonFailureClass,
             point.failureDiagnosticsJson};
+        if (globalContinuityClosureDiagnosticsEnabled) {
+            row.push_back(point.globalContinuityClosureSatisfied ? "1" : "0");
+            row.push_back(formatReal(point.globalElectronContinuityClosureRatio));
+            row.push_back(formatReal(point.globalHoleContinuityClosureRatio));
+            row.push_back(formatReal(point.globalElectronContactFlux));
+            row.push_back(formatReal(point.globalHoleContactFlux));
+            row.push_back(formatReal(point.globalElectronIntegratedSource));
+            row.push_back(formatReal(point.globalHoleIntegratedSource));
+        }
         if (writeUnitScaledColumns) {
             row.push_back(formatReal(currentPerInternalDepthToAPerUm(sweep.scaling, point.totalCurrent)));
             row.push_back(formatReal(currentPerInternalDepthToAPerUm(sweep.scaling, point.electronCurrent)));

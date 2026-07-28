@@ -27,12 +27,44 @@ struct NewtonCarrierRowConvergenceConfig {
     Real epsRow = 1.0e-3;
     Real scaleFloor = 1.0e-300;
     Real minSourceScaleFraction = 1.0e-3;
+    Real minSourceScale = 0.0;
     int minEnforceMaxIter = 200;
     std::string diagnosticCsvFile;
     std::string traceCsvFile;
     std::vector<Index> traceNodes;
     int traceFirstIterations = 10;
     int traceEveryIterations = 10;
+};
+
+struct NewtonContinuityRowScalingConfig {
+    bool enabled = false;
+    Real fluxFraction = 1.0e-3;
+    Real scaleFloor = 1.0e-30;
+    Real minSourceScale = 0.0;
+    Real minWeight = 1.0e-12;
+    Real maxWeight = 1.0e12;
+};
+
+struct NewtonGlobalContinuityClosureConfig {
+    std::string mode = "off"; ///< "off", "report", or "enforce".
+    Real tolerance = 1.0e-2;
+    Real sourceFloor = 1.0e-12;
+};
+
+struct NewtonGlobalContinuityCarrierClosure {
+    bool qualified = false;
+    Real contactFlux = 0.0;
+    Real integratedSource = 0.0;
+    Real mismatch = 0.0;
+    Real ratio = 0.0;
+};
+
+struct NewtonGlobalContinuityClosureEvaluation {
+    bool enabled = false;
+    bool enforced = false;
+    bool satisfied = true;
+    NewtonGlobalContinuityCarrierClosure electron;
+    NewtonGlobalContinuityCarrierClosure hole;
 };
 
 struct NewtonCarrierRowConvergenceViolation {
@@ -99,8 +131,11 @@ struct NewtonConfig {
     CarrierDiagonalFloorRegularizationConfig carrierDiagonalFloor{}; ///< Optional absolute floor for depleted minority carrier-row diagonals.
     NewtonCarrierRowConvergenceConfig carrierRowConvergence{}; ///< Optional per-carrier-row local residual convergence check.
     NewtonCarrierRowRecoveryConfig carrierRowRecovery{}; ///< Optional recovery pass for locally unbalanced carrier rows.
+    NewtonContinuityRowScalingConfig continuityRowScaling{}; ///< Optional source-aware left row equilibration.
+    NewtonGlobalContinuityClosureConfig globalContinuityClosure{}; ///< Optional contact-flux versus integrated-source convergence check.
     Real finiteDifferenceStep = 1.0e-6;
     std::string jacobian = "analytic"; ///< "analytic" or "finite_difference"
+    std::string quasiFermiReference = "none"; ///< "none" or "contact_majority"
     std::string residualNorm = "block"; ///< "block" or "l2" convergence/line-search norm
     Real residualWeightPsi = 1.0;
     Real residualWeightPhin = 1.0;
@@ -195,6 +230,7 @@ struct NewtonResult {
     std::string convergenceReason;
     NewtonBlockResidualInfo finalBlockNorms;
     NewtonCarrierRowConvergenceEvaluation finalCarrierRowConvergence;
+    NewtonGlobalContinuityClosureEvaluation finalGlobalContinuityClosure;
     NewtonCarrierRowRecoveryResult carrierRowRecovery;
     std::vector<NewtonIterationInfo> history;
     NewtonFailureDiagnostics failureDiagnostics;
@@ -373,6 +409,7 @@ public:
     DDSolution unpackArclengthState(const VectorXd& x) const;
 
 private:
+    void configureQuasiFermiReferences(CoupledDDAssembler& assembler) const;
     CoupledDDBoundaryConditions buildBoundaryConditions(
         const CoupledDDAssembler& assembler) const;
     CoupledDDBoundaryConditions buildBoundaryConditions(
@@ -402,6 +439,12 @@ NewtonConfig newtonConfigFromJson(
 NewtonCarrierRowConvergenceEvaluation evaluateCarrierRowConvergence(
     const std::vector<CoupledDDCarrierTermDiagnostic>& rows,
     const NewtonCarrierRowConvergenceConfig& cfg);
+
+NewtonGlobalContinuityClosureEvaluation evaluateGlobalContinuityClosure(
+    const std::vector<CoupledDDCarrierTermDiagnostic>& rows,
+    const std::vector<Index>& electronContactNodes,
+    const std::vector<Index>& holeContactNodes,
+    const NewtonGlobalContinuityClosureConfig& cfg);
 
 NewtonCarrierRowRecoveryResult recoverCarrierRowsWithGummelDensity(
     const DeviceMesh& mesh,

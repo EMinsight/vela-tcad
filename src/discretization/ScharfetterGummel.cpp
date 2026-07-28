@@ -209,9 +209,20 @@ Real sgElectronContinuityFluxFromQuasiFermiVariableNi(Real ni0,
 
     const Real eta = (psi1 - psi0) / Vt
         + (includeNiGradientDrift ? std::log(ni1 / ni0) : 0.0);
-    const Real n0 = ni0 * limitedExp((psi0 - phin0) / Vt);
-    const Real n1 = ni1 * limitedExp((psi1 - phin1) / Vt);
-    return coef * (bernoulli(-eta) * n0 - bernoulli(eta) * n1);
+    const Real endpointExponent0 = (psi0 - phin0) / Vt;
+    const Real endpointExponent1 = (psi1 - phin1) / Vt;
+    const Real clampedExponent0 = std::clamp(
+        endpointExponent0, -ProductionExponentClamp, ProductionExponentClamp);
+    const Real clampedExponent1 = std::clamp(
+        endpointExponent1, -ProductionExponentClamp, ProductionExponentClamp);
+    Real logLeftOverRight = (phin1 - phin0) / Vt;
+    if (!includeNiGradientDrift)
+        logLeftOverRight += std::log(ni0 / ni1);
+    logLeftOverRight +=
+        (clampedExponent0 - endpointExponent0)
+        - (clampedExponent1 - endpointExponent1);
+    return stableBernoulliDensityDifferenceFlux(
+        ni1, clampedExponent1, eta, coef, logLeftOverRight);
 }
 
 SgElectronVariableNiFluxDecomposition
@@ -419,9 +430,20 @@ Real sgHoleContinuityFluxFromQuasiFermiVariableNi(Real ni0,
 
     const Real eta = (psi1 - psi0) / Vt
         + (includeNiGradientDrift ? std::log(ni0 / ni1) : 0.0);
-    const Real p0 = ni0 * limitedExp((phip0 - psi0) / Vt);
-    const Real p1 = ni1 * limitedExp((phip1 - psi1) / Vt);
-    return coef * (bernoulli(eta) * p0 - bernoulli(-eta) * p1);
+    const Real endpointExponent0 = (phip0 - psi0) / Vt;
+    const Real endpointExponent1 = (phip1 - psi1) / Vt;
+    const Real clampedExponent0 = std::clamp(
+        endpointExponent0, -ProductionExponentClamp, ProductionExponentClamp);
+    const Real clampedExponent1 = std::clamp(
+        endpointExponent1, -ProductionExponentClamp, ProductionExponentClamp);
+    Real logLeftOverRight = (phip0 - phip1) / Vt;
+    if (!includeNiGradientDrift)
+        logLeftOverRight += std::log(ni0 / ni1);
+    logLeftOverRight +=
+        (clampedExponent0 - endpointExponent0)
+        - (clampedExponent1 - endpointExponent1);
+    return stableBernoulliDensityDifferenceFlux(
+        ni1, clampedExponent1, -eta, coef, logLeftOverRight);
 }
 
 double sgElectronFlux(double n0, double n1, double dpsi, double Vt,

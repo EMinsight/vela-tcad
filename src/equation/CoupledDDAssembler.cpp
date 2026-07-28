@@ -164,8 +164,11 @@ VectorXd CoupledDDAssembler::pack(const CoupledDDState& state) const
 
     VectorXd x(3 * N);
     x.segment(psiOffset(), N) = state.psi;
-    x.segment(phinOffset(), N) = state.phin;
-    x.segment(phipOffset(), N) = state.phip;
+    const Real potentialScale = scaling_.enabled ? scaling_.V0 : 1.0;
+    x.segment(phinOffset(), N) =
+        state.phin.array() - electronQfReference_V_ / potentialScale;
+    x.segment(phipOffset(), N) =
+        state.phip.array() - holeQfReference_V_ / potentialScale;
     return x;
 }
 
@@ -177,9 +180,25 @@ CoupledDDState CoupledDDAssembler::unpack(const VectorXd& x) const
 
     CoupledDDState state;
     state.psi = x.segment(psiOffset(), N);
-    state.phin = x.segment(phinOffset(), N);
-    state.phip = x.segment(phipOffset(), N);
+    const Real potentialScale = scaling_.enabled ? scaling_.V0 : 1.0;
+    state.phin = x.segment(phinOffset(), N).array()
+        + electronQfReference_V_ / potentialScale;
+    state.phip = x.segment(phipOffset(), N).array()
+        + holeQfReference_V_ / potentialScale;
     return state;
+}
+
+void CoupledDDAssembler::setQuasiFermiReferences(
+    Real electronReference_V,
+    Real holeReference_V)
+{
+    if (!std::isfinite(electronReference_V) ||
+        !std::isfinite(holeReference_V)) {
+        throw std::invalid_argument(
+            "CoupledDDAssembler::setQuasiFermiReferences: references must be finite.");
+    }
+    electronQfReference_V_ = electronReference_V;
+    holeQfReference_V_ = holeReference_V;
 }
 
 VectorXd CoupledDDAssembler::electronDensity(const VectorXd& x) const
@@ -187,12 +206,13 @@ VectorXd CoupledDDAssembler::electronDensity(const VectorXd& x) const
     const int N = static_cast<int>(mesh_.numNodes());
     VectorXd n(N);
     const Real potentialScale = scaling_.enabled ? scaling_.V0 : 1.0;
-    const Real fieldFactor = scaling_.enabled ? scaling_.fieldFromCoordinateDeltaFactor : 1.0;
-    for (int i = 0; i < N; ++i)
-        n(i) = vela::electronDensity(ni_[static_cast<Index>(i)],
-                                     x(psiOffset() + i) * potentialScale,
-                                     x(phinOffset() + i) * potentialScale,
-                                     Vt_);
+    for (int i = 0; i < N; ++i) {
+        const Real psiRelative =
+            x(psiOffset() + i) * potentialScale - electronQfReference_V_;
+        const Real phinIncrement = x(phinOffset() + i) * potentialScale;
+        n(i) = ni_[static_cast<Index>(i)] *
+            limitedExp((psiRelative - phinIncrement) / Vt_);
+    }
     return n;
 }
 
@@ -201,12 +221,13 @@ VectorXd CoupledDDAssembler::holeDensity(const VectorXd& x) const
     const int N = static_cast<int>(mesh_.numNodes());
     VectorXd p(N);
     const Real potentialScale = scaling_.enabled ? scaling_.V0 : 1.0;
-    const Real fieldFactor = scaling_.enabled ? scaling_.fieldFromCoordinateDeltaFactor : 1.0;
-    for (int i = 0; i < N; ++i)
-        p(i) = vela::holeDensity(ni_[static_cast<Index>(i)],
-                                 x(psiOffset() + i) * potentialScale,
-                                 x(phipOffset() + i) * potentialScale,
-                                 Vt_);
+    for (int i = 0; i < N; ++i) {
+        const Real psiRelative =
+            x(psiOffset() + i) * potentialScale - holeQfReference_V_;
+        const Real phipIncrement = x(phipOffset() + i) * potentialScale;
+        p(i) = ni_[static_cast<Index>(i)] *
+            limitedExp((phipIncrement - psiRelative) / Vt_);
+    }
     return p;
 }
 
@@ -241,8 +262,12 @@ VectorXd CoupledDDAssembler::residual(const VectorXd& x,
         : std::vector<Real>{};
     const bool qfImpact =
         detail::usesQuasiFermiAvalancheDrivingForce(impactIonizationConfig_);
-    const VectorXd phinPhysical = x.segment(phinOffset(), N) * potentialScale;
-    const VectorXd phipPhysical = x.segment(phipOffset(), N) * potentialScale;
+    const VectorXd phinIncrement = x.segment(phinOffset(), N) * potentialScale;
+    const VectorXd phipIncrement = x.segment(phipOffset(), N) * potentialScale;
+    const VectorXd phinPhysical =
+        phinIncrement.array() + electronQfReference_V_;
+    const VectorXd phipPhysical =
+        phipIncrement.array() + holeQfReference_V_;
     const std::vector<Real> nodeElectronDrivingFields = (impactIonizationEnabled_ && qfImpact)
         ? detail::computeElectronAvalancheNodeQuasiFermiDrivingFields(
             impactIonizationConfig_, mesh_, nodeCells_, psi, phinPhysical, n, ni_, Vt_, fieldFactor)
@@ -333,10 +358,16 @@ VectorXd CoupledDDAssembler::residual(const VectorXd& x,
             Real nFlux;
             if (bgnEnabled_) {
                 nFlux = sgElectronContinuityFluxFromQuasiFermiVariableNi(
-                    ni_[idxI], ni_[idxJ], psi_i, psi_j, phin_i, phin_j, Vt_, coef);
+                    ni_[idxI], ni_[idxJ],
+                    psi_i - electronQfReference_V_,
+                    psi_j - electronQfReference_V_,
+                    phin_i, phin_j, Vt_, coef);
             } else if (ni_[idxI] == ni_[idxJ]) {
                 nFlux = sgElectronContinuityFluxFromQuasiFermiStable(
-                    ni_[idxI], psi_i, psi_j, phin_i, phin_j, Vt_, coef);
+                    ni_[idxI],
+                    psi_i - electronQfReference_V_,
+                    psi_j - electronQfReference_V_,
+                    phin_i, phin_j, Vt_, coef);
             } else {
                 nFlux = sgElectronContinuityFlux(n(i), n(j), dpsi, Vt_, coef);
             }
@@ -360,10 +391,16 @@ VectorXd CoupledDDAssembler::residual(const VectorXd& x,
             Real pFlux;
             if (bgnEnabled_) {
                 pFlux = sgHoleContinuityFluxFromQuasiFermiVariableNi(
-                    ni_[idxI], ni_[idxJ], psi_i, psi_j, phip_i, phip_j, Vt_, coef);
+                    ni_[idxI], ni_[idxJ],
+                    psi_i - holeQfReference_V_,
+                    psi_j - holeQfReference_V_,
+                    phip_i, phip_j, Vt_, coef);
             } else if (ni_[idxI] == ni_[idxJ]) {
                 pFlux = sgHoleContinuityFluxFromQuasiFermiStable(
-                    ni_[idxI], psi_i, psi_j, phip_i, phip_j, Vt_, coef);
+                    ni_[idxI],
+                    psi_i - holeQfReference_V_,
+                    psi_j - holeQfReference_V_,
+                    phip_i, phip_j, Vt_, coef);
             } else {
                 pFlux = sgHoleContinuityFlux(p(i), p(j), dpsi, Vt_, coef);
             }
@@ -388,7 +425,8 @@ VectorXd CoupledDDAssembler::residual(const VectorXd& x,
             // the naive form n*p - ni^2 is dominated by floating-point rounding
             // in exp(+u) * exp(-u) != 1.
             const Real dPhi =
-                (x(phipOffset() + ii) - x(phinOffset() + ii)) * potentialScale;
+                (holeQfReference_V_ - electronQfReference_V_)
+                + (x(phipOffset() + ii) - x(phinOffset() + ii)) * potentialScale;
             const Real excessProduct = (ni > 0.0)
                 ? ni * ni * std::expm1(dPhi / Vt_)
                 : n(ii) * p(ii);
@@ -479,9 +517,13 @@ VectorXd CoupledDDAssembler::residual(const VectorXd& x,
     for (const auto& [node, value] : bcs.psi)
         r(psiOffset() + static_cast<int>(node)) = x(psiOffset() + static_cast<int>(node)) - value;
     for (const auto& [node, value] : bcs.phin)
-        r(phinOffset() + static_cast<int>(node)) = x(phinOffset() + static_cast<int>(node)) - value;
+        r(phinOffset() + static_cast<int>(node)) =
+            x(phinOffset() + static_cast<int>(node))
+            - (value - electronQfReference_V_ / potentialScale);
     for (const auto& [node, value] : bcs.phip)
-        r(phipOffset() + static_cast<int>(node)) = x(phipOffset() + static_cast<int>(node)) - value;
+        r(phipOffset() + static_cast<int>(node)) =
+            x(phipOffset() + static_cast<int>(node))
+            - (value - holeQfReference_V_ / potentialScale);
 
     return r;
 }
@@ -512,8 +554,12 @@ CoupledDDAssembler::carrierContinuityTermDiagnostics(
         : std::vector<Real>{};
     const bool qfImpact =
         detail::usesQuasiFermiAvalancheDrivingForce(impactIonizationConfig_);
-    const VectorXd phinPhysical = x.segment(phinOffset(), N) * potentialScale;
-    const VectorXd phipPhysical = x.segment(phipOffset(), N) * potentialScale;
+    const VectorXd phinIncrement = x.segment(phinOffset(), N) * potentialScale;
+    const VectorXd phipIncrement = x.segment(phipOffset(), N) * potentialScale;
+    const VectorXd phinPhysical =
+        phinIncrement.array() + electronQfReference_V_;
+    const VectorXd phipPhysical =
+        phipIncrement.array() + holeQfReference_V_;
     const std::vector<Real> nodeElectronDrivingFields = (impactIonizationEnabled_ && qfImpact)
         ? detail::computeElectronAvalancheNodeQuasiFermiDrivingFields(
             impactIonizationConfig_, mesh_, nodeCells_, psi, phinPhysical, n, ni_, Vt_, fieldFactor)
@@ -585,8 +631,8 @@ CoupledDDAssembler::carrierContinuityTermDiagnostics(
             const Real nFlux = sgElectronContinuityFluxFromQuasiFermiVariableNi(
                 ni_[static_cast<Index>(i)],
                 ni_[static_cast<Index>(j)],
-                psi_i,
-                psi_j,
+                psi_i - electronQfReference_V_,
+                psi_j - electronQfReference_V_,
                 phin_i,
                 phin_j,
                 Vt_,
@@ -610,8 +656,8 @@ CoupledDDAssembler::carrierContinuityTermDiagnostics(
             const Real pFlux = sgHoleContinuityFluxFromQuasiFermiVariableNi(
                 ni_[static_cast<Index>(i)],
                 ni_[static_cast<Index>(j)],
-                psi_i,
-                psi_j,
+                psi_i - holeQfReference_V_,
+                psi_j - holeQfReference_V_,
                 phip_i,
                 phip_j,
                 Vt_,
@@ -632,7 +678,8 @@ CoupledDDAssembler::carrierContinuityTermDiagnostics(
 
         if (recombination_.srhEnabled() || recombination_.augerEnabled()) {
             const Real dPhi =
-                (x(phipOffset() + ii) - x(phinOffset() + ii)) * potentialScale;
+                (holeQfReference_V_ - electronQfReference_V_)
+                + (x(phipOffset() + ii) - x(phinOffset() + ii)) * potentialScale;
             const Real excessProduct = (ni > 0.0)
                 ? ni * ni * std::expm1(dPhi / Vt_)
                 : n(ii) * p(ii);
@@ -735,7 +782,9 @@ CoupledDDAssembler::carrierContinuityTermDiagnostics(
         term.impactHoleSource = 0.0;
         term.impactCombinedSource = 0.0;
         term.electronGauge = 0.0;
-        term.electronBoundary = x(phinOffset() + static_cast<int>(node)) - value;
+        term.electronBoundary =
+            x(phinOffset() + static_cast<int>(node))
+            - (value - electronQfReference_V_ / potentialScale);
         term.electronResidual = term.electronBoundary;
     };
     auto applyHoleBoundary = [&](Index node, Real value) {
@@ -748,7 +797,9 @@ CoupledDDAssembler::carrierContinuityTermDiagnostics(
         term.impactHoleSource = 0.0;
         term.impactCombinedSource = 0.0;
         term.holeGauge = 0.0;
-        term.holeBoundary = x(phipOffset() + static_cast<int>(node)) - value;
+        term.holeBoundary =
+            x(phipOffset() + static_cast<int>(node))
+            - (value - holeQfReference_V_ / potentialScale);
         term.holeResidual = term.holeBoundary;
     };
     for (const auto& [node, value] : bcs.phin)
@@ -816,14 +867,20 @@ CoupledDDAssembler::sgEdgeFluxDiagnostics(
         if (mun > 0.0) {
             const Real coef = mun * Vt_ * fieldFactor * couple_[e] / h;
             nFlux = sgElectronContinuityFluxFromQuasiFermiVariableNi(
-                ni_[idxI], ni_[idxJ], psi_i, psi_j, phin_i, phin_j, Vt_, coef,
+                ni_[idxI], ni_[idxJ],
+                psi_i - electronQfReference_V_,
+                psi_j - electronQfReference_V_,
+                phin_i, phin_j, Vt_, coef,
                 bgnEnabled_);
         }
         Real pFlux = 0.0;
         if (mup > 0.0) {
             const Real coef = mup * Vt_ * fieldFactor * couple_[e] / h;
             pFlux = sgHoleContinuityFluxFromQuasiFermiVariableNi(
-                ni_[idxI], ni_[idxJ], psi_i, psi_j, phip_i, phip_j, Vt_, coef,
+                ni_[idxI], ni_[idxJ],
+                psi_i - holeQfReference_V_,
+                psi_j - holeQfReference_V_,
+                phip_i, phip_j, Vt_, coef,
                 bgnEnabled_);
         }
 
@@ -845,10 +902,10 @@ CoupledDDAssembler::sgEdgeFluxDiagnostics(
         record.ni1_m3 = ni_[idxJ];
         record.psi0_V = psi_i;
         record.psi1_V = psi_j;
-        record.phin0_V = phin_i;
-        record.phin1_V = phin_j;
-        record.phip0_V = phip_i;
-        record.phip1_V = phip_j;
+        record.phin0_V = phin_i + electronQfReference_V_;
+        record.phin1_V = phin_j + electronQfReference_V_;
+        record.phip0_V = phip_i + holeQfReference_V_;
+        record.phip1_V = phip_j + holeQfReference_V_;
         record.electricField_V_m = electricField;
         record.electronMobility_m2_V_s = mun;
         record.holeMobility_m2_V_s = mup;
@@ -907,8 +964,12 @@ SparseMatrixd CoupledDDAssembler::impactIonizationSourceJacobian(
     const Real sourceIntegralFactor = scaling_.enabled
         ? scaling_.unitSystem.continuitySourceIntegralFactor() : 1.0;
     const VectorXd psi = x.segment(psiOffset(), N) * potentialScale;
-    const VectorXd phin = x.segment(phinOffset(), N) * potentialScale;
-    const VectorXd phip = x.segment(phipOffset(), N) * potentialScale;
+    const VectorXd phin =
+        (x.segment(phinOffset(), N) * potentialScale).array()
+        + electronQfReference_V_;
+    const VectorXd phip =
+        (x.segment(phipOffset(), N) * potentialScale).array()
+        + holeQfReference_V_;
     const auto cellEdges = detail::buildCellEdgeMap(edgeCells_, mesh_);
 
     std::vector<bool> constrainedRows(static_cast<std::size_t>(3 * N), false);
@@ -1035,8 +1096,12 @@ SparseMatrixd CoupledDDAssembler::impactIonizationSourceFiniteDifferenceJacobian
     const Real derivativeScale = scaling_.enabled
         ? scaling_.V0 / (scaling_.C0 * scaling_.D0) : 1.0;
     const VectorXd psi = x.segment(psiOffset(), N) * potentialScale;
-    const VectorXd phin = x.segment(phinOffset(), N) * potentialScale;
-    const VectorXd phip = x.segment(phipOffset(), N) * potentialScale;
+    const VectorXd phin =
+        (x.segment(phinOffset(), N) * potentialScale).array()
+        + electronQfReference_V_;
+    const VectorXd phip =
+        (x.segment(phipOffset(), N) * potentialScale).array()
+        + holeQfReference_V_;
     const auto cellEdges = detail::buildCellEdgeMap(edgeCells_, mesh_);
 
     std::vector<bool> constrainedRows(static_cast<std::size_t>(3 * N), false);
@@ -1163,8 +1228,12 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
     const Real potentialScale = scaling_.enabled ? scaling_.V0 : 1.0;
     const Real fieldFactor = scaling_.enabled ? scaling_.fieldFromCoordinateDeltaFactor : 1.0;
     const VectorXd psi = x.segment(psiOffset(), N) * potentialScale;
-    const VectorXd phinState = x.segment(phinOffset(), N) * potentialScale;
-    const VectorXd phipState = x.segment(phipOffset(), N) * potentialScale;
+    const VectorXd phinState =
+        (x.segment(phinOffset(), N) * potentialScale).array()
+        + electronQfReference_V_;
+    const VectorXd phipState =
+        (x.segment(phipOffset(), N) * potentialScale).array()
+        + holeQfReference_V_;
     const std::vector<Real> nodeElectricFields = impactIonizationEnabled_
         ? detail::computeNodeElectricFields(psi, mesh_, fieldFactor)
         : std::vector<Real>{};
@@ -1594,14 +1663,22 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
         const Real coef = mun * Vt_ * fieldFactor * couple_e / h;
         if (bgnEnabled_) {
             return sgElectronContinuityFluxFromQuasiFermiVariableNi(
-                ni_[idxI], ni_[idxJ], psi_i, psi_j, phin_i, phin_j, Vt_, coef);
+                ni_[idxI], ni_[idxJ],
+                psi_i - electronQfReference_V_,
+                psi_j - electronQfReference_V_,
+                phin_i, phin_j, Vt_, coef);
         }
         if (ni_[idxI] == ni_[idxJ]) {
             return sgElectronContinuityFluxFromQuasiFermiStable(
-                ni_[idxI], psi_i, psi_j, phin_i, phin_j, Vt_, coef);
+                ni_[idxI],
+                psi_i - electronQfReference_V_,
+                psi_j - electronQfReference_V_,
+                phin_i, phin_j, Vt_, coef);
         }
-        const Real n_i = ni_[idxI] * limitedExp((psi_i - phin_i) / Vt_);
-        const Real n_j = ni_[idxJ] * limitedExp((psi_j - phin_j) / Vt_);
+        const Real n_i = ni_[idxI] * limitedExp(
+            (psi_i - electronQfReference_V_ - phin_i) / Vt_);
+        const Real n_j = ni_[idxJ] * limitedExp(
+            (psi_j - electronQfReference_V_ - phin_j) / Vt_);
         return sgElectronContinuityFlux(n_i, n_j, dpsi, Vt_, coef);
     };
 
@@ -1634,14 +1711,22 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
         const Real coef = mup * Vt_ * fieldFactor * couple_e / h;
         if (bgnEnabled_) {
             return sgHoleContinuityFluxFromQuasiFermiVariableNi(
-                ni_[idxI], ni_[idxJ], psi_i, psi_j, phip_i, phip_j, Vt_, coef);
+                ni_[idxI], ni_[idxJ],
+                psi_i - holeQfReference_V_,
+                psi_j - holeQfReference_V_,
+                phip_i, phip_j, Vt_, coef);
         }
         if (ni_[idxI] == ni_[idxJ]) {
             return sgHoleContinuityFluxFromQuasiFermiStable(
-                ni_[idxI], psi_i, psi_j, phip_i, phip_j, Vt_, coef);
+                ni_[idxI],
+                psi_i - holeQfReference_V_,
+                psi_j - holeQfReference_V_,
+                phip_i, phip_j, Vt_, coef);
         }
-        const Real p_i = ni_[idxI] * limitedExp((phip_i - psi_i) / Vt_);
-        const Real p_j = ni_[idxJ] * limitedExp((phip_j - psi_j) / Vt_);
+        const Real p_i = ni_[idxI] * limitedExp(
+            (phip_i - (psi_i - holeQfReference_V_)) / Vt_);
+        const Real p_j = ni_[idxJ] * limitedExp(
+            (phip_j - (psi_j - holeQfReference_V_)) / Vt_);
         return sgHoleContinuityFlux(p_i, p_j, dpsi, Vt_, coef);
     };
 
@@ -1721,8 +1806,10 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
                 const Real dBminusArg = bernoulliDerivative(-eta);
                 const Real niI = ni_[idxI];
                 const Real niJ = ni_[idxJ];
-                const Real nI = niI * limitedExp((psi_i - phin_i) / Vt_);
-                const Real nJ = niJ * limitedExp((psi_j - phin_j) / Vt_);
+                const Real nI = niI * limitedExp(
+                    (psi_i - electronQfReference_V_ - phin_i) / Vt_);
+                const Real nJ = niJ * limitedExp(
+                    (psi_j - electronQfReference_V_ - phin_j) / Vt_);
                 dF_dpsi_i = coef / Vt_ * ((dBminusArg + Bminus) * nI + dBplus * nJ);
                 dF_dpsi_j = coef / Vt_ * (-dBminusArg * nI - (dBplus + Bplus) * nJ);
                 dF_dphin_i = coef * Bminus * (-nI / Vt_);
@@ -1783,8 +1870,10 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
                 const Real dBminusArg = bernoulliDerivative(-eta);
                 const Real niI = ni_[idxI];
                 const Real niJ = ni_[idxJ];
-                const Real pI = niI * limitedExp((phip_i - psi_i) / Vt_);
-                const Real pJ = niJ * limitedExp((phip_j - psi_j) / Vt_);
+                const Real pI = niI * limitedExp(
+                    (phip_i - (psi_i - holeQfReference_V_)) / Vt_);
+                const Real pJ = niJ * limitedExp(
+                    (phip_j - (psi_j - holeQfReference_V_)) / Vt_);
                 dF_dpsi_i = coef / Vt_ * (-(dBplus + Bplus) * pI - dBminusArg * pJ);
                 dF_dpsi_j = coef / Vt_ * (dBplus * pI + (dBminusArg + Bminus) * pJ);
                 dF_dphip_i = coef * Bplus * ( pI / Vt_);
@@ -2122,7 +2211,8 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
 
         if (recombination_.srhEnabled() || recombination_.augerEnabled()) {
             const Real dPhi =
-                (x(phipOffset() + ii) - x(phinOffset() + ii)) * potentialScale;
+                (holeQfReference_V_ - electronQfReference_V_)
+                + (x(phipOffset() + ii) - x(phinOffset() + ii)) * potentialScale;
             const Real np = (ni > 0.0) ? ni * ni * std::exp(dPhi / Vt_) : n(ii) * p(ii);
             const Real excessProduct = (ni > 0.0)
                 ? ni * ni * std::expm1(dPhi / Vt_)

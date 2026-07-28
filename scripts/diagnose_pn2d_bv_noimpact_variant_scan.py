@@ -31,6 +31,120 @@ class Variant:
 VARIANTS = [
     Variant("baseline", "no-impact baseline: SRH + Masetti high-field QF mobility", {}),
     Variant(
+        "tight_abstol_1e_m12",
+        "no-impact baseline with Newton absolute tolerance tightened to 1e-12",
+        {"abstol": 1.0e-12, "reltol": 1.0e-10},
+    ),
+    Variant(
+        "tight_abstol_1e_m14",
+        "no-impact baseline with Newton absolute tolerance tightened to 1e-14",
+        {"abstol": 1.0e-14, "reltol": 1.0e-12},
+    ),
+    Variant(
+        "carrier_row_enforce",
+        "no-impact baseline with source-aware carrier-row convergence enforced",
+        {
+            "carrier_row_convergence": {
+                "mode": "enforce",
+                "eps_row": 1.0e-3,
+                "scale_floor": 1.0e-30,
+                "min_source_scale_fraction": 0.0,
+                "min_source_scale": 1.0e-18,
+                "min_newton_max_iter": 200,
+                "recovery": {
+                    "mode": "gummel_density",
+                    "max_attempts": 3,
+                    "max_cycles": 3,
+                    "density_change_reltol": 1.0e-10,
+                },
+            },
+        },
+    ),
+    Variant(
+        "source_aware_rows",
+        "carrier-row enforcement plus source-aware Newton row equilibration",
+        {
+            "carrier_row_convergence": {
+                "mode": "enforce",
+                "eps_row": 1.0e-3,
+                "scale_floor": 1.0e-30,
+                "min_source_scale_fraction": 0.0,
+                "min_source_scale": 1.0e-18,
+                "min_newton_max_iter": 200,
+            },
+            "continuity_row_scaling": {
+                "enabled": True,
+                "flux_fraction": 0.0,
+                "scale_floor": 1.0e-30,
+                "min_source_scale": 1.0e-18,
+                "min_weight": 1.0e-12,
+                "max_weight": 1.0e18,
+            },
+            "global_continuity_closure": {
+                "mode": "enforce",
+                "tolerance": 1.0e-2,
+                "source_floor": 1.0e-14,
+            },
+        },
+    ),
+    Variant(
+        "source_aware_rows_fd",
+        "source-aware closure candidate with a finite-difference Jacobian",
+        {
+            "jacobian": "finite_difference",
+            "finite_difference_step": 1.0e-7,
+            "carrier_row_convergence": {
+                "mode": "enforce",
+                "eps_row": 1.0e-3,
+                "scale_floor": 1.0e-30,
+                "min_source_scale_fraction": 0.0,
+                "min_source_scale": 1.0e-18,
+                "min_newton_max_iter": 200,
+            },
+            "continuity_row_scaling": {
+                "enabled": True,
+                "flux_fraction": 0.0,
+                "scale_floor": 1.0e-30,
+                "min_source_scale": 1.0e-18,
+                "min_weight": 1.0e-12,
+                "max_weight": 1.0e18,
+            },
+            "global_continuity_closure": {
+                "mode": "enforce",
+                "tolerance": 1.0e-2,
+                "source_floor": 1.0e-14,
+            },
+        },
+    ),
+    Variant(
+        "source_aware_rows_qf_reference",
+        "source-aware closure with majority-contact quasi-Fermi increments",
+        {
+            "quasi_fermi_reference": "contact_majority",
+            "carrier_row_convergence": {
+                "mode": "enforce",
+                "eps_row": 1.0e-3,
+                "scale_floor": 1.0e-30,
+                "min_source_scale_fraction": 0.0,
+                "min_source_scale": 1.0e-18,
+                "min_newton_max_iter": 200,
+            },
+            "continuity_row_scaling": {
+                "enabled": True,
+                "flux_fraction": 0.0,
+                "scale_floor": 1.0e-30,
+                "min_source_scale": 1.0e-18,
+                "min_weight": 1.0e-12,
+                "max_weight": 1.0e18,
+            },
+            "global_continuity_closure": {
+                "mode": "enforce",
+                "tolerance": 1.0e-2,
+                "source_floor": 1.0e-14,
+            },
+        },
+    ),
+    Variant(
         "srh_tau_equal_1e_m5",
         "SRH with equal electron/hole lifetimes of 1e-5 s",
         {"taun": 1.0e-5, "taup": 1.0e-5},
@@ -171,10 +285,32 @@ def prepare_config(base: dict[str, Any],
     cfg["output_csv"] = f"{variant.tag}.csv"
     solver = cfg.setdefault("solver", {})
     solver["impact_ionization"] = {"model": "none"}
+    solver["diagnostics"] = True
     solver.update(deep_update(solver, variant.solver_updates))
     sweep = cfg.setdefault("sweep", {})
     sweep["write_vtk"] = True
     sweep["vtk_prefix"] = variant.tag
+    # Keep the no-impact scan self-contained and expose the three independent
+    # terminal-current checks needed to distinguish a transport-state error
+    # from a post-processing/extraction error.
+    sweep.pop("write_state_file", None)
+    diagnostics = sweep.setdefault("diagnostics", {})
+    diagnostics["contact_edge"] = {
+        "enabled": True,
+        "contacts": ["Anode", "Cathode"],
+    }
+    diagnostics["continuity_balance"] = {
+        "enabled": True,
+        "contacts": ["Anode", "Cathode"],
+    }
+    diagnostics["terminal_balance"] = {
+        "enabled": True,
+        "contacts": ["Anode", "Cathode"],
+    }
+    diagnostics["terminal_current_method_compare"] = {
+        "enabled": True,
+        "contacts": ["Anode", "Cathode"],
+    }
     run_biases = list(biases)
     if run_biases and abs(run_biases[0]) > 1.0e-15:
         run_biases.insert(0, 0.0)

@@ -31,6 +31,7 @@ ContactCurrent::ContactCurrent(const DeviceMesh& mesh,
     , matdb_(matdb)
     , doping_(doping)
     , edgeCells_(detail::buildEdgeCellMap(mesh))
+    , couple_(detail::computeEdgeCouplings(mesh))
     , mobilityConfig_(mobilityConfig)
     , mobility_(makeMobilityModel(mobilityConfig))
     , thermalVoltage_(validatedThermalVoltage(temperature_K))
@@ -127,7 +128,7 @@ ContactCurrentDetailedResult ContactCurrent::computeDetailed(
         const bool n1OnContact = contactNodes.count(edge.n1) > 0;
         if (n0OnContact == n1OnContact)
             continue;
-        if (edge.length < 1.0e-30 || edge.couple <= 0.0)
+        if (edge.length < 1.0e-30 || couple_[e] <= 0.0)
             continue;
 
         const int i = static_cast<int>(edge.n0);
@@ -148,10 +149,26 @@ ContactCurrentDetailedResult ContactCurrent::computeDetailed(
             ? scaling_.currentDensityLineIntegralFactor
             : 1.0;
         const Real electricField = std::abs(dpsi / edgeLength) * fieldFactor;
-        const Real phin_i = solution.phin(i);
-        const Real phin_j = solution.phin(j);
-        const Real phip_i = solution.phip(i);
-        const Real phip_j = solution.phip(j);
+        const bool hasReferencedElectronQf =
+            solution.phinIncrement.size() == solution.phin.size();
+        const bool hasReferencedHoleQf =
+            solution.phipIncrement.size() == solution.phip.size();
+        const Real phin_i = hasReferencedElectronQf
+            ? solution.phinIncrement(i) : solution.phin(i);
+        const Real phin_j = hasReferencedElectronQf
+            ? solution.phinIncrement(j) : solution.phin(j);
+        const Real phip_i = hasReferencedHoleQf
+            ? solution.phipIncrement(i) : solution.phip(i);
+        const Real phip_j = hasReferencedHoleQf
+            ? solution.phipIncrement(j) : solution.phip(j);
+        const Real electronPsi_i = psi_i -
+            (hasReferencedElectronQf ? solution.electronQfReference_V : 0.0);
+        const Real electronPsi_j = psi_j -
+            (hasReferencedElectronQf ? solution.electronQfReference_V : 0.0);
+        const Real holePsi_i = psi_i -
+            (hasReferencedHoleQf ? solution.holeQfReference_V : 0.0);
+        const Real holePsi_j = psi_j -
+            (hasReferencedHoleQf ? solution.holeQfReference_V : 0.0);
         Real phip_i_forHole = phip_i;
         Real phip_j_forHole = phip_j;
         bool holeQfDropOverrideApplied = false;
@@ -195,7 +212,8 @@ ContactCurrentDetailedResult ContactCurrent::computeDetailed(
         if (mun > 0.0) {
             const Real coef = mun * thermalVoltage_ * fieldFactor / edgeLength;
             electronContinuityFlux01 = sgElectronContinuityFluxFromQuasiFermiVariableNi(
-                ni_i, ni_j, psi_i, psi_j, phin_i, phin_j, thermalVoltage_, coef);
+                ni_i, ni_j, electronPsi_i, electronPsi_j,
+                phin_i, phin_j, thermalVoltage_, coef);
             // sgElectronFlux = -sgElectronContinuityFlux by definition.
             electronFlux01 = -electronContinuityFlux01;
         }
@@ -204,7 +222,7 @@ ContactCurrentDetailedResult ContactCurrent::computeDetailed(
         if (mup > 0.0) {
             const Real coef = mup * thermalVoltage_ * fieldFactor / edgeLength;
             holeContinuityFlux01 = sgHoleContinuityFluxFromQuasiFermiVariableNi(
-                ni_i, ni_j, psi_i, psi_j,
+                ni_i, ni_j, holePsi_i, holePsi_j,
                 phip_i_forHole, phip_j_forHole,
                 thermalVoltage_, coef);
             holeFlux01 = -holeContinuityFlux01;
@@ -228,12 +246,12 @@ ContactCurrentDetailedResult ContactCurrent::computeDetailed(
 
         const Real outwardSign = n0OnContact ? 1.0 : -1.0;
         // Current density in the active internal unit system times edge length gives current per internal device depth.
-        const Real electronCurrent = constants::q * outwardSign * electronFlux01 * edge.couple * currentLineFactor;
-        const Real electronDriftCurrent = constants::q * outwardSign * electronDriftFlux01 * edge.couple * currentLineFactor;
-        const Real electronDiffusionCurrent = constants::q * outwardSign * electronDiffusionFlux01 * edge.couple * currentLineFactor;
-        const Real holeCurrent = constants::q * outwardSign * holeFlux01 * edge.couple * currentLineFactor;
-        const Real holeDriftCurrent = constants::q * outwardSign * holeDriftFlux01 * edge.couple * currentLineFactor;
-        const Real holeDiffusionCurrent = constants::q * outwardSign * holeDiffusionFlux01 * edge.couple * currentLineFactor;
+        const Real electronCurrent = constants::q * outwardSign * electronFlux01 * couple_[e] * currentLineFactor;
+        const Real electronDriftCurrent = constants::q * outwardSign * electronDriftFlux01 * couple_[e] * currentLineFactor;
+        const Real electronDiffusionCurrent = constants::q * outwardSign * electronDiffusionFlux01 * couple_[e] * currentLineFactor;
+        const Real holeCurrent = constants::q * outwardSign * holeFlux01 * couple_[e] * currentLineFactor;
+        const Real holeDriftCurrent = constants::q * outwardSign * holeDriftFlux01 * couple_[e] * currentLineFactor;
+        const Real holeDiffusionCurrent = constants::q * outwardSign * holeDiffusionFlux01 * couple_[e] * currentLineFactor;
 
         detailed.totals.electronCurrent += electronCurrent;
         detailed.totals.electronDriftCurrent += electronDriftCurrent;
@@ -247,7 +265,7 @@ ContactCurrentDetailedResult ContactCurrent::computeDetailed(
         edgeDiag.node0 = edge.n0;
         edgeDiag.node1 = edge.n1;
         edgeDiag.edgeLength_m = scaling_.unitSystem.internalLengthToMeters(edge.length);
-        edgeDiag.edgeCouple_m = scaling_.unitSystem.internalLengthToMeters(edge.couple);
+        edgeDiag.edgeCouple_m = scaling_.unitSystem.internalLengthToMeters(couple_[e]);
         edgeDiag.outwardSign = outwardSign;
         edgeDiag.bernoulliU = dpsi / thermalVoltage_;
         edgeDiag.bernoulliBplus = weights.b_plus;
@@ -256,10 +274,14 @@ ContactCurrentDetailedResult ContactCurrent::computeDetailed(
         edgeDiag.holeUsedQuasiFermi = true;
         edgeDiag.psi0 = psi_i;
         edgeDiag.psi1 = psi_j;
-        edgeDiag.phin0 = phin_i;
-        edgeDiag.phin1 = phin_j;
-        edgeDiag.phip0 = phip_i_forHole;
-        edgeDiag.phip1 = phip_j_forHole;
+        edgeDiag.phin0 = phin_i +
+            (hasReferencedElectronQf ? solution.electronQfReference_V : 0.0);
+        edgeDiag.phin1 = phin_j +
+            (hasReferencedElectronQf ? solution.electronQfReference_V : 0.0);
+        edgeDiag.phip0 = phip_i_forHole +
+            (hasReferencedHoleQf ? solution.holeQfReference_V : 0.0);
+        edgeDiag.phip1 = phip_j_forHole +
+            (hasReferencedHoleQf ? solution.holeQfReference_V : 0.0);
         edgeDiag.holeQfDropOverrideApplied = holeQfDropOverrideApplied;
         edgeDiag.n0 = n_i;
         edgeDiag.n1 = n_j;

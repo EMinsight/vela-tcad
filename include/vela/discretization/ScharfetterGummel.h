@@ -84,8 +84,10 @@ Real sgElectronContinuityFluxFromQuasiFermiFactors(Real ni0,
 /**
  * @brief Balanced electron continuity flux for edge-varying intrinsic density.
  *
- * This generalizes the quasi-Fermi form to BGN/effective-ni edges. It cancels
- * exactly for flat electron quasi-Fermi potential even when ni0 != ni1.
+ * This generalizes the quasi-Fermi form to BGN/effective-ni edges. Production
+ * evaluation uses a factorized expm1(delta quasi-Fermi/Vt) form, avoiding
+ * cancellation of two nearly equal density flux terms. It cancels exactly for
+ * flat electron quasi-Fermi potential even when ni0 != ni1.
  *
  * When includeNiGradientDrift is false the intrinsic-density gradient term
  * log(ni1/ni0) is dropped from the Scharfetter-Gummel argument, reducing the
@@ -107,9 +109,9 @@ Real sgElectronContinuityFluxFromQuasiFermiVariableNi(Real ni0,
  * @brief Read-only term decomposition of the production variable-ni electron SG flux.
  *
  * All values retain the caller's native solver units. The reconstructed flux
- * mirrors the production endpoint exponent clamp [-500, 500] and its exact
- * flat-quasi-Fermi short circuit; the production flux implementation itself is
- * not replaced by the stable diagnostic value.
+ * records the legacy subtractive form; stableFactorizedFlux mirrors the
+ * production endpoint exponent clamp [-500, 500] and exact flat-quasi-Fermi
+ * short circuit.
  *
  * cancellationCondition is (abs(leftTerm) + abs(rightTerm)) /
  * abs(signedDifference). Exact cancellation with nonzero terms is represented
@@ -204,8 +206,10 @@ Real sgHoleContinuityFluxFromQuasiFermiFactors(Real ni0,
 /**
  * @brief Balanced hole continuity flux for edge-varying intrinsic density.
  *
- * This generalizes the quasi-Fermi form to BGN/effective-ni edges. It cancels
- * exactly for flat hole quasi-Fermi potential even when ni0 != ni1.
+ * This generalizes the quasi-Fermi form to BGN/effective-ni edges. Production
+ * evaluation uses a factorized expm1(delta quasi-Fermi/Vt) form, avoiding
+ * cancellation of two nearly equal density flux terms. It cancels exactly for
+ * flat hole quasi-Fermi potential even when ni0 != ni1.
  *
  * When includeNiGradientDrift is false the intrinsic-density gradient term
  * log(ni0/ni1) is dropped from the Scharfetter-Gummel argument, reducing the

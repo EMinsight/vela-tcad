@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
 #include "vela/discretization/ScharfetterGummel.h"
+#include "vela/discretization/Bernoulli.h"
 #include "vela/core/PhysicalConstants.h"
 #include "vela/core/UnitScalingSystem.h"
 #include "vela/equation/AssemblerUtils.h"
@@ -297,7 +298,22 @@ TEST_CASE("SG variable-ni quasi-Fermi flux matches density form at large absolut
     REQUIRE(electronPlainQfFlux == Approx(electronDensityFlux).epsilon(1.0e-12));
     REQUIRE(electronQfFlux == Approx(electronDensityFlux).epsilon(1.0e-12));
     REQUIRE(holePlainQfFlux == Approx(holeDensityFlux).epsilon(1.0e-12));
-    REQUIRE(holeQfFlux == Approx(holeDensityFlux).epsilon(1.0e-12));
+    const long double holeEta =
+        (static_cast<long double>(psi1) - static_cast<long double>(psi0))
+        / static_cast<long double>(Vt);
+    const long double holeRight =
+        static_cast<long double>(bernoulli(static_cast<Real>(-holeEta)))
+        * static_cast<long double>(ni)
+        * std::exp(
+            (static_cast<long double>(phip1) - static_cast<long double>(psi1))
+            / static_cast<long double>(Vt));
+    const long double holeExpected =
+        static_cast<long double>(coef) * holeRight
+        * std::expm1(
+            (static_cast<long double>(phip0) - static_cast<long double>(phip1))
+            / static_cast<long double>(Vt));
+    REQUIRE(holeQfFlux ==
+            Approx(static_cast<Real>(holeExpected)).epsilon(1.0e-12));
 }
 
 TEST_CASE("SG variable-ni electron flux decomposition reconstructs the production flux",
@@ -338,7 +354,7 @@ TEST_CASE("SG variable-ni electron flux decomposition reconstructs the productio
                 Approx(decomposition.bernoulliEta * decomposition.n1));
         REQUIRE(decomposition.signedDifference ==
                 Approx(decomposition.leftTerm - decomposition.rightTerm));
-        REQUIRE(decomposition.reconstructedFlux == production);
+        REQUIRE(decomposition.stableFactorizedFlux == production);
         REQUIRE(std::isfinite(decomposition.stableFactorizedFlux));
         REQUIRE(std::isfinite(decomposition.highPrecisionReferenceFlux));
         REQUIRE(std::isfinite(decomposition.highPrecisionReferenceTermScale));
@@ -375,10 +391,10 @@ TEST_CASE("SG variable-ni electron flux decomposition is oriented and handles la
 
     REQUIRE(forward.eta > 50.0);
     REQUIRE(reverse.eta < -50.0);
-    REQUIRE(forward.reconstructedFlux ==
+    REQUIRE(forward.stableFactorizedFlux ==
             sgElectronContinuityFluxFromQuasiFermiVariableNi(
                 ni0, ni1, psi0, psi1, phin0, phin1, Vt, coef, true));
-    REQUIRE(reverse.reconstructedFlux ==
+    REQUIRE(reverse.stableFactorizedFlux ==
             sgElectronContinuityFluxFromQuasiFermiVariableNi(
                 ni1, ni0, psi1, psi0, phin1, phin0, Vt, coef, true));
     REQUIRE(reverse.reconstructedFlux ==
@@ -443,7 +459,7 @@ TEST_CASE("SG variable-ni electron flux decomposition remains stable under sever
         decomposition.stableFactorizedFlux - decomposition.highPrecisionReferenceFlux);
     REQUIRE(stableError <= productionError);
     REQUIRE(stableError <= 0.1 * productionError);
-    REQUIRE(decomposition.reconstructedFlux ==
+    REQUIRE(decomposition.stableFactorizedFlux ==
             sgElectronContinuityFluxFromQuasiFermiVariableNi(
                 ni0, ni1, psi0, psi1, phin0, phin1, Vt, coef, true));
 }
@@ -465,7 +481,7 @@ TEST_CASE("SG variable-ni electron flux decomposition reports endpoint exponent 
     REQUIRE(std::isfinite(decomposition.stableFactorizedFlux));
     REQUIRE(std::isfinite(decomposition.highPrecisionReferenceFlux));
     REQUIRE(std::isfinite(decomposition.highPrecisionReferenceTermScale));
-    REQUIRE(decomposition.reconstructedFlux ==
+    REQUIRE(decomposition.stableFactorizedFlux ==
             sgElectronContinuityFluxFromQuasiFermiVariableNi(
                 1.0e16, 1.0e16, 13.0, -13.0, 0.0, 0.1,
                 Vt, 1.0, true));

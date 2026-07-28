@@ -47,7 +47,9 @@ public:
     Real fieldFromCoordinateDeltaFactor() const;
     /**
      * Converts a volumetric rate integrated over 2-D area into the native
-     * Scharfetter-Gummel particle-flux units used by continuity rows.
+     * Scharfetter-Gummel particle-flux line-integral units used by continuity
+     * rows.  This includes concentration, area, current-density, and device
+     * depth unit conversions; the elementary charge is applied separately.
      */
     Real continuitySourceIntegralFactor() const;
     Real currentPerInternalDepthFactor() const;

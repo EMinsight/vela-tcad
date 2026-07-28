@@ -200,6 +200,13 @@ struct DCSweepPoint {
     std::string newtonConvergenceReason;
     int carrierRowViolations = 0;
     Real carrierRowMaxRatio = 0.0;
+    bool globalContinuityClosureSatisfied = true;
+    Real globalElectronContinuityClosureRatio = 0.0;
+    Real globalHoleContinuityClosureRatio = 0.0;
+    Real globalElectronContactFlux = 0.0;
+    Real globalHoleContactFlux = 0.0;
+    Real globalElectronIntegratedSource = 0.0;
+    Real globalHoleIntegratedSource = 0.0;
     bool carrierRowRecoveryAttempted = false;
     int carrierRowRecoveryElectronRows = 0;
     int carrierRowRecoveryHoleRows = 0;

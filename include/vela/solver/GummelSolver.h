@@ -38,6 +38,10 @@ struct DDSolution {
     VectorXd psi;   ///< Electrostatic potential [V]
     VectorXd phin;  ///< Electron quasi-Fermi potential [V]
     VectorXd phip;  ///< Hole quasi-Fermi potential [V]
+    VectorXd phinIncrement; ///< Optional cancellation-free electron QF increment [V].
+    VectorXd phipIncrement; ///< Optional cancellation-free hole QF increment [V].
+    Real electronQfReference_V = 0.0; ///< Reference for phinIncrement.
+    Real holeQfReference_V = 0.0; ///< Reference for phipIncrement.
     VectorXd n;     ///< Electron concentration [m^-3]
     VectorXd p;     ///< Hole concentration [m^-3]
     int      iters = 0; ///< Number of Gummel iterations performed

@@ -453,6 +453,50 @@ TEST_CASE("ContactCurrent: unit-scaled residual method matches SG flux without a
     REQUIRE(residual.holeCurrent == Catch::Approx(sgFlux.holeCurrent));
     REQUIRE(residual.totalCurrent == Catch::Approx(sgFlux.totalCurrent));
 }
+
+TEST_CASE("ContactCurrent: referenced quasi-Fermi increments preserve residual current",
+          "[contact_current][residual][qf-reference]")
+{
+    DeviceMesh mesh = makePNMesh();
+    MaterialDatabase matdb;
+    DopingModel doping = makePNDoping(mesh);
+    MobilityModelConfig mobility = mobilityModelConfig("constant");
+    CoupledDDAssembler assembler(
+        mesh, matdb, doping, constants::Vt_300, mobility,
+        recombinationModelConfig({"none"}));
+    assembler.setQuasiFermiReferences(0.0, -20.0);
+
+    const int N = static_cast<int>(mesh.numNodes());
+    CoupledDDState state;
+    state.psi = VectorXd::LinSpaced(N, -20.02, 0.03);
+    state.phin = VectorXd::LinSpaced(N, -0.04, 0.01);
+    state.phip = VectorXd::Constant(N, -20.0);
+    state.phip(N / 2) += 2.0e-15;
+    const VectorXd x = assembler.pack(state);
+
+    DDSolution solution;
+    solution.psi = state.psi;
+    solution.phin = state.phin;
+    solution.phip = state.phip;
+    solution.phinIncrement = x.segment(N, N);
+    solution.phipIncrement = x.segment(2 * N, N);
+    solution.electronQfReference_V = 0.0;
+    solution.holeQfReference_V = -20.0;
+    solution.n = assembler.electronDensity(x);
+    solution.p = assembler.holeDensity(x);
+
+    ContactCurrent current(mesh, matdb, doping, mobility, constants::T0);
+    const ContactCurrentResult sgFlux = current.compute(solution, "anode");
+    const ContactCurrentResult residual =
+        current.computeFromResidual(assembler, x, "anode");
+    REQUIRE(residual.electronCurrent ==
+            Catch::Approx(sgFlux.electronCurrent).epsilon(1.0e-12));
+    REQUIRE(residual.holeCurrent ==
+            Catch::Approx(sgFlux.holeCurrent).epsilon(1.0e-12));
+    REQUIRE(residual.totalCurrent ==
+            Catch::Approx(sgFlux.totalCurrent).epsilon(1.0e-12));
+}
+
 TEST_CASE("NewtonSolver: Gummel initial guess reduces Newton iterations", "[newton]")
 {
     DeviceMesh mesh = makePNMesh();
@@ -552,6 +596,40 @@ TEST_CASE("CoupledDDAssembler: zero-mobility continuity rows are pinned", "[newt
     Eigen::SparseLU<SparseMatrixd> lu;
     lu.compute(J);
     REQUIRE(lu.info() == Eigen::Success);
+}
+
+TEST_CASE("CoupledDDAssembler: contact-referenced quasi-Fermi coordinates preserve physical state",
+          "[newton][coupled][qf-reference]")
+{
+    DeviceMesh mesh = makePNMesh();
+    MaterialDatabase matdb;
+    DopingModel doping = makePNDoping(mesh);
+    CoupledDDAssembler absolute(
+        mesh, matdb, doping, constants::Vt_300, 1.0e-6, 1.0e-6);
+    CoupledDDAssembler referenced(
+        mesh, matdb, doping, constants::Vt_300, 1.0e-6, 1.0e-6);
+    referenced.setQuasiFermiReferences(0.3, -0.2);
+
+    const int N = static_cast<int>(mesh.numNodes());
+    CoupledDDState state;
+    state.psi = VectorXd::LinSpaced(N, -0.05, 0.05);
+    state.phin = VectorXd::LinSpaced(N, 0.299, 0.301);
+    state.phip = VectorXd::LinSpaced(N, -0.201, -0.199);
+
+    const VectorXd absoluteX = absolute.pack(state);
+    const VectorXd referencedX = referenced.pack(state);
+    const CoupledDDState roundTrip = referenced.unpack(referencedX);
+    REQUIRE((roundTrip.psi - state.psi).norm() == Catch::Approx(0.0));
+    REQUIRE((roundTrip.phin - state.phin).norm() == Catch::Approx(0.0).margin(1.0e-15));
+    REQUIRE((roundTrip.phip - state.phip).norm() == Catch::Approx(0.0).margin(1.0e-15));
+
+    CoupledDDBoundaryConditions bcs;
+    bcs.phin[0] = state.phin(0);
+    bcs.phip[0] = state.phip(0);
+    const VectorXd absoluteResidual = absolute.residual(absoluteX, bcs);
+    const VectorXd referencedResidual = referenced.residual(referencedX, bcs);
+    REQUIRE((referencedResidual - absoluteResidual).norm()
+            <= 1.0e-12 * std::max<Real>(1.0, absoluteResidual.norm()));
 }
 
 
@@ -668,10 +746,10 @@ TEST_CASE("CoupledDDAssembler: TCAD SRH source scaling covers residual diagnosti
     const Index node = 4;
     REQUIRE(std::abs(legacyTerms[node].electronRecombination) > 0.0);
     REQUIRE(tcadTerms[node].electronRecombination ==
-            Catch::Approx(legacyTerms[node].electronRecombination * 1.0e-8)
+            Catch::Approx(legacyTerms[node].electronRecombination * 1.0e-4)
                 .epsilon(1.0e-12));
     REQUIRE(tcadTerms[node].holeRecombination ==
-            Catch::Approx(legacyTerms[node].holeRecombination * 1.0e-8)
+            Catch::Approx(legacyTerms[node].holeRecombination * 1.0e-4)
                 .epsilon(1.0e-12));
 
     const VectorXd legacySourceResidual =
@@ -679,7 +757,7 @@ TEST_CASE("CoupledDDAssembler: TCAD SRH source scaling covers residual diagnosti
     const VectorXd tcadSourceResidual =
         tcad.residual(x, bcs).segment(N, 2 * N);
     REQUIRE(tcadSourceResidual.norm() ==
-            Catch::Approx(legacySourceResidual.norm() * 1.0e-8)
+            Catch::Approx(legacySourceResidual.norm() * 1.0e-4)
                 .epsilon(1.0e-12));
 
     const Eigen::MatrixXd baselineJacobian =
@@ -690,7 +768,7 @@ TEST_CASE("CoupledDDAssembler: TCAD SRH source scaling covers residual diagnosti
         Eigen::MatrixXd(tcad.assembleJacobian(x, bcs)) - baselineJacobian;
     REQUIRE(legacySourceJacobian.norm() > 0.0);
     REQUIRE(tcadSourceJacobian.norm() ==
-            Catch::Approx(legacySourceJacobian.norm() * 1.0e-8)
+            Catch::Approx(legacySourceJacobian.norm() * 1.0e-4)
                 .epsilon(1.0e-5));
 }
 
@@ -767,7 +845,7 @@ TEST_CASE("CoupledDDAssembler: TCAD impact source scaling covers residual diagno
     }
     REQUIRE(legacyImpactNorm > 0.0);
     REQUIRE(tcadImpactNorm ==
-            Catch::Approx(legacyImpactNorm * 1.0e-8).epsilon(1.0e-10));
+            Catch::Approx(legacyImpactNorm * 1.0e-4).epsilon(1.0e-10));
 
     const VectorXd legacyResidual = legacy.residual(x, bcs);
     const VectorXd tcadResidual = tcad.residual(x, bcs);
@@ -792,7 +870,7 @@ TEST_CASE("CoupledDDAssembler: TCAD impact source scaling covers residual diagno
         Eigen::MatrixXd(tcad.assembleJacobian(x, bcs)) - baselineJacobian;
     REQUIRE(legacySourceJacobian.norm() > 0.0);
     REQUIRE(tcadSourceJacobian.norm() ==
-            Catch::Approx(legacySourceJacobian.norm() * 1.0e-8)
+            Catch::Approx(legacySourceJacobian.norm() * 1.0e-4)
                 .epsilon(1.0e-4));
 }
 
@@ -1748,6 +1826,7 @@ TEST_CASE("NewtonSolver: defaults to analytic Jacobian", "[newton]")
 {
     const NewtonConfig cfg;
     REQUIRE(cfg.jacobian == "analytic");
+    REQUIRE(cfg.quasiFermiReference == "none");
     REQUIRE_FALSE(cfg.warmStart);
     REQUIRE(cfg.quasiFermiUpdateLimit_V == Catch::Approx(0.0));
     REQUIRE(cfg.quasiFermiUpdateLimitMinority_V == Catch::Approx(0.0));
@@ -1762,6 +1841,7 @@ TEST_CASE("NewtonSolver: defaults to analytic Jacobian", "[newton]")
 
     const NewtonConfig debugCfg = newtonConfigFromJson(nlohmann::json{
         {"jacobian", "finite_difference"},
+        {"quasi_fermi_reference", "contact_majority"},
         {"warm_start", true},
         {"quasi_fermi_update_limit_V", 0.0259},
         {"quasi_fermi_update_limit_minority_V", 0.01},
@@ -1770,6 +1850,7 @@ TEST_CASE("NewtonSolver: defaults to analytic Jacobian", "[newton]")
         {"contact_boundary_reconstruction", "legacy_node_local"},
     });
     REQUIRE(debugCfg.jacobian == "finite_difference");
+    REQUIRE(debugCfg.quasiFermiReference == "contact_majority");
     REQUIRE(debugCfg.warmStart);
     REQUIRE(debugCfg.quasiFermiUpdateLimit_V == Catch::Approx(0.0259));
     REQUIRE(debugCfg.quasiFermiUpdateLimitMinority_V == Catch::Approx(0.01));
@@ -2633,6 +2714,67 @@ TEST_CASE("NewtonSolver: carrier row convergence ignores flux-only rows",
     REQUIRE(evaluation.enforced);
     REQUIRE(evaluation.satisfied);
     CHECK(evaluation.violations.empty());
+}
+
+TEST_CASE("NewtonSolver: carrier row convergence ignores sources below absolute floor",
+          "[newton][carrier_row_convergence]")
+{
+    CoupledDDCarrierTermDiagnostic row;
+    row.nodeId = 5;
+    row.electronRecombination = -1.0e-13;
+    row.electronResidual = -1.0e-13;
+
+    NewtonCarrierRowConvergenceConfig cfg;
+    cfg.mode = "enforce";
+    cfg.epsRow = 1.0e-3;
+    cfg.scaleFloor = 1.0e-30;
+    cfg.minSourceScaleFraction = 0.0;
+    cfg.minSourceScale = 1.0e-12;
+
+    const NewtonCarrierRowConvergenceEvaluation ignored =
+        evaluateCarrierRowConvergence({row}, cfg);
+    REQUIRE(ignored.satisfied);
+    CHECK(ignored.violations.empty());
+
+    row.electronRecombination = -1.0e-11;
+    row.electronResidual = -1.0e-11;
+    const NewtonCarrierRowConvergenceEvaluation enforced =
+        evaluateCarrierRowConvergence({row}, cfg);
+    REQUIRE_FALSE(enforced.satisfied);
+    REQUIRE(enforced.violations.size() == 1);
+}
+
+TEST_CASE("NewtonSolver: global continuity closure compares contact flux with free-node source",
+          "[newton][global_continuity_closure]")
+{
+    std::vector<CoupledDDCarrierTermDiagnostic> rows(3);
+    rows[0].nodeId = 0;
+    rows[0].electronFlux = -2.0;
+    rows[0].holeFlux = -3.0;
+    rows[1].nodeId = 1;
+    rows[1].electronRecombination = -2.0;
+    rows[1].holeRecombination = -3.0;
+    rows[2].nodeId = 2;
+
+    NewtonGlobalContinuityClosureConfig cfg;
+    cfg.mode = "enforce";
+    cfg.tolerance = 1.0e-3;
+    cfg.sourceFloor = 1.0e-12;
+
+    const auto balanced =
+        evaluateGlobalContinuityClosure(rows, {0, 2}, {0, 2}, cfg);
+    REQUIRE(balanced.enabled);
+    REQUIRE(balanced.enforced);
+    REQUIRE(balanced.satisfied);
+    CHECK(balanced.electron.ratio == Catch::Approx(0.0));
+    CHECK(balanced.hole.ratio == Catch::Approx(0.0));
+
+    rows[0].holeFlux = -1.0;
+    const auto unbalanced =
+        evaluateGlobalContinuityClosure(rows, {0, 2}, {0, 2}, cfg);
+    REQUIRE_FALSE(unbalanced.satisfied);
+    CHECK(unbalanced.electron.ratio == Catch::Approx(0.0));
+    CHECK(unbalanced.hole.ratio == Catch::Approx(2.0 / 3.0));
 }
 
 TEST_CASE("NewtonSolver: Gummel density recovery jumps a dead carrier row",

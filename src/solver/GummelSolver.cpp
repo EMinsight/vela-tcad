@@ -955,12 +955,24 @@ void writeDDSolutionVTK(const std::string& filename,
     const std::vector<Point2> electricFieldGradient_V_m =
         detail::computeNodeWeightedLeastSquaresGradients(
             mesh, nodeCells, [&](Index node) { return sol.psi(static_cast<int>(node)); });
+    const bool hasReferencedElectronQf =
+        sol.phinIncrement.size() == sol.phin.size();
+    const bool hasReferencedHoleQf =
+        sol.phipIncrement.size() == sol.phip.size();
+    const VectorXd& electronQfForDifferences =
+        hasReferencedElectronQf ? sol.phinIncrement : sol.phin;
+    const VectorXd& holeQfForDifferences =
+        hasReferencedHoleQf ? sol.phipIncrement : sol.phip;
     const std::vector<Point2> electronQfGradientVector_V_m =
         detail::computeNodeWeightedLeastSquaresGradients(
-            mesh, nodeCells, [&](Index node) { return sol.phin(static_cast<int>(node)); });
+            mesh, nodeCells, [&](Index node) {
+                return electronQfForDifferences(static_cast<int>(node));
+            });
     const std::vector<Point2> holeQfGradientVector_V_m =
         detail::computeNodeWeightedLeastSquaresGradients(
-            mesh, nodeCells, [&](Index node) { return sol.phip(static_cast<int>(node)); });
+            mesh, nodeCells, [&](Index node) {
+                return holeQfForDifferences(static_cast<int>(node));
+            });
     std::vector<Real> electricField_V_m(N, 0.0);
     std::vector<Real> electronQfGradient_V_m(N, 0.0);
     std::vector<Real> holeQfGradient_V_m(N, 0.0);
@@ -1137,7 +1149,19 @@ void writeDDSolutionVTK(const std::string& filename,
         const Real p = sol.p(row);
         const Real deltaEg = bgn->deltaEg(doping.totalImpurity(i), n, p);
         const Real ni = effectiveIntrinsicDensity(nodeMaterials[i].ni, Vt, deltaEg);
-        srh[i] = recombination.srhRate(n, p, ni);
+        // Match the cancellation-free source used by CoupledDDAssembler.
+        // Re-forming n*p-ni^2 from rounded output densities can create a
+        // completely artificial SRH rate in deep depletion.  Referenced
+        // quasi-Fermi increments retain the sub-ulp carrier imbalance even
+        // when the absolute contact bias is tens of volts.
+        const Real electronQf = electronQfForDifferences(row)
+            + (hasReferencedElectronQf ? sol.electronQfReference_V : 0.0);
+        const Real holeQf = holeQfForDifferences(row)
+            + (hasReferencedHoleQf ? sol.holeQfReference_V : 0.0);
+        const Real excessProduct = ni * ni *
+            std::expm1((holeQf - electronQf) / Vt);
+        srh[i] = recombination.srhRateFromExcessProduct(
+            excessProduct, n, p, ni);
         if (detail::usesEdgeCurrentAvalancheSource(impactIonizationConfig)) {
             avalanche[i] = mesh.getNode(i).volume > 0.0
                 ? currentDensityAvalancheSourceIntegrals[i] / mesh.getNode(i).volume

@@ -118,6 +118,14 @@ public:
     VectorXd pack(const CoupledDDState& state) const;
     CoupledDDState unpack(const VectorXd& x) const;
 
+    /// Store quasi-Fermi unknowns as contact-referenced increments.  The
+    /// public CoupledDDState and boundary-condition values remain scaled
+    /// absolute potentials; only the internal packed coordinates are shifted.
+    void setQuasiFermiReferences(Real electronReference_V,
+                                 Real holeReference_V);
+    Real electronQuasiFermiReference() const { return electronQfReference_V_; }
+    Real holeQuasiFermiReference() const { return holeQfReference_V_; }
+
     VectorXd residual(const VectorXd& x,
                       const CoupledDDBoundaryConditions& bcs) const;
 
@@ -190,6 +198,8 @@ private:
     VectorXd fixedInterfaceChargeRhs_;
     DDScalingSpec scaling_;
     CarrierDiagonalFloorRegularizationConfig carrierDiagonalFloor_;
+    Real electronQfReference_V_ = 0.0;
+    Real holeQfReference_V_ = 0.0;
 };
 
 } // namespace vela

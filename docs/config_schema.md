@@ -317,6 +317,10 @@ Newton-specific keys:
 - diagnostics / diagnostic_history
 - jacobian (`analytic` or `finite_difference`)
 - finite_difference_step
+- quasi_fermi_reference (`none` or `contact_majority`)
+- carrier_row_convergence
+- continuity_row_scaling
+- global_continuity_closure
 - residual_norm (`block` or `l2`)
 - residual_weights
 - residual_scales
@@ -498,9 +502,56 @@ Newton configs can opt into diagnostic history with either
 
 - `jacobian`: `analytic` or `finite_difference`
 - `finite_difference_step`
+- `quasi_fermi_reference`: `none` (default) or `contact_majority`
 - `residual_norm`: `block` or `l2`
 - `residual_weights`: object with `psi`, `phin`, and `phip`
 - `residual_scales`: object with `psi`, `phin`, and `phip`
+
+`quasi_fermi_reference: "contact_majority"` keeps the external solution and
+boundary-condition values as absolute volts, but stores the internal electron
+quasi-Fermi unknown relative to the most strongly n-type biased contact and the
+hole unknown relative to the most strongly p-type biased contact. Because each
+carrier uses one constant reference, edge differences and the physical model
+are unchanged. This avoids losing sub-femtovolt current-carrying increments
+when an absolute quasi-Fermi potential is tens of volts from zero.
+
+The source-aware convergence controls are:
+
+```json
+"carrier_row_convergence": {
+  "mode": "enforce",
+  "eps_row": 0.001,
+  "scale_floor": 1e-30,
+  "min_source_scale_fraction": 0.0,
+  "min_source_scale": 1e-18
+},
+"continuity_row_scaling": {
+  "enabled": true,
+  "flux_fraction": 0.0,
+  "scale_floor": 1e-30,
+  "min_source_scale": 1e-18,
+  "min_weight": 1e-12,
+  "max_weight": 1e18
+},
+"global_continuity_closure": {
+  "mode": "enforce",
+  "tolerance": 0.01,
+  "source_floor": 1e-14
+}
+```
+
+`continuity_row_scaling` left-scales the Newton continuity rows using the
+larger of their configured flux/source measures. It changes conditioning only,
+not the nonlinear equations. `min_source_scale` supplies an absolute scale for
+low-current problems where a fraction of the largest source would suppress the
+small rows of interest.
+
+`global_continuity_closure` independently sums the free-node SRH/avalanche
+source and all contact fluxes for electrons and holes. `report` appends the
+metrics without rejecting a solution; `enforce` prevents convergence unless
+each carrier with `|integrated source| >= source_floor` has relative mismatch
+no greater than `tolerance`. The denominator is the largest of the contact
+flux magnitude, integrated-source magnitude, and `source_floor`.
 
 `warm_start: true` preserves supplied quasi-Fermi potentials when continuing
 from a previous solution. The default `false` keeps the conservative
