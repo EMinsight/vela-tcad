@@ -156,8 +156,9 @@ PoissonResult PoissonSimulation::runWithResult(const std::string& configFile)
         poissonScaling.enabled = true;
         poissonScaling.potentialScale_V = scalingSystem.V0();
         poissonScaling.permittivityReference_F_per_m = epsRef;
-        poissonScaling.chargeVolumeFactor = scaling.unitSystem().chargeVolumeFactor();
-        poissonScaling.chargeSheetFactor = scaling.unitSystem().chargeSheetFactor();
+        poissonScaling.chargeAreaFactor = scaling.unitSystem().chargeAreaFactor();
+        poissonScaling.chargeLineFactor = scaling.unitSystem().chargeLineFactor();
+        poissonScaling.boundaryLengthFactor = scaling.unitSystem().lengthMPerInternal();
     }
 
     PoissonAssembler assembler(mesh, matdb, doping,

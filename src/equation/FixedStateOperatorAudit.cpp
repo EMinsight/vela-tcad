@@ -103,12 +103,26 @@ FixedStateOperatorAuditResult evaluateFixedStateOperators(
     const GummelConfig& config,
     const MaterialDatabase& materials)
 {
-    if (mesh.numNodes() != 6)
-        throw std::invalid_argument("fixed-state audit requires exactly 6 nodes");
-    if (mesh.numCells() != 4)
-        throw std::invalid_argument("fixed-state audit requires exactly 4 cells");
-    if (mesh.numEdges() != 9)
-        throw std::invalid_argument("fixed-state audit requires exactly 9 canonical edges");
+    return evaluateFixedStateOperators(
+        mesh, makeDopingModel(doping), state, config, materials, {});
+}
+
+FixedStateOperatorAuditResult evaluateFixedStateOperators(
+    const DeviceMesh& mesh,
+    const DopingModel& dopingModel,
+    const DDSolution& state,
+    const GummelConfig& config,
+    const MaterialDatabase& materials,
+    FixedStateOperatorAuditOptions options)
+{
+    if (!options.allowGeneralTri3) {
+        if (mesh.numNodes() != 6)
+            throw std::invalid_argument("fixed-state audit requires exactly 6 nodes");
+        if (mesh.numCells() != 4)
+            throw std::invalid_argument("fixed-state audit requires exactly 4 cells");
+        if (mesh.numEdges() != 9)
+            throw std::invalid_argument("fixed-state audit requires exactly 9 canonical edges");
+    }
     const std::set<std::array<Index, 3>> sketchTriangles = {
         std::array<Index, 3>{0, 1, 4},
         std::array<Index, 3>{1, 4, 5},
@@ -143,14 +157,19 @@ FixedStateOperatorAuditResult evaluateFixedStateOperators(
         if (!triangleKeys.insert(key).second)
             throw std::invalid_argument("fixed-state audit rejects duplicate triangle keys");
     }
-    if (triangleKeys != sketchTriangles && triangleKeys != mirrorTriangles) {
+    if (!options.allowGeneralTri3 &&
+        triangleKeys != sketchTriangles && triangleKeys != mirrorTriangles) {
         throw std::invalid_argument(
             "fixed-state audit rejects unexpected minimal6 connectivity");
     }
-    if (doping.size() != static_cast<Eigen::Index>(mesh.numNodes()))
+    if (dopingModel.numNodes() != mesh.numNodes())
         throw std::invalid_argument("fixed-state audit doping size mismatch");
-    if (!doping.allFinite())
-        throw std::invalid_argument("fixed-state audit requires finite doping");
+    for (Index nodeId = 0; nodeId < dopingModel.numNodes(); ++nodeId) {
+        if (!std::isfinite(dopingModel.donors(nodeId)) ||
+            !std::isfinite(dopingModel.acceptors(nodeId))) {
+            throw std::invalid_argument("fixed-state audit requires finite doping");
+        }
+    }
 
     requireFiniteVector(state.psi, "psi", mesh.numNodes());
     requireFiniteVector(state.phin, "phin", mesh.numNodes());
@@ -175,13 +194,14 @@ FixedStateOperatorAuditResult evaluateFixedStateOperators(
 
     const std::vector<Material> cellMaterials =
         detail::buildCellMaterials(mesh, materials, config.temperature_K);
-    const std::vector<Real> ni = buildIntrinsicDensity(mesh, cellMaterials);
-    const DopingModel dopingModel = makeDopingModel(doping);
+    const Real thermalVoltage =
+        constants::kb * config.temperature_K / constants::q;
+    const std::vector<Real> ni = detail::buildValidatedEffectiveNodeNi(
+        "FixedStateOperatorAudit", mesh, materials, dopingModel,
+        config.bandgapNarrowing, thermalVoltage);
     const auto mobility = makeMobilityModel(config.mobility);
     const auto impact = makeImpactIonizationModel(config.impactIonization);
     const auto edgeCells = detail::buildEdgeCellMap(mesh);
-    const Real thermalVoltage =
-        constants::kb * config.temperature_K / constants::q;
     const Real fieldFactor =
         config.inputScaling.unitSystem().fieldFromCoordinateDeltaFactor();
 
@@ -360,7 +380,7 @@ FixedStateOperatorAuditResult evaluateFixedStateOperators(
         rawHoleFlux[production.edgeId] =
             std::abs(production.holeRawSignedFluxProxy);
     }
-    if (productionEdges.size() != 7) {
+    if (!options.allowGeneralTri3 && productionEdges.size() != 7) {
         throw std::runtime_error(
             "fixed-state audit expected 7 positive-couple production edges");
     }
@@ -421,7 +441,7 @@ FixedStateOperatorAuditResult evaluateFixedStateOperators(
                 "fixed-state audit supplemental current proxy is non-finite");
         }
     }
-    if (supplementalCount != 2)
+    if (!options.allowGeneralTri3 && supplementalCount != 2)
         throw std::runtime_error("fixed-state audit expected 2 zero-couple edges");
 
     const auto gradPsi = detail::computeCellScalarGradientCache(

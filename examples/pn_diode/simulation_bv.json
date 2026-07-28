@@ -38,6 +38,7 @@
     "start": 0.0,
     "stop": -0.5,
     "step": -0.25,
+    "initial_step": 0.25,
     "current_contact": "anode",
     "write_vtk": true,
     "vtk_prefix": "outputs/pn_bv_sweep",

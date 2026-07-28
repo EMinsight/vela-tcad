@@ -899,7 +899,7 @@ TEST_CASE("PoissonSimulation: unit_scaling Neumann displacement matches legacy p
             {{"name", "midline_neumann"},
              {"type", "neumann"},
              {"node_ids", {2, 3}},
-             {"normal_displacement_C_per_m2", 1.0e-12}}
+             {"normal_displacement_C_per_m2", 1.0e-14}}
         }}
     };
 

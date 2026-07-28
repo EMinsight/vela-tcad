@@ -73,8 +73,9 @@ struct PoissonScalingSpec {
     bool enabled = false;
     Real potentialScale_V = 1.0;
     Real permittivityReference_F_per_m = 1.0;
-    Real chargeVolumeFactor = 1.0;
-    Real chargeSheetFactor = 1.0;
+    Real chargeAreaFactor = 1.0;
+    Real chargeLineFactor = 1.0;
+    Real boundaryLengthFactor = 1.0;
 };
 
 class PoissonAssembler {

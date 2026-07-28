@@ -168,7 +168,7 @@ DeviceMesh makeContactAndInteriorTriangles()
     contact.id = 0;
     contact.name = "contact";
     contact.region_id = 0;
-    contact.node_ids = {0};
+    contact.node_ids = {0, 1};
     mesh.addContact(contact);
 
     mesh.buildEdges();
@@ -201,6 +201,23 @@ TEST_CASE("Element-edge GSS Laux mode has an explicit canonical contract",
         detail::validateImpactIonizationDrivingForce(config, "test"),
         Catch::Matchers::ContainsSubstring(
             "element_edge_sg_gss_laux requires the canonical element-box configuration"));
+
+    config.sourceMappingMode = "element_vertex_box_measure";
+    config.drivingForce = "quasi_fermi_gradient";
+    config.quasiFermiGradientDiscretization = "cell_gradient";
+    config.contactElectricFieldFallbackMode = "face_normal";
+    REQUIRE_THROWS_WITH(
+        detail::validateImpactIonizationDrivingForce(config, "test"),
+        Catch::Matchers::ContainsSubstring(
+            "require scope 'contact_boundary_face'"));
+    config.contactElectricFieldFallbackScope = "contact_boundary_face";
+    REQUIRE_NOTHROW(
+        detail::validateImpactIonizationDrivingForce(config, "test"));
+    config.contactElectricFieldFallbackMode = "unsupported";
+    REQUIRE_THROWS_WITH(
+        detail::validateImpactIonizationDrivingForce(config, "test"),
+        Catch::Matchers::ContainsSubstring(
+            "contact_electric_field_fallback_mode must be"));
 }
 
 TEST_CASE("A zero-box diagonal is inactive on a right triangle",
@@ -397,6 +414,72 @@ TEST_CASE("Element-edge QFP driver remains global in contact and interior cells"
         REQUIRE(record.electronImpactField != Catch::Approx(1.0e6));
         REQUIRE(record.holeImpactField != Catch::Approx(1.0e6));
     }
+
+    impactConfig.contactElectricFieldFallback = true;
+    REQUIRE_NOTHROW(
+        detail::validateImpactIonizationDrivingForce(impactConfig, "test"));
+    for (Index cellId = 0; cellId < mesh.numCells(); ++cellId) {
+        const auto record =
+            detail::elementEdgeGssLauxAvalancheSourceRecordForCell(
+                impactConfig, *impact, mobilityConfig, *mobility,
+                cellEdges.at(static_cast<std::size_t>(cellId)), mesh, doping,
+                cellMaterials, cellId, psi, phin, phip, n, p, ni, Vt);
+        const Real expectedElectron = 1.0e6;
+        const Real expectedHole = 1.0e6;
+        REQUIRE(record.electronImpactField ==
+                Catch::Approx(expectedElectron).epsilon(1.0e-13));
+        REQUIRE(record.holeImpactField ==
+                Catch::Approx(expectedHole).epsilon(1.0e-13));
+    }
+
+    impactConfig.contactElectricFieldFallbackScope = "contact_boundary_face";
+    for (Index cellId = 0; cellId < mesh.numCells(); ++cellId) {
+        const auto record =
+            detail::elementEdgeGssLauxAvalancheSourceRecordForCell(
+                impactConfig, *impact, mobilityConfig, *mobility,
+                cellEdges.at(static_cast<std::size_t>(cellId)), mesh, doping,
+                cellMaterials, cellId, psi, phin, phip, n, p, ni, Vt);
+        const Real expectedElectron = cellId == 0 ? 1.0e6 : 5.0e6;
+        const Real expectedHole = cellId == 0
+            ? 1.0e6 : std::sqrt(29.0) * 1.0e6;
+        REQUIRE(record.electronImpactField ==
+                Catch::Approx(expectedElectron).epsilon(1.0e-13));
+        REQUIRE(record.holeImpactField ==
+                Catch::Approx(expectedHole).epsilon(1.0e-13));
+    }
+
+    struct ModeExpectation {
+        const char* mode;
+        Real electronField;
+        Real holeField;
+    };
+    const std::array<ModeExpectation, 3> expectations{{
+        {"face_normal", 0.0, 0.0},
+        {"one_sided", 1.0e6 / std::sqrt(5.0),
+         1.0e6 / std::sqrt(5.0)},
+        {"distance_weighted_blend", 5.0e6 / 3.0,
+         std::sqrt(29.0) * 1.0e6 / 3.0}}};
+    for (const auto& expectation : expectations) {
+        impactConfig.contactElectricFieldFallbackMode = expectation.mode;
+        const auto contactRecord =
+            detail::elementEdgeGssLauxAvalancheSourceRecordForCell(
+                impactConfig, *impact, mobilityConfig, *mobility,
+                cellEdges.at(0), mesh, doping, cellMaterials, 0,
+                psi, phin, phip, n, p, ni, Vt);
+        REQUIRE(contactRecord.electronImpactField ==
+                Catch::Approx(expectation.electronField).epsilon(1.0e-13));
+        REQUIRE(contactRecord.holeImpactField ==
+                Catch::Approx(expectation.holeField).epsilon(1.0e-13));
+        const auto interiorRecord =
+            detail::elementEdgeGssLauxAvalancheSourceRecordForCell(
+                impactConfig, *impact, mobilityConfig, *mobility,
+                cellEdges.at(1), mesh, doping, cellMaterials, 1,
+                psi, phin, phip, n, p, ni, Vt);
+        REQUIRE(interiorRecord.electronImpactField ==
+                Catch::Approx(5.0e6).epsilon(1.0e-13));
+        REQUIRE(interiorRecord.holeImpactField ==
+                Catch::Approx(std::sqrt(29.0) * 1.0e6).epsilon(1.0e-13));
+    }
 }
 
 TEST_CASE("Element-edge GSS Laux records use exact SG currents and box measures",
@@ -531,10 +614,100 @@ TEST_CASE("Element-edge GSS Laux records use exact SG currents and box measures"
             Catch::Approx(qfMobilityRecord.holeSignedEdgeFlux[0]));
 }
 
+TEST_CASE("Contact-face fallback driver modes have consistent local AD derivatives",
+          "[impact][element_edge_gss_laux][ad][contact_face]")
+{
+    DeviceMesh mesh = makeSingleRightTriangle();
+    Contact contact;
+    contact.id = 0;
+    contact.name = "contact";
+    contact.region_id = 0;
+    contact.node_ids = {0, 1};
+    mesh.addContact(contact);
+    const Cell& cell = mesh.getCell(0);
+
+    ImpactIonizationModelConfig config;
+    config.contactElectricFieldFallbackScope = "contact_boundary_face";
+    constexpr Real fieldFactor = 100.0;
+    const std::array<Real, 3> basePsi{0.0, -0.10, 0.04};
+    const std::array<Real, 3> basePhin{0.01, 0.01, 0.20};
+
+    for (const std::string mode : {
+             "face_normal", "one_sided", "distance_weighted_blend"}) {
+        config.contactElectricFieldFallbackMode = mode;
+        std::array<detail::Tri3LocalForwardDual, 3> psi{};
+        std::array<detail::Tri3LocalForwardDual, 3> phin{};
+        for (std::size_t local = 0; local < 3; ++local) {
+            psi[local] = detail::Tri3LocalForwardDual::variable(
+                basePsi[local], local);
+            phin[local] = detail::Tri3LocalForwardDual::variable(
+                basePhin[local], 3 + local);
+        }
+        const auto electricGradient =
+            detail::localAdTri3Gradient(mesh, cell, psi);
+        const auto qfGradient =
+            detail::localAdTri3Gradient(mesh, cell, phin);
+        const auto qfField = detail::localAdNorm2(
+            qfGradient[0], qfGradient[1]) *
+            detail::Tri3LocalForwardDual(fieldFactor);
+        const auto result =
+            detail::localAdContactElectricFallbackImpactField(
+                config, mesh, cell, electricGradient, qfField,
+                psi, fieldFactor);
+
+        const auto evaluate = [&](const std::array<Real, 3>& psiValues,
+                                  const std::array<Real, 3>& phinValues) {
+            const auto electric =
+                detail::localAdTri3Gradient(mesh, cell, psiValues);
+            const auto qf =
+                detail::localAdTri3Gradient(mesh, cell, phinValues);
+            const Real qfMagnitude =
+                detail::localAdNorm2(qf[0], qf[1]) * fieldFactor;
+            const Point2 electricPoint{electric[0], electric[1]};
+            return detail::contactElectricFallbackImpactField(
+                config, mesh, cell, electricPoint, qfMagnitude,
+                [&](Index node) {
+                    return psiValues[static_cast<std::size_t>(node)];
+                }, fieldFactor);
+        };
+        const Real base = evaluate(basePsi, basePhin);
+        CAPTURE(mode, base, result.value);
+        REQUIRE(result.value == Catch::Approx(base).epsilon(1.0e-13));
+        for (std::size_t dof = 0; dof < 6; ++dof) {
+            auto plusPsi = basePsi;
+            auto minusPsi = basePsi;
+            auto plusPhin = basePhin;
+            auto minusPhin = basePhin;
+            const std::size_t local = dof % 3;
+            const Real step = 1.0e-7;
+            if (dof < 3) {
+                plusPsi[local] += step;
+                minusPsi[local] -= step;
+            } else {
+                plusPhin[local] += step;
+                minusPhin[local] -= step;
+            }
+            const Real finiteDifference =
+                (evaluate(plusPsi, plusPhin) -
+                 evaluate(minusPsi, minusPhin)) / (2.0 * step);
+            CAPTURE(mode, dof, finiteDifference, result.derivative[dof]);
+            REQUIRE(result.derivative[dof] ==
+                    Catch::Approx(finiteDifference).epsilon(2.0e-8)
+                        .margin(1.0e-4));
+        }
+    }
+}
+
 TEST_CASE("Local forward AD source derivatives converge independently",
           "[impact][element_edge_gss_laux][ad]")
 {
     DeviceMesh mesh = makeSingleRightTriangle();
+    Contact contact;
+    contact.id = 0;
+    contact.name = "contact";
+    contact.region_id = 0;
+    contact.node_ids = {0, 1};
+    mesh.addContact(contact);
     const auto edgeCells = detail::buildEdgeCellMap(mesh);
     const auto cellEdges = detail::buildCellEdgeMap(edgeCells, mesh);
     MaterialDatabase matdb;
@@ -550,6 +723,8 @@ TEST_CASE("Local forward AD source derivatives converge independently",
     impactConfig.currentApproximation = "element_edge_sg_gss_laux";
     impactConfig.quasiFermiGradientDiscretization = "cell_gradient";
     impactConfig.sourceMappingMode = "element_vertex_box_measure";
+    impactConfig.contactElectricFieldFallback = true;
+    impactConfig.contactElectricFieldFallbackScope = "contact_boundary_face";
     MobilityModelConfig mobilityConfig = mobilityModelConfig("masetti_field");
     mobilityConfig.highFieldDrivingForce = "quasi_fermi_gradient";
     const auto mobility = makeMobilityModel(mobilityConfig);

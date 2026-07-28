@@ -1,0 +1,182 @@
+{
+  "$id": "https://vela-tcad.local/schema/vela-simulation.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": true,
+  "properties": {
+    "contacts": {
+      "items": {
+        "additionalProperties": true,
+        "properties": {
+          "bias": {
+            "type": "number"
+          },
+          "name": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "bias"
+        ],
+        "type": "object"
+      },
+      "minItems": 2,
+      "type": "array"
+    },
+    "materials_file": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "mesh_file": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "node_doping_file": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "output_csv": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "simulation_type": {
+      "const": "dc_sweep"
+    },
+    "solver": {
+      "additionalProperties": true,
+      "properties": {
+        "impact_ionization": {
+          "additionalProperties": true,
+          "properties": {
+            "model": {
+              "enum": [
+                "none",
+                "van_overstraeten",
+                "selberherr"
+              ]
+            }
+          },
+          "required": [
+            "model"
+          ],
+          "type": "object"
+        },
+        "max_iter": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "method": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "mobility": {
+          "additionalProperties": true,
+          "properties": {
+            "doping_concentration_basis": {
+              "enum": [
+                "net_doping",
+                "total_impurity",
+                "cell_reconstructed_total_impurity"
+              ]
+            },
+            "model": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "model",
+            "doping_concentration_basis"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "method",
+        "max_iter",
+        "mobility",
+        "impact_ionization"
+      ],
+      "type": "object"
+    },
+    "sweep": {
+      "additionalProperties": true,
+      "properties": {
+        "contact": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "current_contact": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "growth_factor": {
+          "exclusiveMinimum": 1.0,
+          "type": "number"
+        },
+        "initial_step": {
+          "exclusiveMinimum": 0.0,
+          "type": "number"
+        },
+        "max_step": {
+          "exclusiveMinimum": 0.0,
+          "type": "number"
+        },
+        "min_step": {
+          "exclusiveMinimum": 0.0,
+          "type": "number"
+        },
+        "mode": {
+          "enum": [
+            "iv",
+            "bv_reverse"
+          ]
+        },
+        "shrink_factor": {
+          "exclusiveMaximum": 1.0,
+          "exclusiveMinimum": 0.0,
+          "type": "number"
+        },
+        "start": {
+          "type": "number"
+        },
+        "step": {
+          "not": {
+            "const": 0.0
+          },
+          "type": "number"
+        },
+        "stop": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "mode",
+        "contact",
+        "current_contact",
+        "start",
+        "stop",
+        "step",
+        "initial_step",
+        "min_step",
+        "max_step",
+        "growth_factor",
+        "shrink_factor"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "simulation_type",
+    "mesh_file",
+    "node_doping_file",
+    "materials_file",
+    "output_csv",
+    "contacts",
+    "solver",
+    "sweep"
+  ],
+  "title": "Vela simulation configuration",
+  "type": "object"
+}

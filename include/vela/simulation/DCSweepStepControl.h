@@ -10,12 +10,18 @@ struct DCSweepStepControlConfig {
     Real start = 0.0;
     Real stop = 0.0;
     Real step = 0.0;
+    Real initialStep = 0.0;
     Real minStep = 0.0;
     Real maxStep = 0.0;
     Real growthFactor = 1.0;
     Real shrinkFactor = 0.5;
     int maxRetries = 5;
     bool stopOnFailure = true;
+};
+
+struct DCSweepStepControlState {
+    Real adaptiveStep = 0.0;
+    bool initialized = false;
 };
 
 struct DCSweepStepControlEvent {
@@ -33,6 +39,7 @@ using DCSweepStepRecorder = std::function<void(const DCSweepStepControlEvent& ev
 
 void runDCSweepStepControl(const DCSweepStepControlConfig& cfg,
                            const DCSweepStepAttempt& attempt,
-                           const DCSweepStepRecorder& record);
+                           const DCSweepStepRecorder& record,
+                           DCSweepStepControlState* state = nullptr);
 
 } // namespace vela::detail

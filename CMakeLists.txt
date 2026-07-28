@@ -435,6 +435,11 @@ add_test(NAME reference_tcad_regression
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/regression/test_reference_tcad_tools.py)
 vela_set_windows_msys2_test_path(reference_tcad_regression)
 
+add_test(NAME pn2d_config_templates
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/regression/test_pn2d_config_templates.py)
+vela_set_windows_msys2_test_path(pn2d_config_templates)
+
 add_test(NAME sentaurus_import_tools
     COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/regression/test_sentaurus_import_tools.py)

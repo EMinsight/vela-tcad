@@ -1296,6 +1296,7 @@ DCSweepConfig dcSweepConfigFromJson(const nlohmann::json& cfg,
     sweep.shrinkFactor = j.value("shrink_factor", sweep.shrinkFactor);
     sweep.growthFactor = j.value("growth_factor", sweep.growthFactor);
     sweep.maxRetries = j.value("max_retries", sweep.maxRetries);
+    sweep.initialStep = j.value("initial_step", nominalStep);
     sweep.minStep = j.value("min_step", nominalStep * std::pow(sweep.shrinkFactor, sweep.maxRetries));
     sweep.maxStep = j.value("max_step", nominalStep);
     sweep.stopOnFailure = j.value("stop_on_failure", sweep.stopOnFailure);
@@ -1688,12 +1689,17 @@ DCSweepConfig dcSweepConfigFromJson(const nlohmann::json& cfg,
         throw std::invalid_argument("DCSweep: sweep.step must be non-zero.");
     if ((sweep.stop - sweep.start) * sweep.step < 0.0)
         throw std::invalid_argument("DCSweep: sweep.step sign must move start toward stop.");
+    if (!std::isfinite(sweep.initialStep) || sweep.initialStep <= 0.0)
+        throw std::invalid_argument("DCSweep: sweep.initial_step must be finite and positive.");
     if (sweep.minStep <= 0.0)
         throw std::invalid_argument("DCSweep: sweep.min_step must be positive.");
     if (sweep.maxStep <= 0.0)
         throw std::invalid_argument("DCSweep: sweep.max_step must be positive.");
     if (sweep.minStep > sweep.maxStep)
         throw std::invalid_argument("DCSweep: sweep.min_step must not exceed sweep.max_step.");
+    if (sweep.initialStep < sweep.minStep || sweep.initialStep > sweep.maxStep)
+        throw std::invalid_argument(
+            "DCSweep: sweep.initial_step must lie within [min_step, max_step].");
     if (sweep.growthFactor < 1.0)
         throw std::invalid_argument("DCSweep: sweep.growth_factor must be at least 1.");
     if (sweep.shrinkFactor <= 0.0 || sweep.shrinkFactor >= 1.0)
@@ -2258,8 +2264,8 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
         ddScaling.L0 = sc.L0();
         ddScaling.permittivityReference_F_per_m = (11.7 * vela::constants::eps0);
         ddScaling.unitSystem = sweep.scaling.unitSystem();
-        ddScaling.chargeVolumeFactor = sweep.scaling.unitSystem().chargeVolumeFactor();
-        ddScaling.chargeSheetFactor = sweep.scaling.unitSystem().chargeSheetFactor();
+        ddScaling.chargeAreaFactor = sweep.scaling.unitSystem().chargeAreaFactor();
+        ddScaling.chargeLineFactor = sweep.scaling.unitSystem().chargeLineFactor();
         ddScaling.fieldFromCoordinateDeltaFactor = sweep.scaling.unitSystem().fieldFromCoordinateDeltaFactor();
         ddScaling.currentDensityLineIntegralFactor =
             sweep.scaling.unitSystem().currentDensityAM2PerInternal() *
@@ -4283,6 +4289,7 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
         const DDSolution* initial = initialState.get();
         Real previousBias = 0.0;
         bool havePreviousBias = false;
+        detail::DCSweepStepControlState pointStepState;
         for (Real bias : sweep.biasPoints) {
             SolvePointAttempt attempt;
             bool ok = false;
@@ -4320,6 +4327,7 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                     pointStepControl.stop = bias;
                     pointStepControl.step = direction * std::min(
                         std::abs(sweep.step), std::abs(bias - previousBias));
+                    pointStepControl.initialStep = sweep.initialStep;
                     pointStepControl.minStep = sweep.minStep;
                     pointStepControl.maxStep = sweep.maxStep;
                     pointStepControl.growthFactor = sweep.growthFactor;
@@ -4381,7 +4389,8 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                             }
                             failureReason.clear();
                             localPreviousSolution = attempt.solution;
-                        });
+                        },
+                        &pointStepState);
 
                     if (ok) {
                         acceptPredictorHistory(previousSolution, currentSolutionBias, recordedVoltage);
@@ -4629,6 +4638,7 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
     stepControl.start = sweep.start;
     stepControl.stop = sweep.stop;
     stepControl.step = sweep.step;
+    stepControl.initialStep = sweep.initialStep;
     stepControl.minStep = sweep.minStep;
     stepControl.maxStep = sweep.maxStep;
     stepControl.growthFactor = sweep.growthFactor;
@@ -4698,6 +4708,7 @@ void validateDCSweepStepControlConfig(const DCSweepStepControlConfig& cfg)
     requireFinite(cfg.start, "start");
     requireFinite(cfg.stop, "stop");
     requireFinite(cfg.step, "step");
+    requireFinite(cfg.initialStep, "initialStep");
     requireFinite(cfg.minStep, "minStep");
     requireFinite(cfg.maxStep, "maxStep");
     requireFinite(cfg.growthFactor, "growthFactor");
@@ -4717,6 +4728,16 @@ void validateDCSweepStepControlConfig(const DCSweepStepControlConfig& cfg)
         throw std::invalid_argument(
             "DCSweep step control: minStep must not exceed maxStep.");
     }
+    if (cfg.initialStep < 0.0) {
+        throw std::invalid_argument(
+            "DCSweep step control: initialStep must be positive when specified.");
+    }
+    const Real resolvedInitialStep =
+        cfg.initialStep > 0.0 ? cfg.initialStep : std::abs(cfg.step);
+    if (resolvedInitialStep < cfg.minStep || resolvedInitialStep > cfg.maxStep) {
+        throw std::invalid_argument(
+            "DCSweep step control: initialStep must lie within [minStep, maxStep].");
+    }
     if (cfg.growthFactor < 1.0) {
         throw std::invalid_argument(
             "DCSweep step control: growthFactor must be at least 1.");
@@ -4735,14 +4756,27 @@ void validateDCSweepStepControlConfig(const DCSweepStepControlConfig& cfg)
 
 void runDCSweepStepControl(const DCSweepStepControlConfig& cfg,
                            const DCSweepStepAttempt& attempt,
-                           const DCSweepStepRecorder& record)
+                           const DCSweepStepRecorder& record,
+                           DCSweepStepControlState* state)
 {
     validateDCSweepStepControlConfig(cfg);
 
     Real previousVoltage = cfg.start;
     const Real direction = (cfg.step > 0.0) ? 1.0 : -1.0;
     const Real tolerance = 1.0e-12;
-    Real adaptiveStep = std::min(std::abs(cfg.step), cfg.maxStep);
+    DCSweepStepControlState localState;
+    DCSweepStepControlState& controlState = state != nullptr ? *state : localState;
+    if (!controlState.initialized) {
+        const Real resolvedInitialStep =
+            cfg.initialStep > 0.0 ? cfg.initialStep : std::abs(cfg.step);
+        controlState.adaptiveStep = std::min(resolvedInitialStep, cfg.maxStep);
+        controlState.initialized = true;
+    } else if (!std::isfinite(controlState.adaptiveStep) ||
+               controlState.adaptiveStep <= 0.0) {
+        throw std::invalid_argument(
+            "DCSweep step control: persisted adaptiveStep must be finite and positive.");
+    }
+    Real& adaptiveStep = controlState.adaptiveStep;
 
     auto limitedTarget = [&](Real target, Real stepMagnitude) {
         const Real remaining = direction * (target - previousVoltage);
@@ -4771,7 +4805,7 @@ void runDCSweepStepControl(const DCSweepStepControlConfig& cfg,
             if (ok) {
                 record({candidate, true, attemptedStep, attemptedStep, retryCount});
                 previousVoltage = candidate;
-                adaptiveStep = std::min(cfg.maxStep, stepMagnitude * cfg.growthFactor);
+                adaptiveStep = std::min(cfg.maxStep, trialStep * cfg.growthFactor);
                 return true;
             }
 

@@ -130,7 +130,7 @@ TerminalChargeResult TerminalCharge::compute(const DDSolution& solution,
             rho += solution.p(static_cast<int>(nodeId)) - solution.n(static_cast<int>(nodeId));
         if (config.includeIonizedDopants)
             rho += doping_.netDoping(nodeId);
-        chargePerInternalDepth += constants::q * rho * volume * unitSystem_.chargeVolumeFactor();
+        chargePerInternalDepth += constants::q * rho * volume * unitSystem_.chargeAreaFactor();
     }
 
     TerminalChargeResult result;

@@ -1,0 +1,924 @@
+{
+    "surface":  "report",
+    "manifest":  {
+                     "version":  1,
+                     "surface":  "report",
+                     "title":  "PN2D general-Tri3 avalanche Tasks 1-10 completion and physics summary",
+                     "description":  "Technical audit summary of task completion, entry and exit gates, fixed-state physics comparisons, imported-state QFP causality, and the production decision.",
+                     "generatedAt":  "2026-07-26T17:42:39+08:00",
+                     "sources":  [
+                                     {
+                                         "id":  "src_plan",
+                                         "label":  "Tasks 1-10 execution plan",
+                                         "path":  "docs/superpowers/plans/2026-07-25-pn2d-avalanche-current-support-qfp-bv-followup.md"
+                                     },
+                                     {
+                                         "id":  "src_fixed",
+                                         "label":  "Tasks 2-5 fixed-state validation",
+                                         "path":  "docs/validation/pn2d_general_tri3_element_edge_avalanche_2026-07-26.md",
+                                         "query":  {
+                                                       "engine":  "SQLite",
+                                                       "language":  "SQL",
+                                                       "description":  "Literal reviewed rows transcribed from the cited frozen validation documents.",
+                                                       "sql":  "WITH upstream(mesh_order,mesh,electron_density_dex,hole_density_dex,e_field_relative,electron_qfp_grad_relative,hole_qfp_grad_relative) AS (\n VALUES (1,\u0027coarse7x3\u0027,4.70229e-6,4.72900e-6,7.62594e-15,1.66936e-13,1.06412e-15),\n (2,\u0027skewed_tri3\u0027,4.65443e-6,4.69293e-6,7.98131e-13,4.71706e-14,1.69898e-15),\n (3,\u0027constrained obtuse\u0027,4.73051e-6,4.75249e-6,1.69198e-13,2.67437e-14,5.65988e-16)\n) SELECT * FROM upstream ORDER BY mesh_order;\nWITH current_geometry(mesh_order,mesh,mobility_e,mobility_h,current_e,current_h,sentaurus_area_relative,vela_area_relative) AS (\n VALUES (1,\u0027coarse7x3\u0027,\u00271.31e-12 / 0.0692 / 0.2289\u0027,\u00271.22e-12 / 0.0680 / 0.1506\u0027,\u00270.00585 / 1.27481\u0027,\u00270.00285 / 0.92365\u0027,0,0),\n (2,\u0027skewed_tri3\u0027,\u00270.0144 / 0.1233 / 0.2460\u0027,\u00270.0136 / 0.0834 / 0.1562\u0027,\u00270.03674 / 0.84526\u0027,\u00270.01599 / 0.61346\u0027,3.85e-16,4.34e-16),\n (3,\u0027constrained obtuse\u0027,\u00270.0363 / 0.3161 / 0.4169\u0027,\u00270.0254 / 0.1853 / 0.2328\u0027,\u00270.33447 / 0.66846\u0027,\u00270.14593 / 0.55743\u0027,3.08e-16,3.2037037)\n) SELECT * FROM current_geometry ORDER BY mesh_order;\nWITH source_comparison(mesh_order,mesh,sent_box_e_dex,sent_box_h_dex,vela_e_dex,vela_h_dex,gate) AS (\n VALUES (1,\u0027coarse7x3 GSS/Laux\u0027,2.08e-6,0.000351,0.00681,0.00607,\u0027Pass\u0027),\n (2,\u0027skewed_tri3 GSS/Laux\u0027,0.46872,0.36769,1.31010,0.96076,\u0027Fail\u0027)\n) SELECT * FROM source_comparison ORDER BY mesh_order;",
+                                                       "tables_used":  [
+                                                                           "reviewed_validation_rows"
+                                                                       ],
+                                                       "filters":  [
+                                                                       "Frozen exact states and reviewed gates only"
+                                                                   ],
+                                                       "metric_definitions":  [
+                                                                                  "Values reproduce the bounded snapshot rows used by this report."
+                                                                              ]
+                                                   }
+                                     },
+                                     {
+                                         "id":  "src_qfp",
+                                         "label":  "Task 7 imported-state QFP audit",
+                                         "path":  "docs/validation/pn2d_imported_state_qfp_update_2026-07-26.md",
+                                         "query":  {
+                                                       "engine":  "SQLite",
+                                                       "language":  "SQL",
+                                                       "description":  "Literal reviewed rows transcribed from the cited frozen validation documents.",
+                                                       "sql":  "WITH qfp_ratios(sort_order,topology,bias_v,electron_residual,hole_residual,carrier_e,carrier_h,coupled_e,coupled_h,direction) AS (\n VALUES (1,\u0027Minimal6 mirror/sketch\u0027,-1,1,1,1,1,1,1,\u0027Equal\u0027),\n (2,\u0027Minimal6 mirror/sketch\u0027,-10,1.027156,1.027976,1.023601,1.024308,1.023601,1.024308,\u0027Worsened\u0027),\n (3,\u0027Minimal6 mirror/sketch\u0027,-20,3.409014e-5,3.373837e-5,0.0297334,0.0294365,0.0297335,0.0294366,\u0027Improved\u0027),\n (4,\u0027coarse7x3\u0027,-1,1,1,1,1,1,1,\u0027Equal\u0027),\n (5,\u0027coarse7x3\u0027,-10,1.099286e-7,1.099887e-7,0.00158892,0.0140316,0.00106766,0.00924058,\u0027Improved\u0027),\n (6,\u0027coarse7x3\u0027,-20,0.0180704,0.0181181,0.0120429,0.00857828,0.00891144,0.00639328,\u0027Improved\u0027)\n) SELECT * FROM qfp_ratios ORDER BY sort_order;\nWITH final_gates(gate_order,gate,observed,threshold,result,implication) AS (\n VALUES (1,\u0027Task 6 nonzero source Jacobian\u0027,\u00270.9640948767506723 relative\u0027,\u0027\u003c= 1e-8\u0027,\u0027Fail\u0027,\u0027Task 6 candidate not authorized\u0027),\n (2,\u0027Task 6 near-zero source Jacobian\u0027,\u00274.6780474445207e-17 absolute\u0027,\u0027\u003c= 1e-12\u0027,\u0027Pass\u0027,\u0027Near-zero handling is stable\u0027),\n (3,\u0027Task 7 residual decomposition\u0027,\u00271.6654229802532582e-16 relative\u0027,\u0027\u003c= 1e-12\u0027,\u0027Pass\u0027,\u0027Term decomposition closes\u0027),\n (4,\u0027Boundary branch difference\u0027,\u00270\u0027,\u0027Floating-point identical\u0027,\u0027Pass\u0027,\u0027Not a boundary/contact discriminator\u0027),\n (5,\u0027Avalanche-off branch difference\u0027,\u00270\u0027,\u0027Exact\u0027,\u0027Pass\u0027,\u0027Difference is isolated to avalanche support\u0027),\n (6,\u0027Cross-topology first-material causality\u0027,\u0027false\u0027,\u0027Must improve both topology classes\u0027,\u0027Fail\u0027,\u0027Task 8 not authorized\u0027)\n) SELECT * FROM final_gates ORDER BY gate_order;",
+                                                       "tables_used":  [
+                                                                           "reviewed_validation_rows"
+                                                                       ],
+                                                       "filters":  [
+                                                                       "Frozen exact states and reviewed gates only"
+                                                                   ],
+                                                       "metric_definitions":  [
+                                                                                  "Values reproduce the bounded snapshot rows used by this report."
+                                                                              ]
+                                                   }
+                                     },
+                                     {
+                                         "id":  "src_review",
+                                         "label":  "Tasks 6-10 review and stop ledger",
+                                         "path":  "docs/validation/pn2d_tasks6_10_review_response_2026-07-26.md"
+                                     },
+                                     {
+                                         "id":  "src_synthesis",
+                                         "label":  "Reviewed synthesis dataset embedded in this report artifact",
+                                         "path":  "docs/validation/pn2d_tasks1_10_summary_2026-07-26.artifact.json",
+                                         "query":  {
+                                                       "engine":  "SQLite",
+                                                       "language":  "SQL",
+                                                       "description":  "Literal reviewed rows transcribed from the cited frozen validation documents.",
+                                                       "sql":  "WITH task_status(task_no, task, scope, status_rank, status, gate, typed_outcome) AS (\n  VALUES\n  (1,\u0027Task 1\u0027,\u0027Schema and RED contract\u0027,2,\u0027Completed\u0027,\u0027RED contract frozen\u0027,\u0027General-mesh schema and negative tests committed\u0027),\n  (2,\u0027Task 2\u0027,\u0027Sentaurus oracle meshes\u0027,2,\u0027Completed\u0027,\u0027144 exact states; A/B exact\u0027,\u0027Oracle lattice accepted\u0027),\n  (3,\u0027Task 3\u0027,\u0027Imported-state upstream replay\u0027,2,\u0027Completed\u0027,\u0027Density/P1 vectors pass; native element alpha unavailable\u0027,\u0027Upstream validated; alpha observation insufficient\u0027),\n  (4,\u0027Task 4\u0027,\u0027Element-local current support\u0027,2,\u0027Completed\u0027,\u0027Medians pass; P95/sign/terminal/KCL fail\u0027,\u0027support_limited_current_difference + insufficient_native_observation\u0027),\n  (5,\u0027Task 5\u0027,\u0027Avalanche source support\u0027,2,\u0027Completed\u0027,\u0027Coarse passes; acute-skewed fails\u0027,\u0027Keep Van Overstraeten and QFP-gradient unchanged\u0027),\n  (6,\u0027Task 6\u0027,\u0027Opt-in C++ operator and Jacobian\u0027,1,\u0027Completed; gate failed\u0027,\u0027Source Jacobian 0.964 \u003e 1e-8\u0027,\u0027jacobian_gate_failed\u0027),\n  (7,\u0027Task 7\u0027,\u0027Residual and first QFP update\u0027,1,\u0027Completed; gate failed\u0027,\u0027Minimal6 worsens while coarse improves at -10 V\u0027,\u0027operator_improvement_without_qfp_causality\u0027),\n  (8,\u0027Task 8\u0027,\u0027Self-consistent sweeps\u0027,0,\u0027Not entered\u0027,\u0027Tasks 6-7 did not authorize a candidate\u0027,\u0027not_entered\u0027),\n  (9,\u0027Task 9\u0027,\u0027Physical PN2D BV curve\u0027,0,\u0027Not entered\u0027,\u0027Task 8 coarse self-consistent gate unavailable\u0027,\u0027not_entered\u0027),\n  (10,\u0027Task 10\u0027,\u0027Decision, validation, reviews\u0027,2,\u0027Completed\u0027,\u0027Independent reviews closed; defaults unchanged\u0027,\u0027keep_opt_in_diagnostic_no_default_change\u0027)\n) SELECT * FROM task_status ORDER BY task_no;",
+                                                       "tables_used":  [
+                                                                           "reviewed_validation_rows"
+                                                                       ],
+                                                       "filters":  [
+                                                                       "Frozen exact states and reviewed gates only"
+                                                                   ],
+                                                       "metric_definitions":  [
+                                                                                  "Values reproduce the bounded snapshot rows used by this report."
+                                                                              ]
+                                                   }
+                                     }
+                                 ],
+                     "charts":  [
+                                    {
+                                        "id":  "chart_task_status",
+                                        "title":  "Task completion and gate status",
+                                        "subtitle":  "Rank 2 = evidence complete; 1 = completed work but mandatory gate failed; 0 = not entered",
+                                        "type":  "bar",
+                                        "dataset":  "task_status",
+                                        "sourceId":  "src_synthesis",
+                                        "question":  "Which planned tasks produced reviewed evidence, and where did the execution stop?",
+                                        "rationale":  "A categorical bar makes the ten-task execution boundary immediately visible; the audit table carries the exact typed outcomes.",
+                                        "encodings":  {
+                                                          "x":  {
+                                                                    "field":  "task",
+                                                                    "type":  "ordinal",
+                                                                    "label":  "Task"
+                                                                },
+                                                          "y":  {
+                                                                    "field":  "status_rank",
+                                                                    "type":  "quantitative",
+                                                                    "label":  "Status rank"
+                                                                },
+                                                          "tooltip":  [
+                                                                          {
+                                                                              "field":  "status",
+                                                                              "type":  "text",
+                                                                              "label":  "Status"
+                                                                          },
+                                                                          {
+                                                                              "field":  "typed_outcome",
+                                                                              "type":  "text",
+                                                                              "label":  "Outcome"
+                                                                          }
+                                                                      ]
+                                                      },
+                                        "valueFormat":  "number",
+                                        "layout":  "full",
+                                        "maxRows":  10
+                                    }
+                                ],
+                     "tables":  [
+                                    {
+                                        "id":  "table_tasks",
+                                        "title":  "Tasks 1-10 completion ledger",
+                                        "subtitle":  "Completed evidence work is distinct from passing a mandatory exit gate",
+                                        "dataset":  "task_status",
+                                        "sourceId":  "src_synthesis",
+                                        "defaultSort":  {
+                                                            "field":  "task_no",
+                                                            "direction":  "asc"
+                                                        },
+                                        "density":  "dense",
+                                        "layout":  "full",
+                                        "columns":  [
+                                                        {
+                                                            "field":  "task_no",
+                                                            "label":  "#",
+                                                            "format":  "number"
+                                                        },
+                                                        {
+                                                            "field":  "task",
+                                                            "label":  "Task",
+                                                            "type":  "text"
+                                                        },
+                                                        {
+                                                            "field":  "scope",
+                                                            "label":  "Scope",
+                                                            "type":  "text"
+                                                        },
+                                                        {
+                                                            "field":  "status",
+                                                            "label":  "Completion",
+                                                            "type":  "text"
+                                                        },
+                                                        {
+                                                            "field":  "gate",
+                                                            "label":  "Gate result",
+                                                            "type":  "text"
+                                                        },
+                                                        {
+                                                            "field":  "typed_outcome",
+                                                            "label":  "Typed outcome / implication",
+                                                            "type":  "text"
+                                                        }
+                                                    ]
+                                    },
+                                    {
+                                        "id":  "table_upstream",
+                                        "title":  "Imported-state density and P1-vector fidelity",
+                                        "subtitle":  "Maximum errors across the accepted -1/-10/-20 V states; all listed upstream gates pass",
+                                        "dataset":  "upstream_physics",
+                                        "sourceId":  "src_fixed",
+                                        "defaultSort":  {
+                                                            "field":  "mesh_order",
+                                                            "direction":  "asc"
+                                                        },
+                                        "density":  "dense",
+                                        "layout":  "full",
+                                        "columns":  [
+                                                        {
+                                                            "field":  "mesh_order",
+                                                            "label":  "#",
+                                                            "format":  "number"
+                                                        },
+                                                        {
+                                                            "field":  "mesh",
+                                                            "label":  "Mesh",
+                                                            "type":  "text"
+                                                        },
+                                                        {
+                                                            "field":  "electron_density_dex",
+                                                            "label":  "n max (dex)",
+                                                            "format":  "number"
+                                                        },
+                                                        {
+                                                            "field":  "hole_density_dex",
+                                                            "label":  "p max (dex)",
+                                                            "format":  "number"
+                                                        },
+                                                        {
+                                                            "field":  "e_field_relative",
+                                                            "label":  "E max rel.",
+                                                            "format":  "number"
+                                                        },
+                                                        {
+                                                            "field":  "electron_qfp_grad_relative",
+                                                            "label":  "grad QFn max rel.",
+                                                            "format":  "number"
+                                                        },
+                                                        {
+                                                            "field":  "hole_qfp_grad_relative",
+                                                            "label":  "grad QFp max rel.",
+                                                            "format":  "number"
+                                                        }
+                                                    ]
+                                    },
+                                    {
+                                        "id":  "table_current_geometry",
+                                        "title":  "Mobility, matching-support current, and area closure",
+                                        "subtitle":  "Median/P95 dex errors are carrier-specific; area errors are maximum relative closure errors",
+                                        "dataset":  "current_geometry",
+                                        "sourceId":  "src_fixed",
+                                        "defaultSort":  {
+                                                            "field":  "mesh_order",
+                                                            "direction":  "asc"
+                                                        },
+                                        "density":  "dense",
+                                        "layout":  "full",
+                                        "columns":  [
+                                                        {
+                                                            "field":  "mesh_order",
+                                                            "label":  "#",
+                                                            "format":  "number"
+                                                        },
+                                                        {
+                                                            "field":  "mesh",
+                                                            "label":  "Mesh",
+                                                            "type":  "text"
+                                                        },
+                                                        {
+                                                            "field":  "mobility_e",
+                                                            "label":  "electron mobility med/P95/max dex",
+                                                            "type":  "text"
+                                                        },
+                                                        {
+                                                            "field":  "mobility_h",
+                                                            "label":  "hole mobility med/P95/max dex",
+                                                            "type":  "text"
+                                                        },
+                                                        {
+                                                            "field":  "current_e",
+                                                            "label":  "|Jn| med/P95 dex",
+                                                            "type":  "text"
+                                                        },
+                                                        {
+                                                            "field":  "current_h",
+                                                            "label":  "|Jp| med/P95 dex",
+                                                            "type":  "text"
+                                                        },
+                                                        {
+                                                            "field":  "sentaurus_area_relative",
+                                                            "label":  "Sentaurus area rel.",
+                                                            "format":  "number"
+                                                        },
+                                                        {
+                                                            "field":  "vela_area_relative",
+                                                            "label":  "Vela area rel.",
+                                                            "format":  "number"
+                                                        }
+                                                    ]
+                                    },
+                                    {
+                                        "id":  "table_source",
+                                        "title":  "Matching QFP-gradient avalanche-source comparison",
+                                        "subtitle":  "Active-range median source-integral error for GSS/Laux support",
+                                        "dataset":  "source_comparison",
+                                        "sourceId":  "src_fixed",
+                                        "defaultSort":  {
+                                                            "field":  "mesh_order",
+                                                            "direction":  "asc"
+                                                        },
+                                        "density":  "dense",
+                                        "layout":  "full",
+                                        "columns":  [
+                                                        {
+                                                            "field":  "mesh_order",
+                                                            "label":  "#",
+                                                            "format":  "number"
+                                                        },
+                                                        {
+                                                            "field":  "mesh",
+                                                            "label":  "Mesh",
+                                                            "type":  "text"
+                                                        },
+                                                        {
+                                                            "field":  "sent_box_e_dex",
+                                                            "label":  "Sent box e- (dex)",
+                                                            "format":  "number"
+                                                        },
+                                                        {
+                                                            "field":  "sent_box_h_dex",
+                                                            "label":  "Sent box h+ (dex)",
+                                                            "format":  "number"
+                                                        },
+                                                        {
+                                                            "field":  "vela_e_dex",
+                                                            "label":  "Vela e- (dex)",
+                                                            "format":  "number"
+                                                        },
+                                                        {
+                                                            "field":  "vela_h_dex",
+                                                            "label":  "Vela h+ (dex)",
+                                                            "format":  "number"
+                                                        },
+                                                        {
+                                                            "field":  "gate",
+                                                            "label":  "General source gate",
+                                                            "type":  "text"
+                                                        }
+                                                    ]
+                                    },
+                                    {
+                                        "id":  "table_qfp",
+                                        "title":  "Candidate / production residual and first-QFP-update ratios",
+                                        "subtitle":  "Ratios below 1 improve; exact equality at -1 V is classified equal",
+                                        "dataset":  "qfp_ratios",
+                                        "sourceId":  "src_qfp",
+                                        "defaultSort":  {
+                                                            "field":  "sort_order",
+                                                            "direction":  "asc"
+                                                        },
+                                        "density":  "dense",
+                                        "layout":  "full",
+                                        "columns":  [
+                                                        {
+                                                            "field":  "sort_order",
+                                                            "label":  "#",
+                                                            "format":  "number"
+                                                        },
+                                                        {
+                                                            "field":  "topology",
+                                                            "label":  "Topology",
+                                                            "type":  "text"
+                                                        },
+                                                        {
+                                                            "field":  "bias_v",
+                                                            "label":  "Bias (V)",
+                                                            "format":  "number"
+                                                        },
+                                                        {
+                                                            "field":  "electron_residual",
+                                                            "label":  "e residual",
+                                                            "format":  "number"
+                                                        },
+                                                        {
+                                                            "field":  "hole_residual",
+                                                            "label":  "h residual",
+                                                            "format":  "number"
+                                                        },
+                                                        {
+                                                            "field":  "carrier_e",
+                                                            "label":  "carrier-only e",
+                                                            "format":  "number"
+                                                        },
+                                                        {
+                                                            "field":  "carrier_h",
+                                                            "label":  "carrier-only h",
+                                                            "format":  "number"
+                                                        },
+                                                        {
+                                                            "field":  "coupled_e",
+                                                            "label":  "coupled e",
+                                                            "format":  "number"
+                                                        },
+                                                        {
+                                                            "field":  "coupled_h",
+                                                            "label":  "coupled h",
+                                                            "format":  "number"
+                                                        },
+                                                        {
+                                                            "field":  "direction",
+                                                            "label":  "Direction",
+                                                            "type":  "text"
+                                                        }
+                                                    ]
+                                    },
+                                    {
+                                        "id":  "table_final_gates",
+                                        "title":  "Final authorization gates",
+                                        "subtitle":  "Both blocking gates independently reject entry to Task 8",
+                                        "dataset":  "final_gates",
+                                        "sourceId":  "src_qfp",
+                                        "defaultSort":  {
+                                                            "field":  "gate_order",
+                                                            "direction":  "asc"
+                                                        },
+                                        "density":  "dense",
+                                        "layout":  "full",
+                                        "columns":  [
+                                                        {
+                                                            "field":  "gate_order",
+                                                            "label":  "#",
+                                                            "format":  "number"
+                                                        },
+                                                        {
+                                                            "field":  "gate",
+                                                            "label":  "Gate",
+                                                            "type":  "text"
+                                                        },
+                                                        {
+                                                            "field":  "observed",
+                                                            "label":  "Observed",
+                                                            "type":  "text"
+                                                        },
+                                                        {
+                                                            "field":  "threshold",
+                                                            "label":  "Threshold",
+                                                            "type":  "text"
+                                                        },
+                                                        {
+                                                            "field":  "result",
+                                                            "label":  "Result",
+                                                            "type":  "text"
+                                                        },
+                                                        {
+                                                            "field":  "implication",
+                                                            "label":  "Implication",
+                                                            "type":  "text"
+                                                        }
+                                                    ]
+                                    }
+                                ],
+                     "blocks":  [
+                                    {
+                                        "id":  "title",
+                                        "type":  "markdown",
+                                        "body":  "# PN2D general-Tri3 avalanche Tasks 1-10 completion and physics summary"
+                                    },
+                                    {
+                                        "id":  "summary",
+                                        "type":  "markdown",
+                                        "body":  "## Technical summary\nTasks 1-7 and Task 10 completed their planned evidence, implementation, or decision work. That does not mean all gates passed: Task 6 failed the true-relative source-Jacobian gate and Task 7 failed the cross-topology QFP-causality gate. Therefore Tasks 8-9 were correctly not entered. The approved production decision is to keep `element_edge_sg_gss_laux` opt-in and diagnostic-only, with no change to Van Overstraeten, the global QFP-gradient driver, or any production default.",
+                                        "sourceId":  "src_review"
+                                    },
+                                    {
+                                        "id":  "task_chart_title",
+                                        "type":  "markdown",
+                                        "body":  "## The execution stopped at two independent authorization gates"
+                                    },
+                                    {
+                                        "id":  "task_chart",
+                                        "type":  "chart",
+                                        "chartId":  "chart_task_status"
+                                    },
+                                    {
+                                        "id":  "task_table",
+                                        "type":  "table",
+                                        "tableId":  "table_tasks"
+                                    },
+                                    {
+                                        "id":  "scope",
+                                        "type":  "markdown",
+                                        "body":  "## Scope and metric definitions\nThe fixed-state lattice covers exact imported states at -1, -10, and -20 V. Density and source errors are reported in dex; vector, closure, and Jacobian errors are dimensionless relative errors. `Sent box` means a documented box-operator reconstruction and is never labeled native directed-edge current. Candidate/production QFP ratios below one mean improvement. The constrained-obtuse mesh is diagnostic-only."
+                                    },
+                                    {
+                                        "id":  "upstream_title",
+                                        "type":  "markdown",
+                                        "body":  "## Imported density and P1 vectors pass before current support is evaluated\nThe upstream transformation is not the limiting physics: carrier density, electric field, and electron/hole QFP gradients all satisfy their frozen gates on coarse, acute-skewed, and constrained-obtuse states.",
+                                        "sourceId":  "src_fixed"
+                                    },
+                                    {
+                                        "id":  "upstream_table",
+                                        "type":  "table",
+                                        "tableId":  "table_upstream"
+                                    },
+                                    {
+                                        "id":  "current_title",
+                                        "type":  "markdown",
+                                        "body":  "## Current medians pass on scientific meshes, but tails and global closure fail\nThe GSS/Laux matching-support median current errors pass on coarse and acute-skewed meshes, while P95, sign, terminal-current, and KCL gates do not. The constrained-obtuse case additionally exposes the pre-fix Vela area defect.",
+                                        "sourceId":  "src_fixed"
+                                    },
+                                    {
+                                        "id":  "current_table",
+                                        "type":  "table",
+                                        "tableId":  "table_current_geometry"
+                                    },
+                                    {
+                                        "id":  "source_title",
+                                        "type":  "markdown",
+                                        "body":  "## Coarse source support closes, while the acute-skewed source remains outside the general gate\nReadMeasure versus CurrentPlot closes at machine precision on both scientific meshes. Reconstructed box current closes the coarse source but not the skewed source, so changing alpha or fitting a scale is not authorized.",
+                                        "sourceId":  "src_fixed"
+                                    },
+                                    {
+                                        "id":  "source_table",
+                                        "type":  "table",
+                                        "tableId":  "table_source"
+                                    },
+                                    {
+                                        "id":  "qfp_title",
+                                        "type":  "markdown",
+                                        "body":  "## The opt-in operator improves coarse QFP updates but worsens Minimal6 at the first material bias\nAt -10 V, every coarse residual/update group improves, while every Minimal6 group worsens. This cross-topology contradiction prevents a causal claim that source support generally fixes QFP evolution.",
+                                        "sourceId":  "src_qfp"
+                                    },
+                                    {
+                                        "id":  "qfp_table",
+                                        "type":  "table",
+                                        "tableId":  "table_qfp"
+                                    },
+                                    {
+                                        "id":  "gates_title",
+                                        "type":  "markdown",
+                                        "body":  "## Task 8 authorization fails independently on Jacobian parity and QFP causality"
+                                    },
+                                    {
+                                        "id":  "gates_table",
+                                        "type":  "table",
+                                        "tableId":  "table_final_gates"
+                                    },
+                                    {
+                                        "id":  "method",
+                                        "type":  "markdown",
+                                        "body":  "## Methodology and robustness\nEvidence used two independently generated roots with matching hashes. The final verifier does not import analyzer calculations; it validates both 117-configuration roots, exact coarse fields, topology, path bindings, complete input hashes, paired avalanche-off/SRH-off controls, residual closure, Jacobian gates, authorization, and typed outcome. Independent scientific and code reviews found no remaining blocking inconsistency after the true-relative Jacobian correction."
+                                    },
+                                    {
+                                        "id":  "limitations",
+                                        "type":  "markdown",
+                                        "body":  "## Limitations and uncertainty\nThere is no documented native general-Tri3 directed-edge current or native element-alpha observation, so those comparisons remain `insufficient_native_observation`. Element-local reconstructed flux is not the native global Sentaurus continuity operator. The obtuse normalization proves nonnegative exact-area closure, not native local-support parity. No Task 8 self-consistent curve or Task 9 physical BV curve exists because entry was not authorized."
+                                    },
+                                    {
+                                        "id":  "next",
+                                        "type":  "markdown",
+                                        "body":  "## Recommended next step\nKeep the candidate opt-in and diagnostic-only. The next scientific work should explain the isolated source-Jacobian mismatch and the topology-dependent -10 V QFP response using a new independent observation or operator derivation. Do not tune field, mobility, alpha, geometry scale, or the production default to force agreement."
+                                    },
+                                    {
+                                        "id":  "questions",
+                                        "type":  "markdown",
+                                        "body":  "## Further questions\nCan a documented native Sentaurus observation disambiguate element alpha or directed current support? Which local derivative term produces the 0.964 source-Jacobian discrepancy? Why does the same support change improve coarse7x3 but worsen Minimal6 at -10 V? Until those questions are resolved, self-consistent and BV execution remains out of scope."
+                                    }
+                                ]
+                 },
+    "snapshot":  {
+                     "version":  1,
+                     "generatedAt":  "2026-07-26T17:42:39+08:00",
+                     "status":  "ready",
+                     "datasets":  {
+                                      "headline":  [
+                                                       {
+                                                           "evidence_complete":  8,
+                                                           "not_entered":  2,
+                                                           "exact_states":  144,
+                                                           "jacobian_relative":  0.9640948767506723
+                                                       }
+                                                   ],
+                                      "task_status":  [
+                                                          {
+                                                              "task_no":  1,
+                                                              "task":  "Task 1",
+                                                              "scope":  "Schema and RED contract",
+                                                              "status_rank":  2,
+                                                              "status":  "Completed",
+                                                              "gate":  "RED contract frozen",
+                                                              "typed_outcome":  "General-mesh schema and negative tests committed"
+                                                          },
+                                                          {
+                                                              "task_no":  2,
+                                                              "task":  "Task 2",
+                                                              "scope":  "Sentaurus oracle meshes",
+                                                              "status_rank":  2,
+                                                              "status":  "Completed",
+                                                              "gate":  "144 exact states; A/B exact",
+                                                              "typed_outcome":  "Oracle lattice accepted"
+                                                          },
+                                                          {
+                                                              "task_no":  3,
+                                                              "task":  "Task 3",
+                                                              "scope":  "Imported-state upstream replay",
+                                                              "status_rank":  2,
+                                                              "status":  "Completed",
+                                                              "gate":  "Density/P1 vectors pass; native element alpha unavailable",
+                                                              "typed_outcome":  "Upstream validated; alpha observation insufficient"
+                                                          },
+                                                          {
+                                                              "task_no":  4,
+                                                              "task":  "Task 4",
+                                                              "scope":  "Element-local current support",
+                                                              "status_rank":  2,
+                                                              "status":  "Completed",
+                                                              "gate":  "Medians pass; P95/sign/terminal/KCL fail",
+                                                              "typed_outcome":  "support_limited_current_difference + insufficient_native_observation"
+                                                          },
+                                                          {
+                                                              "task_no":  5,
+                                                              "task":  "Task 5",
+                                                              "scope":  "Avalanche source support",
+                                                              "status_rank":  2,
+                                                              "status":  "Completed",
+                                                              "gate":  "Coarse passes; acute-skewed fails",
+                                                              "typed_outcome":  "Keep Van Overstraeten and QFP-gradient unchanged"
+                                                          },
+                                                          {
+                                                              "task_no":  6,
+                                                              "task":  "Task 6",
+                                                              "scope":  "Opt-in C++ operator and Jacobian",
+                                                              "status_rank":  1,
+                                                              "status":  "Completed; gate failed",
+                                                              "gate":  "Source Jacobian 0.964 \u003e 1e-8",
+                                                              "typed_outcome":  "jacobian_gate_failed"
+                                                          },
+                                                          {
+                                                              "task_no":  7,
+                                                              "task":  "Task 7",
+                                                              "scope":  "Residual and first QFP update",
+                                                              "status_rank":  1,
+                                                              "status":  "Completed; gate failed",
+                                                              "gate":  "Minimal6 worsens while coarse improves at -10 V",
+                                                              "typed_outcome":  "operator_improvement_without_qfp_causality"
+                                                          },
+                                                          {
+                                                              "task_no":  8,
+                                                              "task":  "Task 8",
+                                                              "scope":  "Self-consistent sweeps",
+                                                              "status_rank":  0,
+                                                              "status":  "Not entered",
+                                                              "gate":  "Tasks 6-7 did not authorize a candidate",
+                                                              "typed_outcome":  "not_entered"
+                                                          },
+                                                          {
+                                                              "task_no":  9,
+                                                              "task":  "Task 9",
+                                                              "scope":  "Physical PN2D BV curve",
+                                                              "status_rank":  0,
+                                                              "status":  "Not entered",
+                                                              "gate":  "Task 8 coarse self-consistent gate unavailable",
+                                                              "typed_outcome":  "not_entered"
+                                                          },
+                                                          {
+                                                              "task_no":  10,
+                                                              "task":  "Task 10",
+                                                              "scope":  "Decision, validation, reviews",
+                                                              "status_rank":  2,
+                                                              "status":  "Completed",
+                                                              "gate":  "Independent reviews closed; defaults unchanged",
+                                                              "typed_outcome":  "keep_opt_in_diagnostic_no_default_change"
+                                                          }
+                                                      ],
+                                      "upstream_physics":  [
+                                                               {
+                                                                   "mesh_order":  1,
+                                                                   "mesh":  "coarse7x3",
+                                                                   "electron_density_dex":  0.00000470229,
+                                                                   "hole_density_dex":  0.00000472900,
+                                                                   "e_field_relative":  7.62594E-15,
+                                                                   "electron_qfp_grad_relative":  1.66936E-13,
+                                                                   "hole_qfp_grad_relative":  1.06412E-15
+                                                               },
+                                                               {
+                                                                   "mesh_order":  2,
+                                                                   "mesh":  "skewed_tri3",
+                                                                   "electron_density_dex":  0.00000465443,
+                                                                   "hole_density_dex":  0.00000469293,
+                                                                   "e_field_relative":  7.98131E-13,
+                                                                   "electron_qfp_grad_relative":  4.71706E-14,
+                                                                   "hole_qfp_grad_relative":  1.69898E-15
+                                                               },
+                                                               {
+                                                                   "mesh_order":  3,
+                                                                   "mesh":  "constrained obtuse",
+                                                                   "electron_density_dex":  0.00000473051,
+                                                                   "hole_density_dex":  0.00000475249,
+                                                                   "e_field_relative":  1.69198E-13,
+                                                                   "electron_qfp_grad_relative":  2.67437E-14,
+                                                                   "hole_qfp_grad_relative":  5.65988E-16
+                                                               }
+                                                           ],
+                                      "current_geometry":  [
+                                                               {
+                                                                   "mesh_order":  1,
+                                                                   "mesh":  "coarse7x3",
+                                                                   "mobility_e":  "1.31e-12 / 0.0692 / 0.2289",
+                                                                   "mobility_h":  "1.22e-12 / 0.0680 / 0.1506",
+                                                                   "current_e":  "0.00585 / 1.27481",
+                                                                   "current_h":  "0.00285 / 0.92365",
+                                                                   "sentaurus_area_relative":  0,
+                                                                   "vela_area_relative":  0
+                                                               },
+                                                               {
+                                                                   "mesh_order":  2,
+                                                                   "mesh":  "skewed_tri3",
+                                                                   "mobility_e":  "0.0144 / 0.1233 / 0.2460",
+                                                                   "mobility_h":  "0.0136 / 0.0834 / 0.1562",
+                                                                   "current_e":  "0.03674 / 0.84526",
+                                                                   "current_h":  "0.01599 / 0.61346",
+                                                                   "sentaurus_area_relative":  3.85E-16,
+                                                                   "vela_area_relative":  4.34E-16
+                                                               },
+                                                               {
+                                                                   "mesh_order":  3,
+                                                                   "mesh":  "constrained obtuse",
+                                                                   "mobility_e":  "0.0363 / 0.3161 / 0.4169",
+                                                                   "mobility_h":  "0.0254 / 0.1853 / 0.2328",
+                                                                   "current_e":  "0.33447 / 0.66846",
+                                                                   "current_h":  "0.14593 / 0.55743",
+                                                                   "sentaurus_area_relative":  3.08E-16,
+                                                                   "vela_area_relative":  3.2037037
+                                                               }
+                                                           ],
+                                      "source_comparison":  [
+                                                                {
+                                                                    "mesh_order":  1,
+                                                                    "mesh":  "coarse7x3 GSS/Laux",
+                                                                    "sent_box_e_dex":  0.00000208,
+                                                                    "sent_box_h_dex":  0.000351,
+                                                                    "vela_e_dex":  0.00681,
+                                                                    "vela_h_dex":  0.00607,
+                                                                    "gate":  "Pass"
+                                                                },
+                                                                {
+                                                                    "mesh_order":  2,
+                                                                    "mesh":  "skewed_tri3 GSS/Laux",
+                                                                    "sent_box_e_dex":  0.46872,
+                                                                    "sent_box_h_dex":  0.36769,
+                                                                    "vela_e_dex":  1.31010,
+                                                                    "vela_h_dex":  0.96076,
+                                                                    "gate":  "Fail"
+                                                                }
+                                                            ],
+                                      "qfp_ratios":  [
+                                                         {
+                                                             "sort_order":  1,
+                                                             "topology":  "Minimal6 mirror/sketch",
+                                                             "bias_v":  -1,
+                                                             "electron_residual":  1,
+                                                             "hole_residual":  1,
+                                                             "carrier_e":  1,
+                                                             "carrier_h":  1,
+                                                             "coupled_e":  1,
+                                                             "coupled_h":  1,
+                                                             "direction":  "Equal"
+                                                         },
+                                                         {
+                                                             "sort_order":  2,
+                                                             "topology":  "Minimal6 mirror/sketch",
+                                                             "bias_v":  -10,
+                                                             "electron_residual":  1.027156,
+                                                             "hole_residual":  1.027976,
+                                                             "carrier_e":  1.023601,
+                                                             "carrier_h":  1.024308,
+                                                             "coupled_e":  1.023601,
+                                                             "coupled_h":  1.024308,
+                                                             "direction":  "Worsened"
+                                                         },
+                                                         {
+                                                             "sort_order":  3,
+                                                             "topology":  "Minimal6 mirror/sketch",
+                                                             "bias_v":  -20,
+                                                             "electron_residual":  0.00003409014,
+                                                             "hole_residual":  0.00003373837,
+                                                             "carrier_e":  0.0297334,
+                                                             "carrier_h":  0.0294365,
+                                                             "coupled_e":  0.0297335,
+                                                             "coupled_h":  0.0294366,
+                                                             "direction":  "Improved"
+                                                         },
+                                                         {
+                                                             "sort_order":  4,
+                                                             "topology":  "coarse7x3",
+                                                             "bias_v":  -1,
+                                                             "electron_residual":  1,
+                                                             "hole_residual":  1,
+                                                             "carrier_e":  1,
+                                                             "carrier_h":  1,
+                                                             "coupled_e":  1,
+                                                             "coupled_h":  1,
+                                                             "direction":  "Equal"
+                                                         },
+                                                         {
+                                                             "sort_order":  5,
+                                                             "topology":  "coarse7x3",
+                                                             "bias_v":  -10,
+                                                             "electron_residual":  1.099286E-07,
+                                                             "hole_residual":  1.099887E-07,
+                                                             "carrier_e":  0.00158892,
+                                                             "carrier_h":  0.0140316,
+                                                             "coupled_e":  0.00106766,
+                                                             "coupled_h":  0.00924058,
+                                                             "direction":  "Improved"
+                                                         },
+                                                         {
+                                                             "sort_order":  6,
+                                                             "topology":  "coarse7x3",
+                                                             "bias_v":  -20,
+                                                             "electron_residual":  0.0180704,
+                                                             "hole_residual":  0.0181181,
+                                                             "carrier_e":  0.0120429,
+                                                             "carrier_h":  0.00857828,
+                                                             "coupled_e":  0.00891144,
+                                                             "coupled_h":  0.00639328,
+                                                             "direction":  "Improved"
+                                                         }
+                                                     ],
+                                      "final_gates":  [
+                                                          {
+                                                              "gate_order":  1,
+                                                              "gate":  "Task 6 nonzero source Jacobian",
+                                                              "observed":  "0.9640948767506723 relative",
+                                                              "threshold":  "\u003c= 1e-8",
+                                                              "result":  "Fail",
+                                                              "implication":  "Task 6 candidate not authorized"
+                                                          },
+                                                          {
+                                                              "gate_order":  2,
+                                                              "gate":  "Task 6 near-zero source Jacobian",
+                                                              "observed":  "4.6780474445207e-17 absolute",
+                                                              "threshold":  "\u003c= 1e-12",
+                                                              "result":  "Pass",
+                                                              "implication":  "Near-zero handling is stable"
+                                                          },
+                                                          {
+                                                              "gate_order":  3,
+                                                              "gate":  "Task 7 residual decomposition",
+                                                              "observed":  "1.6654229802532582e-16 relative",
+                                                              "threshold":  "\u003c= 1e-12",
+                                                              "result":  "Pass",
+                                                              "implication":  "Term decomposition closes"
+                                                          },
+                                                          {
+                                                              "gate_order":  4,
+                                                              "gate":  "Boundary branch difference",
+                                                              "observed":  "0",
+                                                              "threshold":  "Floating-point identical",
+                                                              "result":  "Pass",
+                                                              "implication":  "Not a boundary/contact discriminator"
+                                                          },
+                                                          {
+                                                              "gate_order":  5,
+                                                              "gate":  "Avalanche-off branch difference",
+                                                              "observed":  "0",
+                                                              "threshold":  "Exact",
+                                                              "result":  "Pass",
+                                                              "implication":  "Difference is isolated to avalanche support"
+                                                          },
+                                                          {
+                                                              "gate_order":  6,
+                                                              "gate":  "Cross-topology first-material causality",
+                                                              "observed":  "false",
+                                                              "threshold":  "Must improve both topology classes",
+                                                              "result":  "Fail",
+                                                              "implication":  "Task 8 not authorized"
+                                                          }
+                                                      ]
+                                  }
+                 },
+    "sources":  [
+                    {
+                        "id":  "src_plan",
+                        "label":  "Tasks 1-10 execution plan",
+                        "path":  "docs/superpowers/plans/2026-07-25-pn2d-avalanche-current-support-qfp-bv-followup.md"
+                    },
+                    {
+                        "id":  "src_fixed",
+                        "label":  "Tasks 2-5 fixed-state validation",
+                        "path":  "docs/validation/pn2d_general_tri3_element_edge_avalanche_2026-07-26.md",
+                        "query":  {
+                                      "engine":  "SQLite",
+                                      "language":  "SQL",
+                                      "description":  "Literal reviewed rows transcribed from the cited frozen validation documents.",
+                                      "sql":  "WITH upstream(mesh_order,mesh,electron_density_dex,hole_density_dex,e_field_relative,electron_qfp_grad_relative,hole_qfp_grad_relative) AS (\n VALUES (1,\u0027coarse7x3\u0027,4.70229e-6,4.72900e-6,7.62594e-15,1.66936e-13,1.06412e-15),\n (2,\u0027skewed_tri3\u0027,4.65443e-6,4.69293e-6,7.98131e-13,4.71706e-14,1.69898e-15),\n (3,\u0027constrained obtuse\u0027,4.73051e-6,4.75249e-6,1.69198e-13,2.67437e-14,5.65988e-16)\n) SELECT * FROM upstream ORDER BY mesh_order;\nWITH current_geometry(mesh_order,mesh,mobility_e,mobility_h,current_e,current_h,sentaurus_area_relative,vela_area_relative) AS (\n VALUES (1,\u0027coarse7x3\u0027,\u00271.31e-12 / 0.0692 / 0.2289\u0027,\u00271.22e-12 / 0.0680 / 0.1506\u0027,\u00270.00585 / 1.27481\u0027,\u00270.00285 / 0.92365\u0027,0,0),\n (2,\u0027skewed_tri3\u0027,\u00270.0144 / 0.1233 / 0.2460\u0027,\u00270.0136 / 0.0834 / 0.1562\u0027,\u00270.03674 / 0.84526\u0027,\u00270.01599 / 0.61346\u0027,3.85e-16,4.34e-16),\n (3,\u0027constrained obtuse\u0027,\u00270.0363 / 0.3161 / 0.4169\u0027,\u00270.0254 / 0.1853 / 0.2328\u0027,\u00270.33447 / 0.66846\u0027,\u00270.14593 / 0.55743\u0027,3.08e-16,3.2037037)\n) SELECT * FROM current_geometry ORDER BY mesh_order;\nWITH source_comparison(mesh_order,mesh,sent_box_e_dex,sent_box_h_dex,vela_e_dex,vela_h_dex,gate) AS (\n VALUES (1,\u0027coarse7x3 GSS/Laux\u0027,2.08e-6,0.000351,0.00681,0.00607,\u0027Pass\u0027),\n (2,\u0027skewed_tri3 GSS/Laux\u0027,0.46872,0.36769,1.31010,0.96076,\u0027Fail\u0027)\n) SELECT * FROM source_comparison ORDER BY mesh_order;",
+                                      "tables_used":  [
+                                                          "reviewed_validation_rows"
+                                                      ],
+                                      "filters":  [
+                                                      "Frozen exact states and reviewed gates only"
+                                                  ],
+                                      "metric_definitions":  [
+                                                                 "Values reproduce the bounded snapshot rows used by this report."
+                                                             ]
+                                  }
+                    },
+                    {
+                        "id":  "src_qfp",
+                        "label":  "Task 7 imported-state QFP audit",
+                        "path":  "docs/validation/pn2d_imported_state_qfp_update_2026-07-26.md",
+                        "query":  {
+                                      "engine":  "SQLite",
+                                      "language":  "SQL",
+                                      "description":  "Literal reviewed rows transcribed from the cited frozen validation documents.",
+                                      "sql":  "WITH qfp_ratios(sort_order,topology,bias_v,electron_residual,hole_residual,carrier_e,carrier_h,coupled_e,coupled_h,direction) AS (\n VALUES (1,\u0027Minimal6 mirror/sketch\u0027,-1,1,1,1,1,1,1,\u0027Equal\u0027),\n (2,\u0027Minimal6 mirror/sketch\u0027,-10,1.027156,1.027976,1.023601,1.024308,1.023601,1.024308,\u0027Worsened\u0027),\n (3,\u0027Minimal6 mirror/sketch\u0027,-20,3.409014e-5,3.373837e-5,0.0297334,0.0294365,0.0297335,0.0294366,\u0027Improved\u0027),\n (4,\u0027coarse7x3\u0027,-1,1,1,1,1,1,1,\u0027Equal\u0027),\n (5,\u0027coarse7x3\u0027,-10,1.099286e-7,1.099887e-7,0.00158892,0.0140316,0.00106766,0.00924058,\u0027Improved\u0027),\n (6,\u0027coarse7x3\u0027,-20,0.0180704,0.0181181,0.0120429,0.00857828,0.00891144,0.00639328,\u0027Improved\u0027)\n) SELECT * FROM qfp_ratios ORDER BY sort_order;\nWITH final_gates(gate_order,gate,observed,threshold,result,implication) AS (\n VALUES (1,\u0027Task 6 nonzero source Jacobian\u0027,\u00270.9640948767506723 relative\u0027,\u0027\u003c= 1e-8\u0027,\u0027Fail\u0027,\u0027Task 6 candidate not authorized\u0027),\n (2,\u0027Task 6 near-zero source Jacobian\u0027,\u00274.6780474445207e-17 absolute\u0027,\u0027\u003c= 1e-12\u0027,\u0027Pass\u0027,\u0027Near-zero handling is stable\u0027),\n (3,\u0027Task 7 residual decomposition\u0027,\u00271.6654229802532582e-16 relative\u0027,\u0027\u003c= 1e-12\u0027,\u0027Pass\u0027,\u0027Term decomposition closes\u0027),\n (4,\u0027Boundary branch difference\u0027,\u00270\u0027,\u0027Floating-point identical\u0027,\u0027Pass\u0027,\u0027Not a boundary/contact discriminator\u0027),\n (5,\u0027Avalanche-off branch difference\u0027,\u00270\u0027,\u0027Exact\u0027,\u0027Pass\u0027,\u0027Difference is isolated to avalanche support\u0027),\n (6,\u0027Cross-topology first-material causality\u0027,\u0027false\u0027,\u0027Must improve both topology classes\u0027,\u0027Fail\u0027,\u0027Task 8 not authorized\u0027)\n) SELECT * FROM final_gates ORDER BY gate_order;",
+                                      "tables_used":  [
+                                                          "reviewed_validation_rows"
+                                                      ],
+                                      "filters":  [
+                                                      "Frozen exact states and reviewed gates only"
+                                                  ],
+                                      "metric_definitions":  [
+                                                                 "Values reproduce the bounded snapshot rows used by this report."
+                                                             ]
+                                  }
+                    },
+                    {
+                        "id":  "src_review",
+                        "label":  "Tasks 6-10 review and stop ledger",
+                        "path":  "docs/validation/pn2d_tasks6_10_review_response_2026-07-26.md"
+                    },
+                    {
+                        "id":  "src_synthesis",
+                        "label":  "Reviewed synthesis dataset embedded in this report artifact",
+                        "path":  "docs/validation/pn2d_tasks1_10_summary_2026-07-26.artifact.json",
+                        "query":  {
+                                      "engine":  "SQLite",
+                                      "language":  "SQL",
+                                      "description":  "Literal reviewed rows transcribed from the cited frozen validation documents.",
+                                      "sql":  "WITH task_status(task_no, task, scope, status_rank, status, gate, typed_outcome) AS (\n  VALUES\n  (1,\u0027Task 1\u0027,\u0027Schema and RED contract\u0027,2,\u0027Completed\u0027,\u0027RED contract frozen\u0027,\u0027General-mesh schema and negative tests committed\u0027),\n  (2,\u0027Task 2\u0027,\u0027Sentaurus oracle meshes\u0027,2,\u0027Completed\u0027,\u0027144 exact states; A/B exact\u0027,\u0027Oracle lattice accepted\u0027),\n  (3,\u0027Task 3\u0027,\u0027Imported-state upstream replay\u0027,2,\u0027Completed\u0027,\u0027Density/P1 vectors pass; native element alpha unavailable\u0027,\u0027Upstream validated; alpha observation insufficient\u0027),\n  (4,\u0027Task 4\u0027,\u0027Element-local current support\u0027,2,\u0027Completed\u0027,\u0027Medians pass; P95/sign/terminal/KCL fail\u0027,\u0027support_limited_current_difference + insufficient_native_observation\u0027),\n  (5,\u0027Task 5\u0027,\u0027Avalanche source support\u0027,2,\u0027Completed\u0027,\u0027Coarse passes; acute-skewed fails\u0027,\u0027Keep Van Overstraeten and QFP-gradient unchanged\u0027),\n  (6,\u0027Task 6\u0027,\u0027Opt-in C++ operator and Jacobian\u0027,1,\u0027Completed; gate failed\u0027,\u0027Source Jacobian 0.964 \u003e 1e-8\u0027,\u0027jacobian_gate_failed\u0027),\n  (7,\u0027Task 7\u0027,\u0027Residual and first QFP update\u0027,1,\u0027Completed; gate failed\u0027,\u0027Minimal6 worsens while coarse improves at -10 V\u0027,\u0027operator_improvement_without_qfp_causality\u0027),\n  (8,\u0027Task 8\u0027,\u0027Self-consistent sweeps\u0027,0,\u0027Not entered\u0027,\u0027Tasks 6-7 did not authorize a candidate\u0027,\u0027not_entered\u0027),\n  (9,\u0027Task 9\u0027,\u0027Physical PN2D BV curve\u0027,0,\u0027Not entered\u0027,\u0027Task 8 coarse self-consistent gate unavailable\u0027,\u0027not_entered\u0027),\n  (10,\u0027Task 10\u0027,\u0027Decision, validation, reviews\u0027,2,\u0027Completed\u0027,\u0027Independent reviews closed; defaults unchanged\u0027,\u0027keep_opt_in_diagnostic_no_default_change\u0027)\n) SELECT * FROM task_status ORDER BY task_no;",
+                                      "tables_used":  [
+                                                          "reviewed_validation_rows"
+                                                      ],
+                                      "filters":  [
+                                                      "Frozen exact states and reviewed gates only"
+                                                  ],
+                                      "metric_definitions":  [
+                                                                 "Values reproduce the bounded snapshot rows used by this report."
+                                                             ]
+                                  }
+                    }
+                ]
+}

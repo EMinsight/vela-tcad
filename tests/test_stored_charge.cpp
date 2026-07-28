@@ -35,15 +35,15 @@ TEST_CASE("StoredCharge unit_scaling uses TCAD density-area-depth factor", "[pos
     cfg.regions = {"left", "right"};
     const auto perDepth = sc.compute(sol, cfg);
 
-    const double expectedPerUm = vela::constants::q * 1.0e16 * 1.0e-12;
+    const double expectedPerMeter = vela::constants::q * 1.0e16 * 1.0e-6;
     REQUIRE(perDepth.perMeter);
-    REQUIRE(perDepth.charge == Catch::Approx(expectedPerUm));
+    REQUIRE(perDepth.charge == Catch::Approx(expectedPerMeter));
 
     cfg.perMeter = false;
     cfg.depth_m = 2.0;
     const auto total = sc.compute(sol, cfg);
     REQUIRE_FALSE(total.perMeter);
-    REQUIRE(total.charge == Catch::Approx(2.0 * expectedPerUm));
+    REQUIRE(total.charge == Catch::Approx(2.0 * expectedPerMeter));
 }
 } // namespace
 

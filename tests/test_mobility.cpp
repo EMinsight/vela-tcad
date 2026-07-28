@@ -122,6 +122,36 @@ TEST_CASE("JSON mobility object parses Masetti parameters with unit scaling",
 }
 
 
+TEST_CASE("mobility doping concentration basis parses and validates",
+          "[mobility][json][doping-basis]")
+{
+    const MobilityModelConfig defaultConfig = mobilityModelConfigFromJson(
+        nlohmann::json{{"model", "masetti"}});
+    REQUIRE(defaultConfig.dopingConcentrationBasis == "net_doping");
+
+    const MobilityModelConfig totalConfig = mobilityModelConfigFromJson(
+        nlohmann::json{
+            {"model", "masetti"},
+            {"doping_concentration_basis", "total_impurity"},
+        });
+    REQUIRE(totalConfig.dopingConcentrationBasis == "total_impurity");
+
+    const MobilityModelConfig cellConfig = mobilityModelConfigFromJson(
+        nlohmann::json{
+            {"model", "masetti"},
+            {"doping_concentration_basis", "cell_reconstructed_total_impurity"},
+        });
+    REQUIRE(cellConfig.dopingConcentrationBasis ==
+            "cell_reconstructed_total_impurity");
+
+    REQUIRE_THROWS_AS(
+        mobilityModelConfigFromJson(nlohmann::json{
+            {"model", "masetti"},
+            {"doping_concentration_basis", "unsupported"},
+        }),
+        std::invalid_argument);
+}
+
 TEST_CASE("JSON solver config selects mobility and recombination models", "[mobility][json]")
 {
     const nlohmann::json json = {

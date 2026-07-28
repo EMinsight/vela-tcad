@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <nlohmann/json.hpp>
 
 #include "vela/equation/AssemblerUtils.h"
@@ -3178,4 +3179,75 @@ TEST_CASE("VanOverstraeten Sentaurus fit parameter sets follow active internal u
     REQUIRE(tcadConfig.electronALow == Catch::Approx(2.35990376332e7));
     REQUIRE(tcadConfig.electronBLow == Catch::Approx(6.68288073314e5));
     REQUIRE(tcadConfig.switchField == Catch::Approx(2.5e5));
+}
+
+TEST_CASE("Triangle GSS production source Jacobian supports mobility doping bases",
+          "[impact][newton][triangle_gss][mobility_basis]")
+{
+    DeviceMesh mesh = makePNMesh();
+    MaterialDatabase matdb;
+    const std::vector<RegionDopingSpec> specs = {
+        {"n_region", 5.0e22, 0.0},
+        {"p_region", 0.0, 5.0e22},
+    };
+    DopingModel doping = DopingModel::fromMeshAndRegions(mesh, specs);
+    doping.setNodeDoping(1, 5.0e22, 5.0e22);
+
+    const Real Vt = 0.025852;
+    CoupledDDState state;
+    state.psi = (VectorXd(4) << 0.0, -5.0, -20.0, -2.0).finished();
+    state.phin = (VectorXd(4) << 0.02, -5.05, -20.10, -2.08).finished();
+    state.phip = (VectorXd(4) << -0.15, -5.35, -20.82, -2.60).finished();
+
+    ImpactIonizationModelConfig impactConfig =
+        impactIonizationModelConfig("van_overstraeten");
+    impactConfig.drivingForce = "quasi_fermi_gradient";
+    impactConfig.generation = "current_density";
+    impactConfig.currentApproximation = "cell_reconstructed";
+    impactConfig.currentMagnitudeMode = "edge_scalar_abs";
+    impactConfig.cellReconstructedMidpointDensity = "gss_logistic";
+    impactConfig.quasiFermiGradientDiscretization = "cell_gradient";
+    impactConfig.sourceVolumePolicy = "genius_truncated";
+    impactConfig.sourceMappingMode = "triangle_gss_gradqf_truncated";
+
+    const auto basis = GENERATE(
+        std::string("net_doping"),
+        std::string("cell_reconstructed_total_impurity"));
+    CAPTURE(basis);
+    MobilityModelConfig mobilityConfig =
+        mobilityModelConfig("caughey_thomas_field");
+    mobilityConfig.highFieldDrivingForce = "quasi_fermi_gradient";
+    mobilityConfig.dopingConcentrationBasis = basis;
+    mobilityConfig.jacobianFieldDerivatives = false;
+
+    CoupledDDAssembler assembler(
+        mesh, matdb, doping, Vt, mobilityConfig,
+        recombinationModelConfig({"none"}), BandgapNarrowingConfig{},
+        impactConfig);
+    CoupledDDAssembler baselineAssembler(
+        mesh, matdb, doping, Vt, mobilityConfig,
+        recombinationModelConfig({"none"}), BandgapNarrowingConfig{},
+        ImpactIonizationModelConfig{});
+
+    const VectorXd x = assembler.pack(state);
+    const CoupledDDBoundaryConditions bcs;
+    const Eigen::MatrixXd analyticSource =
+        Eigen::MatrixXd(assembler.assembleJacobian(x, bcs)) -
+        Eigen::MatrixXd(baselineAssembler.assembleJacobian(x, bcs));
+    const Eigen::MatrixXd finiteDifferenceSource =
+        Eigen::MatrixXd(assembler.finiteDifferenceJacobian(x, bcs, 1.0e-7)) -
+        Eigen::MatrixXd(
+            baselineAssembler.finiteDifferenceJacobian(x, bcs, 1.0e-7));
+
+    const int N = static_cast<int>(mesh.numNodes());
+    const auto analyticCarrier = analyticSource.block(N, 0, 2 * N, 3 * N);
+    const auto finiteDifferenceCarrier =
+        finiteDifferenceSource.block(N, 0, 2 * N, 3 * N);
+    const Real reference = std::max<Real>(1.0, finiteDifferenceCarrier.norm());
+    const Real relativeDifference =
+        (analyticCarrier - finiteDifferenceCarrier).norm() / reference;
+    CAPTURE(analyticCarrier.norm(), finiteDifferenceCarrier.norm(),
+            relativeDifference);
+    REQUIRE(analyticCarrier.norm() > 0.0);
+    REQUIRE(relativeDifference < 2.0e-4);
 }

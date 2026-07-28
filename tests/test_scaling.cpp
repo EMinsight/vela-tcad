@@ -122,12 +122,31 @@ TEST_CASE("PhysicalUnitSystem exposes TCAD composite factors", "[scaling]")
     const UnitScalingConfig unitScaling{UnitScalingMode::UnitScaling};
     const PhysicalUnitSystem& units = unitScaling.unitSystem();
 
+    REQUIRE(units.chargeAreaFactor() == Catch::Approx(1.0e-6));
+    REQUIRE(units.chargeLineFactor() == Catch::Approx(1.0e-2));
     REQUIRE(units.chargeVolumeFactor() == Catch::Approx(1.0e-12));
     REQUIRE(units.chargeSheetFactor() == Catch::Approx(1.0e-8));
     REQUIRE(units.fieldFromCoordinateDeltaFactor() == Catch::Approx(1.0e4));
     REQUIRE(units.continuitySourceIntegralFactor() == Catch::Approx(1.0e-8));
     REQUIRE(units.currentPerInternalDepthFactor() == Catch::Approx(1.0e-6));
 }
+TEST_CASE("PhysicalUnitSystem 2D charge integrals match SI representation", "[scaling][poisson][charge]")
+{
+    const PhysicalUnitSystem units = PhysicalUnitSystem::tcadInternal();
+
+    const Real legacyVolumeChargePerDepth = 1.0e23 * 1.0e-12;
+    const Real tcadVolumeChargePerDepth =
+        1.0e17 * 1.0 * units.chargeAreaFactor();
+    REQUIRE(tcadVolumeChargePerDepth ==
+            Catch::Approx(legacyVolumeChargePerDepth).epsilon(1e-12));
+
+    const Real legacySheetChargePerDepth = 1.0e15 * 1.0e-6;
+    const Real tcadSheetChargePerDepth =
+        1.0e11 * 1.0 * units.chargeLineFactor();
+    REQUIRE(tcadSheetChargePerDepth ==
+            Catch::Approx(legacySheetChargePerDepth).epsilon(1e-12));
+}
+
 TEST_CASE("UnitScalingSystem: unit_scaling references stay in TCAD internal units", "[scaling]")
 {
     const UnitScalingConfig unitScaling{UnitScalingMode::UnitScaling};

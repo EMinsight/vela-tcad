@@ -40,6 +40,7 @@ struct Arguments {
     std::filesystem::path edgeOut;
     std::filesystem::path triangleOut;
     std::optional<std::filesystem::path> elementOut;
+    bool generalTri3 = false;
 };
 
 std::string usage()
@@ -49,7 +50,8 @@ std::string usage()
         "--mesh mesh.json --doping doping.csv --state state.csv "
         "--config audit.json --node-out vela_node_state.csv "
         "--edge-out vela_edge_audit.csv --triangle-out vela_triangle_audit.csv "
-        "[--element-out vela_element_edge_gss_laux.csv]";
+        "[--element-out vela_element_edge_gss_laux.csv] "
+        "[--scope minimal6|general_tri3]";
 }
 
 Arguments parseArguments(int argc, char** argv)
@@ -58,8 +60,8 @@ Arguments parseArguments(int argc, char** argv)
         std::cout << usage() << '\n';
         std::exit(0);
     }
-    if (argc != 15 && argc != 17)
-        throw std::invalid_argument("expected seven or eight option/value pairs; usage: " + usage());
+    if (argc != 15 && argc != 17 && argc != 19)
+        throw std::invalid_argument("expected seven to nine option/value pairs; usage: " + usage());
 
     std::map<std::string, std::filesystem::path> values;
     for (int i = 1; i < argc; i += 2) {
@@ -67,7 +69,7 @@ Arguments parseArguments(int argc, char** argv)
         if (option != "--mesh" && option != "--doping" && option != "--state" &&
             option != "--config" && option != "--node-out" &&
             option != "--edge-out" && option != "--triangle-out" &&
-            option != "--element-out") {
+            option != "--element-out" && option != "--scope") {
             throw std::invalid_argument("unknown option '" + option + "'; usage: " + usage());
         }
         if (!values.emplace(option, argv[i + 1]).second)
@@ -89,6 +91,9 @@ Arguments parseArguments(int argc, char** argv)
                 std::string("empty optional path ") + option);
         return it->second;
     };
+    const std::string scope = optional("--scope").value_or("minimal6").string();
+    if (scope != "minimal6" && scope != "general_tri3")
+        throw std::invalid_argument("--scope must be minimal6 or general_tri3");
     return {
         required("--mesh"),
         required("--doping"),
@@ -98,6 +103,7 @@ Arguments parseArguments(int argc, char** argv)
         required("--edge-out"),
         required("--triangle-out"),
         optional("--element-out"),
+        scope == "general_tri3",
     };
 }
 
@@ -158,7 +164,7 @@ std::map<std::string, std::size_t> columnMap(
     return columns;
 }
 
-vela::VectorXd readDoping(const std::filesystem::path& path,
+vela::DopingModel readDoping(const std::filesystem::path& path,
                           Index nodeCount,
                           const vela::UnitScalingConfig& scaling)
 {
@@ -169,7 +175,7 @@ vela::VectorXd readDoping(const std::filesystem::path& path,
             throw std::runtime_error("doping CSV missing required column '" + std::string(name) + "'");
     }
 
-    vela::VectorXd doping = vela::VectorXd::Zero(static_cast<Eigen::Index>(nodeCount));
+    vela::DopingModel doping(nodeCount);
     std::vector<bool> seen(nodeCount, false);
     std::string line;
     while (std::getline(input, line)) {
@@ -183,10 +189,13 @@ vela::VectorXd readDoping(const std::filesystem::path& path,
             throw std::runtime_error("doping CSV has duplicate node_id " + std::to_string(node));
         const Real donors = parseFinite(row[columns.at("donors_cm3")], "donors_cm3");
         const Real acceptors = parseFinite(row[columns.at("acceptors_cm3")], "acceptors_cm3");
-        const Real netDopingCm3 = donors - acceptors;
-        doping(static_cast<Eigen::Index>(node)) = scaling.isUnitScaling()
-            ? netDopingCm3
-            : netDopingCm3 * 1.0e6;
+        const Real donorsInternal = scaling.isUnitScaling()
+            ? donors
+            : donors * 1.0e6;
+        const Real acceptorsInternal = scaling.isUnitScaling()
+            ? acceptors
+            : acceptors * 1.0e6;
+        doping.setNodeDoping(node, donorsInternal, acceptorsInternal);
         seen[node] = true;
     }
     if (std::find(seen.begin(), seen.end(), false) != seen.end())
@@ -470,20 +479,21 @@ int main(int argc, char** argv)
         const vela::GummelConfig& config = auditConfig.solver;
         vela::JsonMeshReader reader;
         const vela::DeviceMesh mesh = reader.read(args.mesh.string());
-        const vela::VectorXd doping =
+        const vela::DopingModel doping =
             readDoping(args.doping, mesh.numNodes(), config.inputScaling);
         const vela::DDSolution state =
             readState(args.state, mesh.numNodes(), config.inputScaling);
 
         const vela::FixedStateOperatorAuditResult result =
             vela::evaluateFixedStateOperators(
-                mesh, doping, state, config, auditConfig.materials);
-        if (result.nodes.size() != 6 ||
-            result.edges.size() != 9 ||
-            result.triangles.size() != 4) {
+                mesh, doping, state, config, auditConfig.materials,
+                vela::FixedStateOperatorAuditOptions{args.generalTri3});
+        if (!args.generalTri3 &&
+            (result.nodes.size() != 6 || result.edges.size() != 9 ||
+             result.triangles.size() != 4)) {
             throw std::runtime_error("fixed-state audit result counts are not exactly 6/9/4");
         }
-        if (args.elementOut &&
+        if (!args.generalTri3 && args.elementOut &&
             result.elementEdgeGssLauxTriangles.size() != 4) {
             throw std::runtime_error(
                 "element-edge GSS/Laux audit result count is not exactly 4");

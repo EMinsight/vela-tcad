@@ -2557,7 +2557,7 @@ TEST_CASE("TerminalCharge: unit_scaling uses TCAD density-area-depth factor", "[
     config.includeIonizedDopants = false;
 
     const TerminalChargeResult perDepth = tc.compute(solution, config);
-    REQUIRE(perDepth.charge / constants::q == Catch::Approx(0.5e16 * 1.0e-12));
+    REQUIRE(perDepth.charge / constants::q == Catch::Approx(0.5e16 * 1.0e-6));
 
     config.perMeter = false;
     config.depth_m = 2.0;
@@ -3670,6 +3670,181 @@ TEST_CASE("DCSweep step control: invalid direct-call config fails fast", "[dc_sw
         REQUIRE_THROWS_AS(detail::runDCSweepStepControl(cfg, attempt, record),
                           std::invalid_argument);
     }
+
+    SECTION("negative initialStep is rejected")
+    {
+        detail::DCSweepStepControlConfig cfg;
+        cfg.start = 0.0;
+        cfg.stop = 1.0;
+        cfg.step = 0.25;
+        cfg.initialStep = -0.125;
+        cfg.minStep = 0.0625;
+        cfg.maxStep = 0.25;
+
+        REQUIRE_THROWS_AS(detail::runDCSweepStepControl(cfg, attempt, record),
+                          std::invalid_argument);
+    }
+
+    SECTION("initialStep outside step bounds is rejected")
+    {
+        detail::DCSweepStepControlConfig cfg;
+        cfg.start = 0.0;
+        cfg.stop = 1.0;
+        cfg.step = 0.25;
+        cfg.initialStep = 0.5;
+        cfg.minStep = 0.0625;
+        cfg.maxStep = 0.25;
+
+        REQUIRE_THROWS_AS(detail::runDCSweepStepControl(cfg, attempt, record),
+                          std::invalid_argument);
+    }
+}
+
+TEST_CASE("DCSweep step control: independent initialStep grows within nominal targets",
+          "[dc_sweep]")
+{
+    detail::DCSweepStepControlConfig cfg;
+    cfg.start = 0.0;
+    cfg.stop = 0.5;
+    cfg.step = 0.25;
+    cfg.initialStep = 0.0625;
+    cfg.minStep = 0.03125;
+    cfg.maxStep = 0.25;
+    cfg.growthFactor = 2.0;
+
+    std::vector<detail::DCSweepStepControlEvent> events;
+    detail::runDCSweepStepControl(
+        cfg,
+        [](Real, Real, int) { return true; },
+        [&](const detail::DCSweepStepControlEvent& event) {
+            events.push_back(event);
+        });
+
+    REQUIRE(events.size() == 4);
+    REQUIRE(events[0].voltage == Catch::Approx(0.0625));
+    REQUIRE(events[0].acceptedStep == Catch::Approx(0.0625));
+    REQUIRE(events[1].voltage == Catch::Approx(0.1875));
+    REQUIRE(events[1].acceptedStep == Catch::Approx(0.125));
+    REQUIRE(events[2].voltage == Catch::Approx(0.25));
+    REQUIRE(events[2].acceptedStep == Catch::Approx(0.0625));
+    REQUIRE(events[3].voltage == Catch::Approx(0.5));
+    REQUIRE(events[3].acceptedStep == Catch::Approx(0.25));
+}
+
+TEST_CASE("DCSweep: sweep.initial_step is parsed and bounded", "[dc_sweep]")
+{
+    const auto dir = makeUniqueSweepDir();
+    const ScopedDirectoryCleanup cleanup{dir};
+    std::filesystem::create_directories(dir);
+    const auto meshPath = writePNMesh(dir);
+    const auto csvPath = dir / "initial_step.csv";
+
+    SECTION("first accepted voltage step uses initial_step")
+    {
+        const auto cfgPath = writeSweepConfig(dir, meshPath, csvPath, {
+            {"start", 0.0},
+            {"stop", 0.25},
+            {"step", 0.25},
+            {"initial_step", 0.0625},
+            {"min_step", 0.03125},
+            {"max_step", 0.25},
+            {"growth_factor", 2.0},
+            {"write_vtk", false}
+        });
+
+        DCSweep sweep;
+        const DCSweepResult result = sweep.runWithResult(cfgPath.string());
+        REQUIRE(result.points.size() == 4);
+        REQUIRE(result.points.at(1).attemptedStep == Catch::Approx(0.0625));
+        REQUIRE(result.points.at(1).acceptedStep == Catch::Approx(0.0625));
+        REQUIRE(result.points.back().voltage == Catch::Approx(0.25));
+    }
+
+    SECTION("initial_step outside min and max is rejected")
+    {
+        const auto cfgPath = writeSweepConfig(dir, meshPath, csvPath, {
+            {"start", 0.0},
+            {"stop", 0.25},
+            {"step", 0.25},
+            {"initial_step", 0.5},
+            {"min_step", 0.03125},
+            {"max_step", 0.25},
+            {"write_vtk", false}
+        });
+
+        DCSweep sweep;
+        REQUIRE_THROWS_WITH(
+            sweep.runWithResult(cfgPath.string()),
+            Catch::Matchers::ContainsSubstring(
+                "DCSweep: sweep.initial_step must lie within [min_step, max_step]."));
+    }
+}
+
+TEST_CASE("DCSweep step control: persisted state carries growth across explicit targets",
+          "[dc_sweep]")
+{
+    detail::DCSweepStepControlConfig cfg;
+    cfg.start = 0.0;
+    cfg.stop = 0.2;
+    cfg.step = 0.2;
+    cfg.initialStep = 0.05;
+    cfg.minStep = 0.025;
+    cfg.maxStep = 0.2;
+    cfg.growthFactor = 2.0;
+
+    detail::DCSweepStepControlState state;
+    std::vector<Real> attempts;
+    const auto attempt = [&](Real voltage, Real, int) {
+        attempts.push_back(voltage);
+        return true;
+    };
+    const auto record = [](const detail::DCSweepStepControlEvent&) {};
+
+    detail::runDCSweepStepControl(cfg, attempt, record, &state);
+    REQUIRE(attempts.size() == 3);
+    REQUIRE(attempts[0] == Catch::Approx(0.05));
+    REQUIRE(attempts[1] == Catch::Approx(0.15));
+    REQUIRE(attempts[2] == Catch::Approx(0.2));
+    REQUIRE(state.initialized);
+    REQUIRE(state.adaptiveStep == Catch::Approx(0.2));
+
+    cfg.start = 0.2;
+    cfg.stop = 0.4;
+    attempts.clear();
+    detail::runDCSweepStepControl(cfg, attempt, record, &state);
+
+    REQUIRE(attempts.size() == 1);
+    REQUIRE(attempts[0] == Catch::Approx(0.4));
+    REQUIRE(state.adaptiveStep == Catch::Approx(0.2));
+}
+
+TEST_CASE("DCSweep step control: Sentaurus-style BV reaches minus 20 in bounded points",
+          "[dc_sweep]")
+{
+    detail::DCSweepStepControlConfig cfg;
+    cfg.start = 0.0;
+    cfg.stop = -20.0;
+    cfg.step = -0.05;
+    cfg.initialStep = 1.0e-4;
+    cfg.minStep = 1.0e-10;
+    cfg.maxStep = 0.05;
+    cfg.growthFactor = 1.2;
+    cfg.shrinkFactor = 0.5;
+    cfg.maxRetries = 20;
+
+    std::vector<detail::DCSweepStepControlEvent> events;
+    detail::runDCSweepStepControl(
+        cfg,
+        [](Real, Real, int) { return true; },
+        [&](const detail::DCSweepStepControlEvent& event) {
+            events.push_back(event);
+        });
+
+    REQUIRE_FALSE(events.empty());
+    REQUIRE(events.size() <= 450);
+    REQUIRE(events.front().acceptedStep == Catch::Approx(-1.0e-4));
+    REQUIRE(events.back().voltage == Catch::Approx(-20.0).margin(1.0e-12));
+    REQUIRE(std::abs(events.back().acceptedStep) <= 0.05 + 1.0e-12);
 }
 
 TEST_CASE("DCSweep step control: failure after growth shrinks and retries", "[dc_sweep]")

@@ -36,6 +36,16 @@ PhysicalUnitSystem PhysicalUnitSystem::tcadInternal()
     return PhysicalUnitSystem(1.0e-6, 1.0e6, 1.0e4, 1.0e-4, 1.0e-2, 1.0e2, 1.0e2, 1.0e-2, 1.0e4);
 }
 
+Real PhysicalUnitSystem::chargeAreaFactor() const
+{
+    return concentrationM3PerInternal_ * areaM2PerInternal();
+}
+
+Real PhysicalUnitSystem::chargeLineFactor() const
+{
+    return sheetDensityM2PerInternal_ * lengthMPerInternal_;
+}
+
 Real PhysicalUnitSystem::chargeVolumeFactor() const
 {
     return concentrationM3PerInternal_ * volumeM3PerInternal();

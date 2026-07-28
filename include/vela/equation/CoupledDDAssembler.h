@@ -130,6 +130,20 @@ public:
         const CoupledDDBoundaryConditions& bcs,
         Real relativeStep = 1.0e-6) const;
 
+    // Assemble only the impact-ionization source contribution. These direct
+    // paths avoid subtracting two full continuity residuals/Jacobians when the
+    // avalanche block is many orders of magnitude smaller than transport.
+    VectorXd impactIonizationSourceResidual(
+        const VectorXd& x,
+        const CoupledDDBoundaryConditions& bcs) const;
+    SparseMatrixd impactIonizationSourceJacobian(
+        const VectorXd& x,
+        const CoupledDDBoundaryConditions& bcs) const;
+    SparseMatrixd impactIonizationSourceFiniteDifferenceJacobian(
+        const VectorXd& x,
+        const CoupledDDBoundaryConditions& bcs,
+        Real relativeStep) const;
+
     VectorXd electronDensity(const VectorXd& x) const;
     VectorXd holeDensity(const VectorXd& x) const;
     std::vector<CoupledDDCarrierTermDiagnostic> carrierContinuityTermDiagnostics(

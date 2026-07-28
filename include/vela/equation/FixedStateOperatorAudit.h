@@ -34,6 +34,10 @@ struct FixedStateTriangleRecord {
     std::vector<TriangleGssAvalancheSourceRecord> localEdges;
 };
 
+struct FixedStateOperatorAuditOptions {
+    bool allowGeneralTri3 = false;
+};
+
 struct FixedStateOperatorAuditResult {
     std::vector<FixedStateNodeRecord> nodes;
     std::vector<FixedStateEdgeRecord> edges;
@@ -54,5 +58,12 @@ FixedStateOperatorAuditResult evaluateFixedStateOperators(
     const DDSolution& state,
     const GummelConfig& config,
     const MaterialDatabase& materials);
+FixedStateOperatorAuditResult evaluateFixedStateOperators(
+    const DeviceMesh& mesh,
+    const DopingModel& doping,
+    const DDSolution& state,
+    const GummelConfig& config,
+    const MaterialDatabase& materials,
+    FixedStateOperatorAuditOptions options = {});
 
 } // namespace vela

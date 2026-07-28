@@ -52,6 +52,7 @@ struct SurfaceMobilityParameters {
 struct MobilityModelConfig {
     std::string model = "constant";
     std::string highFieldDrivingForce = "electric_field";
+    std::string dopingConcentrationBasis = "net_doping";
     bool jacobianFieldDerivatives = true;
 
     // 300 K silicon defaults converted from common Caughey-Thomas parameter

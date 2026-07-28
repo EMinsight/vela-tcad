@@ -90,6 +90,16 @@ void validateHighFieldDrivingForce(const std::string& value)
             "mobility.high_field_driving_force must be 'electric_field' or "
             "'quasi_fermi_gradient'.");
 }
+
+void validateDopingConcentrationBasis(const std::string& value)
+{
+    if (value != "net_doping" && value != "total_impurity" &&
+        value != "cell_reconstructed_total_impurity") {
+        throw std::invalid_argument(
+            "mobility.doping_concentration_basis must be 'net_doping', "
+            "'total_impurity', or 'cell_reconstructed_total_impurity'.");
+    }
+}
 void convertMobilityDefaultsToInternal(MobilityModelConfig& config,
                                        UnitScalingConfig scaling)
 {
@@ -279,6 +289,7 @@ MobilityModelConfig mobilityModelConfig(std::string modelName)
     MobilityModelConfig config;
     config.model = std::move(modelName);
     validateHighFieldDrivingForce(config.highFieldDrivingForce);
+    validateDopingConcentrationBasis(config.dopingConcentrationBasis);
     return config;
 }
 
@@ -293,6 +304,7 @@ MobilityModelConfig mobilityModelConfigFromJson(
         convertMobilityDefaultsToInternal(config, scaling);
         config.model = value.get<std::string>();
         validateHighFieldDrivingForce(config.highFieldDrivingForce);
+        validateDopingConcentrationBasis(config.dopingConcentrationBasis);
         return config;
     }
     if (!value.is_object())
@@ -303,9 +315,12 @@ MobilityModelConfig mobilityModelConfigFromJson(
     config.model = value.value("model", config.model);
     config.highFieldDrivingForce = value.value(
         "high_field_driving_force", config.highFieldDrivingForce);
+    config.dopingConcentrationBasis = value.value(
+        "doping_concentration_basis", config.dopingConcentrationBasis);
     config.jacobianFieldDerivatives = value.value(
         "jacobian_field_derivatives", config.jacobianFieldDerivatives);
     validateHighFieldDrivingForce(config.highFieldDrivingForce);
+    validateDopingConcentrationBasis(config.dopingConcentrationBasis);
 
     parseCaugheyThomas(value, config.electronCT, "electron", scaling);
     parseCaugheyThomas(value, config.holeCT, "hole", scaling);

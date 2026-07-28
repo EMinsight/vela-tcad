@@ -84,16 +84,17 @@ void PoissonAssembler::assemble()
     A_.setFromTriplets(triplets.begin(), triplets.end());
 
     // ---- Mobile-free source term: rhs_i = +q * netDoping_i * vol_i ----
-    const Real chargeVolumeFactor = scaling_.enabled ? scaling_.chargeVolumeFactor : 1.0;
-    const Real chargeSheetFactor = scaling_.enabled ? scaling_.chargeSheetFactor : 1.0;
+    const Real chargeAreaFactor = scaling_.enabled ? scaling_.chargeAreaFactor : 1.0;
+    const Real chargeLineFactor = scaling_.enabled ? scaling_.chargeLineFactor : 1.0;
+    const Real boundaryLengthFactor = scaling_.enabled ? scaling_.boundaryLengthFactor : 1.0;
     for (Index i = 0; i < N; ++i)
         b_(static_cast<int>(i)) =
-            constants::q * doping_.netDoping(i) * vol[i] * chargeVolumeFactor;
+            constants::q * doping_.netDoping(i) * vol[i] * chargeAreaFactor;
 
     // ---- Region fixed charge: q * fixed_charge_m3 * cell_area / 3 ----
     detail::addFixedAndInterfaceChargeToRhs(
         mesh_, edgeCells, fixedCharges_, sheetCharges_, b_, "PoissonAssembler",
-        chargeVolumeFactor, chargeSheetFactor);
+        chargeAreaFactor, chargeLineFactor);
 
     // ---- Neumann boundary conditions ----
     // For each boundary segment defined by a polyline of node IDs, compute the
@@ -120,7 +121,7 @@ void PoissonAssembler::assemble()
             if (edgeLength < 1e-30) continue; // Skip degenerate edges
 
             const Real endpointContribution =
-                neumannSpec.normalDisplacement * edgeLength * chargeSheetFactor * 0.5;
+                neumannSpec.normalDisplacement * edgeLength * boundaryLengthFactor * 0.5;
             b_(static_cast<int>(n0)) += endpointContribution;
             b_(static_cast<int>(n1)) += endpointContribution;
         }

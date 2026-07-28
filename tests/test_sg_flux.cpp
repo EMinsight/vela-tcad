@@ -491,6 +491,41 @@ static DeviceMesh makeSingleSiliconTriangleMesh()
     return mesh;
 }
 
+TEST_CASE("mobility doping bases distinguish net, total, and cell reconstruction",
+          "[sg][mobility][doping-basis]")
+{
+    DeviceMesh mesh = makeSingleSiliconTriangleMesh();
+    DopingModel doping(mesh.numNodes());
+    doping.setNodeDoping(0, 1.0e23, 1.0e23);
+    doping.setNodeDoping(1, 1.0e23, 0.0);
+    doping.setNodeDoping(2, 1.0e23, 0.0);
+
+    MobilityModelConfig netConfig;
+    MobilityModelConfig totalConfig;
+    totalConfig.dopingConcentrationBasis = "total_impurity";
+    MobilityModelConfig cellConfig;
+    cellConfig.dopingConcentrationBasis =
+        "cell_reconstructed_total_impurity";
+
+    REQUIRE(detail::nodeMobilityDopingConcentration(
+                mesh, doping, 0, 0, &netConfig) == Approx(0.0));
+    REQUIRE(detail::nodeMobilityDopingConcentration(
+                mesh, doping, 0, 0, &totalConfig) == Approx(2.0e23));
+    REQUIRE(detail::nodeMobilityDopingConcentration(
+                mesh, doping, 0, 0, &cellConfig) == Approx(4.0e23 / 3.0));
+
+    const auto edgeIt = std::find_if(
+        mesh.edges().begin(), mesh.edges().end(), [](const Edge& edge) {
+            return edge.n0 == 0 && edge.n1 == 1;
+        });
+    REQUIRE(edgeIt != mesh.edges().end());
+    REQUIRE(detail::edgeMobilityDopingConcentration(
+                mesh, doping, *edgeIt, 0, &netConfig) == Approx(0.5e23));
+    REQUIRE(detail::edgeMobilityDopingConcentration(
+                mesh, doping, *edgeIt, 0, &totalConfig) == Approx(1.5e23));
+    REQUIRE(detail::edgeMobilityDopingConcentration(
+                mesh, doping, *edgeIt, 0, &cellConfig) == Approx(4.0e23 / 3.0));
+}
 TEST_CASE("CoupledDDAssembler BGN continuity residuals vanish for flat quasi-Fermi levels",
           "[sg][coupled][bgn]")
 {
@@ -687,8 +722,8 @@ TEST_CASE("CoupledDDAssembler unit scaling Poisson residual matches DDAssembler"
     scaling.L0 = 1.0;
     scaling.permittivityReference_F_per_m = constants::eps0 * 11.7;
     scaling.unitSystem = unitScaling.unitSystem();
-    scaling.chargeVolumeFactor = unitScaling.unitSystem().chargeVolumeFactor();
-    scaling.chargeSheetFactor = unitScaling.unitSystem().chargeSheetFactor();
+    scaling.chargeAreaFactor = unitScaling.unitSystem().chargeAreaFactor();
+    scaling.chargeLineFactor = unitScaling.unitSystem().chargeLineFactor();
     scaling.fieldFromCoordinateDeltaFactor =
         unitScaling.unitSystem().fieldFromCoordinateDeltaFactor();
 
@@ -761,8 +796,8 @@ TEST_CASE("CoupledDDAssembler unit scaling continuity residual matches DDAssembl
     scaling.L0 = 1.0;
     scaling.permittivityReference_F_per_m = constants::eps0 * 11.7;
     scaling.unitSystem = unitScaling.unitSystem();
-    scaling.chargeVolumeFactor = unitScaling.unitSystem().chargeVolumeFactor();
-    scaling.chargeSheetFactor = unitScaling.unitSystem().chargeSheetFactor();
+    scaling.chargeAreaFactor = unitScaling.unitSystem().chargeAreaFactor();
+    scaling.chargeLineFactor = unitScaling.unitSystem().chargeLineFactor();
     scaling.fieldFromCoordinateDeltaFactor =
         unitScaling.unitSystem().fieldFromCoordinateDeltaFactor();
     scaling.currentDensityLineIntegralFactor =
@@ -862,8 +897,8 @@ static DDScalingSpec makeTcadCurrentScalingSpec(const UnitScalingConfig& unitSca
     scaling.L0 = 1.0;
     scaling.permittivityReference_F_per_m = constants::eps0 * 11.7;
     scaling.unitSystem = unitScaling.unitSystem();
-    scaling.chargeVolumeFactor = unitScaling.unitSystem().chargeVolumeFactor();
-    scaling.chargeSheetFactor = unitScaling.unitSystem().chargeSheetFactor();
+    scaling.chargeAreaFactor = unitScaling.unitSystem().chargeAreaFactor();
+    scaling.chargeLineFactor = unitScaling.unitSystem().chargeLineFactor();
     scaling.fieldFromCoordinateDeltaFactor =
         unitScaling.unitSystem().fieldFromCoordinateDeltaFactor();
     scaling.currentDensityLineIntegralFactor =

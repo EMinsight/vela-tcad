@@ -30,7 +30,19 @@ public:
     }
     Real currentDensityAM2PerInternal() const { return currentDensityAM2PerInternal_; }
 
+    /**
+     * Converts a volumetric concentration integrated over a 2-D control area
+     * into the SI per-device-depth measure used by the Poisson rows.
+     */
+    Real chargeAreaFactor() const;
+    /**
+     * Converts a sheet density integrated along a 2-D interface line into the
+     * SI per-device-depth measure used by the Poisson rows.
+     */
+    Real chargeLineFactor() const;
+    /// Three-dimensional volume conversion retained for genuinely 3-D uses.
     Real chargeVolumeFactor() const;
+    /// Three-dimensional surface conversion retained for genuinely 3-D uses.
     Real chargeSheetFactor() const;
     Real fieldFromCoordinateDeltaFactor() const;
     /**

@@ -151,6 +151,7 @@ struct DCSweepConfig {
     Real start = 0.0;
     Real stop = 0.0;
     Real step = 0.0;
+    Real initialStep = 0.0;
     std::vector<Real> biasPoints;
     Real minStep = 0.0;
     Real maxStep = 0.0;

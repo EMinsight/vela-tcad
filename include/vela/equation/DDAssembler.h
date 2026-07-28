@@ -25,8 +25,8 @@ struct DDScalingSpec {
     Real L0 = 1.0;
     Real permittivityReference_F_per_m = 1.0;
     PhysicalUnitSystem unitSystem = PhysicalUnitSystem::legacySI();
-    Real chargeVolumeFactor = 1.0;
-    Real chargeSheetFactor = 1.0;
+    Real chargeAreaFactor = 1.0;
+    Real chargeLineFactor = 1.0;
     Real fieldFromCoordinateDeltaFactor = 1.0;
     Real currentDensityLineIntegralFactor = 1.0;
 };

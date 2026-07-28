@@ -1,0 +1,157 @@
+{
+  "config": {
+    "contacts": [
+      {
+        "bias": 0.0,
+        "name": "${reference_contact}"
+      },
+      {
+        "bias": 0.0,
+        "name": "${swept_contact}"
+      }
+    ],
+    "materials_file": "${materials_file}",
+    "mesh_file": "${mesh_file}",
+    "node_doping_file": "${node_doping_file}",
+    "output_csv": "${output_csv}",
+    "scaling": {
+      "mode": "unit_scaling"
+    },
+    "simulation_type": "dc_sweep",
+    "solver": {
+      "abstol": 1e-09,
+      "bandgap_narrowing": "old_slotboom",
+      "contact_boundary_minority_electron_relaxation": false,
+      "contact_boundary_reconstruction": "dominant_signed_contact_mean",
+      "damping_factor": 1.0,
+      "damping_psi": 0.2,
+      "diagnostics": "${solver_diagnostics}",
+      "handoff": {
+        "fallback": "none",
+        "gummel_max_iter": 0,
+        "newton_max_iter": 50,
+        "require_gummel_convergence": false
+      },
+      "impact_ionization": {
+        "model": "none"
+      },
+      "line_search": true,
+      "max_iter": 50,
+      "max_update": 0,
+      "method": "gummel_newton",
+      "mobility": {
+        "doping_concentration_basis": "${mobility_doping_basis}",
+        "model": "masetti"
+      },
+      "quasi_fermi_update_limit_V": 0.1,
+      "recombination": [
+        "srh"
+      ],
+      "reltol": 1e-08,
+      "warm_start": true
+    },
+    "sweep": {
+      "contact": "${swept_contact}",
+      "current_contact": "${swept_contact}",
+      "diagnostics": {
+        "newton_history": {
+          "csv_file": "${newton_history_csv}",
+          "enabled": "${sweep_diagnostics}"
+        }
+      },
+      "growth_factor": 1.3,
+      "initial_step": 0.001,
+      "initialization": {
+        "mode": "poisson_block"
+      },
+      "max_retries": 20,
+      "max_step": 0.025,
+      "min_step": 1e-08,
+      "mode": "iv",
+      "shrink_factor": 0.5,
+      "start": "${start_voltage}",
+      "step": 0.1,
+      "stop": "${stop_voltage}",
+      "vtk_prefix": "${vtk_prefix}",
+      "write_state_file": "${state_output}",
+      "write_vtk": "${write_vtk}"
+    }
+  },
+  "parameters": {
+    "materials_file": {
+      "default": "inputs/materials.json",
+      "path": true,
+      "type": "string"
+    },
+    "mesh_file": {
+      "default": "inputs/mesh.json",
+      "path": true,
+      "type": "string"
+    },
+    "mobility_doping_basis": {
+      "choices": [
+        "net_doping",
+        "total_impurity",
+        "cell_reconstructed_total_impurity"
+      ],
+      "default": "cell_reconstructed_total_impurity",
+      "type": "string"
+    },
+    "newton_history_csv": {
+      "default": "pn2d_iv_newton.csv",
+      "path": true,
+      "type": "string"
+    },
+    "node_doping_file": {
+      "default": "inputs/doping.csv",
+      "path": true,
+      "type": "string"
+    },
+    "output_csv": {
+      "default": "pn2d_iv.csv",
+      "path": true,
+      "type": "string"
+    },
+    "reference_contact": {
+      "default": "Cathode",
+      "type": "string"
+    },
+    "solver_diagnostics": {
+      "default": false,
+      "type": "boolean"
+    },
+    "start_voltage": {
+      "default": 0.0,
+      "type": "number"
+    },
+    "state_output": {
+      "default": "pn2d_iv_last_state.csv",
+      "path": true,
+      "type": "string"
+    },
+    "stop_voltage": {
+      "default": 20.0,
+      "type": "number"
+    },
+    "sweep_diagnostics": {
+      "default": true,
+      "type": "boolean"
+    },
+    "swept_contact": {
+      "default": "Anode",
+      "type": "string"
+    },
+    "vtk_prefix": {
+      "default": "pn2d_iv",
+      "path": true,
+      "type": "string"
+    },
+    "write_vtk": {
+      "default": false,
+      "type": "boolean"
+    }
+  },
+  "template": "pn2d_iv",
+  "template_schema": "vela.simulation-template.v1",
+  "version": 1
+}

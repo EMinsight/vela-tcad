@@ -18,6 +18,9 @@ struct ImpactIonizationModelConfig {
     std::string cellReconstructedMidpointDensity = "bernoulli"; ///< cell_reconstructed carrier midpoint: bernoulli or arithmetic.
     std::string drivingForceInterpolation = "none";
     std::string quasiFermiGradientDiscretization = "edge_difference"; ///< edge_difference or Genius-style cell_gradient.
+    bool contactElectricFieldFallback = false; ///< Experimental: use |grad psi| for alpha in contact-adjacent cells while retaining GradQF in interior cells.
+    std::string contactElectricFieldFallbackScope = "contact_node_cell"; ///< contact_node_cell or contact_boundary_face.
+    std::string contactElectricFieldFallbackMode = "cell_gradient_magnitude"; ///< cell_gradient_magnitude, face_normal, one_sided, or distance_weighted_blend.
     Real electronDrivingForceRefDensity = 0.0; ///< RefDens_eGradQuasiFermi_ElectricField_Aval equivalent [1/m^3]
     Real holeDrivingForceRefDensity = 0.0; ///< RefDens_hGradQuasiFermi_ElectricField_Aval equivalent [1/m^3]
     Real sourceGeometryScale = 1.0; ///< Diagnostic scale for SG edge-current source geometry.

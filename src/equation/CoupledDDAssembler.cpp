@@ -123,8 +123,8 @@ CoupledDDAssembler::CoupledDDAssembler(
           fixedCharges,
           sheetCharges,
           "CoupledDDAssembler",
-          scaling.enabled ? scaling.chargeVolumeFactor : 1.0,
-          scaling.enabled ? scaling.chargeSheetFactor : 1.0))
+          scaling.enabled ? scaling.chargeAreaFactor : 1.0,
+          scaling.enabled ? scaling.chargeLineFactor : 1.0))
     , scaling_(scaling)
     , carrierDiagonalFloor_(carrierDiagonalFloor)
 {
@@ -252,7 +252,7 @@ VectorXd CoupledDDAssembler::residual(const VectorXd& x,
             impactIonizationConfig_, mesh_, nodeCells_, psi, phipPhysical, p, ni_, Vt_, fieldFactor)
         : nodeElectricFields;
     const bool qfMobility = mobilityConfig_.highFieldDrivingForce == "quasi_fermi_gradient";
-    const Real chargeVolumeFactor = scaling_.enabled ? scaling_.chargeVolumeFactor : 1.0;
+    const Real chargeAreaFactor = scaling_.enabled ? scaling_.chargeAreaFactor : 1.0;
     const Real sourceIntegralFactor = scaling_.enabled
         ? scaling_.unitSystem.continuitySourceIntegralFactor()
         : 1.0;
@@ -375,7 +375,7 @@ VectorXd CoupledDDAssembler::residual(const VectorXd& x,
     for (Index i = 0; i < Nidx; ++i) {
         const int ii = static_cast<int>(i);
         r(psiOffset() + ii) -= constants::q *
-            (p(ii) - n(ii) + doping_.netDoping(i)) * vol[i] * chargeVolumeFactor;
+            (p(ii) - n(ii) + doping_.netDoping(i)) * vol[i] * chargeAreaFactor;
 
         const Real ni = ni_[i];
         if (ni <= 0.0)
@@ -860,6 +860,295 @@ CoupledDDAssembler::sgEdgeFluxDiagnostics(
     return edges;
 }
 
+VectorXd CoupledDDAssembler::impactIonizationSourceResidual(
+    const VectorXd& x,
+    const CoupledDDBoundaryConditions& bcs) const
+{
+    const int N = static_cast<int>(mesh_.numNodes());
+    if (x.size() != 3 * N) {
+        throw std::invalid_argument(
+            "CoupledDDAssembler::impactIonizationSourceResidual: vector size mismatch.");
+    }
+
+    VectorXd source = VectorXd::Zero(3 * N);
+    const auto terms = carrierContinuityTermDiagnostics(x, bcs);
+    for (int node = 0; node < N; ++node) {
+        source(phinOffset() + node) =
+            terms[static_cast<std::size_t>(node)].electronImpact;
+        source(phipOffset() + node) =
+            terms[static_cast<std::size_t>(node)].holeImpact;
+    }
+    return source;
+}
+
+SparseMatrixd CoupledDDAssembler::impactIonizationSourceJacobian(
+    const VectorXd& x,
+    const CoupledDDBoundaryConditions& bcs) const
+{
+    const int N = static_cast<int>(mesh_.numNodes());
+    if (x.size() != 3 * N) {
+        throw std::invalid_argument(
+            "CoupledDDAssembler::impactIonizationSourceJacobian: vector size mismatch.");
+    }
+    if (!impactIonizationEnabled_ ||
+        !detail::usesElementEdgeGssLauxAvalancheSource(impactIonizationConfig_)) {
+        throw std::invalid_argument(
+            "CoupledDDAssembler::impactIonizationSourceJacobian requires the "
+            "element_edge_sg_gss_laux avalanche source.");
+    }
+    if (isSurfaceMobilityModel(mobilityConfig_)) {
+        throw std::invalid_argument(
+            "element-edge source-only Jacobian does not support surface mobility");
+    }
+
+    const Real potentialScale = scaling_.enabled ? scaling_.V0 : 1.0;
+    const Real fieldFactor = scaling_.enabled
+        ? scaling_.fieldFromCoordinateDeltaFactor : 1.0;
+    const Real sourceIntegralFactor = scaling_.enabled
+        ? scaling_.unitSystem.continuitySourceIntegralFactor() : 1.0;
+    const VectorXd psi = x.segment(psiOffset(), N) * potentialScale;
+    const VectorXd phin = x.segment(phinOffset(), N) * potentialScale;
+    const VectorXd phip = x.segment(phipOffset(), N) * potentialScale;
+    const auto cellEdges = detail::buildCellEdgeMap(edgeCells_, mesh_);
+
+    std::vector<bool> constrainedRows(static_cast<std::size_t>(3 * N), false);
+    for (const auto& [node, value] : bcs.phin) {
+        (void)value;
+        constrainedRows[static_cast<std::size_t>(
+            phinOffset() + static_cast<int>(node))] = true;
+    }
+    for (const auto& [node, value] : bcs.phip) {
+        (void)value;
+        constrainedRows[static_cast<std::size_t>(
+            phipOffset() + static_cast<int>(node))] = true;
+    }
+
+    std::vector<Eigen::Triplet<double>> triplets;
+    triplets.reserve(static_cast<std::size_t>(mesh_.numCells()) * 54);
+    const Real derivativeScale = scaling_.enabled
+        ? scaling_.V0 / (scaling_.C0 * scaling_.D0) : 1.0;
+
+    for (Index cellId = 0; cellId < mesh_.numCells(); ++cellId) {
+        const Cell& cell = mesh_.getCell(cellId);
+        std::array<detail::Tri3LocalForwardDual, 3> localPsi{};
+        std::array<detail::Tri3LocalForwardDual, 3> localPhin{};
+        std::array<detail::Tri3LocalForwardDual, 3> localPhip{};
+        std::array<detail::Tri3LocalForwardDual, 3> localElectronDensity{};
+        std::array<detail::Tri3LocalForwardDual, 3> localHoleDensity{};
+        std::array<Real, 3> localIntrinsicDensity{};
+        for (std::size_t localNode = 0; localNode < 3; ++localNode) {
+            const Index node = cell.node_ids[localNode];
+            const int nodeIndex = static_cast<int>(node);
+            localPsi[localNode] = detail::Tri3LocalForwardDual::variable(
+                psi(nodeIndex), localNode);
+            localPhin[localNode] = detail::Tri3LocalForwardDual::variable(
+                phin(nodeIndex), 3 + localNode);
+            localPhip[localNode] = detail::Tri3LocalForwardDual::variable(
+                phip(nodeIndex), 6 + localNode);
+            localIntrinsicDensity[localNode] = ni_[node];
+            localElectronDensity[localNode] =
+                detail::Tri3LocalForwardDual(ni_[node]) * detail::localAdLimitedExp(
+                    (localPsi[localNode] - localPhin[localNode]) /
+                    detail::Tri3LocalForwardDual(Vt_));
+            localHoleDensity[localNode] =
+                detail::Tri3LocalForwardDual(ni_[node]) * detail::localAdLimitedExp(
+                    (localPhip[localNode] - localPsi[localNode]) /
+                    detail::Tri3LocalForwardDual(Vt_));
+        }
+        const auto sources =
+            detail::elementEdgeGssLauxAvalancheSourceIntegralsLocal<
+                detail::Tri3LocalForwardDual>(
+                impactIonizationConfig_, mobilityConfig_, *mobility_,
+                cellEdges.at(static_cast<std::size_t>(cellId)), mesh_, doping_,
+                cellMaterials_, cellId, localPsi, localPhin, localPhip,
+                localElectronDensity, localHoleDensity, localIntrinsicDensity,
+                Vt_, fieldFactor);
+
+        for (int localRow = 0; localRow < 3; ++localRow) {
+            const int rowNode = static_cast<int>(
+                cell.node_ids[static_cast<std::size_t>(localRow)]);
+            for (std::size_t localDof = 0;
+                 localDof < detail::Tri3LocalPotentialDofCount; ++localDof) {
+                const int variableBlock = static_cast<int>(localDof / 3);
+                const int localColumn = static_cast<int>(localDof % 3);
+                const int columnNode = static_cast<int>(
+                    cell.node_ids[static_cast<std::size_t>(localColumn)]);
+                const int columnOffset = variableBlock == 0
+                    ? psiOffset()
+                    : (variableBlock == 1 ? phinOffset() : phipOffset());
+                const Real derivative =
+                    -sources.combined[static_cast<std::size_t>(localRow)]
+                         .derivative[localDof] * sourceIntegralFactor * derivativeScale;
+                const int electronRow = phinOffset() + rowNode;
+                const int holeRow = phipOffset() + rowNode;
+                if (derivative != 0.0 &&
+                    !constrainedRows[static_cast<std::size_t>(electronRow)]) {
+                    triplets.emplace_back(
+                        electronRow, columnOffset + columnNode, derivative);
+                }
+                if (derivative != 0.0 &&
+                    !constrainedRows[static_cast<std::size_t>(holeRow)]) {
+                    triplets.emplace_back(
+                        holeRow, columnOffset + columnNode, derivative);
+                }
+            }
+        }
+    }
+
+    SparseMatrixd jacobian(3 * N, 3 * N);
+    jacobian.setFromTriplets(triplets.begin(), triplets.end());
+    return jacobian;
+}
+
+SparseMatrixd CoupledDDAssembler::impactIonizationSourceFiniteDifferenceJacobian(
+    const VectorXd& x,
+    const CoupledDDBoundaryConditions& bcs,
+    Real relativeStep) const
+{
+    const int N = static_cast<int>(mesh_.numNodes());
+    if (x.size() != 3 * N) {
+        throw std::invalid_argument(
+            "CoupledDDAssembler::impactIonizationSourceFiniteDifferenceJacobian: "
+            "vector size mismatch.");
+    }
+    if (relativeStep <= 0.0 || !std::isfinite(relativeStep)) {
+        throw std::invalid_argument(
+            "CoupledDDAssembler::impactIonizationSourceFiniteDifferenceJacobian: "
+            "step must be positive and finite.");
+    }
+    if (!impactIonizationEnabled_ ||
+        !detail::usesElementEdgeGssLauxAvalancheSource(impactIonizationConfig_)) {
+        throw std::invalid_argument(
+            "CoupledDDAssembler::impactIonizationSourceFiniteDifferenceJacobian "
+            "requires the element_edge_sg_gss_laux avalanche source.");
+    }
+    if (isSurfaceMobilityModel(mobilityConfig_)) {
+        throw std::invalid_argument(
+            "element-edge source-only FD Jacobian does not support surface mobility");
+    }
+
+    const Real potentialScale = scaling_.enabled ? scaling_.V0 : 1.0;
+    const Real fieldFactor = scaling_.enabled
+        ? scaling_.fieldFromCoordinateDeltaFactor : 1.0;
+    const Real sourceIntegralFactor = scaling_.enabled
+        ? scaling_.unitSystem.continuitySourceIntegralFactor() : 1.0;
+    const Real derivativeScale = scaling_.enabled
+        ? scaling_.V0 / (scaling_.C0 * scaling_.D0) : 1.0;
+    const VectorXd psi = x.segment(psiOffset(), N) * potentialScale;
+    const VectorXd phin = x.segment(phinOffset(), N) * potentialScale;
+    const VectorXd phip = x.segment(phipOffset(), N) * potentialScale;
+    const auto cellEdges = detail::buildCellEdgeMap(edgeCells_, mesh_);
+
+    std::vector<bool> constrainedRows(static_cast<std::size_t>(3 * N), false);
+    for (const auto& [node, value] : bcs.phin) {
+        (void)value;
+        constrainedRows[static_cast<std::size_t>(
+            phinOffset() + static_cast<int>(node))] = true;
+    }
+    for (const auto& [node, value] : bcs.phip) {
+        (void)value;
+        constrainedRows[static_cast<std::size_t>(
+            phipOffset() + static_cast<int>(node))] = true;
+    }
+
+    std::vector<Eigen::Triplet<double>> triplets;
+    triplets.reserve(static_cast<std::size_t>(mesh_.numCells()) * 54);
+    for (Index cellId = 0; cellId < mesh_.numCells(); ++cellId) {
+        const Cell& cell = mesh_.getCell(cellId);
+        std::array<Real, 3> localPsi{};
+        std::array<Real, 3> localPhin{};
+        std::array<Real, 3> localPhip{};
+        std::array<Real, 3> localIntrinsicDensity{};
+        for (std::size_t localNode = 0; localNode < 3; ++localNode) {
+            const Index node = cell.node_ids[localNode];
+            const int nodeIndex = static_cast<int>(node);
+            localPsi[localNode] = psi(nodeIndex);
+            localPhin[localNode] = phin(nodeIndex);
+            localPhip[localNode] = phip(nodeIndex);
+            localIntrinsicDensity[localNode] = ni_[node];
+        }
+        auto evaluate = [&](const std::array<Real, 3>& psiValues,
+                            const std::array<Real, 3>& phinValues,
+                            const std::array<Real, 3>& phipValues) {
+            std::array<Real, 3> electronDensity{};
+            std::array<Real, 3> holeDensity{};
+            for (std::size_t localNode = 0; localNode < 3; ++localNode) {
+                electronDensity[localNode] = localIntrinsicDensity[localNode] *
+                    detail::localAdLimitedExp(
+                        (psiValues[localNode] - phinValues[localNode]) / Vt_);
+                holeDensity[localNode] = localIntrinsicDensity[localNode] *
+                    detail::localAdLimitedExp(
+                        (phipValues[localNode] - psiValues[localNode]) / Vt_);
+            }
+            return detail::elementEdgeGssLauxAvalancheSourceIntegralsLocal<Real>(
+                impactIonizationConfig_, mobilityConfig_, *mobility_,
+                cellEdges.at(static_cast<std::size_t>(cellId)), mesh_, doping_,
+                cellMaterials_, cellId, psiValues, phinValues, phipValues,
+                electronDensity, holeDensity, localIntrinsicDensity, Vt_,
+                fieldFactor).combined;
+        };
+
+        for (int variableBlock = 0; variableBlock < 3; ++variableBlock) {
+            for (int localColumn = 0; localColumn < 3; ++localColumn) {
+                auto psiPlus = localPsi;
+                auto psiMinus = localPsi;
+                auto phinPlus = localPhin;
+                auto phinMinus = localPhin;
+                auto phipPlus = localPhip;
+                auto phipMinus = localPhip;
+                const Real value = variableBlock == 0
+                    ? localPsi[static_cast<std::size_t>(localColumn)]
+                    : (variableBlock == 1
+                        ? localPhin[static_cast<std::size_t>(localColumn)]
+                        : localPhip[static_cast<std::size_t>(localColumn)]);
+                const Real step = detail::physicalPotentialCentralDifferenceStep(
+                    value, potentialScale, relativeStep);
+                if (variableBlock == 0) {
+                    psiPlus[static_cast<std::size_t>(localColumn)] += step;
+                    psiMinus[static_cast<std::size_t>(localColumn)] -= step;
+                } else if (variableBlock == 1) {
+                    phinPlus[static_cast<std::size_t>(localColumn)] += step;
+                    phinMinus[static_cast<std::size_t>(localColumn)] -= step;
+                } else {
+                    phipPlus[static_cast<std::size_t>(localColumn)] += step;
+                    phipMinus[static_cast<std::size_t>(localColumn)] -= step;
+                }
+                const auto plus = evaluate(psiPlus, phinPlus, phipPlus);
+                const auto minus = evaluate(psiMinus, phinMinus, phipMinus);
+                const int columnNode = static_cast<int>(
+                    cell.node_ids[static_cast<std::size_t>(localColumn)]);
+                const int columnOffset = variableBlock == 0
+                    ? psiOffset()
+                    : (variableBlock == 1 ? phinOffset() : phipOffset());
+                for (int localRow = 0; localRow < 3; ++localRow) {
+                    const Real derivative =
+                        -(plus[static_cast<std::size_t>(localRow)] -
+                          minus[static_cast<std::size_t>(localRow)]) /
+                        (2.0 * step) * sourceIntegralFactor * derivativeScale;
+                    const int rowNode = static_cast<int>(
+                        cell.node_ids[static_cast<std::size_t>(localRow)]);
+                    const int electronRow = phinOffset() + rowNode;
+                    const int holeRow = phipOffset() + rowNode;
+                    if (derivative != 0.0 &&
+                        !constrainedRows[static_cast<std::size_t>(electronRow)]) {
+                        triplets.emplace_back(
+                            electronRow, columnOffset + columnNode, derivative);
+                    }
+                    if (derivative != 0.0 &&
+                        !constrainedRows[static_cast<std::size_t>(holeRow)]) {
+                        triplets.emplace_back(
+                            holeRow, columnOffset + columnNode, derivative);
+                    }
+                }
+            }
+        }
+    }
+
+    SparseMatrixd jacobian(3 * N, 3 * N);
+    jacobian.setFromTriplets(triplets.begin(), triplets.end());
+    return jacobian;
+}
+
 SparseMatrixd CoupledDDAssembler::assembleJacobian(
     const VectorXd& x,
     const CoupledDDBoundaryConditions& bcs) const
@@ -899,7 +1188,7 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
             impactIonizationConfig_, mesh_, nodeCells_, psi, phipState, p, ni_, Vt_, fieldFactor)
         : nodeElectricFields;
     const bool qfMobility = mobilityConfig_.highFieldDrivingForce == "quasi_fermi_gradient";
-    const Real chargeVolumeFactor = scaling_.enabled ? scaling_.chargeVolumeFactor : 1.0;
+    const Real chargeAreaFactor = scaling_.enabled ? scaling_.chargeAreaFactor : 1.0;
     const Real sourceIntegralFactor = scaling_.enabled
         ? scaling_.unitSystem.continuitySourceIntegralFactor()
         : 1.0;
@@ -1721,7 +2010,7 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
                     return sources;
                 }
                 const auto records = detail::triangleGssAvalancheSourceRecordsForCell(
-                    impactIonizationConfig_, *impactIonization_, *mobility_,
+                    impactIonizationConfig_, *impactIonization_, mobilityConfig_, *mobility_,
                     cellEdges.at(static_cast<std::size_t>(cellId)),
                     mesh_, doping_, cellMaterials_, cellId, psiValues, phinValues,
                     phipValues, nValues, pValues, Vt_, fieldFactor);
@@ -1821,11 +2110,11 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
         const Real dpi_dphip = p(ii) / Vt_;
 
         add(psiOffset() + ii, psiOffset() + ii,
-            -constants::q * (dpi_dpsi - dni_dpsi) * vol_[i] * chargeVolumeFactor);
+            -constants::q * (dpi_dpsi - dni_dpsi) * vol_[i] * chargeAreaFactor);
         add(psiOffset() + ii, phinOffset() + ii,
-            -constants::q * (-dni_dphin) * vol_[i] * chargeVolumeFactor);
+            -constants::q * (-dni_dphin) * vol_[i] * chargeAreaFactor);
         add(psiOffset() + ii, phipOffset() + ii,
-            -constants::q * dpi_dphip * vol_[i] * chargeVolumeFactor);
+            -constants::q * dpi_dphip * vol_[i] * chargeAreaFactor);
 
         const Real ni = ni_[i];
         if (ni <= 0.0)
@@ -1906,7 +2195,8 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
                         cellMaterials_,
                         i,
                         CarrierType::Electron,
-                        electronImpactField);
+                        electronImpactField,
+                        &mobilityConfig_);
                     const Real mup = detail::nodeMobility(
                         nodeCells_,
                         mesh_,
@@ -1915,7 +2205,8 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
                         cellMaterials_,
                         i,
                         CarrierType::Hole,
-                        holeImpactField);
+                        holeImpactField,
+                        &mobilityConfig_);
                     electronFactor = alphaN * mun * std::abs(electronImpactField);
                     holeFactor = alphaP * mup * std::abs(holeImpactField);
                 } else {

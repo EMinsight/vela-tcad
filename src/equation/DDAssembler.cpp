@@ -116,8 +116,8 @@ DDAssembler::DDAssembler(const DeviceMesh&               mesh,
           fixedCharges,
           sheetCharges,
           "DDAssembler",
-          scaling.enabled ? scaling.chargeVolumeFactor : 1.0,
-          scaling.enabled ? scaling.chargeSheetFactor : 1.0))
+          scaling.enabled ? scaling.chargeAreaFactor : 1.0,
+          scaling.enabled ? scaling.chargeLineFactor : 1.0))
     , scaling_(scaling)
     , A_(static_cast<int>(mesh.numNodes()),
          static_cast<int>(mesh.numNodes()))
@@ -198,17 +198,17 @@ void DDAssembler::assemblePoissonWithCarriers(const VectorXd& n,
         const Real pi_v   = scaling_.enabled ? p(ii) * scaling_.C0 : p(ii);
         const Real psi_v  = scaling_.enabled ? psi(ii) * scaling_.V0 : psi(ii);
         const Real vol_i  = vol_[i];
-        const Real chargeVolumeFactor = scaling_.enabled ? scaling_.chargeVolumeFactor : 1.0;
+        const Real chargeAreaFactor = scaling_.enabled ? scaling_.chargeAreaFactor : 1.0;
 
         const Real diagCarrier =
-            constants::q * (ni_v + pi_v) / Vt_ * vol_i * chargeVolumeFactor;
+            constants::q * (ni_v + pi_v) / Vt_ * vol_i * chargeAreaFactor;
         const Real matrixScale = scaling_.enabled
             ? (1.0 / scaling_.permittivityReference_F_per_m)
             : 1.0;
         A_.coeffRef(ii, ii) += diagCarrier * matrixScale;
 
         const Real rhs_si = constants::q *
-                 (pi_v - ni_v + doping_.netDoping(i)) * vol_i * chargeVolumeFactor
+                 (pi_v - ni_v + doping_.netDoping(i)) * vol_i * chargeAreaFactor
                  + diagCarrier * psi_v;
         b_(ii) = scaling_.enabled
             ? rhs_si / (scaling_.permittivityReference_F_per_m * scaling_.V0)

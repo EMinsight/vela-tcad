@@ -270,8 +270,8 @@ nlohmann::json runNewtonSolveFromState(const std::string& configFile,
         ddScaling.L0 = sc.L0();
         ddScaling.permittivityReference_F_per_m = (11.7 * vela::constants::eps0);
         ddScaling.unitSystem = problem.newton.inputScaling.unitSystem();
-        ddScaling.chargeVolumeFactor = problem.newton.inputScaling.unitSystem().chargeVolumeFactor();
-        ddScaling.chargeSheetFactor = problem.newton.inputScaling.unitSystem().chargeSheetFactor();
+        ddScaling.chargeAreaFactor = problem.newton.inputScaling.unitSystem().chargeAreaFactor();
+        ddScaling.chargeLineFactor = problem.newton.inputScaling.unitSystem().chargeLineFactor();
         ddScaling.fieldFromCoordinateDeltaFactor = problem.newton.inputScaling.unitSystem().fieldFromCoordinateDeltaFactor();
         ddScaling.currentDensityLineIntegralFactor =
             problem.newton.inputScaling.unitSystem().currentDensityAM2PerInternal() *

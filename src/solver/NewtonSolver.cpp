@@ -735,8 +735,8 @@ DDScalingSpec buildRecoveryScalingSpec(const DeviceMesh& mesh,
     scaling.L0 = sc.L0();
     scaling.permittivityReference_F_per_m = epsRef;
     scaling.unitSystem = cfg.inputScaling.unitSystem();
-    scaling.chargeVolumeFactor = cfg.inputScaling.unitSystem().chargeVolumeFactor();
-    scaling.chargeSheetFactor = cfg.inputScaling.unitSystem().chargeSheetFactor();
+    scaling.chargeAreaFactor = cfg.inputScaling.unitSystem().chargeAreaFactor();
+    scaling.chargeLineFactor = cfg.inputScaling.unitSystem().chargeLineFactor();
     scaling.fieldFromCoordinateDeltaFactor = cfg.inputScaling.unitSystem().fieldFromCoordinateDeltaFactor();
     scaling.currentDensityLineIntegralFactor =
         cfg.inputScaling.unitSystem().currentDensityAM2PerInternal() *
@@ -1180,6 +1180,15 @@ NewtonConfig newtonConfigFromJson(const nlohmann::json& json, UnitScalingConfig 
             cfg.impactIonization.quasiFermiGradientDiscretization = value.value(
                 "quasi_fermi_gradient_discretization",
                 cfg.impactIonization.quasiFermiGradientDiscretization);
+            cfg.impactIonization.contactElectricFieldFallback = value.value(
+                "contact_electric_field_fallback",
+                cfg.impactIonization.contactElectricFieldFallback);
+            cfg.impactIonization.contactElectricFieldFallbackScope = value.value(
+                "contact_electric_field_fallback_scope",
+                cfg.impactIonization.contactElectricFieldFallbackScope);
+            cfg.impactIonization.contactElectricFieldFallbackMode = value.value(
+                "contact_electric_field_fallback_mode",
+                cfg.impactIonization.contactElectricFieldFallbackMode);
             parseImpactIonizationDrivingForceInterpolation(
                 value, scaling, cfg.impactIonization, "newtonConfigFromJson");
             cfg.impactIonization.sourceGeometryScale = value.value(
@@ -1440,8 +1449,8 @@ DDScalingSpec NewtonSolver::buildScalingSpec() const
     scaling.L0 = sc.L0();
     scaling.permittivityReference_F_per_m = epsRef;
     scaling.unitSystem = cfg_.inputScaling.unitSystem();
-    scaling.chargeVolumeFactor = cfg_.inputScaling.unitSystem().chargeVolumeFactor();
-    scaling.chargeSheetFactor = cfg_.inputScaling.unitSystem().chargeSheetFactor();
+    scaling.chargeAreaFactor = cfg_.inputScaling.unitSystem().chargeAreaFactor();
+    scaling.chargeLineFactor = cfg_.inputScaling.unitSystem().chargeLineFactor();
     scaling.fieldFromCoordinateDeltaFactor = cfg_.inputScaling.unitSystem().fieldFromCoordinateDeltaFactor();
     scaling.currentDensityLineIntegralFactor =
         cfg_.inputScaling.unitSystem().currentDensityAM2PerInternal() *
@@ -2313,6 +2322,16 @@ std::vector<NewtonJacobianBlockAuditRow> NewtonSolver::evaluateJacobianBlockAudi
         [&](CoupledDDAssembler& withTerm,
             CoupledDDAssembler& withoutTerm,
             const std::string& termName) {
+            const bool directElementEdgeImpact =
+                termName == "sg_avalanche" &&
+                detail::usesElementEdgeGssLauxAvalancheSource(
+                    cfg_.impactIonization);
+            if (directElementEdgeImpact) {
+                return std::pair<SparseMatrixd, SparseMatrixd>{
+                    withTerm.impactIonizationSourceJacobian(x, bcs),
+                    withTerm.impactIonizationSourceFiniteDifferenceJacobian(
+                        x, bcs, finiteDifferenceStep)};
+            }
             SparseMatrixd analytic =
                 withTerm.assembleJacobian(x, bcs) -
                 withoutTerm.assembleJacobian(x, bcs);
@@ -2321,6 +2340,8 @@ std::vector<NewtonJacobianBlockAuditRow> NewtonSolver::evaluateJacobianBlockAudi
                 [&](CoupledDDAssembler& assembler,
                     const VectorXd& values,
                     const std::string& selectedTerm) {
+                    if (selectedTerm == "sg_avalanche")
+                        return assembler.impactIonizationSourceResidual(values, bcs);
                     const auto terms =
                         assembler.carrierContinuityTermDiagnostics(values, bcs);
                     VectorXd residual = VectorXd::Zero(unknowns);
@@ -2339,45 +2360,39 @@ std::vector<NewtonJacobianBlockAuditRow> NewtonSolver::evaluateJacobianBlockAudi
                     }
                     return residual;
                 };
-            std::vector<Eigen::Triplet<double>> termTriplets;
-            std::vector<Eigen::Triplet<double>> gaugeTriplets;
-            termTriplets.reserve(static_cast<std::size_t>(unknowns) * 7);
-            gaugeTriplets.reserve(static_cast<std::size_t>(unknowns));
-            for (int col = 0; col < unknowns; ++col) {
-                const Real step = finiteDifferenceStep *
-                    std::max<Real>(1.0, std::abs(x(col)));
-                VectorXd plus = x;
-                VectorXd minus = x;
-                plus(col) += step;
-                minus(col) -= step;
-                const VectorXd plusTerm =
-                    diagnosticResidual(withTerm, plus, termName);
-                const VectorXd minusTerm =
-                    diagnosticResidual(withTerm, minus, termName);
-                const VectorXd termDerivative =
-                    (plusTerm - minusTerm) / (2.0 * step);
-                const VectorXd plusGauge =
-                    diagnosticResidual(withTerm, plus, "gauge") -
-                    diagnosticResidual(withoutTerm, plus, "gauge");
-                const VectorXd minusGauge =
-                    diagnosticResidual(withTerm, minus, "gauge") -
-                    diagnosticResidual(withoutTerm, minus, "gauge");
-                const VectorXd gaugeDerivative =
-                    (plusGauge - minusGauge) / (2.0 * step);
-                for (int row = 0; row < unknowns; ++row) {
-                    if (termDerivative(row) != 0.0)
-                        termTriplets.emplace_back(row, col, termDerivative(row));
-                    if (gaugeDerivative(row) != 0.0)
-                        gaugeTriplets.emplace_back(row, col, gaugeDerivative(row));
-                }
-            }
-            SparseMatrixd finiteDifference(unknowns, unknowns);
-            finiteDifference.setFromTriplets(
-                termTriplets.begin(), termTriplets.end());
-            SparseMatrixd gaugeDifference(unknowns, unknowns);
-            gaugeDifference.setFromTriplets(
-                gaugeTriplets.begin(), gaugeTriplets.end());
-            analytic -= gaugeDifference;
+            auto centralDifference =
+                [&](auto&& residualEvaluator, Real relativeStep) {
+                    std::vector<Eigen::Triplet<double>> triplets;
+                    triplets.reserve(static_cast<std::size_t>(unknowns) * 7);
+                    for (int col = 0; col < unknowns; ++col) {
+                        const Real step = relativeStep *
+                            std::max<Real>(1.0, std::abs(x(col)));
+                        VectorXd plus = x;
+                        VectorXd minus = x;
+                        plus(col) += step;
+                        minus(col) -= step;
+                        const VectorXd derivative =
+                            (residualEvaluator(plus) - residualEvaluator(minus)) /
+                            (2.0 * step);
+                        for (int row = 0; row < unknowns; ++row) {
+                            if (derivative(row) != 0.0)
+                                triplets.emplace_back(row, col, derivative(row));
+                        }
+                    }
+                    SparseMatrixd matrix(unknowns, unknowns);
+                    matrix.setFromTriplets(triplets.begin(), triplets.end());
+                    return matrix;
+                };
+            auto termResidual = [&](const VectorXd& values) {
+                return diagnosticResidual(withTerm, values, termName);
+            };
+            SparseMatrixd finiteDifference =
+                centralDifference(termResidual, finiteDifferenceStep);
+            auto gaugeResidual = [&](const VectorXd& values) {
+                return diagnosticResidual(withTerm, values, "gauge") -
+                    diagnosticResidual(withoutTerm, values, "gauge");
+            };
+            analytic -= centralDifference(gaugeResidual, finiteDifferenceStep);
             return std::pair<SparseMatrixd, SparseMatrixd>{
                 analytic, finiteDifference};
         };

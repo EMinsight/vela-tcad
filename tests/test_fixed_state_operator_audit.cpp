@@ -228,6 +228,24 @@ TEST_CASE("fixed-state audit exposes opt-in element-edge GSS Laux records",
     }
 }
 
+TEST_CASE("fixed-state audit explicitly accepts general Tri3 connectivity",
+          "[fixed-state][general-tri3]")
+{
+    const DeviceMesh mesh = makeMinimal6Mesh(false, true);
+    const VectorXd netDoping = makeDoping();
+    DopingModel doping(mesh.numNodes());
+    for (Index node = 0; node < mesh.numNodes(); ++node) {
+        const Real value = netDoping(static_cast<Eigen::Index>(node));
+        doping.setNodeDoping(node, std::max(value, 0.0), std::max(-value, 0.0));
+    }
+    MaterialDatabase materials;
+    const auto result = evaluateFixedStateOperators(
+        mesh, doping, makeState(), makeConfig(), materials,
+        FixedStateOperatorAuditOptions{true});
+    REQUIRE(result.nodes.size() == mesh.numNodes());
+    REQUIRE(result.edges.size() == mesh.numEdges());
+    REQUIRE(result.triangles.size() == mesh.numCells());
+}
 TEST_CASE("fixed-state audit rejects invalid contracts", "[minimal6][fixed-state]")
 {
     const DeviceMesh mesh = makeMinimal6Mesh();

@@ -727,7 +727,11 @@ Required core fields:
 - contact: swept contact name
 - start: number
 - stop: number
-- step: non-zero number, sign must move start toward stop
+- step: non-zero nominal target spacing; its sign must move `start` toward
+  `stop`
+- initial_step: optional positive magnitude of the first internal voltage
+  step. It must lie within `[min_step, max_step]`. When omitted it defaults to
+  `abs(step)`, preserving legacy sweep behavior.
 - bias_points: optional array of explicit biases. When present, the adaptive
   `start`/`stop`/`step` stepping loop is bypassed and Vela solves exactly these
   biases in order. Use a one-element array for a single-bias restart.
@@ -759,6 +763,38 @@ Initialization semantics:
   points continue from the last accepted sweep state as usual.
 - `initialization.mode="poisson_block"` cannot be combined with
   `initial_state_file`; use one first-point initialization source or the other.
+
+### Versioned PN2D templates
+
+Qualified PN2D production starting points are stored separately for forward
+and reverse operation:
+
+- `configs/templates/pn2d_iv.template.json`: forward 0--20 V IV, low-field
+  Masetti mobility, `cell_reconstructed_total_impurity`, SRH plus Old
+  Slotboom, and impact ionization disabled.
+- `configs/templates/pn2d_bv.template.json`: reverse 0---20 V BV,
+  `masetti_field`, `net_doping`, SRH plus Old Slotboom, and
+  Van Overstraeten impact ionization.
+
+Render a runnable configuration and its separate reproducibility manifest with:
+
+```text
+python scripts/generate_pn2d_config.py \
+  --template pn2d_bv \
+  --output runs/pn2d_bv/simulation.json \
+  --set mesh_file="inputs/mesh.json" \
+  --set node_doping_file="inputs/doping.csv" \
+  --set materials_file="inputs/materials.json"
+```
+
+`--set` accepts only declared template parameters and parses its value as JSON
+when possible. Vela resolves relative input and output paths against the
+directory containing the generated configuration. Paths are relative by
+default so a deck can be moved together with its run directory.
+`--allow-absolute-paths` is reserved for legacy or external workflows. The
+rendered deck is checked for parameter types, sweep direction, step bounds, and
+the template's qualified IV/BV physics combination. The machine-readable final-config schema is
+`configs/schema/vela-simulation.schema.json`.
 
 Restart-state CSV files use this exact header:
 
@@ -853,12 +889,33 @@ display columns (`*_A_per_um`, `charge_C_per_um`, `capacitance_F_per_um`) by
 dividing per-meter values by `1e6`.
 
 Step control fields:
+- initial_step
 - min_step
 - max_step
 - growth_factor
 - shrink_factor
 - max_retries
 - stop_on_failure
+
+`step` and `initial_step` have distinct roles. For example, the following
+configuration records nominal targets every `0.05 V`, starts continuation at
+`1e-4 V`, grows successful internal steps by `1.2`, and never exceeds
+`0.05 V`:
+
+```json
+{
+  "step": -0.05,
+  "initial_step": 1e-4,
+  "min_step": 1e-10,
+  "max_step": 0.05,
+  "growth_factor": 1.2,
+  "shrink_factor": 0.5
+}
+```
+
+For explicit `bias_points`, `initial_step` is used only for the first interval.
+Later intervals inherit the adaptive step magnitude from the preceding
+accepted interval, capped by the next target distance and `max_step`.
 
 Sweep continuation fields:
 - `sweep.continuation.predictor.mode`: `none`, `constant`, `linear`, or `secant`.

@@ -183,6 +183,72 @@ TEST_CASE("Triangle GSS GradQf alpha depends on the third cell vertex",
         REQUIRE(components.electron[node] + components.hole[node] ==
                 Catch::Approx(components.combined[node]).epsilon(1.0e-14));
     }
+
+    Contact contact;
+    contact.id = 0;
+    contact.name = "contact";
+    contact.region_id = 0;
+    contact.node_ids = {0};
+    mesh.addContact(contact);
+    impactConfig.contactElectricFieldFallback = true;
+    REQUIRE_NOTHROW(
+        detail::validateImpactIonizationDrivingForce(impactConfig, "test"));
+    const auto fallback = detail::triangleGssAvalancheSourceRecords(
+        impactConfig, *impact, mobilityConfig, *mobility, edgeCells, mesh,
+        doping, cellMaterials, psi, phin, phip, n, p, ni,
+        constants::kb * constants::T0 / constants::q);
+    const auto fallbackEdge =
+        std::find_if(fallback.begin(), fallback.end(), edge01);
+    REQUIRE(fallbackEdge != fallback.end());
+    REQUIRE(fallbackEdge->electronCellQfField ==
+            Catch::Approx(changedEdge->electronCellQfField));
+    REQUIRE(fallbackEdge->electronAlpha == Catch::Approx(0.0));
+
+    impactConfig.contactElectricFieldFallbackScope = "contact_boundary_face";
+    const auto boundaryFaceFallback = detail::triangleGssAvalancheSourceRecords(
+        impactConfig, *impact, mobilityConfig, *mobility, edgeCells, mesh,
+        doping, cellMaterials, psi, phin, phip, n, p, ni,
+        constants::kb * constants::T0 / constants::q);
+    const auto boundaryFaceEdge =
+        std::find_if(boundaryFaceFallback.begin(), boundaryFaceFallback.end(), edge01);
+    REQUIRE(boundaryFaceEdge != boundaryFaceFallback.end());
+    REQUIRE(boundaryFaceEdge->electronAlpha ==
+            Catch::Approx(changedEdge->electronAlpha).epsilon(1.0e-14));
+
+    Contact faceContact;
+    faceContact.id = 1;
+    faceContact.name = "face_contact";
+    faceContact.region_id = 0;
+    faceContact.node_ids = {0, 1};
+    mesh.addContact(faceContact);
+    impactConfig.contactElectricFieldFallbackMode = "face_normal";
+    const auto faceNormal = detail::triangleGssAvalancheSourceRecords(
+        impactConfig, *impact, mobilityConfig, *mobility, edgeCells, mesh,
+        doping, cellMaterials, psi, phin, phip, n, p, ni,
+        constants::kb * constants::T0 / constants::q);
+    const auto faceNormalEdge = std::find_if(faceNormal.begin(), faceNormal.end(), edge01);
+    REQUIRE(faceNormalEdge != faceNormal.end());
+    REQUIRE(faceNormalEdge->electronAlpha == Catch::Approx(0.0));
+
+    impactConfig.contactElectricFieldFallbackMode = "one_sided";
+    const auto oneSided = detail::triangleGssAvalancheSourceRecords(
+        impactConfig, *impact, mobilityConfig, *mobility, edgeCells, mesh,
+        doping, cellMaterials, psi, phin, phip, n, p, ni,
+        constants::kb * constants::T0 / constants::q);
+    const auto oneSidedEdge = std::find_if(oneSided.begin(), oneSided.end(), edge01);
+    REQUIRE(oneSidedEdge != oneSided.end());
+    REQUIRE(oneSidedEdge->electronAlpha == Catch::Approx(0.0));
+
+    impactConfig.contactElectricFieldFallbackMode = "distance_weighted_blend";
+    const auto blended = detail::triangleGssAvalancheSourceRecords(
+        impactConfig, *impact, mobilityConfig, *mobility, edgeCells, mesh,
+        doping, cellMaterials, psi, phin, phip, n, p, ni,
+        constants::kb * constants::T0 / constants::q);
+    const auto blendedEdge = std::find_if(blended.begin(), blended.end(), edge01);
+    REQUIRE(blendedEdge != blended.end());
+    REQUIRE(blendedEdge->electronAlpha == Catch::Approx(
+        impact->electronCoefficient(changedEdge->electronCellQfField / 3.0))
+        .epsilon(1.0e-13));
 }
 
 TEST_CASE("Avalanche current proxy selection covers every configured mode",

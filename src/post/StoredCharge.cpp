@@ -73,7 +73,7 @@ StoredChargeResult StoredCharge::compute(const DDSolution& solution,
     Real chargePerInternalDepth = 0.0;
     for (const auto& [nodeId, volume] : selectedVolumes) {
         const Real mobileSum = solution.n(static_cast<int>(nodeId)) + solution.p(static_cast<int>(nodeId));
-        chargePerInternalDepth += constants::q * mobileSum * volume * unitSystem_.chargeVolumeFactor();
+        chargePerInternalDepth += constants::q * mobileSum * volume * unitSystem_.chargeAreaFactor();
     }
 
     StoredChargeResult result;

@@ -7,14 +7,14 @@ Plan task: Task 14 of
 
 ## Outcome
 
-Typed outcome: `partial_high_bias_oracle`
+Typed outcome: `exact_high_bias_oracle_available`
 
-The exact paired branch/state matrix and its native observations are accepted,
-but Task 14's first-material-process-departure exit gate is not closed. The
-current analysis compares global maxima on different supports and cannot identify
-the first local dependency stage. Task 15 and every Vela nonlinear candidate also
-remain independently blocked because Task 12 stopped with
-`incomplete_analytic_derivative`.
+The exact paired branch/state matrix and its native observations are accepted.
+A 2026-07-27 same-support follow-up closes the original
+first-material-process-departure gap using the accepted raw records without
+rerunning Sentaurus. Task 15 and every Vela nonlinear candidate remain
+independently blocked because Task 12 stopped with
+`nonsmooth_branch_derivative`.
 
 ## Exact paired matrix
 
@@ -98,11 +98,15 @@ is not a stage-order result: the maxima can occur at different locations, the
 maximum density is contact-dominated, and vertex velocity is not spatially
 aligned with element current.
 
-The required contact/interior split, active-region restriction, and
-hotspot-coincident same-support comparison were not produced. The first
-material process departure is therefore unresolved, which is why the typed
-outcome is `partial_high_bias_oracle`. Task 15 remains blocked rather than
-being used to fill that gap.
+The original global-maximum analysis did not provide contact/interior,
+active-region, or hotspot-coincident support. The 2026-07-27 follow-up now maps
+native vertex and element records onto the same coarse7x3 Tri3 cells. The fixed
+`-20 V` generation hotspot is interior cell 13 (`11;10;8`). From `-19 V` to
+`-20 V`, mean electron density grows `3.77935x`, electron current `5.69013x`,
+electron alpha `1.14342x`, and generation `4.70196x`, while electric field and
+electron QFP gradient grow only `1.02776x` and `1.02908x` and mobility falls to
+`0.97261x`. Density is the first material stage under the frozen `1.10` ratio
+threshold. This closes Task 14, but Task 15 remains blocked by Task 12.
 
 Native electron, hole, and mean ionization-integral fields are present but
 are exactly zero on this accepted run. They remain native-zero observations

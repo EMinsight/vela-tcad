@@ -224,6 +224,15 @@ GummelConfig gummelConfigFromJson(const nlohmann::json& json, UnitScalingConfig 
             cfg.impactIonization.quasiFermiGradientDiscretization = value.value(
                 "quasi_fermi_gradient_discretization",
                 cfg.impactIonization.quasiFermiGradientDiscretization);
+            cfg.impactIonization.contactElectricFieldFallback = value.value(
+                "contact_electric_field_fallback",
+                cfg.impactIonization.contactElectricFieldFallback);
+            cfg.impactIonization.contactElectricFieldFallbackScope = value.value(
+                "contact_electric_field_fallback_scope",
+                cfg.impactIonization.contactElectricFieldFallbackScope);
+            cfg.impactIonization.contactElectricFieldFallbackMode = value.value(
+                "contact_electric_field_fallback_mode",
+                cfg.impactIonization.contactElectricFieldFallbackMode);
             parseImpactIonizationDrivingForceInterpolation(
                 value, scaling, cfg.impactIonization, "gummelConfigFromJson");
             cfg.impactIonization.sourceGeometryScale = value.value(
@@ -373,8 +382,8 @@ DDSolution runGummelImpl(const DeviceMesh&                          mesh,
         ddScaling.L0 = scalingSystem.L0();
         ddScaling.permittivityReference_F_per_m = epsRef;
         ddScaling.unitSystem = cfg.inputScaling.unitSystem();
-        ddScaling.chargeVolumeFactor = cfg.inputScaling.unitSystem().chargeVolumeFactor();
-        ddScaling.chargeSheetFactor = cfg.inputScaling.unitSystem().chargeSheetFactor();
+        ddScaling.chargeAreaFactor = cfg.inputScaling.unitSystem().chargeAreaFactor();
+        ddScaling.chargeLineFactor = cfg.inputScaling.unitSystem().chargeLineFactor();
         ddScaling.fieldFromCoordinateDeltaFactor = cfg.inputScaling.unitSystem().fieldFromCoordinateDeltaFactor();
         ddScaling.currentDensityLineIntegralFactor =
             cfg.inputScaling.unitSystem().currentDensityAM2PerInternal() *
@@ -1162,14 +1171,18 @@ void writeDDSolutionVTK(const std::string& filename,
         const Real holeMobilityField = holeMobilityDrive_V_m[i];
         electronHighFieldDrive_V_cm[i] = electronMobilityField * scaleToVcm;
         holeHighFieldDrive_V_cm[i] = holeMobilityField * scaleToVcm;
-        electronLowFieldMobility[i] = mobility->electronMobility(
-            nodeMaterials[i], doping.netDoping(i), n, p, 0.0);
-        holeLowFieldMobility[i] = mobility->holeMobility(
-            nodeMaterials[i], doping.netDoping(i), n, p, 0.0);
-        electronMobility[i] = mobility->electronMobility(
-            nodeMaterials[i], doping.netDoping(i), n, p, electronMobilityField);
-        holeMobility[i] = mobility->holeMobility(
-            nodeMaterials[i], doping.netDoping(i), n, p, holeMobilityField);
+        electronLowFieldMobility[i] = detail::nodeMobility(
+            nodeCells, mesh, doping, *mobility, cellMaterials, i,
+            CarrierType::Electron, 0.0, &mobilityConfig);
+        holeLowFieldMobility[i] = detail::nodeMobility(
+            nodeCells, mesh, doping, *mobility, cellMaterials, i,
+            CarrierType::Hole, 0.0, &mobilityConfig);
+        electronMobility[i] = detail::nodeMobility(
+            nodeCells, mesh, doping, *mobility, cellMaterials, i,
+            CarrierType::Electron, electronMobilityField, &mobilityConfig);
+        holeMobility[i] = detail::nodeMobility(
+            nodeCells, mesh, doping, *mobility, cellMaterials, i,
+            CarrierType::Hole, holeMobilityField, &mobilityConfig);
         if (electronLowFieldMobility[i] > 0.0)
             electronMobilityLimiter[i] = electronMobility[i] / electronLowFieldMobility[i];
         if (holeLowFieldMobility[i] > 0.0)

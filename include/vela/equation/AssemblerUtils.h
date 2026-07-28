@@ -115,8 +115,8 @@ inline VectorXd computeFixedAndInterfaceChargeRhs(
     const std::vector<RegionFixedChargeSpec>& fixedCharges,
     const std::vector<InterfaceSheetChargeSpec>& sheetCharges,
     const std::string& context,
-    Real chargeVolumeFactor = 1.0,
-    Real chargeSheetFactor = 1.0)
+    Real chargeAreaFactor = 1.0,
+    Real chargeLineFactor = 1.0)
 {
     VectorXd contribution = VectorXd::Zero(static_cast<int>(mesh.numNodes()));
 
@@ -129,7 +129,7 @@ inline VectorXd computeFixedAndInterfaceChargeRhs(
             if (it == fixedByRegion.end()) continue;
 
             const Real nodeCharge = constants::q * it->second * triangleArea(mesh, cell) *
-                chargeVolumeFactor / 3.0;
+                chargeAreaFactor / 3.0;
             for (Index nid : cell.node_ids)
                 contribution(static_cast<int>(nid)) += nodeCharge;
         }
@@ -148,7 +148,7 @@ inline VectorXd computeFixedAndInterfaceChargeRhs(
 
             const Edge& edge = mesh.getEdge(e);
             const Real endpointCharge = constants::q * it->second * edge.length *
-                chargeSheetFactor * 0.5;
+                chargeLineFactor * 0.5;
             contribution(static_cast<int>(edge.n0)) += endpointCharge;
             contribution(static_cast<int>(edge.n1)) += endpointCharge;
         }
@@ -164,12 +164,12 @@ inline void addFixedAndInterfaceChargeToRhs(
     const std::vector<InterfaceSheetChargeSpec>& sheetCharges,
     VectorXd& rhs,
     const std::string& context,
-    Real chargeVolumeFactor = 1.0,
-    Real chargeSheetFactor = 1.0)
+    Real chargeAreaFactor = 1.0,
+    Real chargeLineFactor = 1.0)
 {
     rhs += computeFixedAndInterfaceChargeRhs(
         mesh, edgeCells, fixedCharges, sheetCharges, context,
-        chargeVolumeFactor, chargeSheetFactor);
+        chargeAreaFactor, chargeLineFactor);
 }
 
 // ---------------------------------------------------------------------------
@@ -624,6 +624,54 @@ inline Real estimateSurfaceNormalField(const std::vector<Index>& cells,
     return std::abs((cellPhi - edgePhi) / normalDistance);
 }
 
+inline Real cellAverageTotalImpurity(const DeviceMesh& mesh,
+                                     const DopingModel& doping,
+                                     Index cellId)
+{
+    const Cell& cell = mesh.getCell(cellId);
+    if (cell.node_ids.empty())
+        return 0.0;
+    Real sum = 0.0;
+    for (Index nodeId : cell.node_ids)
+        sum += doping.totalImpurity(nodeId);
+    return sum / static_cast<Real>(cell.node_ids.size());
+}
+
+inline Real edgeMobilityDopingConcentration(
+    const DeviceMesh& mesh,
+    const DopingModel& doping,
+    const Edge& edge,
+    Index cellId,
+    const MobilityModelConfig* config)
+{
+    const std::string basis = config != nullptr
+        ? config->dopingConcentrationBasis
+        : "net_doping";
+    if (basis == "total_impurity") {
+        return 0.5 * (doping.totalImpurity(edge.n0) +
+                      doping.totalImpurity(edge.n1));
+    }
+    if (basis == "cell_reconstructed_total_impurity")
+        return cellAverageTotalImpurity(mesh, doping, cellId);
+    return 0.5 * (doping.netDoping(edge.n0) + doping.netDoping(edge.n1));
+}
+
+inline Real nodeMobilityDopingConcentration(
+    const DeviceMesh& mesh,
+    const DopingModel& doping,
+    Index nodeId,
+    Index cellId,
+    const MobilityModelConfig* config)
+{
+    const std::string basis = config != nullptr
+        ? config->dopingConcentrationBasis
+        : "net_doping";
+    if (basis == "total_impurity")
+        return doping.totalImpurity(nodeId);
+    if (basis == "cell_reconstructed_total_impurity")
+        return cellAverageTotalImpurity(mesh, doping, cellId);
+    return doping.netDoping(nodeId);
+}
 /// Return average model mobility [m^2/V/s] for edge @p edgeId.
 inline Real edgeMobility(const std::vector<std::vector<Index>>& edgeCells,
                          const DeviceMesh&                       mesh,
@@ -640,8 +688,6 @@ inline Real edgeMobility(const std::vector<std::vector<Index>>& edgeCells,
     if (cells.empty()) return 0.0;
 
     const Edge& edge = mesh.getEdge(edgeId);
-    const Real netDoping = 0.5 * (doping.netDoping(edge.n0) +
-                                  doping.netDoping(edge.n1));
 
     const bool surfaceEnabled =
         mobilityConfig != nullptr && isSurfaceMobilityModel(*mobilityConfig);
@@ -672,11 +718,13 @@ inline Real edgeMobility(const std::vector<std::vector<Index>>& edgeCells,
         const Real surfaceNormalField = (surfaceApplies && psi != nullptr)
             ? estimateSurfaceNormalField(cells, mesh, *psi, edgeId, c)
             : std::numeric_limits<Real>::quiet_NaN();
+        const Real mobilityDoping = edgeMobilityDopingConcentration(
+            mesh, doping, edge, c, mobilityConfig);
         const Real modelMobility = (carrier == CarrierType::Electron)
             ? mobility.electronMobility(
-                material, netDoping, 0.0, 0.0, electricField, surfaceNormalField)
+                material, mobilityDoping, 0.0, 0.0, electricField, surfaceNormalField)
             : mobility.holeMobility(
-                material, netDoping, 0.0, 0.0, electricField, surfaceNormalField);
+                material, mobilityDoping, 0.0, 0.0, electricField, surfaceNormalField);
         if (modelMobility <= 0.0)
             continue;
 
@@ -696,7 +744,8 @@ inline Real nodeMobility(const std::vector<std::vector<Index>>& nodeCells,
                          const std::vector<Material>&          cellMaterials,
                          Index                                 nodeId,
                          CarrierType                           carrier,
-                         Real                                  drivingField)
+                         Real                                  drivingField,
+                         const MobilityModelConfig*            mobilityConfig = nullptr)
 {
     const auto& cells = nodeCells[nodeId];
     if (cells.empty())
@@ -709,11 +758,13 @@ inline Real nodeMobility(const std::vector<std::vector<Index>>& nodeCells,
         const Real baseMobility = (carrier == CarrierType::Electron) ? material.mun : material.mup;
         if (baseMobility <= 0.0)
             continue;
+        const Real mobilityDoping = nodeMobilityDopingConcentration(
+            mesh, doping, nodeId, c, mobilityConfig);
         const Real modelMobility = (carrier == CarrierType::Electron)
             ? mobility.electronMobility(
-                material, doping.netDoping(nodeId), 0.0, 0.0, drivingField)
+                material, mobilityDoping, 0.0, 0.0, drivingField)
             : mobility.holeMobility(
-                material, doping.netDoping(nodeId), 0.0, 0.0, drivingField);
+                material, mobilityDoping, 0.0, 0.0, drivingField);
         if (modelMobility <= 0.0)
             continue;
         sum += modelMobility;
@@ -1129,6 +1180,46 @@ inline void validateImpactIonizationDrivingForce(const ImpactIonizationModelConf
         usesCurrentAlignedAvalancheDrivingForce(config);
     const bool currentAlignedDrivingForce =
         !config.debugRawVanOverstraeten && configuredCurrentAlignedDrivingForce;
+    if (config.contactElectricFieldFallbackScope != "contact_node_cell" &&
+        config.contactElectricFieldFallbackScope != "contact_boundary_face") {
+        throw std::invalid_argument(
+            std::string(context) +
+            ": impact_ionization.contact_electric_field_fallback_scope must be "
+            "'contact_node_cell' or 'contact_boundary_face'.");
+    }
+
+    const bool validContactFallbackMode =
+        config.contactElectricFieldFallbackMode == "cell_gradient_magnitude" ||
+        config.contactElectricFieldFallbackMode == "face_normal" ||
+        config.contactElectricFieldFallbackMode == "one_sided" ||
+        config.contactElectricFieldFallbackMode == "distance_weighted_blend";
+    if (!validContactFallbackMode) {
+        throw std::invalid_argument(
+            std::string(context) +
+            ": impact_ionization.contact_electric_field_fallback_mode must be "
+            "'cell_gradient_magnitude', 'face_normal', 'one_sided', or "
+            "'distance_weighted_blend'.");
+    }
+    if (config.contactElectricFieldFallbackMode != "cell_gradient_magnitude" &&
+        config.contactElectricFieldFallbackScope != "contact_boundary_face") {
+        throw std::invalid_argument(
+            std::string(context) +
+            ": contact-face fallback modes require scope 'contact_boundary_face'.");
+    }
+
+    if (config.contactElectricFieldFallback &&
+        (config.drivingForce != "quasi_fermi_gradient" ||
+         config.quasiFermiGradientDiscretization != "cell_gradient" ||
+         config.generation != "current_density" ||
+         (config.sourceMappingMode != "triangle_gss_gradqf_truncated" &&
+          config.sourceMappingMode != "element_vertex_box_measure"))) {
+        throw std::invalid_argument(
+            std::string(context) +
+            ": impact_ionization.contact_electric_field_fallback requires "
+            "current-density GradQF with cell_gradient and a triangle or "
+            "element-vertex-box source mapping.");
+    }
+
     if (config.drivingForce != "electric_field" &&
         config.drivingForce != "quasi_fermi_gradient" &&
         !configuredCurrentAlignedDrivingForce) {
@@ -1565,6 +1656,148 @@ inline std::vector<bool> contactNodeMask(const DeviceMesh& mesh)
     }
     return mask;
 }
+inline bool cellTouchesContact(const DeviceMesh& mesh, const Cell& cell)
+{
+    for (const Contact& contact : mesh.contacts()) {
+        for (Index contactNode : contact.node_ids) {
+            for (Index cellNode : cell.node_ids) {
+                if (contactNode == cellNode)
+                    return true;
+            }
+        }
+    }
+    return false;
+}
+
+inline bool cellTouchesContactBoundaryFace(
+    const DeviceMesh& mesh,
+    const Cell& cell)
+{
+    for (const Contact& contact : mesh.contacts()) {
+        std::size_t contactVertexCount = 0;
+        for (Index cellNode : cell.node_ids) {
+            for (Index contactNode : contact.node_ids) {
+                if (cellNode == contactNode) {
+                    ++contactVertexCount;
+                    break;
+                }
+            }
+        }
+        if (contactVertexCount >= 2)
+            return true;
+    }
+    return false;
+}
+
+struct ContactBoundaryFaceGeometry {
+    std::array<std::size_t, 2> faceLocalNodes{};
+    std::size_t oppositeLocalNode = 0;
+    Point2 unitNormal = Point2::Zero();
+    Point2 faceMidpoint = Point2::Zero();
+    Real oppositeToFaceMidpointDistance = 0.0;
+    Real normalHeight = 0.0;
+    Real centroidElectricWeight = 0.0;
+};
+
+inline bool contactBoundaryFaceGeometry(
+    const DeviceMesh& mesh,
+    const Cell& cell,
+    ContactBoundaryFaceGeometry& geometry)
+{
+    if (cell.type != CellType::Tri3 || cell.node_ids.size() != 3)
+        return false;
+    for (const Contact& contact : mesh.contacts()) {
+        std::array<bool, 3> onContact{};
+        for (std::size_t local = 0; local < 3; ++local) {
+            onContact[local] = std::find(
+                contact.node_ids.begin(), contact.node_ids.end(),
+                cell.node_ids[local]) != contact.node_ids.end();
+        }
+        for (std::size_t local = 0; local < 3; ++local) {
+            const std::size_t next = (local + 1) % 3;
+            if (!onContact[local] || !onContact[next])
+                continue;
+            const std::size_t opposite = (local + 2) % 3;
+            const Point2 face0 = meshPoint(mesh, cell.node_ids[local]);
+            const Point2 face1 = meshPoint(mesh, cell.node_ids[next]);
+            const Point2 oppositePoint =
+                meshPoint(mesh, cell.node_ids[opposite]);
+            const Point2 tangent = face1 - face0;
+            const Real faceLength = tangent.norm();
+            if (faceLength <= 1.0e-30)
+                return false;
+            geometry.faceLocalNodes = {local, next};
+            geometry.oppositeLocalNode = opposite;
+            geometry.unitNormal =
+                Point2{-tangent.y() / faceLength, tangent.x() / faceLength};
+            geometry.faceMidpoint = 0.5 * (face0 + face1);
+            const Point2 oppositeOffset =
+                oppositePoint - geometry.faceMidpoint;
+            geometry.oppositeToFaceMidpointDistance = oppositeOffset.norm();
+            geometry.normalHeight =
+                std::abs(oppositeOffset.dot(geometry.unitNormal));
+            if (geometry.oppositeToFaceMidpointDistance <= 1.0e-30 ||
+                geometry.normalHeight <= 1.0e-30) {
+                return false;
+            }
+            const Point2 centroid = (face0 + face1 + oppositePoint) / 3.0;
+            const Real centroidDistance =
+                std::abs((centroid - geometry.faceMidpoint)
+                             .dot(geometry.unitNormal));
+            geometry.centroidElectricWeight = std::clamp(
+                1.0 - centroidDistance / geometry.normalHeight, 0.0, 1.0);
+            return true;
+        }
+    }
+    return false;
+}
+
+inline bool cellUsesContactElectricFieldFallback(
+    const ImpactIonizationModelConfig& config,
+    const DeviceMesh& mesh,
+    const Cell& cell)
+{
+    return config.contactElectricFieldFallback &&
+           config.drivingForce == "quasi_fermi_gradient" &&
+           (config.contactElectricFieldFallbackScope == "contact_boundary_face"
+                ? cellTouchesContactBoundaryFace(mesh, cell)
+                : cellTouchesContact(mesh, cell));
+}
+
+inline Real contactElectricFallbackImpactField(
+    const ImpactIonizationModelConfig& config,
+    const DeviceMesh& mesh,
+    const Cell& cell,
+    const Point2& electricGradient,
+    Real quasiFermiField,
+    const std::function<Real(Index)>& potential,
+    Real fieldFactor)
+{
+    const Real electricMagnitude = electricGradient.norm() * fieldFactor;
+    if (config.contactElectricFieldFallbackMode == "cell_gradient_magnitude")
+        return electricMagnitude;
+
+    ContactBoundaryFaceGeometry geometry;
+    if (!contactBoundaryFaceGeometry(mesh, cell, geometry))
+        return quasiFermiField;
+    const Real faceNormalField =
+        std::abs(electricGradient.dot(geometry.unitNormal)) * fieldFactor;
+    if (config.contactElectricFieldFallbackMode == "face_normal")
+        return faceNormalField;
+
+    const Index face0 = cell.node_ids[geometry.faceLocalNodes[0]];
+    const Index face1 = cell.node_ids[geometry.faceLocalNodes[1]];
+    const Index opposite = cell.node_ids[geometry.oppositeLocalNode];
+    const Real oneSidedField = std::abs(
+        potential(opposite) - 0.5 * (potential(face0) + potential(face1))) /
+        geometry.oppositeToFaceMidpointDistance * fieldFactor;
+    if (config.contactElectricFieldFallbackMode == "one_sided")
+        return oneSidedField;
+
+    return geometry.centroidElectricWeight * faceNormalField +
+           (1.0 - geometry.centroidElectricWeight) * quasiFermiField;
+}
+
 
 inline bool edgeTouchesContactElement(const DeviceMesh& mesh,
                                       const std::vector<std::vector<Index>>& edgeCells,
@@ -2087,6 +2320,7 @@ struct TriangleGssAvalancheSourceRecord {
 };
 
 inline Real triangleGssEndpointAveragedMobility(
+    const MobilityModelConfig&    mobilityConfig,
     const MobilityModel&          mobility,
     const DeviceMesh&             mesh,
     const DopingModel&            doping,
@@ -2101,12 +2335,14 @@ inline Real triangleGssEndpointAveragedMobility(
 {
     const Material& material = cellMaterials.at(static_cast<std::size_t>(cellId));
     const auto atNode = [&](Index node) {
+        const Real mobilityDoping = nodeMobilityDopingConcentration(
+            mesh, doping, node, cellId, &mobilityConfig);
         return carrier == CarrierType::Electron
             ? mobility.electronMobility(
-                material, doping.netDoping(node), n(static_cast<int>(node)),
+                material, mobilityDoping, n(static_cast<int>(node)),
                 p(static_cast<int>(node)), drivingField, 0.0)
             : mobility.holeMobility(
-                material, doping.netDoping(node), n(static_cast<int>(node)),
+                material, mobilityDoping, n(static_cast<int>(node)),
                 p(static_cast<int>(node)), drivingField, 0.0);
     };
     return 0.5 * (atNode(node0) + atNode(node1));
@@ -2116,6 +2352,7 @@ inline std::vector<TriangleGssAvalancheSourceRecord>
 triangleGssAvalancheSourceRecordsForCell(
     const ImpactIonizationModelConfig& config,
     const ImpactIonizationModel&       impact,
+    const MobilityModelConfig&         mobilityConfig,
     const MobilityModel&               mobility,
     const std::vector<Index>&          cellEdgeIds,
     const DeviceMesh&                  mesh,
@@ -2154,8 +2391,29 @@ triangleGssAvalancheSourceRecordsForCell(
 
     const Real electronCellField = electronGradient.norm() * fieldFactor;
     const Real holeCellField = holeGradient.norm() * fieldFactor;
-    const Real electronAlpha = impact.electronCoefficient(electronCellField);
-    const Real holeAlpha = impact.holeCoefficient(holeCellField);
+    Real electronImpactField = electronCellField;
+    Real holeImpactField = holeCellField;
+    if (cellUsesContactElectricFieldFallback(config, mesh, cell)) {
+        bool electricGradientValid = false;
+        Real electricDoubleArea = 0.0;
+        const Point2 electricGradient =
+            cellScalarGradient(mesh, cell, [&](Index node) {
+                return psi(static_cast<int>(node));
+            }, electricGradientValid, electricDoubleArea);
+        if (!electricGradientValid)
+            return {};
+        const auto potential = [&](Index node) {
+            return psi(static_cast<int>(node));
+        };
+        electronImpactField = contactElectricFallbackImpactField(
+            config, mesh, cell, electricGradient, electronCellField,
+            potential, fieldFactor);
+        holeImpactField = contactElectricFallbackImpactField(
+            config, mesh, cell, electricGradient, holeCellField,
+            potential, fieldFactor);
+    }
+    const Real electronAlpha = impact.electronCoefficient(electronImpactField);
+    const Real holeAlpha = impact.holeCoefficient(holeImpactField);
     std::vector<TriangleGssAvalancheSourceRecord> records;
     records.reserve(3);
 
@@ -2203,10 +2461,10 @@ triangleGssAvalancheSourceRecordsForCell(
             p(static_cast<int>(node0)), p(static_cast<int>(node1)),
             psi(static_cast<int>(node0)), psi(static_cast<int>(node1)), Vt);
         record.electronMobility = triangleGssEndpointAveragedMobility(
-            mobility, mesh, doping, cellMaterials, n, p, cellId, node0, node1,
+            mobilityConfig, mobility, mesh, doping, cellMaterials, n, p, cellId, node0, node1,
             CarrierType::Electron, record.electronEdgeQfField);
         record.holeMobility = triangleGssEndpointAveragedMobility(
-            mobility, mesh, doping, cellMaterials, n, p, cellId, node0, node1,
+            mobilityConfig, mobility, mesh, doping, cellMaterials, n, p, cellId, node0, node1,
             CarrierType::Hole, record.holeEdgeQfField);
         record.electronAlpha = electronAlpha;
         record.holeAlpha = holeAlpha;
@@ -2256,7 +2514,7 @@ triangleGssAvalancheSourceRecords(
 
     for (Index cellId = 0; cellId < mesh.numCells(); ++cellId) {
         auto cellRecords = triangleGssAvalancheSourceRecordsForCell(
-            config, impact, mobility,
+            config, impact, mobilityConfig, mobility,
             cellEdges.at(static_cast<std::size_t>(cellId)),
             mesh, doping, cellMaterials, cellId, psi, phin, phip, n, p, Vt,
             fieldFactor);
@@ -2348,16 +2606,27 @@ elementEdgeGssLauxAvalancheSourceRecordForCell(
         tri3ElementEdgeBoxPartialVolumes(mesh, cell);
     record.vertexMeasures =
         tri3ElementVertexBoxMeasures(mesh, cell);
-    const Point2& electronDrivingGradient =
-        config.drivingForce == "electric_field"
-        ? electricGradient : electronGradient;
-    const Point2& holeDrivingGradient =
-        config.drivingForce == "electric_field"
-        ? electricGradient : holeGradient;
-    record.electronImpactField =
-        electronDrivingGradient.norm() * fieldFactor;
-    record.holeImpactField =
-        holeDrivingGradient.norm() * fieldFactor;
+    const bool useContactFallback =
+        cellUsesContactElectricFieldFallback(config, mesh, cell);
+    const Real electronQfField = electronGradient.norm() * fieldFactor;
+    const Real holeQfField = holeGradient.norm() * fieldFactor;
+    if (config.drivingForce == "electric_field") {
+        record.electronImpactField = electricGradient.norm() * fieldFactor;
+        record.holeImpactField = record.electronImpactField;
+    } else if (useContactFallback) {
+        const auto potential = [&](Index node) {
+            return psi(static_cast<int>(node));
+        };
+        record.electronImpactField = contactElectricFallbackImpactField(
+            config, mesh, cell, electricGradient, electronQfField,
+            potential, fieldFactor);
+        record.holeImpactField = contactElectricFallbackImpactField(
+            config, mesh, cell, electricGradient, holeQfField,
+            potential, fieldFactor);
+    } else {
+        record.electronImpactField = electronQfField;
+        record.holeImpactField = holeQfField;
+    }
     record.electronAlpha =
         impact.electronCoefficient(record.electronImpactField);
     record.holeAlpha =
@@ -2402,12 +2671,12 @@ elementEdgeGssLauxAvalancheSourceRecordForCell(
             edgeLength * fieldFactor;
         const Real electronMobility =
             triangleGssEndpointAveragedMobility(
-                mobility, mesh, doping, cellMaterials, n, p, cellId,
+                mobilityConfig, mobility, mesh, doping, cellMaterials, n, p, cellId,
                 node0, node1, CarrierType::Electron,
                 qfMobility ? electronEdgeField : electricEdgeField);
         const Real holeMobility =
             triangleGssEndpointAveragedMobility(
-                mobility, mesh, doping, cellMaterials, n, p, cellId,
+                mobilityConfig, mobility, mesh, doping, cellMaterials, n, p, cellId,
                 node0, node1, CarrierType::Hole,
                 qfMobility ? holeEdgeField : electricEdgeField);
         record.electronMobilities[local] = electronMobility;
@@ -3177,10 +3446,10 @@ inline Real impactIonizationGenerationRate(
     const Real alphaP = impact.holeCoefficient(holeImpactField);
     const Real mun = nodeMobility(
         nodeCells, mesh, doping, mobility, cellMaterials, nodeId, CarrierType::Electron,
-        electronImpactField);
+        electronImpactField, &mobilityConfig);
     const Real mup = nodeMobility(
         nodeCells, mesh, doping, mobility, cellMaterials, nodeId, CarrierType::Hole,
-        holeImpactField);
+        holeImpactField, &mobilityConfig);
     return alphaN * mun * std::max(n, 0.0) * std::abs(electronImpactField) +
            alphaP * mup * std::max(p, 0.0) * std::abs(holeImpactField);
 }

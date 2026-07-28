@@ -113,6 +113,45 @@ inline std::array<Scalar, 2> localAdTri3Gradient(
 }
 
 template <typename Scalar>
+inline Scalar localAdContactElectricFallbackImpactField(
+    const ImpactIonizationModelConfig& config,
+    const DeviceMesh& mesh,
+    const Cell& cell,
+    const std::array<Scalar, 2>& electricGradient,
+    const Scalar& quasiFermiField,
+    const std::array<Scalar, 3>& potential,
+    Real fieldFactor)
+{
+    const Scalar electricMagnitude = localAdNorm2(
+        electricGradient[0], electricGradient[1]) * Scalar(fieldFactor);
+    if (config.contactElectricFieldFallbackMode == "cell_gradient_magnitude")
+        return electricMagnitude;
+
+    ContactBoundaryFaceGeometry geometry;
+    if (!contactBoundaryFaceGeometry(mesh, cell, geometry))
+        return quasiFermiField;
+    const Scalar faceNormalField = localAdAbs(
+        electricGradient[0] * Scalar(geometry.unitNormal.x()) +
+        electricGradient[1] * Scalar(geometry.unitNormal.y())) *
+        Scalar(fieldFactor);
+    if (config.contactElectricFieldFallbackMode == "face_normal")
+        return faceNormalField;
+
+    const std::size_t face0 = geometry.faceLocalNodes[0];
+    const std::size_t face1 = geometry.faceLocalNodes[1];
+    const std::size_t opposite = geometry.oppositeLocalNode;
+    const Scalar oneSidedField = localAdAbs(
+        potential[opposite] -
+        Scalar(0.5) * (potential[face0] + potential[face1])) *
+        Scalar(fieldFactor / geometry.oppositeToFaceMidpointDistance);
+    if (config.contactElectricFieldFallbackMode == "one_sided")
+        return oneSidedField;
+
+    return Scalar(geometry.centroidElectricWeight) * faceNormalField +
+           Scalar(1.0 - geometry.centroidElectricWeight) * quasiFermiField;
+}
+
+template <typename Scalar>
 inline Scalar localAdFieldLimitedMobility(
     Real lowFieldMobility,
     const Scalar& drivingField,
@@ -176,17 +215,19 @@ inline Scalar localAdEndpointAveragedMobility(
     const Material& material =
         cellMaterials.at(static_cast<std::size_t>(cellId));
     const auto lowFieldAt = [&](Index node, int localNode) {
+        const Real mobilityDoping = nodeMobilityDopingConcentration(
+            mesh, doping, node, cellId, &mobilityConfig);
         return carrier == CarrierType::Electron
             ? mobility.electronMobility(
                 material,
-                doping.netDoping(node),
+                mobilityDoping,
                 localAdValue(n[static_cast<std::size_t>(localNode)]),
                 localAdValue(p[static_cast<std::size_t>(localNode)]),
                 0.0,
                 0.0)
             : mobility.holeMobility(
                 material,
-                doping.netDoping(node),
+                mobilityDoping,
                 localAdValue(n[static_cast<std::size_t>(localNode)]),
                 localAdValue(p[static_cast<std::size_t>(localNode)]),
                 0.0,
@@ -417,19 +458,27 @@ elementEdgeGssLauxAvalancheSourceIntegralsLocal(
     const auto electricGradient = localAdTri3Gradient(mesh, cell, psi);
     const auto electronGradient = localAdTri3Gradient(mesh, cell, phin);
     const auto holeGradient = localAdTri3Gradient(mesh, cell, phip);
-    const auto& electronDrivingGradient =
-        impactConfig.drivingForce == "electric_field"
-        ? electricGradient : electronGradient;
-    const auto& holeDrivingGradient =
-        impactConfig.drivingForce == "electric_field"
-        ? electricGradient : holeGradient;
-    const Scalar electronImpactField =
-        localAdNorm2(
-            electronDrivingGradient[0], electronDrivingGradient[1]) *
+    const Scalar electronQfField =
+        localAdNorm2(electronGradient[0], electronGradient[1]) *
         Scalar(fieldFactor);
-    const Scalar holeImpactField =
-        localAdNorm2(holeDrivingGradient[0], holeDrivingGradient[1]) *
+    const Scalar holeQfField =
+        localAdNorm2(holeGradient[0], holeGradient[1]) *
         Scalar(fieldFactor);
+    Scalar electronImpactField = electronQfField;
+    Scalar holeImpactField = holeQfField;
+    if (impactConfig.drivingForce == "electric_field") {
+        electronImpactField = localAdNorm2(
+            electricGradient[0], electricGradient[1]) * Scalar(fieldFactor);
+        holeImpactField = electronImpactField;
+    } else if (cellUsesContactElectricFieldFallback(
+                   impactConfig, mesh, cell)) {
+        electronImpactField = localAdContactElectricFallbackImpactField(
+            impactConfig, mesh, cell, electricGradient, electronQfField,
+            psi, fieldFactor);
+        holeImpactField = localAdContactElectricFallbackImpactField(
+            impactConfig, mesh, cell, electricGradient, holeQfField,
+            psi, fieldFactor);
+    }
     const Scalar electronAlpha = localAdImpactCoefficient(
         impactConfig, CarrierType::Electron, electronImpactField);
     const Scalar holeAlpha = localAdImpactCoefficient(
