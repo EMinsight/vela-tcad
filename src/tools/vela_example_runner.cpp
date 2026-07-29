@@ -47,6 +47,7 @@ nlohmann::json releaseBVConfigAuditJson(const vela::ReleaseBVConfigAuditMetadata
 {
     return {
         {"model", metadata.model},
+        {"coupling_mode", metadata.couplingMode},
         {"driving_force", metadata.drivingForce},
         {"parameter_set", metadata.parameterSet},
         {"A_scale", metadata.aScale},

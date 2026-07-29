@@ -572,6 +572,7 @@ Object form:
 ```json
 "impact_ionization": {
   "model": "selberherr",
+  "coupling_mode": "self_consistent",
   "parameter_set": "default",
   "driving_force": "electric_field",
   "quasi_fermi_gradient_discretization": "edge_difference",
@@ -590,6 +591,14 @@ Supported `model` values:
 - `none`
 - `selberherr`
 - `van_overstraeten`
+
+Supported `coupling_mode` values:
+- `self_consistent` (default): include avalanche generation in the continuity
+  residual and Jacobian.
+- `postprocess_only`: evaluate avalanche coefficients, driving fields,
+  current/source diagnostics, and VTK output on the solved state, but exclude
+  avalanche generation from the continuity residual and Jacobian. This is an
+  observation mode; it does not change the default.
 
 Field meanings (Selberherr prototype):
 - `electron_A_m_inv` (1/m): electron ionization prefactor.

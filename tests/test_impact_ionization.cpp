@@ -681,6 +681,76 @@ TEST_CASE("Coupled DD analytic avalanche Jacobian matches carrier finite differe
     REQUIRE(maxAbsDiff / std::max<Real>(1.0, maxAbsRef) < 5.0e-5);
 }
 
+TEST_CASE("Postprocess-only avalanche observes source without solver feedback",
+          "[impact][postprocess_only]")
+{
+    DeviceMesh mesh = makePNMesh();
+    MaterialDatabase matdb;
+    const std::vector<RegionDopingSpec> specs = {
+        {"n_region", 5.0e22, 0.0},
+        {"p_region", 0.0, 5.0e22},
+    };
+    DopingModel doping = DopingModel::fromMeshAndRegions(mesh, specs);
+
+    const Real Vt = 0.025852;
+    CoupledDDState state;
+    state.psi = VectorXd::Zero(static_cast<int>(mesh.numNodes()));
+    state.phin = VectorXd::LinSpaced(
+        static_cast<int>(mesh.numNodes()), 0.01, -0.005);
+    state.phip = VectorXd::LinSpaced(
+        static_cast<int>(mesh.numNodes()), -0.008, 0.006);
+    state.psi(1) = 0.1;
+    state.psi(2) = 0.1;
+
+    ImpactIonizationModelConfig selfConsistent;
+    selfConsistent.model = "selberherr";
+    selfConsistent.electronA = 1.0;
+    selfConsistent.electronB = 1.0;
+    selfConsistent.holeA = 1.0;
+    selfConsistent.holeB = 1.0;
+    selfConsistent.carrierVelocity = 1.0;
+
+    ImpactIonizationModelConfig postprocess = selfConsistent;
+    postprocess.couplingMode = "postprocess_only";
+
+    const auto makeAssembler = [&](const ImpactIonizationModelConfig& impact) {
+        return std::make_unique<CoupledDDAssembler>(
+            mesh,
+            matdb,
+            doping,
+            Vt,
+            mobilityModelConfig("constant"),
+            recombinationModelConfig({"none"}),
+            BandgapNarrowingConfig{},
+            impact);
+    };
+    const auto disabled = makeAssembler(ImpactIonizationModelConfig{});
+    const auto observed = makeAssembler(postprocess);
+    const auto coupled = makeAssembler(selfConsistent);
+
+    const VectorXd x = disabled->pack(state);
+    const CoupledDDBoundaryConditions bcs;
+    REQUIRE(observed->residual(x, bcs).isApprox(disabled->residual(x, bcs), 0.0));
+    REQUIRE(
+        Eigen::MatrixXd(observed->assembleJacobian(x, bcs))
+            .isApprox(Eigen::MatrixXd(disabled->assembleJacobian(x, bcs)), 0.0));
+
+    const auto observedTerms = observed->carrierContinuityTermDiagnostics(x, bcs);
+    const auto coupledTerms = coupled->carrierContinuityTermDiagnostics(x, bcs);
+    bool sawSource = false;
+    for (std::size_t node = 0; node < observedTerms.size(); ++node) {
+        REQUIRE(
+            observedTerms[node].electronImpact ==
+            Catch::Approx(coupledTerms[node].electronImpact));
+        REQUIRE(
+            observedTerms[node].holeImpact ==
+            Catch::Approx(coupledTerms[node].holeImpact));
+        sawSource = sawSource || observedTerms[node].electronImpact != 0.0 ||
+            observedTerms[node].holeImpact != 0.0;
+    }
+    REQUIRE(sawSource);
+}
+
 TEST_CASE("Coupled DD SG edge-current avalanche Jacobian matches carrier finite differences",
           "[impact][newton]")
 {
@@ -1770,6 +1840,7 @@ TEST_CASE("JSON solver config selects impact ionization model", "[impact][json]"
 {
     REQUIRE(ImpactIonizationModelConfig{}.sourceVolumePolicy == "genius_truncated");
     REQUIRE(ImpactIonizationModelConfig{}.edgeSourcePartition == "symmetric");
+    REQUIRE(ImpactIonizationModelConfig{}.couplingMode == "self_consistent");
 
     const GummelConfig cfg = gummelConfigFromJson(nlohmann::json{
         {"impact_ionization", {
@@ -1779,6 +1850,7 @@ TEST_CASE("JSON solver config selects impact ionization model", "[impact][json]"
         }}
     });
     REQUIRE(cfg.impactIonization.model == "selberherr");
+    REQUIRE(cfg.impactIonization.couplingMode == "self_consistent");
     REQUIRE(cfg.impactIonization.electronA == Catch::Approx(1.0e6));
     REQUIRE(cfg.impactIonization.sourceGeometryScale == Catch::Approx(2.0));
 
@@ -1803,6 +1875,29 @@ TEST_CASE("JSON solver config selects impact ionization model", "[impact][json]"
     REQUIRE(objectCfg.impactIonization.holeA == Catch::Approx(4.0e6));
     REQUIRE(objectCfg.impactIonization.holeB == Catch::Approx(5.0e7));
     REQUIRE(objectCfg.impactIonization.carrierVelocity == Catch::Approx(6.0e4));
+
+    const NewtonConfig postprocessCfg = newtonConfigFromJson(nlohmann::json{
+        {"impact_ionization", {
+            {"model", "van_overstraeten"},
+            {"coupling_mode", "postprocess_only"},
+        }}
+    });
+    REQUIRE(postprocessCfg.impactIonization.couplingMode == "postprocess_only");
+    const GummelConfig gummelPostprocessCfg = gummelConfigFromJson(nlohmann::json{
+        {"impact_ionization", {
+            {"model", "van_overstraeten"},
+            {"coupling_mode", "postprocess_only"},
+        }}
+    });
+    REQUIRE(gummelPostprocessCfg.impactIonization.couplingMode == "postprocess_only");
+    REQUIRE_THROWS_AS(
+        newtonConfigFromJson(nlohmann::json{
+            {"impact_ionization", {
+                {"model", "van_overstraeten"},
+                {"coupling_mode", "unknown"},
+            }}
+        }),
+        std::invalid_argument);
 
     const NewtonConfig vanOverstraetenCfg = newtonConfigFromJson(nlohmann::json{
         {"impact_ionization", {

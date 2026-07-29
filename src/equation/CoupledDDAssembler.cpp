@@ -101,6 +101,9 @@ CoupledDDAssembler::CoupledDDAssembler(
     , impactIonizationConfig_(impactIonizationConfig)
     , impactIonization_(makeImpactIonizationModel(impactIonizationConfig))
     , impactIonizationEnabled_(impactIonizationConfig.model != "none")
+    , impactIonizationCoupled_(
+          impactIonizationConfig.model != "none" &&
+          impactIonizationConfig.couplingMode == "self_consistent")
     , bgnEnabled_(bandgapNarrowingConfig.model != "none")
     , ni_(detail::buildValidatedEffectiveNodeNi(
           "CoupledDDAssembler",
@@ -257,7 +260,7 @@ VectorXd CoupledDDAssembler::residual(const VectorXd& x,
     const Real fieldFactor = scaling_.enabled ? scaling_.fieldFromCoordinateDeltaFactor : 1.0;
     const VectorXd psi = x.segment(psiOffset(), N) * potentialScale;
 
-    const std::vector<Real> nodeElectricFields = impactIonizationEnabled_
+    const std::vector<Real> nodeElectricFields = impactIonizationCoupled_
         ? detail::computeNodeElectricFields(psi, mesh_, fieldFactor)
         : std::vector<Real>{};
     const bool qfImpact =
@@ -268,11 +271,11 @@ VectorXd CoupledDDAssembler::residual(const VectorXd& x,
         phinIncrement.array() + electronQfReference_V_;
     const VectorXd phipPhysical =
         phipIncrement.array() + holeQfReference_V_;
-    const std::vector<Real> nodeElectronDrivingFields = (impactIonizationEnabled_ && qfImpact)
+    const std::vector<Real> nodeElectronDrivingFields = (impactIonizationCoupled_ && qfImpact)
         ? detail::computeElectronAvalancheNodeQuasiFermiDrivingFields(
             impactIonizationConfig_, mesh_, nodeCells_, psi, phinPhysical, n, ni_, Vt_, fieldFactor)
         : nodeElectricFields;
-    const std::vector<Real> nodeHoleDrivingFields = (impactIonizationEnabled_ && qfImpact)
+    const std::vector<Real> nodeHoleDrivingFields = (impactIonizationCoupled_ && qfImpact)
         ? detail::computeHoleAvalancheNodeQuasiFermiDrivingFields(
             impactIonizationConfig_, mesh_, nodeCells_, psi, phipPhysical, p, ni_, Vt_, fieldFactor)
         : nodeElectricFields;
@@ -281,7 +284,7 @@ VectorXd CoupledDDAssembler::residual(const VectorXd& x,
     const Real sourceIntegralFactor = scaling_.enabled
         ? scaling_.unitSystem.continuitySourceIntegralFactor()
         : 1.0;
-    const bool sgCurrentAvalanche = impactIonizationEnabled_ &&
+    const bool sgCurrentAvalanche = impactIonizationCoupled_ &&
         detail::usesEdgeCurrentAvalancheSource(impactIonizationConfig_);
     const std::vector<Real> sgAvalancheSourceIntegrals = sgCurrentAvalanche
         ? detail::currentDensityAvalancheSourceIntegrals(
@@ -440,7 +443,7 @@ VectorXd CoupledDDAssembler::residual(const VectorXd& x,
             }
         }
 
-        if (impactIonizationEnabled_ && sgCurrentAvalanche) {
+        if (impactIonizationCoupled_ && sgCurrentAvalanche) {
             const Real source = sgAvalancheSourceIntegrals[i] * sourceIntegralFactor;
             if (source != 0.0) {
                 r(phinOffset() + ii) -= source;
@@ -448,7 +451,7 @@ VectorXd CoupledDDAssembler::residual(const VectorXd& x,
                 hasElectronContribution[static_cast<std::size_t>(ii)] = true;
                 hasHoleContribution[static_cast<std::size_t>(ii)] = true;
             }
-        } else if (impactIonizationEnabled_) {
+        } else if (impactIonizationCoupled_) {
             const Real G = detail::impactIonizationGenerationRate(
                 impactIonizationConfig_,
                 *impactIonization_,
@@ -1234,7 +1237,7 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
     const VectorXd phipState =
         (x.segment(phipOffset(), N) * potentialScale).array()
         + holeQfReference_V_;
-    const std::vector<Real> nodeElectricFields = impactIonizationEnabled_
+    const std::vector<Real> nodeElectricFields = impactIonizationCoupled_
         ? detail::computeNodeElectricFields(psi, mesh_, fieldFactor)
         : std::vector<Real>{};
     const bool qfImpact =
@@ -1248,11 +1251,11 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
         detail::usesCellVectorCurrentReconstructedAvalancheCurrent(impactIonizationConfig_);
     const bool dualFaceVectorCurrentMagnitude =
         impactIonizationConfig_.currentMagnitudeMode == "dual_face_vector_mag";
-    const std::vector<Real> nodeElectronDrivingFields = (impactIonizationEnabled_ && qfImpact)
+    const std::vector<Real> nodeElectronDrivingFields = (impactIonizationCoupled_ && qfImpact)
         ? detail::computeElectronAvalancheNodeQuasiFermiDrivingFields(
             impactIonizationConfig_, mesh_, nodeCells_, psi, phinState, n, ni_, Vt_, fieldFactor)
         : nodeElectricFields;
-    const std::vector<Real> nodeHoleDrivingFields = (impactIonizationEnabled_ && qfImpact)
+    const std::vector<Real> nodeHoleDrivingFields = (impactIonizationCoupled_ && qfImpact)
         ? detail::computeHoleAvalancheNodeQuasiFermiDrivingFields(
             impactIonizationConfig_, mesh_, nodeCells_, psi, phipState, p, ni_, Vt_, fieldFactor)
         : nodeElectricFields;
@@ -1264,7 +1267,7 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
     const std::vector<bool> contactNodes = detail::contactNodeMask(mesh_);
     const std::vector<std::vector<Index>> cellEdges = detail::buildCellEdgeMap(edgeCells_, mesh_);
     const bool transportMobilityDerivative = transportMobilityDependsOnPotentials(mobilityConfig_);
-    const bool sgCurrentAvalanche = impactIonizationEnabled_ &&
+    const bool sgCurrentAvalanche = impactIonizationCoupled_ &&
         detail::usesEdgeCurrentAvalancheSource(impactIonizationConfig_);
     const bool triangleGssAvalanche = sgCurrentAvalanche &&
         detail::usesTriangleGssAvalancheSource(impactIonizationConfig_);
@@ -2243,11 +2246,11 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
             }
         }
 
-        if (impactIonizationEnabled_ && sgCurrentAvalanche) {
+        if (impactIonizationCoupled_ && sgCurrentAvalanche) {
             // The SG edge-current avalanche probe has nonlocal edge derivatives.
             // Omit source derivatives here rather than applying the legacy
             // node-local approximation to the wrong discretization.
-        } else if (impactIonizationEnabled_) {
+        } else if (impactIonizationCoupled_) {
             const Real electronImpactField = detail::electronAvalancheDrivingField(
                 impactIonizationConfig_, nodeElectronDrivingFields[i], nodeElectricFields[i], n(ii));
             const Real holeImpactField = detail::holeAvalancheDrivingField(

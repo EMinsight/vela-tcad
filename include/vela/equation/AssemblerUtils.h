@@ -1176,6 +1176,13 @@ inline Real avalancheSourceEdgeArea(
 inline void validateImpactIonizationDrivingForce(const ImpactIonizationModelConfig& config,
                                                  const char* context)
 {
+    if (config.couplingMode != "self_consistent" &&
+        config.couplingMode != "postprocess_only") {
+        throw std::invalid_argument(
+            std::string(context) +
+            ": impact_ionization.coupling_mode must be 'self_consistent' or "
+            "'postprocess_only'.");
+    }
     const bool configuredCurrentAlignedDrivingForce =
         usesCurrentAlignedAvalancheDrivingForce(config);
     const bool currentAlignedDrivingForce =

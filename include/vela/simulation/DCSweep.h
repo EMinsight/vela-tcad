@@ -255,6 +255,7 @@ struct DCSweepPoint {
 struct ReleaseBVConfigAuditMetadata {
     bool enabled = false;
     std::string model;
+    std::string couplingMode;
     std::string drivingForce;
     std::string parameterSet;
     Real aScale = 1.0;

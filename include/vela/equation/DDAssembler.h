@@ -137,6 +137,7 @@ private:
     ImpactIonizationModelConfig impactIonizationConfig_;
     std::unique_ptr<ImpactIonizationModel> impactIonization_;
     bool impactIonizationEnabled_ = false;
+    bool impactIonizationCoupled_ = false;
 
     std::vector<Real> ni_; ///< Per-node intrinsic concentration [m^-3]
 

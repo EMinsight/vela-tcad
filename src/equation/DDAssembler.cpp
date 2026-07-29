@@ -99,6 +99,9 @@ DDAssembler::DDAssembler(const DeviceMesh&               mesh,
     , impactIonizationConfig_(impactIonizationConfig)
     , impactIonization_(makeImpactIonizationModel(impactIonizationConfig))
     , impactIonizationEnabled_(impactIonizationConfig.model != "none")
+    , impactIonizationCoupled_(
+          impactIonizationConfig.model != "none" &&
+          impactIonizationConfig.couplingMode == "self_consistent")
     , ni_(detail::buildValidatedEffectiveNodeNi(
           "DDAssembler",
           mesh,
@@ -298,7 +301,7 @@ void DDAssembler::assembleElectronContinuity(const VectorXd& psi,
     A_.setFromTriplets(triplets.begin(), triplets.end());
 
     const VectorXd psi_si = psiForMobility;
-    const std::vector<Real> nodeElectricFields = impactIonizationEnabled_
+    const std::vector<Real> nodeElectricFields = impactIonizationCoupled_
         ? detail::computeNodeElectricFields(psi_si, mesh_, fieldFactor)
         : std::vector<Real>{};
     VectorXd n_physical = n_old;
@@ -311,17 +314,17 @@ void DDAssembler::assembleElectronContinuity(const VectorXd& psi,
         detail::usesQuasiFermiAvalancheDrivingForce(impactIonizationConfig_);
     const VectorXd phipForImpact =
         holeQuasiFermiFromDensity(psi_si, p_old, ni_, Vt_, scaling_);
-    const std::vector<Real> nodeElectronDrivingFields = (impactIonizationEnabled_ && qfImpact)
+    const std::vector<Real> nodeElectronDrivingFields = (impactIonizationCoupled_ && qfImpact)
         ? detail::computeElectronAvalancheNodeQuasiFermiDrivingFields(
             impactIonizationConfig_, mesh_, nodeCells_, psi_si, phinForMobility,
             n_physical, ni_, Vt_, fieldFactor)
         : nodeElectricFields;
-    const std::vector<Real> nodeHoleDrivingFields = (impactIonizationEnabled_ && qfImpact)
+    const std::vector<Real> nodeHoleDrivingFields = (impactIonizationCoupled_ && qfImpact)
         ? detail::computeHoleAvalancheNodeQuasiFermiDrivingFields(
             impactIonizationConfig_, mesh_, nodeCells_, psi_si, phipForImpact,
             p_physical, ni_, Vt_, fieldFactor)
         : nodeElectricFields;
-    const bool sgCurrentAvalanche = impactIonizationEnabled_ &&
+    const bool sgCurrentAvalanche = impactIonizationCoupled_ &&
         detail::usesEdgeCurrentAvalancheSource(impactIonizationConfig_);
     const std::vector<Real> sgAvalancheSourceIntegrals = sgCurrentAvalanche
         ? detail::currentDensityAvalancheSourceIntegrals(
@@ -366,10 +369,10 @@ void DDAssembler::assembleElectronContinuity(const VectorXd& psi,
             A_.coeffRef(ii, ii) += linearization.diagonal * vol_i;
             b_(ii) += linearization.rhs * vol_i;
         }
-        if (impactIonizationEnabled_ && sgCurrentAvalanche) {
+        if (impactIonizationCoupled_ && sgCurrentAvalanche) {
             const Real gen = sgAvalancheSourceIntegrals[i] * sourceIntegralFactor;
             b_(ii) += scaling_.enabled ? (gen / (scaling_.C0 * scaling_.D0)) : gen;
-        } else if (impactIonizationEnabled_) {
+        } else if (impactIonizationCoupled_) {
             const Real gen = detail::impactIonizationGenerationRate(
                 impactIonizationConfig_,
                 *impactIonization_,
@@ -477,7 +480,7 @@ void DDAssembler::assembleHoleContinuity(const VectorXd& psi,
     A_.setFromTriplets(triplets.begin(), triplets.end());
 
     const VectorXd psi_si = psiForMobility;
-    const std::vector<Real> nodeElectricFields = impactIonizationEnabled_
+    const std::vector<Real> nodeElectricFields = impactIonizationCoupled_
         ? detail::computeNodeElectricFields(psi_si, mesh_, fieldFactor)
         : std::vector<Real>{};
     VectorXd n_physical = n_old;
@@ -490,17 +493,17 @@ void DDAssembler::assembleHoleContinuity(const VectorXd& psi,
         detail::usesQuasiFermiAvalancheDrivingForce(impactIonizationConfig_);
     const VectorXd phinForImpact =
         electronQuasiFermiFromDensity(psi_si, n_old, ni_, Vt_, scaling_);
-    const std::vector<Real> nodeElectronDrivingFields = (impactIonizationEnabled_ && qfImpact)
+    const std::vector<Real> nodeElectronDrivingFields = (impactIonizationCoupled_ && qfImpact)
         ? detail::computeElectronAvalancheNodeQuasiFermiDrivingFields(
             impactIonizationConfig_, mesh_, nodeCells_, psi_si, phinForImpact,
             n_physical, ni_, Vt_, fieldFactor)
         : nodeElectricFields;
-    const std::vector<Real> nodeHoleDrivingFields = (impactIonizationEnabled_ && qfImpact)
+    const std::vector<Real> nodeHoleDrivingFields = (impactIonizationCoupled_ && qfImpact)
         ? detail::computeHoleAvalancheNodeQuasiFermiDrivingFields(
             impactIonizationConfig_, mesh_, nodeCells_, psi_si, phipForMobility,
             p_physical, ni_, Vt_, fieldFactor)
         : nodeElectricFields;
-    const bool sgCurrentAvalanche = impactIonizationEnabled_ &&
+    const bool sgCurrentAvalanche = impactIonizationCoupled_ &&
         detail::usesEdgeCurrentAvalancheSource(impactIonizationConfig_);
     const std::vector<Real> sgAvalancheSourceIntegrals = sgCurrentAvalanche
         ? detail::currentDensityAvalancheSourceIntegrals(
@@ -545,10 +548,10 @@ void DDAssembler::assembleHoleContinuity(const VectorXd& psi,
             A_.coeffRef(ii, ii) += linearization.diagonal * vol_i;
             b_(ii) += linearization.rhs * vol_i;
         }
-        if (impactIonizationEnabled_ && sgCurrentAvalanche) {
+        if (impactIonizationCoupled_ && sgCurrentAvalanche) {
             const Real gen = sgAvalancheSourceIntegrals[i] * sourceIntegralFactor;
             b_(ii) += scaling_.enabled ? (gen / (scaling_.C0 * scaling_.D0)) : gen;
-        } else if (impactIonizationEnabled_) {
+        } else if (impactIonizationCoupled_) {
             const Real gen = detail::impactIonizationGenerationRate(
                 impactIonizationConfig_,
                 *impactIonization_,

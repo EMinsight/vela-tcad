@@ -49,6 +49,12 @@
         "impact_ionization": {
           "additionalProperties": true,
           "properties": {
+            "coupling_mode": {
+              "enum": [
+                "self_consistent",
+                "postprocess_only"
+              ]
+            },
             "model": {
               "enum": [
                 "none",

@@ -10,6 +10,7 @@ namespace vela {
 struct ImpactIonizationModelConfig {
     PhysicalUnitSystem unitSystem = PhysicalUnitSystem::legacySI();
     std::string model = "none";
+    std::string couplingMode = "self_consistent"; ///< self_consistent or postprocess_only.
     std::string parameterSet = "default";
     std::string drivingForce = "electric_field";
     std::string generation = "carrier_density";

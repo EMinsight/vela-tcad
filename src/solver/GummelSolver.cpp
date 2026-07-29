@@ -208,6 +208,8 @@ GummelConfig gummelConfigFromJson(const nlohmann::json& json, UnitScalingConfig 
         } else if (value.is_object()) {
             cfg.impactIonization = impactIonizationModelConfig(
                 value.value("model", cfg.impactIonization.model), scaling);
+            cfg.impactIonization.couplingMode = value.value(
+                "coupling_mode", cfg.impactIonization.couplingMode);
             cfg.impactIonization.parameterSet = value.value(
                 "parameter_set", cfg.impactIonization.parameterSet);
             cfg.impactIonization.drivingForce = value.value(

@@ -558,6 +558,13 @@ Tests:
 - `vela_postprocess_branch_verified`; or
 - `postprocess_residual_leakage` and stop.
 
+Executed outcome: `vela_postprocess_branch_verified`. The opt-in
+`postprocess_only` mode is excluded from both coupled and Gummel solver source
+assembly while retaining fixed-state avalanche process diagnostics. Focused
+tests verify exact residual/Jacobian equality with `model:none`, nonzero
+diagnostic source equality with `self_consistent`, configuration validation,
+and explicit `coupling_mode` provenance in the release BV audit.
+
 ## 8. Work package 4 - create shared solver-used process records
 
 ### Problem
@@ -863,7 +870,7 @@ WP0 -> WP1 -> WP2 -> WP2.1 -> scientific Task 2 verifier
                                 -> WP3 -> WP4 -> WP5 -> WP6 -> WP7 -> WP8
 ```
 
-WP0-WP2.1 and scientific Task 2 are complete. WP3 is the next gate. After WP1
+WP0-WP3 and scientific Task 2 are complete. WP4 is the next gate. After WP1
 is stable, these
 implementation streams may proceed independently, but their acceptance gates
 remain ordered:
@@ -954,10 +961,9 @@ Every work package must report before the next begins:
 
 ## 17. Next execution slice
 
-WP0-WP2.1 and scientific Task 2 are complete. The next slice is:
+WP0-WP3 and scientific Task 2 are complete. The next slice is:
 
-1. implement WP3, then WP4 and WP5, without changing a production physics
-   formula; and
+1. implement WP4 and WP5 without changing a production physics formula; and
 2. stop at WP6's authorization gate before any nonlinear correction.
 
 The deterministic current-branch failure is an expected observed condition,

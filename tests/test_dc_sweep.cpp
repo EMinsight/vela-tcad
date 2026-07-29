@@ -1546,6 +1546,7 @@ TEST_CASE("DCSweep: release BV config audit records resolved avalanche parity me
         }},
         {"impact_ionization", {
             {"model", "van_overstraeten"},
+            {"coupling_mode", "postprocess_only"},
             {"parameter_set", "default"},
             {"driving_force", "quasi_fermi_gradient"},
             {"generation", "current_density"},
@@ -1563,6 +1564,7 @@ TEST_CASE("DCSweep: release BV config audit records resolved avalanche parity me
     REQUIRE(result.releaseBVConfigAudit.has_value());
     REQUIRE(result.releaseBVConfigAudit->enabled);
     REQUIRE(result.releaseBVConfigAudit->model == "van_overstraeten");
+    REQUIRE(result.releaseBVConfigAudit->couplingMode == "postprocess_only");
     REQUIRE(result.releaseBVConfigAudit->parameterSet == "default");
     REQUIRE(result.releaseBVConfigAudit->drivingForce == "GradQuasiFermi");
     REQUIRE(result.releaseBVConfigAudit->aScale == Catch::Approx(2.0));
@@ -1580,6 +1582,7 @@ TEST_CASE("DCSweep: release BV config audit records resolved avalanche parity me
     const std::size_t aCol = csvColumnIndex(header, "A_scale");
     const std::size_t bCol = csvColumnIndex(header, "B_scale");
     const std::size_t modelCol = csvColumnIndex(header, "model");
+    const std::size_t couplingCol = csvColumnIndex(header, "coupling_mode");
     const std::size_t forceCol = csvColumnIndex(header, "driving_force");
     const std::size_t mappingCol = csvColumnIndex(header, "source_mapping_mode");
     const std::size_t qgFullCol = csvColumnIndex(header, "qG_full");
@@ -1594,6 +1597,7 @@ TEST_CASE("DCSweep: release BV config audit records resolved avalanche parity me
     REQUIRE(csvReal(row, aCol) == Catch::Approx(2.0));
     REQUIRE(csvReal(row, bCol) == Catch::Approx(1.05));
     REQUIRE(row.at(modelCol) == "van_overstraeten");
+    REQUIRE(row.at(couplingCol) == "postprocess_only");
     REQUIRE(row.at(forceCol) == "GradQuasiFermi");
     REQUIRE(row.at(mappingCol) == "edge_F_edge_alpha_edge_G_to_node");
     REQUIRE(csvReal(row, qgFullCol) >= 0.0);
@@ -1604,6 +1608,7 @@ TEST_CASE("DCSweep: release BV config audit records resolved avalanche parity me
     REQUIRE(row.at(convergedCol) == "1");
 
     const std::string summary = readTextFile(summaryPath);
+    REQUIRE(summary.find("coupling_mode: postprocess_only") != std::string::npos);
     REQUIRE(summary.find("release uses A_scale=2: yes") != std::string::npos);
     REQUIRE(summary.find("release uses B_scale=1.05: yes") != std::string::npos);
     REQUIRE(summary.find("release uses VanOverstraeten + GradQuasiFermi: yes") != std::string::npos);

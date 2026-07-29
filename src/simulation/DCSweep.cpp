@@ -250,6 +250,7 @@ ReleaseBVConfigAuditMetadata releaseBVConfigAuditMetadata(
     ReleaseBVConfigAuditMetadata metadata;
     metadata.enabled = sweep.diagnostics.releaseBVConfigAudit.enabled;
     metadata.model = config.model;
+    metadata.couplingMode = config.couplingMode;
     metadata.drivingForce = drivingForceDisplayName(config.drivingForce);
     metadata.parameterSet = config.parameterSet;
     metadata.aScale = config.aScale;
@@ -321,6 +322,7 @@ void writeReleaseBVConfigAuditSummary(
     std::ofstream output(path);
     output << "# Release BV Configuration Parity Audit\n\n";
     output << "- model: " << metadata.model << "\n";
+    output << "- coupling_mode: " << metadata.couplingMode << "\n";
     output << "- driving_force: " << metadata.drivingForce << "\n";
     output << "- parameter_set: " << metadata.parameterSet << "\n";
     output << "- A_scale: " << formatReal(metadata.aScale) << "\n";
@@ -2701,6 +2703,7 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
             "A_scale",
             "B_scale",
             "model",
+            "coupling_mode",
             "driving_force",
             "parameter_set",
             "switchField_V_per_cm",
@@ -3704,6 +3707,7 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                 formatReal(metadata.aScale),
                 formatReal(metadata.bScale),
                 metadata.model,
+                metadata.couplingMode,
                 metadata.drivingForce,
                 metadata.parameterSet,
                 formatReal(metadata.switchField_V_per_cm),
