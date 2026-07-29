@@ -168,6 +168,11 @@ struct NewtonBlockResidualInfo {
     Real combined = 0.0;
 };
 
+struct NewtonResidualPeak {
+    Index nodeId = 0;
+    Real signedResidual = 0.0;
+    Real absoluteResidual = 0.0;
+};
 
 struct NewtonIterationInfo {
     int iter = 0;
@@ -179,6 +184,12 @@ struct NewtonIterationInfo {
     int lineSearchAttempts = 0;
     bool lineSearchAccepted = false;
     NewtonBlockResidualInfo blockResiduals;
+    NewtonBlockResidualInfo rowScaledBlockResiduals;
+    NewtonResidualPeak topPoissonResidual;
+    NewtonResidualPeak topElectronResidual;
+    NewtonResidualPeak topHoleResidual;
+    std::string sourceJacobianActiveBranchFingerprint;
+    std::string event;
     NewtonCarrierRowConvergenceEvaluation carrierRowConvergence;
     std::vector<LineSearchIterationInfo> lineSearchHistory;
 };
@@ -233,6 +244,7 @@ struct NewtonResult {
     NewtonGlobalContinuityClosureEvaluation finalGlobalContinuityClosure;
     NewtonCarrierRowRecoveryResult carrierRowRecovery;
     std::vector<NewtonIterationInfo> history;
+    std::vector<NewtonIterationInfo> trace;
     NewtonFailureDiagnostics failureDiagnostics;
 };
 

@@ -1769,6 +1769,8 @@ TEST_CASE("DCSweep: Newton history diagnostic writes accepted iteration block re
     const auto meshPath = writePNMeshWithInterior(dir);
     const auto csvPath = dir / "newton_history.csv";
     const auto historyPath = dir / "newton_history_iterations.csv";
+    const auto attemptsPath = dir / "newton_attempts.csv";
+    const auto iterationsPath = dir / "newton_iterations.csv";
     const auto initialStatePath = dir / "newton_history_initial_state.csv";
     {
         std::ofstream state(initialStatePath);
@@ -1785,7 +1787,9 @@ TEST_CASE("DCSweep: Newton history diagnostic writes accepted iteration block re
         {"diagnostics", {
             {"newton_history", {
                 {"enabled", true},
-                {"csv_file", historyPath.string()}
+                {"csv_file", historyPath.string()},
+                {"attempts_csv_file", attemptsPath.string()},
+                {"iterations_csv_file", iterationsPath.string()}
             }}
         }}
     }, {
@@ -1802,6 +1806,8 @@ TEST_CASE("DCSweep: Newton history diagnostic writes accepted iteration block re
     REQUIRE(result.points.size() == 1);
     REQUIRE(result.points.front().converged);
     REQUIRE(std::filesystem::exists(historyPath));
+    REQUIRE(std::filesystem::exists(attemptsPath));
+    REQUIRE(std::filesystem::exists(iterationsPath));
 
     const auto rows = readCsvRows(historyPath);
     REQUIRE(rows.size() > 1);
@@ -1834,6 +1840,21 @@ TEST_CASE("DCSweep: Newton history diagnostic writes accepted iteration block re
     REQUIRE(std::stod(rows.at(1).at(phipBlockCol)) >= 0.0);
     REQUIRE(std::stod(rows.at(1).at(combinedBlockCol)) >=
             std::stod(rows.at(1).at(psiBlockCol)));
+
+    const auto attemptRows = readCsvRows(attemptsPath);
+    REQUIRE(attemptRows.size() == 2);
+    const auto& attemptHeader = attemptRows.front();
+    REQUIRE(attemptRows.at(1).at(csvColumnIndex(attemptHeader, "status")) == "accepted");
+    REQUIRE_FALSE(
+        attemptRows.at(1).at(csvColumnIndex(attemptHeader, "final_state_hash")).empty());
+
+    const auto iterationRows = readCsvRows(iterationsPath);
+    REQUIRE(iterationRows.size() > 1);
+    const auto& iterationHeader = iterationRows.front();
+    REQUIRE(iterationRows.at(1).at(csvColumnIndex(iterationHeader, "event")) == "initial");
+    REQUIRE_FALSE(iterationRows.at(1).at(csvColumnIndex(
+        iterationHeader,
+        "source_jacobian_active_branch_fingerprint")).empty());
 }
 
 TEST_CASE("DCSweep: continuation predictor config is validated",
@@ -3995,6 +4016,296 @@ TEST_CASE("DCSweep: failed solve records retry diagnostics", "[dc_sweep]")
     REQUIRE(points.back().retryCount <= 3);
     REQUIRE(points.back().attemptedStep == Catch::Approx(0.0));
     REQUIRE(points.back().acceptedStep == Catch::Approx(0.0));
+}
+
+TEST_CASE("DCSweep: nonlinear trace records rejected attempts before deterministic retry",
+          "[dc_sweep][diagnostics][newton_history][retry]")
+{
+    const auto dir = makeUniqueSweepDir();
+    const ScopedDirectoryCleanup cleanup{dir};
+    std::filesystem::create_directories(dir);
+    const auto meshPath = writePNMeshWithInterior(dir);
+
+    auto run = [&](const std::string& name, bool diagnosticsEnabled) {
+        const auto csvPath = dir / (name + ".csv");
+        nlohmann::json diagnostics = nlohmann::json::object();
+        if (diagnosticsEnabled) {
+            diagnostics["newton_history"] = {
+                {"enabled", true},
+                {"attempts_csv_file", (dir / (name + "_attempts.csv")).string()},
+                {"iterations_csv_file", (dir / (name + "_iterations.csv")).string()}
+            };
+        }
+        const auto cfgPath = writeSweepConfig(dir, meshPath, csvPath, {
+            {"start", 0.0},
+            {"stop", 0.5},
+            {"step", 0.5},
+            {"min_step", 0.0625},
+            {"max_step", 0.5},
+            {"growth_factor", 1.0},
+            {"shrink_factor", 0.5},
+            {"max_retries", 3},
+            {"stop_on_failure", true},
+            {"write_vtk", false},
+            {"write_state_every_point_prefix", (dir / name / "state").string()},
+            {"diagnostics", diagnostics}
+        }, {
+            {"method", "newton"},
+            {"max_iter", 80},
+            {"reltol", 1.0e-5},
+            {"damping_psi", 0.5},
+            {"verbose", false}
+        });
+        DCSweep sweep;
+        return sweep.runWithResult(cfgPath.string());
+    };
+
+    const DCSweepResult first = run("trace_first", true);
+    REQUIRE(first.points.size() == 3);
+    REQUIRE(first.points.at(0).converged);
+    REQUIRE(first.points.at(1).converged);
+    REQUIRE(first.points.at(1).bias == Catch::Approx(0.0625));
+    REQUIRE(first.points.at(1).retryCount == 3);
+    REQUIRE_FALSE(first.points.back().converged);
+
+    const auto attemptsPath = dir / "trace_first_attempts.csv";
+    const auto iterationsPath = dir / "trace_first_iterations.csv";
+    const auto attemptRows = readCsvRows(attemptsPath);
+    REQUIRE(attemptRows.size() >= 6);
+    const auto& attemptHeader = attemptRows.front();
+    const std::size_t segmentCol = csvColumnIndex(attemptHeader, "segment_id");
+    const std::size_t attemptIdCol = csvColumnIndex(attemptHeader, "attempt_id");
+    const std::size_t parentBiasCol =
+        csvColumnIndex(attemptHeader, "parent_accepted_bias_V");
+    const std::size_t parentHashCol = csvColumnIndex(attemptHeader, "parent_state_hash");
+    const std::size_t requestedCol =
+        csvColumnIndex(attemptHeader, "requested_target_bias_V");
+    const std::size_t actualCol =
+        csvColumnIndex(attemptHeader, "actual_target_bias_V");
+    const std::size_t initialHashCol = csvColumnIndex(attemptHeader, "initial_state_hash");
+    const std::size_t statusCol = csvColumnIndex(attemptHeader, "status");
+    const std::size_t reasonCol = csvColumnIndex(attemptHeader, "reason");
+    const std::size_t retryCol = csvColumnIndex(attemptHeader, "retry_number");
+    const std::size_t traceRowsCol =
+        csvColumnIndex(attemptHeader, "iteration_trace_rows");
+
+    std::string retrySegment;
+    std::string retryParentHash;
+    std::string firstRejectedAttemptId;
+    int rejectedBeforeSuccess = 0;
+    bool sawSuccessfulRetry = false;
+    for (std::size_t rowIndex = 1; rowIndex < attemptRows.size(); ++rowIndex) {
+        const auto& row = attemptRows.at(rowIndex);
+        if (row.at(statusCol) == "accepted" && std::stoi(row.at(retryCol)) > 0) {
+            retrySegment = row.at(segmentCol);
+            retryParentHash = row.at(parentHashCol);
+            REQUIRE(std::stod(row.at(parentBiasCol)) == Catch::Approx(0.0));
+            REQUIRE(std::stod(row.at(requestedCol)) == Catch::Approx(0.5));
+            REQUIRE(std::stod(row.at(actualCol)) == Catch::Approx(0.0625));
+            REQUIRE(row.at(initialHashCol) == retryParentHash);
+            REQUIRE(std::stoi(row.at(traceRowsCol)) > 1);
+            sawSuccessfulRetry = true;
+            break;
+        }
+    }
+    REQUIRE(sawSuccessfulRetry);
+
+    for (std::size_t rowIndex = 1; rowIndex < attemptRows.size(); ++rowIndex) {
+        const auto& row = attemptRows.at(rowIndex);
+        if (row.at(segmentCol) != retrySegment ||
+            row.at(statusCol) != "rejected") {
+            continue;
+        }
+        REQUIRE(row.at(parentHashCol) == retryParentHash);
+        REQUIRE(row.at(initialHashCol) == retryParentHash);
+        REQUIRE(std::stod(row.at(requestedCol)) == Catch::Approx(0.5));
+        REQUIRE(std::stoi(row.at(traceRowsCol)) > 1);
+        if (firstRejectedAttemptId.empty())
+            firstRejectedAttemptId = row.at(attemptIdCol);
+        ++rejectedBeforeSuccess;
+    }
+    REQUIRE(rejectedBeforeSuccess == 3);
+    REQUIRE(attemptRows.at(2).at(reasonCol) == "line_search_non_decrease");
+
+    const auto iterationRows = readCsvRows(iterationsPath);
+    const auto& iterationHeader = iterationRows.front();
+    const std::size_t iterationAttemptCol =
+        csvColumnIndex(iterationHeader, "attempt_id");
+    const std::size_t eventCol = csvColumnIndex(iterationHeader, "event");
+    const std::size_t fingerprintCol = csvColumnIndex(
+        iterationHeader,
+        "source_jacobian_active_branch_fingerprint");
+    bool sawRejectedTerminalIteration = false;
+    for (std::size_t rowIndex = 1; rowIndex < iterationRows.size(); ++rowIndex) {
+        const auto& row = iterationRows.at(rowIndex);
+        if (row.at(iterationAttemptCol) != firstRejectedAttemptId)
+            continue;
+        REQUIRE_FALSE(row.at(fingerprintCol).empty());
+        sawRejectedTerminalIteration =
+            sawRejectedTerminalIteration ||
+            row.at(eventCol) == "line_search_non_decrease";
+    }
+    REQUIRE(sawRejectedTerminalIteration);
+
+    const std::string firstAttempts = readTextFile(attemptsPath);
+    const std::string firstIterations = readTextFile(iterationsPath);
+    const DCSweepResult second = run("trace_second", true);
+    REQUIRE(readTextFile(dir / "trace_second_attempts.csv") == firstAttempts);
+    REQUIRE(readTextFile(dir / "trace_second_iterations.csv") == firstIterations);
+
+    const DCSweepResult withoutDiagnostics = run("trace_disabled", false);
+    REQUIRE(second.points.size() == withoutDiagnostics.points.size());
+    for (std::size_t i = 0; i < second.points.size(); ++i) {
+        REQUIRE(second.points.at(i).bias ==
+                Catch::Approx(withoutDiagnostics.points.at(i).bias));
+        REQUIRE(second.points.at(i).converged ==
+                withoutDiagnostics.points.at(i).converged);
+        REQUIRE(second.points.at(i).totalCurrent ==
+                Catch::Approx(withoutDiagnostics.points.at(i).totalCurrent));
+    }
+    REQUIRE(readTextFile(dir / "trace_second" / "state_bias_0p062500.csv") ==
+            readTextFile(dir / "trace_disabled" / "state_bias_0p062500.csv"));
+}
+
+TEST_CASE("DCSweep: sealed PN2D BV transition preserves max-iteration failure trace",
+          "[dc_sweep][diagnostics][newton_history][pn2d_bv]")
+{
+    constexpr Real parentBias = -19.692187499999644;
+    constexpr Real targetBias = -19.693749999999643;
+    constexpr int expectedIterations = 40;
+
+    const auto dir = makeUniqueSweepDir();
+    const ScopedDirectoryCleanup cleanup{dir};
+    std::filesystem::create_directories(dir);
+    const std::filesystem::path fixture =
+        std::filesystem::path(VELA_SOURCE_DIR) /
+        "tests" / "fixtures" / "pn2d_bv_rejected_transition";
+    const auto outputPath = dir / "sealed_transition.csv";
+    const auto attemptsPath = dir / "sealed_transition_attempts.csv";
+    const auto iterationsPath = dir / "sealed_transition_iterations.csv";
+
+    nlohmann::json cfg = {
+        {"simulation_type", "dc_sweep"},
+        {"mesh_file", (fixture / "mesh.json").string()},
+        {"node_doping_file", (fixture / "doping.csv").string()},
+        {"materials_file", (fixture / "materials.json").string()},
+        {"output_csv", outputPath.string()},
+        {"scaling", {{"mode", "unit_scaling"}}},
+        {"contacts", {
+            {{"name", "Cathode"}, {"bias", 0.0}},
+            {{"name", "Anode"}, {"bias", 0.0}}
+        }},
+        {"solver", {
+            {"method", "gummel_newton"},
+            {"max_iter", expectedIterations},
+            {"reltol", 1.0e-8},
+            {"abstol", 1.0e-9},
+            {"damping_psi", 0.2},
+            {"damping_factor", 1.0},
+            {"max_update", 0},
+            {"line_search", true},
+            {"warm_start", true},
+            {"verbose", false},
+            {"contact_boundary_reconstruction", "dominant_signed_contact_mean"},
+            {"contact_boundary_minority_electron_relaxation", false},
+            {"quasi_fermi_update_limit_V", 0.1},
+            {"mobility", {
+                {"model", "masetti_field"},
+                {"high_field_driving_force", "quasi_fermi_gradient"},
+                {"jacobian_field_derivatives", false},
+                {"doping_concentration_basis", "net_doping"}
+            }},
+            {"recombination", {"srh"}},
+            {"bandgap_narrowing", "old_slotboom"},
+            {"impact_ionization", {
+                {"model", "van_overstraeten"},
+                {"driving_force", "quasi_fermi_gradient"},
+                {"generation", "current_density"},
+                {"current_approximation", "cell_reconstructed"},
+                {"current_magnitude_mode", "edge_scalar_abs"},
+                {"cell_reconstructed_midpoint_density", "gss_logistic"},
+                {"source_volume_policy", "genius_truncated"},
+                {"source_volume_factor", 0.0},
+                {"source_geometry_scale", 1.0},
+                {"edge_source_partition", "symmetric"},
+                {"driving_force_interpolation", "none"},
+                {"quasi_fermi_gradient_discretization", "cell_gradient"},
+                {"quasi_fermi_carrier_truncation", 0.0},
+                {"minimum_field_V_m", 0.0},
+                {"electron_driving_force_ref_density_m3", 0.0},
+                {"hole_driving_force_ref_density_m3", 0.0},
+                {"source_mapping_mode", "triangle_gss_gradqf_truncated"}
+            }},
+            {"diagnostics", true},
+            {"handoff", {
+                {"fallback", "none"},
+                {"require_gummel_convergence", false},
+                {"gummel_max_iter", 0},
+                {"newton_max_iter", expectedIterations}
+            }}
+        }},
+        {"sweep", {
+            {"mode", "bv_reverse"},
+            {"contact", "Anode"},
+            {"current_contact", "Anode"},
+            {"start", targetBias},
+            {"stop", targetBias},
+            {"step", targetBias - parentBias},
+            {"initial_state_file",
+             (fixture / "parent_state_m19p6921875V.csv").string()},
+            {"write_vtk", false},
+            {"stop_on_failure", true},
+            {"diagnostics", {
+                {"newton_history", {
+                    {"enabled", true},
+                    {"attempts_csv_file", attemptsPath.string()},
+                    {"iterations_csv_file", iterationsPath.string()}
+                }}
+            }}
+        }}
+    };
+    const auto cfgPath = dir / "sealed_transition.json";
+    std::ofstream(cfgPath) << cfg.dump(2);
+
+    DCSweep sweep;
+    const DCSweepResult result = sweep.runWithResult(cfgPath.string());
+    REQUIRE(result.points.size() == 1);
+    REQUIRE_FALSE(result.points.front().converged);
+    REQUIRE(result.points.front().bias == Catch::Approx(targetBias));
+    REQUIRE(result.points.front().failureReason == "max_iterations");
+    REQUIRE(result.points.front().newtonFailureClass == "max_iterations");
+    REQUIRE(result.points.front().newtonIterations == expectedIterations);
+
+    const auto attemptRows = readCsvRows(attemptsPath);
+    REQUIRE(attemptRows.size() == 2);
+    const auto& attemptHeader = attemptRows.front();
+    const auto& rejected = attemptRows.at(1);
+    REQUIRE(rejected.at(csvColumnIndex(attemptHeader, "status")) == "rejected");
+    REQUIRE(rejected.at(csvColumnIndex(attemptHeader, "reason")) == "max_iterations");
+    REQUIRE(std::stod(rejected.at(csvColumnIndex(
+        attemptHeader, "requested_target_bias_V"))) == Catch::Approx(targetBias));
+    REQUIRE(std::stod(rejected.at(csvColumnIndex(
+        attemptHeader, "actual_target_bias_V"))) == Catch::Approx(targetBias));
+    REQUIRE_FALSE(rejected.at(csvColumnIndex(
+        attemptHeader, "initial_state_hash")).empty());
+    REQUIRE(std::stoi(rejected.at(csvColumnIndex(
+        attemptHeader, "newton_iterations"))) == expectedIterations);
+    REQUIRE(std::stoi(rejected.at(csvColumnIndex(
+        attemptHeader, "iteration_trace_rows"))) == expectedIterations + 1);
+
+    const auto iterationRows = readCsvRows(iterationsPath);
+    REQUIRE(iterationRows.size() ==
+            static_cast<std::size_t>(expectedIterations + 2));
+    const auto& iterationHeader = iterationRows.front();
+    REQUIRE(iterationRows.at(1).at(csvColumnIndex(
+        iterationHeader, "event")) == "initial");
+    REQUIRE(std::stoi(iterationRows.back().at(csvColumnIndex(
+        iterationHeader, "iteration"))) == expectedIterations);
+    for (std::size_t rowIndex = 1; rowIndex < iterationRows.size(); ++rowIndex) {
+        REQUIRE_FALSE(iterationRows.at(rowIndex).at(csvColumnIndex(
+            iterationHeader,
+            "source_jacobian_active_branch_fingerprint")).empty());
+    }
 }
 
 TEST_CASE("DCSweep: final stop point is reached exactly without overshoot", "[dc_sweep]")

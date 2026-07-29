@@ -9,7 +9,11 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
+#include <iomanip>
+#include <sstream>
 #include <stdexcept>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -44,6 +48,18 @@ bool transportMobilityDependsOnPotentials(const MobilityModelConfig& config)
            config.model == "masetti_field" ||
            config.model == "caughey_thomas_field_surface" ||
            isSurfaceMobilityModel(config);
+}
+
+std::string fnv1a64(std::string_view text)
+{
+    std::uint64_t hash = 14695981039346656037ULL;
+    for (const unsigned char value : text) {
+        hash ^= value;
+        hash *= 1099511628211ULL;
+    }
+    std::ostringstream output;
+    output << std::hex << std::setfill('0') << std::setw(16) << hash;
+    return output.str();
 }
 
 } // namespace
@@ -99,6 +115,7 @@ CoupledDDAssembler::CoupledDDAssembler(
     , mobility_(makeMobilityModel(mobilityConfig))
     , recombinationConfig_(recombinationConfig)
     , recombination_(recombinationConfig)
+    , bandgapNarrowingConfig_(bandgapNarrowingConfig)
     , impactIonizationConfig_(impactIonizationConfig)
     , impactIonization_(makeImpactIonizationModel(impactIonizationConfig))
     , impactIonizationEnabled_(impactIonizationConfig.model != "none")
@@ -2433,6 +2450,38 @@ std::string CoupledDDAssembler::impactIonizationConfigurationFingerprint() const
 {
     return bvProcessConfigurationFingerprint(
         mobilityConfig_, impactIonizationConfig_);
+}
+
+std::string CoupledDDAssembler::impactIonizationActiveBranchFingerprint(
+    const VectorXd& x) const
+{
+    const CoupledDDState state = unpack(x);
+    const Real potentialScale = scaling_.enabled ? scaling_.V0 : 1.0;
+
+    DDSolution solution;
+    solution.psi = state.psi * potentialScale;
+    solution.phin = state.phin * potentialScale;
+    solution.phip = state.phip * potentialScale;
+    solution.n = electronDensity(x);
+    solution.p = holeDensity(x);
+
+    const BVProcessProbeResult probe = evaluateBVProcessProbe(
+        mesh_,
+        doping_,
+        solution,
+        mobilityConfig_,
+        impactIonizationConfig_,
+        bandgapNarrowingConfig_,
+        matdb_,
+        Vt_ * constants::q / constants::kb,
+        scaling_.enabled ? scaling_.fieldFromCoordinateDeltaFactor : 1.0);
+
+    std::string canonical = probe.configurationFingerprint;
+    for (const BVProcessProbeRecord& record : probe.records) {
+        canonical.push_back('|');
+        canonical += record.activeBranchFingerprint;
+    }
+    return fnv1a64(canonical);
 }
 
 } // namespace vela

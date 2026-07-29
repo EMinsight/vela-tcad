@@ -199,6 +199,48 @@ NewtonBlockResidualInfo blockResidualInfo(const VectorXd& residual, Index nodeCo
     return {blocks.psi, blocks.phin, blocks.phip, blocks.combined};
 }
 
+NewtonResidualPeak residualPeak(
+    const VectorXd& residual,
+    Eigen::Index offset,
+    Index nodeCount)
+{
+    NewtonResidualPeak peak;
+    peak.nodeId = -1;
+    for (Index node = 0; node < nodeCount; ++node) {
+        const Real value =
+            residual(offset + static_cast<Eigen::Index>(node));
+        const Real magnitude = std::abs(value);
+        if (peak.nodeId < 0 || magnitude > peak.absoluteResidual) {
+            peak.nodeId = node;
+            peak.signedResidual = value;
+            peak.absoluteResidual = magnitude;
+        }
+    }
+    return peak;
+}
+
+void fillNewtonIterationResidualTrace(
+    NewtonIterationInfo& info,
+    const VectorXd& state,
+    const VectorXd& residual,
+    const VectorXd& rowWeights,
+    Index nodeCount,
+    const CoupledDDAssembler& assembler,
+    bool captureActiveBranches)
+{
+    info.blockResiduals = blockResidualInfo(residual, nodeCount);
+    info.rowScaledBlockResiduals =
+        blockResidualInfo(residual.cwiseProduct(rowWeights), nodeCount);
+    info.topPoissonResidual = residualPeak(residual, 0, nodeCount);
+    info.topElectronResidual = residualPeak(
+        residual, static_cast<Eigen::Index>(nodeCount), nodeCount);
+    info.topHoleResidual = residualPeak(
+        residual, 2 * static_cast<Eigen::Index>(nodeCount), nodeCount);
+    info.sourceJacobianActiveBranchFingerprint = captureActiveBranches
+        ? assembler.impactIonizationActiveBranchFingerprint(state)
+        : assembler.impactIonizationConfigurationFingerprint();
+}
+
 bool isPoissonLineSearchStall(const LineSearchResult& lineSearch,
                               const NewtonBlockResidualInfo& blocks,
                               Real stalledNorm,
@@ -3066,6 +3108,12 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
         NewtonSolver retrySolver(
             mesh_, matdb_, doping_, contactBiases_, retryCfg, fixedCharges_, sheetCharges_);
         NewtonResult retried = retrySolver.solve(recovery.solution);
+        std::vector<NewtonIterationInfo> combinedTrace = result.trace;
+        combinedTrace.insert(
+            combinedTrace.end(),
+            retried.trace.begin(),
+            retried.trace.end());
+        retried.trace = std::move(combinedTrace);
         if (retried.carrierRowRecovery.attempted) {
             recovery.electronRowsUpdated += retried.carrierRowRecovery.electronRowsUpdated;
             recovery.holeRowsUpdated += retried.carrierRowRecovery.holeRowsUpdated;
@@ -3099,6 +3147,17 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
 
     NewtonCarrierRowConvergenceEvaluation initialRowEval = carrierRowEval(x);
     NewtonGlobalContinuityClosureEvaluation initialGlobalEval = globalClosureEval(x);
+    NewtonIterationInfo initialTrace;
+    initialTrace.iter = 0;
+    initialTrace.residualNorm = initialNorm;
+    initialTrace.relativeResidualNorm = 1.0;
+    initialTrace.lineSearchAccepted = true;
+    initialTrace.event = "initial";
+    initialTrace.carrierRowConvergence = initialRowEval;
+    fillNewtonIterationResidualTrace(
+        initialTrace, x, r, activeRowWeights, mesh_.numNodes(), assembler,
+        cfg_.diagnostics);
+    result.trace.push_back(std::move(initialTrace));
     writeCarrierRowTraceCsv(x, initialRowEval, 0, initialNorm, "initial");
     if (initialNorm <= cfg_.abstol &&
         carrierRowsAcceptConvergence(initialRowEval) &&
@@ -3158,6 +3217,18 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
                 step = linearSolver.solve(J, -r);
             }
         } catch (const std::runtime_error&) {
+            NewtonIterationInfo failedTrace;
+            failedTrace.iter = iter;
+            failedTrace.residualNorm = residualNormFn(r);
+            failedTrace.relativeResidualNorm =
+                ResidualNorm::relative(failedTrace.residualNorm, initialNorm);
+            failedTrace.lineSearchAccepted = false;
+            failedTrace.event = "linear_solve_failed";
+            failedTrace.carrierRowConvergence = carrierRowEval(x);
+            fillNewtonIterationResidualTrace(
+                failedTrace, x, r, activeRowWeights, mesh_.numNodes(), assembler,
+                cfg_.diagnostics);
+            result.trace.push_back(std::move(failedTrace));
             result.finalResidualNorm = residualNormFn(acceptedR);
             result.iters = acceptedIters;
             result.solution = makeSolution(assembler, acceptedX, acceptedIters);
@@ -3203,6 +3274,31 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
             const NewtonGlobalContinuityClosureEvaluation stalledGlobalEval =
                 globalClosureEval(acceptedX);
             const NewtonBlockResidualInfo stalledBlocks = blockResidualInfo(acceptedR, mesh_.numNodes());
+            NewtonIterationInfo rejectedTrace;
+            rejectedTrace.iter = iter;
+            rejectedTrace.residualNorm = stalledNorm;
+            rejectedTrace.relativeResidualNorm =
+                ResidualNorm::relative(stalledNorm, initialNorm);
+            rejectedTrace.rawStepNorm = stepNorm;
+            rejectedTrace.stepNorm = 0.0;
+            rejectedTrace.dampingFactor = ls.damping;
+            rejectedTrace.lineSearchAttempts = ls.attempts;
+            rejectedTrace.lineSearchAccepted = false;
+            rejectedTrace.event = ls.failureReason.empty()
+                ? "line_search_rejected"
+                : ls.failureReason;
+            rejectedTrace.carrierRowConvergence = stalledRowEval;
+            if (cfg_.diagnostics)
+                rejectedTrace.lineSearchHistory = ls.history;
+            fillNewtonIterationResidualTrace(
+                rejectedTrace,
+                acceptedX,
+                acceptedR,
+                activeRowWeights,
+                mesh_.numNodes(),
+                assembler,
+                cfg_.diagnostics);
+            result.trace.push_back(std::move(rejectedTrace));
             if (stalledNorm <= stallResidualFloor &&
                 carrierRowsAcceptConvergence(stalledRowEval) &&
                 globalClosureAcceptsConvergence(stalledGlobalEval)) {
@@ -3292,11 +3388,15 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
         info.rawStepNorm = stepNorm;
         info.lineSearchAttempts = ls.attempts;
         info.lineSearchAccepted = ls.accepted;
-        info.blockResiduals = blockResidualInfo(r, mesh_.numNodes());
+        info.event = "accepted_iteration";
+        fillNewtonIterationResidualTrace(
+            info, x, r, activeRowWeights, mesh_.numNodes(), assembler,
+            cfg_.diagnostics);
         info.carrierRowConvergence = carrierRowEval(x);
         writeCarrierRowTraceCsv(x, info.carrierRowConvergence, iter, residualNorm, "iteration");
         if (cfg_.diagnostics)
             info.lineSearchHistory = std::move(ls.history);
+        result.trace.push_back(info);
         result.history.push_back(std::move(info));
         if (cfg_.verbose) {
             const NewtonBlockResidualInfo& blocks = result.history.back().blockResiduals;

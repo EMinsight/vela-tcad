@@ -1,0 +1,20 @@
+{
+  "schema": "vela.pn2d_bv_rejected_transition_fixture.v1",
+  "description": "Sealed Vela avalanche-on parent state and operator inputs for the first WP0 solver failure.",
+  "parent_bias_V": -19.692187499999644,
+  "requested_target_bias_V": -19.693749999999643,
+  "expected_failure_reason": "max_iterations",
+  "expected_newton_iterations": 40,
+  "fixture_sha256": {
+    "mesh.json": "a2214ee99a8c7463fb1e49cc0179ae8f84bf4f4984f50c2ad8c648f396913de5",
+    "doping.csv": "c8bf364645f81fee573c00aaa97b646cc9d87931746ccaee16a24bc700da1a40",
+    "materials.json": "212b896ed86ace76d0d02e86b90f6ced6a2851417b2ec321d0dd702cfbfa6524",
+    "parent_state_m19p6921875V.csv": "dd2de1df9fb3311bcc6457deba5e5a02f636ba3b7b4fdd5f3c0a1945fecfdd33"
+  },
+  "origin": {
+    "baseline": "build-release/pn2d-wp0-on-a-20260729/net_doping_on",
+    "parent_state_source_sha256": "22fddd39cf344a2b22823680410cf2a57d16538efa16738fb2dd079d78774dec",
+    "mesh_source_sha256": "c9aaf5f3130f2e1e78e399d155390ed8f19a306ff9ab5af4904230b5e328bc7e",
+    "doping_source_sha256": "714bb5c461d0acba49b1f9211318cc120a2e3891f92367776b636eda4b7fd155"
+  }
+}

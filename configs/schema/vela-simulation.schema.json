@@ -132,6 +132,27 @@
                 }
               },
               "type": "object"
+            },
+            "newton_history": {
+              "additionalProperties": false,
+              "properties": {
+                "attempts_csv_file": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "csv_file": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "enabled": {
+                  "type": "boolean"
+                },
+                "iterations_csv_file": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "type": "object"
             }
           },
           "type": "object"
@@ -174,6 +195,10 @@
         },
         "stop": {
           "type": "number"
+        },
+        "write_state_every_point_prefix": {
+          "minLength": 1,
+          "type": "string"
         }
       },
       "required": [

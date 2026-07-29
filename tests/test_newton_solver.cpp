@@ -2224,6 +2224,13 @@ TEST_CASE("NewtonSolver: line search rejection returns last accepted state", "[n
     REQUIRE_FALSE(result.converged);
     REQUIRE(result.iters == 0);
     REQUIRE(result.history.empty());
+    REQUIRE(result.trace.size() == 2);
+    REQUIRE(result.trace.front().event == "initial");
+    REQUIRE(result.trace.back().event == "carrier_invalid");
+    REQUIRE_FALSE(result.trace.back().lineSearchAccepted);
+    REQUIRE(result.trace.back().lineSearchAttempts >= 1);
+    REQUIRE_FALSE(
+        result.trace.back().sourceJacobianActiveBranchFingerprint.empty());
     REQUIRE(result.finalResidualNorm == Catch::Approx(result.initialResidualNorm));
     REQUIRE(result.failureDiagnostics.failureReason == "carrier_invalid");
     REQUIRE(result.failureDiagnostics.lineSearchFailureReason == "carrier_invalid");
@@ -2476,6 +2483,11 @@ TEST_CASE("NewtonSolver: optionally records line-search diagnostics in history",
 
     REQUIRE(result.converged);
     REQUIRE_FALSE(result.history.empty());
+    REQUIRE(result.trace.size() == result.history.size() + 1);
+    REQUIRE(result.trace.front().iter == 0);
+    REQUIRE(result.trace.front().event == "initial");
+    REQUIRE_FALSE(
+        result.trace.front().sourceJacobianActiveBranchFingerprint.empty());
     const NewtonIterationInfo& first = result.history.front();
     REQUIRE(first.iter == 1);
     REQUIRE(first.rawStepNorm >= first.stepNorm);
@@ -2488,6 +2500,16 @@ TEST_CASE("NewtonSolver: optionally records line-search diagnostics in history",
     REQUIRE(first.lineSearchHistory.back().accepted);
     REQUIRE(first.lineSearchHistory.back().damping == Catch::Approx(first.dampingFactor));
     REQUIRE(first.lineSearchHistory.back().residualNorm == Catch::Approx(first.residualNorm));
+    REQUIRE(first.rowScaledBlockResiduals.psi >= 0.0);
+    REQUIRE(first.rowScaledBlockResiduals.phin >= 0.0);
+    REQUIRE(first.rowScaledBlockResiduals.phip >= 0.0);
+    REQUIRE(first.topPoissonResidual.nodeId >= 0);
+    REQUIRE(first.topElectronResidual.nodeId >= 0);
+    REQUIRE(first.topHoleResidual.nodeId >= 0);
+    REQUIRE(first.topPoissonResidual.absoluteResidual ==
+            Catch::Approx(std::abs(first.topPoissonResidual.signedResidual)));
+    REQUIRE_FALSE(first.sourceJacobianActiveBranchFingerprint.empty());
+    REQUIRE(first.event == "accepted_iteration");
 
     const NewtonConfig parsed = newtonConfigFromJson(nlohmann::json{{"diagnostic_history", true}});
     REQUIRE(parsed.diagnostics);

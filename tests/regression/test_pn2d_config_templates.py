@@ -66,6 +66,19 @@ class Pn2dConfigTemplatesTest(unittest.TestCase):
         self.assertEqual(
             config["solver"]["impact_ionization"]["model"], "van_overstraeten"
         )
+        self.assertEqual(
+            config["sweep"]["write_state_every_point_prefix"],
+            "pn2d_bv_states/state",
+        )
+        newton_history = config["sweep"]["diagnostics"]["newton_history"]
+        self.assertEqual(
+            newton_history["attempts_csv_file"],
+            "pn2d_bv_newton_attempts.csv",
+        )
+        self.assertEqual(
+            newton_history["iterations_csv_file"],
+            "pn2d_bv_newton_iterations.csv",
+        )
 
     def test_defaults_contain_no_absolute_paths_or_placeholders(self) -> None:
         for template in ("pn2d_iv", "pn2d_bv"):
@@ -136,6 +149,11 @@ class Pn2dConfigTemplatesTest(unittest.TestCase):
         )
         self.assertIn("sweep", schema["required"])
         self.assertIn("initial_step", schema["properties"]["sweep"]["required"])
+        sweep_properties = schema["properties"]["sweep"]["properties"]
+        self.assertIn("write_state_every_point_prefix", sweep_properties)
+        newton_history = sweep_properties["diagnostics"]["properties"]["newton_history"]
+        self.assertIn("attempts_csv_file", newton_history["properties"])
+        self.assertIn("iterations_csv_file", newton_history["properties"])
 
 
 if __name__ == "__main__":

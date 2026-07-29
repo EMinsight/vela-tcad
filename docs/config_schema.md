@@ -922,12 +922,23 @@ Diagnostics fields:
   `diagnostic_reference_qG_full_A_per_um`, and
   `diagnostic_reference_qG_junction_A_per_um` let the summary compare the
   current release run against a known A2/B1.05 diagnostic reference.
-- `diagnostics.newton_history.enabled`: writes accepted Newton iteration
-  history rows for converged sweep points. The CSV includes point index, bias,
-  solver/handoff stage, iteration number, residual norm, relative residual,
-  raw and applied update norms, damping, line-search attempt count, and
-  `psi`/`phin`/`phip`/combined block residuals. Optional `csv_file` overrides
-  the default `<sweep csv stem>_newton_history.csv`.
+- `diagnostics.newton_history.enabled`: writes a complete nonlinear transition
+  trace without changing the solve. The compatibility `csv_file` contains
+  accepted Newton iterations for converged points. `attempts_csv_file`
+  contains every accepted or rejected continuation/Newton attempt, including
+  parent bias/state hash, requested and actual target, retry number, typed
+  reason, solver/handoff stage, residuals, clamp/damping summary, and final
+  state hash. `iterations_csv_file` contains initial, accepted, and rejected
+  Newton rows with raw and row-scaled equation-block residuals, update and
+  line-search metrics, carrier-row convergence, top residual node per
+  equation, and the solver-used source/Jacobian active-branch fingerprint.
+  Defaults are `<sweep csv stem>_newton_history.csv`,
+  `<sweep csv stem>_newton_attempts.csv`, and
+  `<sweep csv stem>_newton_iterations.csv`.
+- `write_state_every_point_prefix`: writes every accepted continuation state
+  as `<prefix>_bias_<encoded bias>.csv`. These states are restartable with
+  `initial_state_file`; use this together with the nonlinear trace to seal
+  exact parent states for failed-transition reproduction.
 - `contact_current_reporting.endpoint_qf_floor.enabled`: opt-in reporting-only
   policy for Sentaurus restart parity. When enabled, DCSweep captures tiny
   contact-edge hole quasi-Fermi endpoint drops from the external

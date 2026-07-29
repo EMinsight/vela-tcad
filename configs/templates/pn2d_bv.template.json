@@ -102,8 +102,10 @@
           "enabled": "${sweep_diagnostics}"
         },
         "newton_history": {
+          "attempts_csv_file": "${newton_attempts_csv}",
           "csv_file": "${newton_history_csv}",
-          "enabled": "${sweep_diagnostics}"
+          "enabled": "${sweep_diagnostics}",
+          "iterations_csv_file": "${newton_iterations_csv}"
         }
       },
       "growth_factor": 1.2,
@@ -120,6 +122,7 @@
       "step": -1.0,
       "stop": "${stop_voltage}",
       "vtk_prefix": "${vtk_prefix}",
+      "write_state_every_point_prefix": "${state_every_point_prefix}",
       "write_state_file": "${state_output}",
       "write_vtk": "${write_vtk}"
     }
@@ -154,6 +157,16 @@
       "path": true,
       "type": "string"
     },
+    "newton_attempts_csv": {
+      "default": "pn2d_bv_newton_attempts.csv",
+      "path": true,
+      "type": "string"
+    },
+    "newton_iterations_csv": {
+      "default": "pn2d_bv_newton_iterations.csv",
+      "path": true,
+      "type": "string"
+    },
     "node_doping_file": {
       "default": "inputs/doping.csv",
       "path": true,
@@ -178,6 +191,11 @@
     },
     "state_output": {
       "default": "pn2d_bv_last_state.csv",
+      "path": true,
+      "type": "string"
+    },
+    "state_every_point_prefix": {
+      "default": "pn2d_bv_states/state",
       "path": true,
       "type": "string"
     },

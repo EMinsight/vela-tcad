@@ -88,6 +88,8 @@ struct TerminalCurrentMethodCompareDiagnosticsConfig {
 struct NewtonHistoryDiagnosticsConfig {
     bool enabled = false;
     std::string csvFile;
+    std::string attemptsCsvFile;
+    std::string iterationsCsvFile;
 };
 
 struct ContactCurrentQfFloorDiagnosticsConfig {

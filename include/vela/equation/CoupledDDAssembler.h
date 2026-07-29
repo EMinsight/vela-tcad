@@ -171,6 +171,7 @@ public:
     Real concentrationScale() const { return scaling_.C0; }
     Real continuityResidualScale() const { return scaling_.enabled ? scaling_.C0 * scaling_.D0 : 1.0; }
     std::string impactIonizationConfigurationFingerprint() const;
+    std::string impactIonizationActiveBranchFingerprint(const VectorXd& x) const;
 
 private:
     int psiOffset() const { return 0; }
@@ -185,6 +186,7 @@ private:
     std::unique_ptr<MobilityModel> mobility_;
     RecombinationModelConfig recombinationConfig_;
     RecombinationModel recombination_;
+    BandgapNarrowingConfig bandgapNarrowingConfig_;
     ImpactIonizationModelConfig impactIonizationConfig_;
     std::unique_ptr<ImpactIonizationModel> impactIonization_;
     bool impactIonizationEnabled_ = false;

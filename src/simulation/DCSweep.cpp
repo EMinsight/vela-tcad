@@ -27,6 +27,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdint>
 #include <exception>
 #include <filesystem>
 #include <fstream>
@@ -242,6 +243,36 @@ std::string releaseBVLambdaDescription(const ImpactIonizationModelConfig& config
         << ";source_volume_policy=" << config.sourceVolumePolicy
         << ";source_volume_factor=" << formatReal(config.sourceVolumeFactor);
     return out.str();
+}
+
+std::string ddSolutionStateHash(const DDSolution& state)
+{
+    std::uint64_t hash = 14695981039346656037ULL;
+    const auto appendBytes = [&](const void* data, std::size_t size) {
+        const auto* bytes = static_cast<const unsigned char*>(data);
+        for (std::size_t i = 0; i < size; ++i) {
+            hash ^= bytes[i];
+            hash *= 1099511628211ULL;
+        }
+    };
+    const auto appendVector = [&](const VectorXd& values) {
+        const std::uint64_t count =
+            static_cast<std::uint64_t>(values.size());
+        appendBytes(&count, sizeof(count));
+        if (values.size() > 0) {
+            appendBytes(
+                values.data(),
+                static_cast<std::size_t>(values.size()) * sizeof(Real));
+        }
+    };
+    appendVector(state.psi);
+    appendVector(state.phin);
+    appendVector(state.phip);
+    appendVector(state.n);
+    appendVector(state.p);
+    std::ostringstream output;
+    output << std::hex << std::setfill('0') << std::setw(16) << hash;
+    return output.str();
 }
 
 ReleaseBVConfigAuditMetadata releaseBVConfigAuditMetadata(
@@ -1486,6 +1517,10 @@ DCSweepConfig dcSweepConfigFromJson(const nlohmann::json& cfg,
             newtonHistoryCfg.value("enabled", sweep.diagnostics.newtonHistory.enabled);
         sweep.diagnostics.newtonHistory.csvFile =
             newtonHistoryCfg.value("csv_file", std::string{});
+        sweep.diagnostics.newtonHistory.attemptsCsvFile =
+            newtonHistoryCfg.value("attempts_csv_file", std::string{});
+        sweep.diagnostics.newtonHistory.iterationsCsvFile =
+            newtonHistoryCfg.value("iterations_csv_file", std::string{});
     }
     if (diagnosticsCfg.contains("qf_bounds")) {
         const auto& qfBoundsCfg = diagnosticsCfg.at("qf_bounds");
@@ -1689,13 +1724,29 @@ DCSweepConfig dcSweepConfigFromJson(const nlohmann::json& cfg,
         }
     }
     if (sweep.diagnostics.newtonHistory.enabled) {
+        const std::filesystem::path csvPath(sweep.csvFile);
         if (sweep.diagnostics.newtonHistory.csvFile.empty()) {
-            const std::filesystem::path csvPath(sweep.csvFile);
             sweep.diagnostics.newtonHistory.csvFile =
                 (csvPath.parent_path() / (csvPath.stem().string() + "_newton_history.csv")).string();
         } else {
             sweep.diagnostics.newtonHistory.csvFile =
                 resolve(sweep.diagnostics.newtonHistory.csvFile);
+        }
+        if (sweep.diagnostics.newtonHistory.attemptsCsvFile.empty()) {
+            sweep.diagnostics.newtonHistory.attemptsCsvFile =
+                (csvPath.parent_path() /
+                 (csvPath.stem().string() + "_newton_attempts.csv")).string();
+        } else {
+            sweep.diagnostics.newtonHistory.attemptsCsvFile =
+                resolve(sweep.diagnostics.newtonHistory.attemptsCsvFile);
+        }
+        if (sweep.diagnostics.newtonHistory.iterationsCsvFile.empty()) {
+            sweep.diagnostics.newtonHistory.iterationsCsvFile =
+                (csvPath.parent_path() /
+                 (csvPath.stem().string() + "_newton_iterations.csv")).string();
+        } else {
+            sweep.diagnostics.newtonHistory.iterationsCsvFile =
+                resolve(sweep.diagnostics.newtonHistory.iterationsCsvFile);
         }
     }
 
@@ -2190,12 +2241,16 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
     if (solverMethod == SolverMethod::Newton) {
         newton = newtonConfigFromJson(solverCfg, scaling);
         newton.unitScalingRefs = scalingRefs;
+        newton.diagnostics =
+            newton.diagnostics || sweep.diagnostics.newtonHistory.enabled;
         mobilityConfig = newton.mobility;
     } else if (solverMethod == SolverMethod::GummelNewton) {
         gummel = gummelConfigFromJson(solverCfg, scaling);
         gummel.unitScalingRefs = scalingRefs;
         newton = newtonConfigFromJson(solverCfg, scaling);
         newton.unitScalingRefs = scalingRefs;
+        newton.diagnostics =
+            newton.diagnostics || sweep.diagnostics.newtonHistory.enabled;
         mobilityConfig = newton.mobility;
     } else {
         gummel = gummelConfigFromJson(solverCfg, scaling);
@@ -2835,6 +2890,8 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
     }
 
     std::unique_ptr<CSVWriter> newtonHistoryCsv;
+    std::unique_ptr<CSVWriter> newtonAttemptsCsv;
+    std::unique_ptr<CSVWriter> newtonIterationsCsv;
     if (sweep.diagnostics.newtonHistory.enabled) {
         const std::filesystem::path diagPath(sweep.diagnostics.newtonHistory.csvFile);
         if (!diagPath.parent_path().empty())
@@ -2860,6 +2917,75 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
             "block_combined",
             "carrier_row_violations",
             "carrier_row_max_ratio"});
+
+        const std::filesystem::path attemptsPath(
+            sweep.diagnostics.newtonHistory.attemptsCsvFile);
+        if (!attemptsPath.parent_path().empty())
+            std::filesystem::create_directories(attemptsPath.parent_path());
+        newtonAttemptsCsv =
+            std::make_unique<CSVWriter>(attemptsPath.string());
+        newtonAttemptsCsv->writeHeader({
+            "run_id",
+            "segment_id",
+            "attempt_id",
+            "parent_accepted_bias_V",
+            "parent_state_hash",
+            "requested_target_bias_V",
+            "actual_target_bias_V",
+            "initial_state_hash",
+            "predictor_state_hash",
+            "solver_method",
+            "handoff_stage",
+            "status",
+            "reason",
+            "branch_acceptance_status",
+            "branch_acceptance_reason",
+            "retry_number",
+            "attempted_step_V",
+            "damping_summary",
+            "clamp_summary",
+            "initial_residual_norm",
+            "final_residual_norm",
+            "final_state_hash",
+            "newton_iterations",
+            "iteration_trace_rows"});
+
+        const std::filesystem::path iterationsPath(
+            sweep.diagnostics.newtonHistory.iterationsCsvFile);
+        if (!iterationsPath.parent_path().empty())
+            std::filesystem::create_directories(iterationsPath.parent_path());
+        newtonIterationsCsv =
+            std::make_unique<CSVWriter>(iterationsPath.string());
+        newtonIterationsCsv->writeHeader({
+            "run_id",
+            "segment_id",
+            "attempt_id",
+            "iteration",
+            "event",
+            "residual_norm",
+            "relative_residual_norm",
+            "block_psi",
+            "block_phin",
+            "block_phip",
+            "block_combined",
+            "row_scaled_block_psi",
+            "row_scaled_block_phin",
+            "row_scaled_block_phip",
+            "row_scaled_block_combined",
+            "raw_update_norm",
+            "applied_update_norm",
+            "damping",
+            "line_search_attempts",
+            "line_search_accepted",
+            "carrier_row_violations",
+            "carrier_row_max_ratio",
+            "top_psi_node",
+            "top_psi_residual",
+            "top_phin_node",
+            "top_phin_residual",
+            "top_phip_node",
+            "top_phip_residual",
+            "source_jacobian_active_branch_fingerprint"});
     }
 
     std::unique_ptr<CSVWriter> qfBoundsCsv;
@@ -2894,6 +3020,7 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
     int vtkIndex = 0;
 
     struct SolvePointAttempt {
+        std::uint64_t attemptId = 0;
         bool ok = false;
         DDSolution solution;
         std::string failureReason;
@@ -2916,6 +3043,10 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
         Real carrierRowRecoveryMaxDensityRatio = 0.0;
         NewtonFailureDiagnostics newtonFailureDiagnostics;
         std::vector<NewtonIterationInfo> newtonHistory;
+        std::vector<NewtonIterationInfo> newtonTrace;
+        Real initialResidualNorm = 0.0;
+        Real finalResidualNorm = 0.0;
+        std::string initialStateHash;
         bool predictedInitialState = false;
         std::string branchAcceptanceStatus;
         std::string branchAcceptanceReason;
@@ -2928,7 +3059,9 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
         ContactCurrentEdgeOverrides contactCurrentOverrides;
         QfBoundsEvaluation qfBoundsEvaluation;
         bool qfBoundsRecovered = false;
+        bool nonlinearTraceWritten = false;
     };
+    std::uint64_t nextNonlinearAttemptId = 1;
 
     if ((solverMethod == SolverMethod::Newton ||
          solverMethod == SolverMethod::GummelNewton) &&
@@ -2956,6 +3089,10 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
             bool solverConverged = false;
             DDSolution sol;
             SolvePointAttempt attempt;
+            attempt.attemptId = nextNonlinearAttemptId++;
+            attempt.initialStateHash =
+                initial != nullptr ? ddSolutionStateHash(*initial)
+                                   : std::string("solver_default");
             if ((sweep.diagnostics.contactCurrentQfFloor.enabled ||
                  sweep.diagnostics.terminalCurrentMethodCompare.enabled) &&
                 allowContactCurrentQfFloorCapture &&
@@ -2974,6 +3111,9 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                 attempt.handoffStage = solverConverged ? "newton" : "newton_failed";
                 attempt.newtonFailureDiagnostics = result.failureDiagnostics;
                 attempt.newtonHistory = result.history;
+                attempt.newtonTrace = result.trace;
+                attempt.initialResidualNorm = result.initialResidualNorm;
+                attempt.finalResidualNorm = result.finalResidualNorm;
                 attempt.newtonConvergenceReason = result.convergenceReason;
                 attempt.carrierRowViolations = static_cast<int>(
                     result.finalCarrierRowConvergence.violations.size());
@@ -3017,6 +3157,9 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                                     handoffNewton, fixedChargeSpecs, sheetChargeSpecs);
                     attempt.newtonFailureDiagnostics = result.failureDiagnostics;
                     attempt.newtonHistory = result.history;
+                    attempt.newtonTrace = result.trace;
+                    attempt.initialResidualNorm = result.initialResidualNorm;
+                    attempt.finalResidualNorm = result.finalResidualNorm;
                     attempt.newtonConvergenceReason = result.convergenceReason;
                     attempt.carrierRowViolations = static_cast<int>(
                         result.finalCarrierRowConvergence.violations.size());
@@ -3063,6 +3206,9 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                                        handoffNewton, fixedChargeSpecs, sheetChargeSpecs);
                     attempt.newtonFailureDiagnostics = result.failureDiagnostics;
                     attempt.newtonHistory = result.history;
+                    attempt.newtonTrace = result.trace;
+                    attempt.initialResidualNorm = result.initialResidualNorm;
+                    attempt.finalResidualNorm = result.finalResidualNorm;
                     attempt.newtonConvergenceReason = result.convergenceReason;
                     attempt.carrierRowViolations = static_cast<int>(
                         result.finalCarrierRowConvergence.violations.size());
@@ -3375,6 +3521,121 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
             std::filesystem::create_directories(newtonFailureJsonPath.parent_path());
         std::ofstream output(newtonFailureJsonPath);
         output << std::setw(2) << newtonFailureReports << '\n';
+    };
+
+    auto writeNonlinearTrace = [&](
+        SolvePointAttempt& attempt,
+        std::size_t segmentId,
+        const DDSolution* parentAcceptedState,
+        Real parentAcceptedBias,
+        Real requestedTargetBias,
+        Real actualTargetBias,
+        Real attemptedStep,
+        int retryNumber) {
+        if (newtonAttemptsCsv == nullptr || newtonIterationsCsv == nullptr ||
+            attempt.nonlinearTraceWritten) {
+            return;
+        }
+        if (attempt.attemptId == 0)
+            attempt.attemptId = nextNonlinearAttemptId++;
+        attempt.nonlinearTraceWritten = true;
+
+        Real lastDamping = 0.0;
+        if (!attempt.newtonTrace.empty())
+            lastDamping = attempt.newtonTrace.back().dampingFactor;
+        const std::string dampingSummary =
+            "configured=" + formatReal(newton.dampingFactor) +
+            ";last=" + formatReal(lastDamping);
+        const std::string clampSummary =
+            "max_update=" + formatReal(newton.maxUpdate) +
+            ";qf_update_V=" + formatReal(newton.quasiFermiUpdateLimit_V) +
+            ";minority_qf_update_V=" +
+                formatReal(newton.quasiFermiUpdateLimitMinority_V) +
+            ";carrier_regularization=" +
+                formatReal(newton.carrierRegularizationScale);
+        std::string reason;
+        if (attempt.ok) {
+            reason = attempt.newtonConvergenceReason.empty()
+                ? "accepted"
+                : attempt.newtonConvergenceReason;
+        } else if (!attempt.branchAcceptanceReason.empty()) {
+            reason = attempt.branchAcceptanceReason;
+        } else if (!attempt.failureReason.empty()) {
+            reason = attempt.failureReason;
+        } else {
+            reason = "non_convergence";
+        }
+        const std::string parentHash = parentAcceptedState != nullptr
+            ? ddSolutionStateHash(*parentAcceptedState)
+            : std::string();
+        const std::string finalHash =
+            attempt.solution.psi.size() > 0
+            ? ddSolutionStateHash(attempt.solution)
+            : std::string();
+
+        newtonAttemptsCsv->writeRow({
+            "run_0",
+            std::to_string(segmentId),
+            std::to_string(attempt.attemptId),
+            parentAcceptedState != nullptr
+                ? formatReal(parentAcceptedBias)
+                : std::string(),
+            parentHash,
+            formatReal(requestedTargetBias),
+            formatReal(actualTargetBias),
+            attempt.initialStateHash,
+            attempt.predictedInitialState
+                ? attempt.initialStateHash
+                : std::string(),
+            attempt.solverMethod,
+            attempt.handoffStage,
+            attempt.ok ? "accepted" : "rejected",
+            reason,
+            attempt.branchAcceptanceStatus,
+            attempt.branchAcceptanceReason,
+            std::to_string(retryNumber),
+            formatReal(attemptedStep),
+            dampingSummary,
+            clampSummary,
+            formatReal(attempt.initialResidualNorm),
+            formatReal(attempt.finalResidualNorm),
+            finalHash,
+            std::to_string(attempt.newtonIterations),
+            std::to_string(attempt.newtonTrace.size())});
+
+        for (const NewtonIterationInfo& info : attempt.newtonTrace) {
+            newtonIterationsCsv->writeRow({
+                "run_0",
+                std::to_string(segmentId),
+                std::to_string(attempt.attemptId),
+                std::to_string(info.iter),
+                info.event,
+                formatReal(info.residualNorm),
+                formatReal(info.relativeResidualNorm),
+                formatReal(info.blockResiduals.psi),
+                formatReal(info.blockResiduals.phin),
+                formatReal(info.blockResiduals.phip),
+                formatReal(info.blockResiduals.combined),
+                formatReal(info.rowScaledBlockResiduals.psi),
+                formatReal(info.rowScaledBlockResiduals.phin),
+                formatReal(info.rowScaledBlockResiduals.phip),
+                formatReal(info.rowScaledBlockResiduals.combined),
+                formatReal(info.rawStepNorm),
+                formatReal(info.stepNorm),
+                formatReal(info.dampingFactor),
+                std::to_string(info.lineSearchAttempts),
+                info.lineSearchAccepted ? "1" : "0",
+                std::to_string(
+                    info.carrierRowConvergence.violations.size()),
+                formatReal(info.carrierRowConvergence.maxRatio),
+                formatIndexOrMinusOne(info.topPoissonResidual.nodeId),
+                formatReal(info.topPoissonResidual.signedResidual),
+                formatIndexOrMinusOne(info.topElectronResidual.nodeId),
+                formatReal(info.topElectronResidual.signedResidual),
+                formatIndexOrMinusOne(info.topHoleResidual.nodeId),
+                formatReal(info.topHoleResidual.signedResidual),
+                info.sourceJacobianActiveBranchFingerprint});
+        }
     };
 
     auto recordPoint = [&](Real voltage, const SolvePointAttempt& attempt, bool converged,
@@ -4560,6 +4821,15 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                         0,
                         std::move(attempt),
                         points.size());
+                    writeNonlinearTrace(
+                        attempt,
+                        points.size(),
+                        initial,
+                        bias,
+                        bias,
+                        bias,
+                        attemptedStep,
+                        0);
                     ok = attempt.ok;
                     acceptedStep = ok ? attemptedStep : 0.0;
                     failureReason = attempt.failureReason;
@@ -4586,6 +4856,7 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                     pointStepControl.stopOnFailure = sweep.stopOnFailure;
 
                     DDSolution localPreviousSolution = previousSolution;
+                    Real localPreviousBias = previousBias;
                     SolvePointAttempt lastPointAttempt;
                     std::string lastPointFailureReason;
                     std::string lastPointValidationDiagnostics;
@@ -4604,6 +4875,15 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                                     stepRetryCount,
                                     std::move(pointAttempt),
                                     points.size());
+                                writeNonlinearTrace(
+                                    pointAttempt,
+                                    points.size(),
+                                    &localPreviousSolution,
+                                    localPreviousBias,
+                                    bias,
+                                    voltage,
+                                    voltage - localPreviousBias,
+                                    stepRetryCount);
                                 const bool pointOk = pointAttempt.ok;
                                 lastPointAttempt = std::move(pointAttempt);
                                 lastPointFailureReason = pointOk
@@ -4639,6 +4919,7 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                             }
                             failureReason.clear();
                             localPreviousSolution = attempt.solution;
+                            localPreviousBias = event.voltage;
                         },
                         &pointStepState);
 
@@ -4696,6 +4977,15 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
             0,
             std::move(startAttempt),
             points.size());
+        writeNonlinearTrace(
+            startAttempt,
+            points.size(),
+            initialState.get(),
+            sweep.start,
+            sweep.start,
+            sweep.start,
+            0.0,
+            0);
         startOk = startAttempt.ok;
         startFailureReason = startAttempt.failureReason;
         startValidationDiagnostics = startAttempt.validationDiagnostics;
@@ -4884,6 +5174,7 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
     SolvePointAttempt lastStepAttempt;
     std::string lastStepFailureReason;
     std::string lastStepValidationDiagnostics;
+    Real activeRequestedTargetBias = sweep.start;
     detail::DCSweepStepControlConfig stepControl;
     stepControl.start = sweep.start;
     stepControl.stop = sweep.stop;
@@ -4900,6 +5191,8 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
         stepControl,
         [&](Real voltage, Real, int stepRetryCount) {
             try {
+                if (stepRetryCount == 0)
+                    activeRequestedTargetBias = voltage;
                 SolvePointAttempt attempt = solvePointWithContinuation(
                     voltage, &previousSolution, false, stepRetryCount);
                 attempt = enforceQfBounds(
@@ -4909,6 +5202,15 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                     stepRetryCount,
                     std::move(attempt),
                     points.size());
+                writeNonlinearTrace(
+                    attempt,
+                    points.size(),
+                    &previousSolution,
+                    currentSolutionBias,
+                    activeRequestedTargetBias,
+                    voltage,
+                    voltage - currentSolutionBias,
+                    stepRetryCount);
                 lastStepAttempt = std::move(attempt);
                 lastStepFailureReason = lastStepAttempt.ok ? std::string() : lastStepAttempt.failureReason;
                 lastStepValidationDiagnostics = lastStepAttempt.validationDiagnostics;

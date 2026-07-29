@@ -726,6 +726,18 @@ workflow.
 - `complete_nonlinear_trace_available`; or
 - `rejected_transition_unobserved` and stop.
 
+Executed outcome: `complete_nonlinear_trace_available`. The compatibility
+accepted-iteration CSV remains unchanged, while the new attempt and iteration
+CSVs record rejected transitions before shrink/retry, deterministic parent and
+state hashes, requested versus actual targets, typed reasons, raw and
+row-scaled block residuals, residual peaks, line-search decisions, and
+state-dependent solver-used source/Jacobian active-branch fingerprints. A
+synthetic large-step failure proves same-parent retry linkage and byte-stable
+repeated traces; a diagnostics-off control produces the same accepted states.
+The sealed repository fixture reproduces
+`-19.692187499999644 -> -19.693749999999643 V` as `max_iterations` after 40
+Newton iterations and emits the initial row plus all 40 iteration rows.
+
 ## 10. Work package 6 - close the non-smooth source Jacobian blocker
 
 This work package implements Task 4 of the companion parity plan after work
