@@ -2,7 +2,7 @@
 
 Date: 2026-07-29
 
-Status: engineering WP0-WP2.1 executed; scientific Task 2 is next.
+Status: engineering WP0-WP2.1 and scientific Task 2 executed; WP3 is next.
 
 Starting point: local branch `codex-pn2d-minimal6-operator-audit`, commit
 `1350d11`. Commit `fa1c343` is an ancestor of this starting point.
@@ -128,7 +128,10 @@ The companion observability plan's WP0-WP2 were executed on 2026-07-29:
   1,044 aggregates per root. Both lattices have no missing rows, hashes match,
   actual-bias error is zero, and 348/348 source comparisons close to
   `4.830623899888963e-15` maximum relative error.
-- Twenty-four focused Python tests and the complete Release suite
+- Scientific Task 2 passed 12 synthetic fail-closed scenarios. Its current-data
+  outcome is `solver_first_failure`, with no substituted knee metrics and the
+  exact missing Vela rows recorded.
+- Thirty-six focused Python tests and the complete Release suite
   (`495/495`) pass.
 
 Primary evidence:
@@ -146,7 +149,7 @@ also include every integer bias from `0` through `-20 V`.
 | Scientific task | Engineering prerequisite | Current state |
 |---|---|---|
 | Task 1 | observability WP0, WP2, and WP2.1 | `paired_m0_reference_sealed`; exact Sentaurus lattices complete |
-| Task 2 | common WP1 contract plus dedicated curve/knee analyzer | contract complete; analyzer next |
+| Task 2 | common WP1 contract plus dedicated curve/knee analyzer | `curve_knee_contract_verified`; current data returns `solver_first_failure` |
 | Task 3 | WP0 baseline plus WP4-WP5 solver-used/attempt records | deterministic first failure sealed; full trace pending |
 | Task 4 | WP6 source-only derivative work | pending; fixed-state `-20 V` probe remains available |
 | Tasks 5-6 | WP3-WP5 records and WP7 paired process analyzer | pending |
@@ -402,6 +405,13 @@ preserve missing/failed bias, parent bias, solver reason, and manifest hashes
 without emitting final knee gates. Report test names and expected/actual
 outcomes. Stop before physical parity classification if the verifier does not
 fail closed.
+
+Executed implementation outcome: `curve_knee_contract_verified` with 12
+synthetic scenarios. Executed current-data outcome: `solver_first_failure`;
+global `-20 V` and knee
+`-19.7, -19.8, -19.85, -19.9, -19.95, -20 V` Vela rows are unavailable.
+Evidence:
+`build-release/pn2d-task2-curve-knee-20260730/acceptance.json`.
 
 ## Task 3 - capture and classify the current Vela avalanche-on branch
 

@@ -2,7 +2,7 @@
 
 Date: 2026-07-29
 
-Status: WP0-WP2.1 executed and verified; scientific Task 2 is the next gate.
+Status: WP0-WP2.1 and scientific Task 2 executed; WP3 is next.
 
 Starting point: branch `codex-pn2d-minimal6-operator-audit`, commit
 `1350d11`.
@@ -111,7 +111,12 @@ physics or solver:
   zero over 28,159 records per comparison. All 348 native/replayed source
   integrals close, with maximum relative error
   `4.830623899888963e-15`.
-- Twenty-four focused Python tests and the complete Release suite
+- Scientific Task 2 outcome: `curve_knee_contract_verified` in 12 synthetic
+  scenarios. Current-data classification is `solver_first_failure`; Vela is
+  missing global `-20 V` and knee
+  `-19.7, -19.8, -19.85, -19.9, -19.95, -20 V`, with the sealed first failure
+  at `-19.693749999999643 V`.
+- Thirty-six focused Python tests and the complete Release suite
   (`495/495`) pass.
 
 Primary evidence bundles:
@@ -119,6 +124,7 @@ Primary evidence bundles:
 - `build-release/pn2d-wp0-implementation-baseline-20260729/acceptance.json`;
 - `build-release/pn2d-wp2-process-matrix-pair-20260729/acceptance.json`.
 - `build-release/pn2d-wp21-full-lattice-pair-20260729/acceptance.json`.
+- `build-release/pn2d-task2-curve-knee-20260730/acceptance.json`.
 
 The source/schema/plan files implementing WP1-WP2 are currently untracked.
 They must be reviewed and committed in the boundaries defined in section 15
@@ -857,8 +863,8 @@ WP0 -> WP1 -> WP2 -> WP2.1 -> scientific Task 2 verifier
                                 -> WP3 -> WP4 -> WP5 -> WP6 -> WP7 -> WP8
 ```
 
-WP0-WP2.1 are complete. The scientific Task 2 verifier is the next gate.
-After WP1 is stable, these
+WP0-WP2.1 and scientific Task 2 are complete. WP3 is the next gate. After WP1
+is stable, these
 implementation streams may proceed independently, but their acceptance gates
 remain ordered:
 
@@ -948,12 +954,11 @@ Every work package must report before the next begins:
 
 ## 17. Next execution slice
 
-WP0-WP2.1 are complete. The next slice is:
+WP0-WP2.1 and scientific Task 2 are complete. The next slice is:
 
-1. implement and verify scientific Task 2's curve/knee analyzer;
-2. implement WP3, then WP4 and WP5, without changing a production physics
+1. implement WP3, then WP4 and WP5, without changing a production physics
    formula; and
-3. stop at WP6's authorization gate before any nonlinear correction.
+2. stop at WP6's authorization gate before any nonlinear correction.
 
 The deterministic current-branch failure is an expected observed condition,
 not permission to relax convergence or substitute missing curve rows.
