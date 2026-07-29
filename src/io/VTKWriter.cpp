@@ -1,6 +1,8 @@
 #include "vela/io/VTKWriter.h"
 
 #include <fstream>
+#include <iomanip>
+#include <limits>
 #include <stdexcept>
 
 namespace vela {
@@ -14,6 +16,7 @@ void VTKWriter::write()
     std::ofstream ofs(filename_);
     if (!ofs.is_open())
         throw std::runtime_error("Cannot open VTK file for writing: " + filename_);
+    ofs << std::setprecision(std::numeric_limits<Real>::max_digits10);
 
     const auto& nodes = mesh_.nodes();
     const auto& cells = mesh_.cells();
@@ -59,6 +62,7 @@ void VTKWriter::addNodeScalar(const std::string& fieldName,
     std::ofstream ofs(filename_, std::ios::app);
     if (!ofs.is_open())
         throw std::runtime_error("Cannot open VTK file for appending: " + filename_);
+    ofs << std::setprecision(std::numeric_limits<Real>::max_digits10);
 
     if (!pointDataHeaderWritten_) {
         ofs << "POINT_DATA " << mesh_.numNodes() << "\n";
@@ -80,6 +84,7 @@ void VTKWriter::addNodeVector(const std::string& fieldName,
     std::ofstream ofs(filename_, std::ios::app);
     if (!ofs.is_open())
         throw std::runtime_error("Cannot open VTK file for appending: " + filename_);
+    ofs << std::setprecision(std::numeric_limits<Real>::max_digits10);
 
     if (!pointDataHeaderWritten_) {
         ofs << "POINT_DATA " << mesh_.numNodes() << "\n";
@@ -100,6 +105,7 @@ void VTKWriter::addCellScalar(const std::string& fieldName,
     std::ofstream ofs(filename_, std::ios::app);
     if (!ofs.is_open())
         throw std::runtime_error("Cannot open VTK file for appending: " + filename_);
+    ofs << std::setprecision(std::numeric_limits<Real>::max_digits10);
 
     ofs << "SCALARS " << fieldName << " double 1\n";
     ofs << "LOOKUP_TABLE default\n";
@@ -116,6 +122,7 @@ void VTKWriter::addCellVector(const std::string& fieldName,
     std::ofstream ofs(filename_, std::ios::app);
     if (!ofs.is_open())
         throw std::runtime_error("Cannot open VTK file for appending: " + filename_);
+    ofs << std::setprecision(std::numeric_limits<Real>::max_digits10);
 
     ofs << "VECTORS " << fieldName << " double\n";
     for (const auto& v : values)

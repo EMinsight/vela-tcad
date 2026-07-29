@@ -1,0 +1,122 @@
+#!/usr/bin/env python3
+"""Prepare sealed Sentaurus sources for the PN2D SRH mesh matrix."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import re
+import shutil
+from pathlib import Path
+
+
+LEVELS = {
+    "M0": {"junction_x": 1.0 / 3.0, "junction_y": 0.25},
+    "M1": {"junction_x": 1.0 / 6.0, "junction_y": 0.125},
+    "M2": {"junction_x": 1.0 / 12.0, "junction_y": 0.0625},
+}
+
+
+def digest(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def replace_size(text: str, name: str, value: float) -> str:
+    pattern = (
+        rf'(\(sdedr:define-refinement-size\s+"{re.escape(name)}"\s+)'
+        rf"[-+0-9.eE]+\s+[-+0-9.eE]+\s+[-+0-9.eE]+\s+[-+0-9.eE]+(\s*\))"
+    )
+    replacement = rf"\g<1>{value:g} {value:g} {value:g} {value:g}\g<2>"
+    updated, count = re.subn(pattern, replacement, text, flags=re.MULTILINE)
+    if count != 1:
+        raise RuntimeError(f"expected one {name} refinement-size block, found {count}")
+    return updated
+
+
+def add_junction_refinement(text: str, spacing_x: float, spacing_y: float) -> str:
+    marker = ";----------------------------------------------------------\n; Build mesh"
+    if marker not in text:
+        raise RuntimeError("missing build-mesh marker in sealed coarse7x3 source")
+    block = f""";----------------------------------------------------------
+; Junction-focused Task 4 refinement
+;----------------------------------------------------------
+
+(sdedr:define-refeval-window
+  "Junction.Window"
+  "Rectangle"
+  (position 0.75 0.0 0.0)
+  (position 1.25 H 0.0)
+)
+
+(sdedr:define-refinement-size
+  "Junction.Mesh"
+  {spacing_x:.17g} {spacing_y:.17g}
+  {spacing_x:.17g} {spacing_y:.17g}
+)
+
+(sdedr:define-refinement-placement
+  "Junction.Mesh.Place"
+  "Junction.Mesh"
+  "Junction.Window"
+)
+
+"""
+    return text.replace(marker, block + marker, 1)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--sealed-source", type=Path, required=True)
+    parser.add_argument("--out-root", type=Path, required=True)
+    args = parser.parse_args()
+    source = args.sealed_source.resolve()
+    root = args.out_root.resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    base_sde = (source / "pn2d_sde.cmd").read_text(encoding="utf-8")
+    rows = []
+    for level, sizes in LEVELS.items():
+        out = root / level
+        out.mkdir(parents=True, exist_ok=True)
+        if level == "M0":
+            shutil.copyfile(source / "pn2d_sde.cmd", out / "pn2d_sde.cmd")
+        else:
+            sde = base_sde
+            sde = add_junction_refinement(
+                sde, sizes["junction_x"], sizes["junction_y"]
+            )
+            (out / "pn2d_sde.cmd").write_text(sde, encoding="utf-8")
+        shutil.copyfile(source / "pn2d_bv_sdevice.cmd", out / "pn2d_bv_sdevice.cmd")
+        shutil.copyfile(source / "models.par", out / "models.par")
+        rows.append(
+            {
+                "level": level,
+                "global_spacing_x_um": 1.0 / 3.0,
+                "global_spacing_y_um": 0.25,
+                "junction_spacing_x_um": sizes["junction_x"],
+                "junction_spacing_y_um": sizes["junction_y"],
+                "relative_junction_refinement_vs_M0": (
+                    LEVELS["M0"]["junction_x"] / sizes["junction_x"]
+                ),
+                "source_dir": str(out),
+                "hashes": {
+                    name: digest(out / name)
+                    for name in ("pn2d_sde.cmd", "pn2d_bv_sdevice.cmd", "models.par")
+                },
+            }
+        )
+    manifest = {
+        "schema": "vela.pn2d_bv_off_srh_mesh_matrix_sources.v1",
+        "geometry_um": {"length": 2.0, "height": 0.5, "junction_x": 1.0},
+        "doping_cm3": {"p": 1.0e17, "n": 1.0e17},
+        "levels": rows,
+    }
+    (root / "manifest.json").write_text(
+        json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
+    )
+    print(json.dumps(manifest, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

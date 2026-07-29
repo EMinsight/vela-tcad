@@ -1019,6 +1019,7 @@ void writeDDSolutionVTK(const std::string& filename,
         doping,
         bandgapNarrowingConfig,
         Vt);
+    writer.addNodeScalar("EffectiveIntrinsicDensity", effectiveNi);
     const bool qfImpact =
         detail::usesQuasiFermiAvalancheDrivingForce(impactIonizationConfig);
     const std::vector<Real> electronImpactQfGradient_V_m = qfImpact
