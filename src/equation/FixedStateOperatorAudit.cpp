@@ -493,6 +493,17 @@ FixedStateOperatorAuditResult evaluateFixedStateOperators(
                 thermalVoltage, fieldFactor);
     }
 
+    result.processProbe = evaluateBVProcessProbe(
+        mesh,
+        dopingModel,
+        state,
+        config.mobility,
+        config.impactIonization,
+        config.bandgapNarrowing,
+        materials,
+        config.temperature_K,
+        fieldFactor);
+
     requireUnchanged(state, before, beforeIters, beforeConverged);
     return result;
 }

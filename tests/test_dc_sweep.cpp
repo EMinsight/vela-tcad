@@ -1519,6 +1519,7 @@ TEST_CASE("DCSweep: release BV config audit records resolved avalanche parity me
     const auto csvPath = dir / "bv_release_config.csv";
     const auto auditPath = dir / "release_bv_config_audit.csv";
     const auto summaryPath = dir / "release_bv_config_audit_summary.md";
+    const auto processProbePath = dir / "bv_process_probe.csv";
     const auto cfgPath = writeUnitScalingSweepConfig(dir, meshPath, csvPath, {
         {"mode", "bv_reverse"},
         {"start", 0.0},
@@ -1535,6 +1536,10 @@ TEST_CASE("DCSweep: release BV config audit records resolved avalanche parity me
                 {"diagnostic_reference_source_mapping_mode", "edge_F_edge_alpha_edge_G_to_node"},
                 {"diagnostic_reference_qG_full_A_per_um", 1.323e-16},
                 {"diagnostic_reference_qG_junction_A_per_um", 9.03e-17}
+            }},
+            {"bv_process_probe", {
+                {"enabled", true},
+                {"csv_file", processProbePath.string()}
             }}
         }}
     }, {
@@ -1574,6 +1579,7 @@ TEST_CASE("DCSweep: release BV config audit records resolved avalanche parity me
 
     REQUIRE(std::filesystem::exists(auditPath));
     REQUIRE(std::filesystem::exists(summaryPath));
+    REQUIRE(std::filesystem::exists(processProbePath));
     const auto rows = readCsvRows(auditPath);
     REQUIRE(rows.size() == 2);
 
@@ -1614,6 +1620,21 @@ TEST_CASE("DCSweep: release BV config audit records resolved avalanche parity me
     REQUIRE(summary.find("release uses VanOverstraeten + GradQuasiFermi: yes") != std::string::npos);
     REQUIRE(summary.find("release uses diagnostic source_mapping_mode: yes") != std::string::npos);
     REQUIRE(summary.find("release qG_full/qG_junction same order as A2_B105 diagnostic:") != std::string::npos);
+
+    const auto processRows = readCsvRows(processProbePath);
+    REQUIRE(processRows.size() > 1);
+    const auto& processHeader = processRows.front();
+    const std::size_t processCoupledCol =
+        csvColumnIndex(processHeader, "solver_coupled");
+    const std::size_t processConfigHashCol =
+        csvColumnIndex(processHeader, "configuration_fingerprint");
+    const std::size_t processBranchHashCol =
+        csvColumnIndex(processHeader, "active_branch_fingerprint");
+    for (std::size_t rowIndex = 1; rowIndex < processRows.size(); ++rowIndex) {
+        REQUIRE(processRows[rowIndex].at(processCoupledCol) == "0");
+        REQUIRE_FALSE(processRows[rowIndex].at(processConfigHashCol).empty());
+        REQUIRE_FALSE(processRows[rowIndex].at(processBranchHashCol).empty());
+    }
 }
 
 TEST_CASE("DCSweep: continuity-balance diagnostics write contact-adjacent residual rows",

@@ -889,6 +889,15 @@ Diagnostics fields:
   `"conserved_total_current"`).
   Optional `csv_file` overrides the default
   `<sweep csv stem>_sg_avalanche_edges.csv`.
+- `diagnostics.bv_process_probe.enabled`: writes a normalized solver-used
+  avalanche process record for every active edge/cell support and carrier.
+  Records include endpoint state, electric/QF-gradient vectors, low- and
+  high-field mobility stages, native or reconstructed current provenance,
+  alpha, carrier-split generation, source measure, qG, residual scatter,
+  every selected branch flag, and deterministic configuration/branch
+  fingerprints. The writer checks its summed source against the production
+  assembled source to `1e-12` before emitting rows. Optional `csv_file`
+  overrides `<sweep csv stem>_bv_process_probe.csv`.
 - `diagnostics.avalanche_internal_source_current_audit.enabled`: writes the
   internal SG edge-current avalanche source terms used by assembly, including
   `Fn/Fp` in `V/cm`, `alpha_n/alpha_p` in `cm^-1`, `Jn/Jp` in `A/cm^2`,
@@ -930,6 +939,18 @@ Diagnostics fields:
 - `diagnostics.contact_current_qf_floor.enabled`: compatibility alias for the
   same reporting-only policy. Prefer
   `contact_current_reporting.endpoint_qf_floor` in new BV configurations.
+
+VTK node current and mobility fields are reconstructed post-processing
+quantities. `NodeReconstructedElectronCurrentDensityVector`,
+`NodeReconstructedHoleCurrentDensityVector`,
+`NodeReconstructedTotalCurrentDensityVector`,
+`NodeReconstructedElectronMobility`, and
+`NodeReconstructedHoleMobility` are explicit provenance aliases; the older
+unqualified names remain for compatibility. `ElectronIonIntegral`,
+`HoleIonIntegral`, and `MeanIonIntegral` are local alpha-length accumulations,
+not Sentaurus path ionization integrals. Prefer the equivalent
+`LocalElectronAlphaLengthProxy`, `LocalHoleAlphaLengthProxy`, and
+`LocalMeanAlphaLengthProxy` names in new comparisons.
 
 For Sentaurus BV parity work, compare both the `.plt` terminal current and the
 TDR-exported `ContactCurrentFlux` when judging the remaining terminal-current

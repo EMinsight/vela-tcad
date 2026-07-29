@@ -3,6 +3,7 @@
 #include "vela/core/UnitScalingSystem.h"
 #include "vela/discretization/ScharfetterGummel.h"
 #include "vela/equation/AssemblerUtils.h"
+#include "vela/equation/BVProcessProbe.h"
 #include "vela/simulation/DCSweepPredictor.h"
 #include "vela/simulation/DCSweepStepControl.h"
 #include "vela/simulation/QfBoundsGuard.h"
@@ -1410,6 +1411,16 @@ DCSweepConfig dcSweepConfigFromJson(const nlohmann::json& cfg,
         sweep.diagnostics.triangleGssSources.csvFile =
             triangleCfg.value("csv_file", std::string{});
     }
+    if (diagnosticsCfg.contains("bv_process_probe")) {
+        const auto& probeCfg = diagnosticsCfg.at("bv_process_probe");
+        if (!probeCfg.is_object())
+            throw std::invalid_argument(
+                "DCSweep: sweep.diagnostics.bv_process_probe must be an object.");
+        sweep.diagnostics.bvProcessProbe.enabled =
+            probeCfg.value("enabled", sweep.diagnostics.bvProcessProbe.enabled);
+        sweep.diagnostics.bvProcessProbe.csvFile =
+            probeCfg.value("csv_file", std::string{});
+    }
     if (diagnosticsCfg.contains("avalanche_internal_source_current_audit")) {
         const auto& auditCfg = diagnosticsCfg.at("avalanche_internal_source_current_audit");
         if (!auditCfg.is_object())
@@ -1620,6 +1631,17 @@ DCSweepConfig dcSweepConfigFromJson(const nlohmann::json& cfg,
         } else {
             sweep.diagnostics.triangleGssSources.csvFile =
                 resolve(sweep.diagnostics.triangleGssSources.csvFile);
+        }
+    }
+    if (sweep.diagnostics.bvProcessProbe.enabled) {
+        if (sweep.diagnostics.bvProcessProbe.csvFile.empty()) {
+            const std::filesystem::path csvPath(sweep.csvFile);
+            sweep.diagnostics.bvProcessProbe.csvFile =
+                (csvPath.parent_path() /
+                 (csvPath.stem().string() + "_bv_process_probe.csv")).string();
+        } else {
+            sweep.diagnostics.bvProcessProbe.csvFile =
+                resolve(sweep.diagnostics.bvProcessProbe.csvFile);
         }
     }
     if (sweep.diagnostics.avalancheInternalSourceCurrentAudit.enabled) {
@@ -2234,6 +2256,13 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
             "DCSweep: sweep.diagnostics.triangle_gss_sources requires "
             "impact_ionization.source_mapping_mode='triangle_gss_gradqf_truncated'.");
     }
+    if (sweep.diagnostics.bvProcessProbe.enabled &&
+        !detail::usesEdgeCurrentAvalancheSource(sweepImpactIonizationConfig)) {
+        throw std::invalid_argument(
+            "DCSweep: sweep.diagnostics.bv_process_probe requires "
+            "impact_ionization.generation='current_density' with a supported "
+            "solver-used current approximation.");
+    }
     if (sweep.diagnostics.avalancheInternalSourceCurrentAudit.enabled &&
         !detail::usesEdgeCurrentAvalancheSource(sweepImpactIonizationConfig)) {
         throw std::invalid_argument(
@@ -2659,6 +2688,65 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
             "edge_source_integral",
             "node0_source_integral",
             "node1_source_integral"});
+    }
+
+    std::unique_ptr<CSVWriter> bvProcessProbeCsv;
+    if (sweep.diagnostics.bvProcessProbe.enabled) {
+        const std::filesystem::path diagPath(
+            sweep.diagnostics.bvProcessProbe.csvFile);
+        if (!diagPath.parent_path().empty())
+            std::filesystem::create_directories(diagPath.parent_path());
+        bvProcessProbeCsv = std::make_unique<CSVWriter>(diagPath.string());
+        bvProcessProbeCsv->writeHeader({
+            "point_index",
+            "bias_V",
+            "support_kind",
+            "carrier",
+            "cell_id",
+            "local_edge",
+            "edge_id",
+            "node0",
+            "node1",
+            "psi0",
+            "psi1",
+            "quasi_fermi0",
+            "quasi_fermi1",
+            "density0",
+            "density1",
+            "midpoint_density",
+            "electric_field_x",
+            "electric_field_y",
+            "qf_gradient_x",
+            "qf_gradient_y",
+            "low_field_mobility",
+            "high_field_drive",
+            "final_mobility",
+            "mobility_limiter",
+            "directed_sg_flux",
+            "selected_flux_magnitude",
+            "current_vector_x",
+            "current_vector_y",
+            "current_vector_provenance",
+            "impact_field",
+            "alpha",
+            "source_measure",
+            "generation_rate",
+            "source_integral",
+            "qG_contribution",
+            "scatter_nodes",
+            "source_weights",
+            "electron_residual_contributions",
+            "hole_residual_contributions",
+            "solver_coupled",
+            "contact_adjacent",
+            "zero_measure",
+            "zero_mobility",
+            "zero_alpha",
+            "reconstructed_current",
+            "directional_partition",
+            "active_branches",
+            "configuration_fingerprint",
+            "active_branch_fingerprint"});
     }
 
     std::unique_ptr<CSVWriter> avalancheInternalSourceAuditCsv;
@@ -4130,6 +4218,126 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                     formatReal(record.edgeSourceIntegral),
                     formatReal(record.node0SourceIntegral),
                     formatReal(record.node1SourceIntegral)});
+            }
+        }
+
+        if (converged && bvProcessProbeCsv != nullptr) {
+            const BVProcessProbeResult probe = evaluateBVProcessProbe(
+                mesh,
+                doping,
+                sol,
+                mobilityConfig,
+                sweepImpactIonizationConfig,
+                sweepBgnConfig,
+                matdb,
+                temperature_K,
+                fieldFactor);
+            const std::vector<Real> assembledSource =
+                detail::currentDensityAvalancheSourceIntegrals(
+                    sweepImpactIonizationConfig,
+                    *sweepImpactIonization,
+                    mobilityConfig,
+                    *sweepMobility,
+                    sweepEdgeCells,
+                    mesh,
+                    doping,
+                    sweepCellMaterials,
+                    sol.psi,
+                    sol.phin,
+                    sol.phip,
+                    sol.n,
+                    sol.p,
+                    effectiveNi,
+                    constants::kb * temperature_K / constants::q,
+                    fieldFactor);
+            Real assembledTotal = 0.0;
+            for (Real value : assembledSource)
+                assembledTotal += value;
+            const Real closureScale =
+                std::max({std::abs(assembledTotal),
+                          std::abs(probe.totalSourceIntegral),
+                          Real{1.0e-300}});
+            if (std::abs(assembledTotal - probe.totalSourceIntegral) /
+                    closureScale >
+                1.0e-12) {
+                throw std::logic_error(
+                    "DCSweep: BV process probe source closure failed");
+            }
+
+            const auto joinIndexValues =
+                [](const BVProcessProbeRecord& record) {
+                    std::ostringstream value;
+                    for (std::size_t i = 0; i < record.scatterCount; ++i) {
+                        if (i != 0)
+                            value << ';';
+                        value << record.scatterNodes[i];
+                    }
+                    return value.str();
+                };
+            const auto joinRealValues =
+                [](const BVProcessProbeRecord& record,
+                   const std::array<Real, 6>& values) {
+                    std::ostringstream value;
+                    for (std::size_t i = 0; i < record.scatterCount; ++i) {
+                        if (i != 0)
+                            value << ';';
+                        value << std::setprecision(17) << values[i];
+                    }
+                    return value.str();
+                };
+            const std::size_t pointIndex = points.size();
+            for (const BVProcessProbeRecord& record : probe.records) {
+                bvProcessProbeCsv->writeRow({
+                    std::to_string(pointIndex),
+                    formatReal(point.bias),
+                    record.supportKind,
+                    record.carrier,
+                    std::to_string(record.cellId),
+                    std::to_string(record.localEdge),
+                    std::to_string(record.edgeId),
+                    std::to_string(record.node0),
+                    std::to_string(record.node1),
+                    formatReal(record.psi0),
+                    formatReal(record.psi1),
+                    formatReal(record.quasiFermi0),
+                    formatReal(record.quasiFermi1),
+                    formatReal(record.density0),
+                    formatReal(record.density1),
+                    formatReal(record.midpointDensity),
+                    formatReal(record.electricFieldVector.x()),
+                    formatReal(record.electricFieldVector.y()),
+                    formatReal(record.quasiFermiGradientVector.x()),
+                    formatReal(record.quasiFermiGradientVector.y()),
+                    formatReal(record.lowFieldMobility),
+                    formatReal(record.highFieldDrive),
+                    formatReal(record.finalMobility),
+                    formatReal(record.mobilityLimiter),
+                    formatReal(record.directedSgFlux),
+                    formatReal(record.selectedFluxMagnitude),
+                    formatReal(record.currentVector.x()),
+                    formatReal(record.currentVector.y()),
+                    record.currentVectorProvenance,
+                    formatReal(record.impactField),
+                    formatReal(record.alpha),
+                    formatReal(record.sourceMeasure),
+                    formatReal(record.generationRate),
+                    formatReal(record.sourceIntegral),
+                    formatReal(record.qGContribution),
+                    joinIndexValues(record),
+                    joinRealValues(record, record.sourceWeights),
+                    joinRealValues(
+                        record, record.electronResidualContributions),
+                    joinRealValues(record, record.holeResidualContributions),
+                    record.solverCoupled ? "1" : "0",
+                    record.contactAdjacent ? "1" : "0",
+                    record.zeroMeasure ? "1" : "0",
+                    record.zeroMobility ? "1" : "0",
+                    record.zeroAlpha ? "1" : "0",
+                    record.reconstructedCurrent ? "1" : "0",
+                    record.directionalPartition ? "1" : "0",
+                    record.activeBranches,
+                    record.configurationFingerprint,
+                    record.activeBranchFingerprint});
             }
         }
 

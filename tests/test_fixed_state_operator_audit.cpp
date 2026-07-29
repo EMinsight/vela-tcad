@@ -10,6 +10,7 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include <set>
 #include <vector>
 
 using namespace vela;
@@ -140,6 +141,11 @@ TEST_CASE("fixed-state audit enumerates nine edges and four triangles",
 
     REQUIRE(result.edges.size() == 9);
     REQUIRE(result.triangles.size() == 4);
+    REQUIRE(result.processProbe.records.size() == 14);
+    REQUIRE(result.processProbe.totalSourceIntegral >= 0.0);
+    REQUIRE(result.processProbe.electronResidualContribution ==
+            Catch::Approx(-result.processProbe.totalSourceIntegral)
+                .epsilon(1.0e-14));
     std::vector<Index> zeroCoupleEdges;
     for (Index edgeId = 0; edgeId < mesh.numEdges(); ++edgeId) {
         if (mesh.getEdge(edgeId).couple <= 0.0)
@@ -216,6 +222,12 @@ TEST_CASE("fixed-state audit exposes opt-in element-edge GSS Laux records",
         makeMinimal6Mesh(), makeDoping(), makeState(), config);
 
     REQUIRE(result.elementEdgeGssLauxTriangles.size() == 4);
+    REQUIRE(result.processProbe.records.size() == 48);
+    std::set<std::string> processSupports;
+    for (const auto& process : result.processProbe.records)
+        processSupports.insert(process.supportKind);
+    REQUIRE(processSupports == std::set<std::string>{
+        "element_edge_gss_laux", "element_vertex_gss_laux"});
     for (const auto& record : result.elementEdgeGssLauxTriangles) {
         REQUIRE(record.cellId < 4);
         REQUIRE(record.electronCurrentVector.allFinite());

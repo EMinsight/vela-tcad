@@ -1,5 +1,6 @@
 #pragma once
 
+#include "vela/equation/BVProcessProbe.h"
 #include "vela/equation/AssemblerUtils.h"
 #include "vela/material/MaterialDatabase.h"
 #include "vela/solver/GummelSolver.h"
@@ -44,6 +45,7 @@ struct FixedStateOperatorAuditResult {
     std::vector<FixedStateTriangleRecord> triangles;
     std::vector<ElementEdgeGssLauxAvalancheSourceRecord>
         elementEdgeGssLauxTriangles;
+    BVProcessProbeResult processProbe;
 };
 
 FixedStateOperatorAuditResult evaluateFixedStateOperators(

@@ -68,6 +68,7 @@ add_library(vela_core STATIC
     src/physics/BandgapNarrowing.cpp
     src/equation/PoissonAssembler.cpp
     src/equation/DDAssembler.cpp
+    src/equation/BVProcessProbe.cpp
     src/equation/FixedStateOperatorAudit.cpp
     src/discretization/Bernoulli.cpp
     src/discretization/ScharfetterGummel.cpp
@@ -302,6 +303,9 @@ target_link_libraries(test_element_edge_gss_laux_avalanche PRIVATE vela_core Cat
 add_executable(test_fixed_state_operator_audit tests/test_fixed_state_operator_audit.cpp)
 target_link_libraries(test_fixed_state_operator_audit PRIVATE vela_core Catch2::Catch2WithMain)
 
+add_executable(test_bv_process_probe tests/test_bv_process_probe.cpp)
+target_link_libraries(test_bv_process_probe PRIVATE vela_core Catch2::Catch2WithMain)
+
 add_executable(test_recombination tests/test_recombination.cpp)
 target_link_libraries(test_recombination PRIVATE vela_core Catch2::Catch2WithMain)
 
@@ -379,6 +383,7 @@ vela_catch_discover_tests(test_impact_ionization)
 vela_catch_discover_tests(test_cell_reconstructed_avalanche)
 vela_catch_discover_tests(test_element_edge_gss_laux_avalanche)
 vela_catch_discover_tests(test_fixed_state_operator_audit)
+vela_catch_discover_tests(test_bv_process_probe)
 vela_catch_discover_tests(test_recombination)
 vela_catch_discover_tests(test_line_search_backtrack_failure)
 vela_catch_discover_tests(test_dc_sweep)

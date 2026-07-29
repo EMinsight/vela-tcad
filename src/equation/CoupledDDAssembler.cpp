@@ -1,4 +1,5 @@
 #include "vela/equation/CoupledDDAssembler.h"
+#include "vela/equation/BVProcessProbe.h"
 #include "vela/core/PhysicalConstants.h"
 #include "vela/discretization/Bernoulli.h"
 #include "vela/discretization/ScharfetterGummel.h"
@@ -2426,6 +2427,12 @@ SparseMatrixd CoupledDDAssembler::finiteDifferenceJacobian(
     SparseMatrixd J(M, M);
     J.setFromTriplets(triplets.begin(), triplets.end());
     return J;
+}
+
+std::string CoupledDDAssembler::impactIonizationConfigurationFingerprint() const
+{
+    return bvProcessConfigurationFingerprint(
+        mobilityConfig_, impactIonizationConfig_);
 }
 
 } // namespace vela

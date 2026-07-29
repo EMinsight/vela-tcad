@@ -12,6 +12,7 @@
 #include "vela/physics/MobilityModel.h"
 #include "vela/physics/RecombinationModel.h"
 #include <memory>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -169,6 +170,7 @@ public:
     Real potentialScale() const { return scaling_.V0; }
     Real concentrationScale() const { return scaling_.C0; }
     Real continuityResidualScale() const { return scaling_.enabled ? scaling_.C0 * scaling_.D0 : 1.0; }
+    std::string impactIonizationConfigurationFingerprint() const;
 
 private:
     int psiOffset() const { return 0; }

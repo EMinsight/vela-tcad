@@ -644,6 +644,17 @@ in a CSV writer.
 - `solver_used_process_records_verified`; or
 - `diagnostic_formula_drift` and stop.
 
+Executed outcome: `solver_used_process_records_verified`. The normalized
+`BVProcessProbe` consumes the existing production SG-edge, triangle-GSS, and
+element-edge/GSS-Laux records, emits carrier-split cell/edge/vertex state,
+mobility, current, alpha, source, qG, residual-scatter, branch, and
+fingerprint data, and closes its source and residual sums to the production
+operator at `<= 1e-12`. The coupled assembler exposes the same complete
+configuration fingerprint used by the output records. Acute, right, obtuse,
+reversed-orientation, contact/interior, both-carrier, and postprocess-only
+tests pass. Explicit `NodeReconstructed*` and `Local*AlphaLengthProxy` VTK
+aliases document the old fields without removing compatibility names.
+
 ## 9. Work package 5 - record every continuation and Newton attempt
 
 ### Problem
@@ -870,7 +881,7 @@ WP0 -> WP1 -> WP2 -> WP2.1 -> scientific Task 2 verifier
                                 -> WP3 -> WP4 -> WP5 -> WP6 -> WP7 -> WP8
 ```
 
-WP0-WP3 and scientific Task 2 are complete. WP4 is the next gate. After WP1
+WP0-WP4 and scientific Task 2 are complete. WP5 is the next gate. After WP1
 is stable, these
 implementation streams may proceed independently, but their acceptance gates
 remain ordered:
@@ -961,9 +972,9 @@ Every work package must report before the next begins:
 
 ## 17. Next execution slice
 
-WP0-WP3 and scientific Task 2 are complete. The next slice is:
+WP0-WP4 and scientific Task 2 are complete. The next slice is:
 
-1. implement WP4 and WP5 without changing a production physics formula; and
+1. implement WP5 without changing a production physics formula; and
 2. stop at WP6's authorization gate before any nonlinear correction.
 
 The deterministic current-branch failure is an expected observed condition,

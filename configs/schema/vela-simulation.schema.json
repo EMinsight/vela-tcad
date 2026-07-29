@@ -117,6 +117,25 @@
           "minLength": 1,
           "type": "string"
         },
+        "diagnostics": {
+          "additionalProperties": true,
+          "properties": {
+            "bv_process_probe": {
+              "additionalProperties": false,
+              "properties": {
+                "csv_file": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "enabled": {
+                  "type": "boolean"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "type": "object"
+        },
         "growth_factor": {
           "exclusiveMinimum": 1.0,
           "type": "number"

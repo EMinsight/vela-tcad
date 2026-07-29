@@ -2309,10 +2309,16 @@ struct TriangleGssAvalancheSourceRecord {
     Real truncatedPartialVolume = 0.0;
     Real electronCellQfField = 0.0;
     Real holeCellQfField = 0.0;
+    Real electronImpactField = 0.0;
+    Real holeImpactField = 0.0;
     Real electronEdgeQfField = 0.0;
     Real holeEdgeQfField = 0.0;
     Real electronMidpointDensity = 0.0;
     Real holeMidpointDensity = 0.0;
+    Real electronMobilityDrivingField = 0.0;
+    Real holeMobilityDrivingField = 0.0;
+    Real electronLowFieldMobility = 0.0;
+    Real holeLowFieldMobility = 0.0;
     Real electronMobility = 0.0;
     Real holeMobility = 0.0;
     Real electronAlpha = 0.0;
@@ -2455,6 +2461,8 @@ triangleGssAvalancheSourceRecordsForCell(
                 mesh, cell, node0, node1) * config.sourceGeometryScale;
         record.electronCellQfField = electronCellField;
         record.holeCellQfField = holeCellField;
+        record.electronImpactField = electronImpactField;
+        record.holeImpactField = holeImpactField;
         record.electronEdgeQfField =
             std::abs(phin(static_cast<int>(node1)) - phin(static_cast<int>(node0))) /
             edge.length * fieldFactor;
@@ -2467,6 +2475,14 @@ triangleGssAvalancheSourceRecordsForCell(
         record.holeMidpointDensity = gssHoleAvalancheMidpointDensity(
             p(static_cast<int>(node0)), p(static_cast<int>(node1)),
             psi(static_cast<int>(node0)), psi(static_cast<int>(node1)), Vt);
+        record.electronMobilityDrivingField = record.electronEdgeQfField;
+        record.holeMobilityDrivingField = record.holeEdgeQfField;
+        record.electronLowFieldMobility = triangleGssEndpointAveragedMobility(
+            mobilityConfig, mobility, mesh, doping, cellMaterials, n, p, cellId, node0, node1,
+            CarrierType::Electron, 0.0);
+        record.holeLowFieldMobility = triangleGssEndpointAveragedMobility(
+            mobilityConfig, mobility, mesh, doping, cellMaterials, n, p, cellId, node0, node1,
+            CarrierType::Hole, 0.0);
         record.electronMobility = triangleGssEndpointAveragedMobility(
             mobilityConfig, mobility, mesh, doping, cellMaterials, n, p, cellId, node0, node1,
             CarrierType::Electron, record.electronEdgeQfField);
@@ -2540,6 +2556,10 @@ struct ElementEdgeGssLauxAvalancheSourceRecord {
     std::array<Real, 3> vertexMeasures{};
     std::array<Real, 3> electronMobilities{};
     std::array<Real, 3> holeMobilities{};
+    std::array<Real, 3> electronLowFieldMobilities{};
+    std::array<Real, 3> holeLowFieldMobilities{};
+    std::array<Real, 3> electronMobilityDrivingFields{};
+    std::array<Real, 3> holeMobilityDrivingFields{};
     std::array<Real, 3> electronSignedEdgeFlux{};
     std::array<Real, 3> holeSignedEdgeFlux{};
     Point2 electronCurrentVector = Point2::Zero();
@@ -2676,16 +2696,32 @@ elementEdgeGssLauxAvalancheSourceRecordForCell(
                 phip(static_cast<int>(node1)) -
                 phip(static_cast<int>(node0))) /
             edgeLength * fieldFactor;
+        const Real electronMobilityDrive =
+            qfMobility ? electronEdgeField : electricEdgeField;
+        const Real holeMobilityDrive =
+            qfMobility ? holeEdgeField : electricEdgeField;
+        const Real electronLowFieldMobility =
+            triangleGssEndpointAveragedMobility(
+                mobilityConfig, mobility, mesh, doping, cellMaterials, n, p, cellId,
+                node0, node1, CarrierType::Electron, 0.0);
+        const Real holeLowFieldMobility =
+            triangleGssEndpointAveragedMobility(
+                mobilityConfig, mobility, mesh, doping, cellMaterials, n, p, cellId,
+                node0, node1, CarrierType::Hole, 0.0);
         const Real electronMobility =
             triangleGssEndpointAveragedMobility(
                 mobilityConfig, mobility, mesh, doping, cellMaterials, n, p, cellId,
                 node0, node1, CarrierType::Electron,
-                qfMobility ? electronEdgeField : electricEdgeField);
+                electronMobilityDrive);
         const Real holeMobility =
             triangleGssEndpointAveragedMobility(
                 mobilityConfig, mobility, mesh, doping, cellMaterials, n, p, cellId,
                 node0, node1, CarrierType::Hole,
-                qfMobility ? holeEdgeField : electricEdgeField);
+                holeMobilityDrive);
+        record.electronLowFieldMobilities[local] = electronLowFieldMobility;
+        record.holeLowFieldMobilities[local] = holeLowFieldMobility;
+        record.electronMobilityDrivingFields[local] = electronMobilityDrive;
+        record.holeMobilityDrivingFields[local] = holeMobilityDrive;
         record.electronMobilities[local] = electronMobility;
         record.holeMobilities[local] = holeMobility;
         record.electronSignedEdgeFlux[local] =
@@ -2793,6 +2829,10 @@ struct SgEdgeCurrentAvalancheSourceRecord {
     Real holeAlpha = 0.0;
     Real electronMobility = 0.0;
     Real holeMobility = 0.0;
+    Real electronLowFieldMobility = 0.0;
+    Real holeLowFieldMobility = 0.0;
+    Real electronMobilityDrivingField = 0.0;
+    Real holeMobilityDrivingField = 0.0;
     Real electronRawFluxProxy = 0.0;
     Real holeRawFluxProxy = 0.0;
     Real electronRawSignedFluxProxy = 0.0;
@@ -3000,15 +3040,23 @@ inline std::vector<SgEdgeCurrentAvalancheSourceRecord> sgEdgeCurrentAvalancheSou
         record.edgeCouple = edge.couple;
         record.edgeAreaProxy = edgeArea;
         record.electricField = electricField;
+        record.electronMobilityDrivingField = electronMobilityField;
+        record.holeMobilityDrivingField = holeMobilityField;
 
         const Real mun = edgeMobility(
             edgeCells, mesh, doping, mobility, cellMaterials, e, CarrierType::Electron,
             electronMobilityField, &mobilityConfig, &psi);
         record.electronMobility = mun;
+        record.electronLowFieldMobility = edgeMobility(
+            edgeCells, mesh, doping, mobility, cellMaterials, e,
+            CarrierType::Electron, 0.0, &mobilityConfig, &psi);
         const Real mup = edgeMobility(
             edgeCells, mesh, doping, mobility, cellMaterials, e, CarrierType::Hole,
             holeMobilityField, &mobilityConfig, &psi);
         record.holeMobility = mup;
+        record.holeLowFieldMobility = edgeMobility(
+            edgeCells, mesh, doping, mobility, cellMaterials, e,
+            CarrierType::Hole, 0.0, &mobilityConfig, &psi);
         constexpr bool IncludeElectronNiGradientDrift = true;
         const Real electronContinuityCoefficient =
             mun > 0.0 ? mun * Vt * fieldFactor / h : 0.0;

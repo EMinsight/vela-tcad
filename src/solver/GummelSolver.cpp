@@ -1285,8 +1285,21 @@ void writeDDSolutionVTK(const std::string& filename,
     writer.addNodeVector("ElectronCurrentDensityVector", electronCurrentDensity_A_cm2);
     writer.addNodeVector("HoleCurrentDensityVector", holeCurrentDensity_A_cm2);
     writer.addNodeVector("TotalCurrentDensityVector", totalCurrentDensity_A_cm2);
+    writer.addNodeVector(
+        "NodeReconstructedElectronCurrentDensityVector",
+        electronCurrentDensity_A_cm2);
+    writer.addNodeVector(
+        "NodeReconstructedHoleCurrentDensityVector",
+        holeCurrentDensity_A_cm2);
+    writer.addNodeVector(
+        "NodeReconstructedTotalCurrentDensityVector",
+        totalCurrentDensity_A_cm2);
     writer.addNodeScalar("ElectronMobility", electronMobility);
     writer.addNodeScalar("HoleMobility", holeMobility);
+    writer.addNodeScalar(
+        "NodeReconstructedElectronMobility", electronMobility);
+    writer.addNodeScalar(
+        "NodeReconstructedHoleMobility", holeMobility);
     writer.addNodeScalar("ElectronVelocity", electronVelocity);
     writer.addNodeScalar("HoleVelocity", holeVelocity);
     writer.addNodeScalar("ElectronAlphaAvalanche", electronAlphaAvalanche);
@@ -1296,6 +1309,12 @@ void writeDDSolutionVTK(const std::string& filename,
     writer.addNodeScalar("ElectronIonIntegral", electronIonIntegral);
     writer.addNodeScalar("HoleIonIntegral", holeIonIntegral);
     writer.addNodeScalar("MeanIonIntegral", meanIonIntegral);
+    writer.addNodeScalar(
+        "LocalElectronAlphaLengthProxy", electronIonIntegral);
+    writer.addNodeScalar(
+        "LocalHoleAlphaLengthProxy", holeIonIntegral);
+    writer.addNodeScalar(
+        "LocalMeanAlphaLengthProxy", meanIonIntegral);
     writer.addNodeScalar("ElectronLowFieldMobility", electronLowFieldMobility);
     writer.addNodeScalar("HoleLowFieldMobility", holeLowFieldMobility);
     writer.addNodeScalar("ElectronHighFieldDrive", electronHighFieldDrive_V_cm);

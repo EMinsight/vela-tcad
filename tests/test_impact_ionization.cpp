@@ -1756,6 +1756,26 @@ TEST_CASE("VTK exports direct avalanche velocity alpha ion integral and impact d
         readVtkScalar(vtkPath, "HoleIonIntegral", static_cast<std::size_t>(mesh.numNodes()));
     const auto meanIon =
         readVtkScalar(vtkPath, "MeanIonIntegral", static_cast<std::size_t>(mesh.numNodes()));
+    const auto localElectronAlphaLength = readVtkScalar(
+        vtkPath,
+        "LocalElectronAlphaLengthProxy",
+        static_cast<std::size_t>(mesh.numNodes()));
+    const auto localHoleAlphaLength = readVtkScalar(
+        vtkPath,
+        "LocalHoleAlphaLengthProxy",
+        static_cast<std::size_t>(mesh.numNodes()));
+    const auto localMeanAlphaLength = readVtkScalar(
+        vtkPath,
+        "LocalMeanAlphaLengthProxy",
+        static_cast<std::size_t>(mesh.numNodes()));
+    const auto nodeReconstructedElectronMobility = readVtkScalar(
+        vtkPath,
+        "NodeReconstructedElectronMobility",
+        static_cast<std::size_t>(mesh.numNodes()));
+    const auto legacyElectronMobility = readVtkScalar(
+        vtkPath,
+        "ElectronMobility",
+        static_cast<std::size_t>(mesh.numNodes()));
 
     REQUIRE(*std::max_element(electronVelocity.begin(), electronVelocity.end()) > 0.0);
     REQUIRE(*std::max_element(holeVelocity.begin(), holeVelocity.end()) > 0.0);
@@ -1769,8 +1789,17 @@ TEST_CASE("VTK exports direct avalanche velocity alpha ion integral and impact d
     REQUIRE(electronIon.size() == static_cast<std::size_t>(mesh.numNodes()));
     REQUIRE(holeIon.size() == static_cast<std::size_t>(mesh.numNodes()));
     REQUIRE(meanIon.size() == static_cast<std::size_t>(mesh.numNodes()));
-    for (std::size_t i = 0; i < meanIon.size(); ++i)
+    for (std::size_t i = 0; i < meanIon.size(); ++i) {
         REQUIRE(meanIon[i] == Catch::Approx(0.5 * (electronIon[i] + holeIon[i])));
+        REQUIRE(localElectronAlphaLength[i] ==
+                Catch::Approx(electronIon[i]).margin(0.0));
+        REQUIRE(localHoleAlphaLength[i] ==
+                Catch::Approx(holeIon[i]).margin(0.0));
+        REQUIRE(localMeanAlphaLength[i] ==
+                Catch::Approx(meanIon[i]).margin(0.0));
+        REQUIRE(nodeReconstructedElectronMobility[i] ==
+                Catch::Approx(legacyElectronMobility[i]).margin(0.0));
+    }
 
     std::error_code removeError;
     std::filesystem::remove(vtkPath, removeError);
