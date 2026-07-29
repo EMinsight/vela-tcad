@@ -2,7 +2,7 @@
 
 Date: 2026-07-29
 
-Status: WP0-WP2 executed and verified; WP2.1 is the next evidence gate.
+Status: WP0-WP2.1 executed and verified; scientific Task 2 is the next gate.
 
 Starting point: branch `codex-pn2d-minimal6-operator-audit`, commit
 `1350d11`.
@@ -102,13 +102,23 @@ physics or solver:
   Avalanche-on versus `AvalDerivatives` also has zero state difference over
   7,768 records. Native CurrentPlot and Tcl/`ReadMeasure` source integration
   close to `3.977747984452422e-15` relative.
-- Twenty-two focused Python tests and the complete Release suite
+- WP2.1 outcome: `exact_reference_lattices_complete`. Two independent VM
+  roots each produced 116 exact snapshots on the 29-point union of the global
+  and knee lattices, 176,668 field records, and 1,044 aggregates. Both
+  acceptance lattices have no missing rows, requested/actual bias error is
+  zero, and normalized/input hashes match.
+- WP2.1 off versus IIC and on versus `AvalDerivatives` state differences are
+  zero over 28,159 records per comparison. All 348 native/replayed source
+  integrals close, with maximum relative error
+  `4.830623899888963e-15`.
+- Twenty-four focused Python tests and the complete Release suite
   (`495/495`) pass.
 
 Primary evidence bundles:
 
 - `build-release/pn2d-wp0-implementation-baseline-20260729/acceptance.json`;
 - `build-release/pn2d-wp2-process-matrix-pair-20260729/acceptance.json`.
+- `build-release/pn2d-wp21-full-lattice-pair-20260729/acceptance.json`.
 
 The source/schema/plan files implementing WP1-WP2 are currently untracked.
 They must be reviewed and committed in the boundaries defined in section 15
@@ -470,6 +480,9 @@ proof to the exact global and knee reference required by the companion plan.
 
 - `exact_reference_lattices_complete`; or
 - `incomplete_exact_lattice` and stop before scientific parity scoring.
+
+Executed outcome: `exact_reference_lattices_complete` on the 29-point union
+lattice in two independent VM roots. Scientific Task 2 is authorized.
 
 ## 7. Work package 3 - implement a Vela IIC-equivalent observation mode
 
@@ -844,8 +857,8 @@ WP0 -> WP1 -> WP2 -> WP2.1 -> scientific Task 2 verifier
                                 -> WP3 -> WP4 -> WP5 -> WP6 -> WP7 -> WP8
 ```
 
-WP0-WP2 are complete. Review/commit boundaries 1 and 2, WP2.1, and the
-scientific Task 2 verifier are the next gates. After WP1 is stable, these
+WP0-WP2.1 are complete. The scientific Task 2 verifier is the next gate.
+After WP1 is stable, these
 implementation streams may proceed independently, but their acceptance gates
 remain ordered:
 
@@ -935,15 +948,12 @@ Every work package must report before the next begins:
 
 ## 17. Next execution slice
 
-WP0-WP2 are complete. The next slice is:
+WP0-WP2.1 are complete. The next slice is:
 
-1. review and commit WP1 schema/contract files as boundary 1;
-2. review and commit WP2 VM runner/analyzer/tests as boundary 2;
-3. execute WP2.1 to complete both exact Sentaurus acceptance lattices;
-4. implement and verify scientific Task 2's curve/knee analyzer;
-5. implement WP3, then WP4 and WP5, without changing a production physics
+1. implement and verify scientific Task 2's curve/knee analyzer;
+2. implement WP3, then WP4 and WP5, without changing a production physics
    formula; and
-6. stop at WP6's authorization gate before any nonlinear correction.
+3. stop at WP6's authorization gate before any nonlinear correction.
 
 The deterministic current-branch failure is an expected observed condition,
 not permission to relax convergence or substitute missing curve rows.

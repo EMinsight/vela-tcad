@@ -27,6 +27,20 @@ REQUIRED_BRANCHES = frozenset(
     }
 )
 SOURCE_CLOSURE_RELATIVE_TOLERANCE = 1.0e-10
+GLOBAL_BIASES_V = tuple(float(-value) for value in range(21))
+KNEE_BIASES_V = (
+    -18.0,
+    -18.5,
+    -19.0,
+    -19.25,
+    -19.5,
+    -19.7,
+    -19.8,
+    -19.85,
+    -19.9,
+    -19.95,
+    -20.0,
+)
 
 STATE_QUANTITIES = frozenset(
     {
@@ -68,6 +82,18 @@ def process_matrix_shape(manifest: Mapping[str, Any]) -> dict[str, Any]:
         "biases_V": list(reference_biases),
         "snapshot_count": snapshot_count,
         "expected_snapshot_count": len(REQUIRED_BRANCHES) * len(reference_biases),
+    }
+
+
+def reference_lattice_coverage(biases: list[float]) -> dict[str, Any]:
+    observed = set(biases)
+    missing_global = [bias for bias in GLOBAL_BIASES_V if bias not in observed]
+    missing_knee = [bias for bias in KNEE_BIASES_V if bias not in observed]
+    return {
+        "global_complete": not missing_global,
+        "knee_complete": not missing_knee,
+        "missing_global_biases_V": missing_global,
+        "missing_knee_biases_V": missing_knee,
     }
 
 
@@ -202,7 +228,12 @@ def max_iic_generation(manifest: Mapping[str, Any]) -> float:
     )
 
 
-def analyze(root_a: Path, root_b: Path) -> dict[str, Any]:
+def analyze(
+    root_a: Path,
+    root_b: Path,
+    *,
+    require_acceptance_lattices: bool = False,
+) -> dict[str, Any]:
     manifest_a = load_run(root_a)
     manifest_b = load_run(root_b)
     shape_a = process_matrix_shape(manifest_a)
@@ -235,6 +266,7 @@ def analyze(root_a: Path, root_b: Path) -> dict[str, Any]:
     iic_generation = max_iic_generation(manifest_a)
     closure = source_closure(manifest_a)
     expected_source_comparisons = snapshot_count * 3
+    lattice_coverage = reference_lattice_coverage(shape_a["biases_V"])
 
     outcome = "sentaurus_process_matrix_available"
     if (
@@ -260,6 +292,13 @@ def analyze(root_a: Path, root_b: Path) -> dict[str, Any]:
         and derivatives_state["maximum_absolute"] > 1.0e-12
     ):
         outcome = "sentaurus_solver_path_difference"
+    elif require_acceptance_lattices:
+        outcome = (
+            "exact_reference_lattices_complete"
+            if lattice_coverage["global_complete"]
+            and lattice_coverage["knee_complete"]
+            else "incomplete_exact_lattice"
+        )
 
     return {
         "schema": "vela.pn2d_bv_process_matrix_pair_acceptance.v1",
@@ -270,6 +309,7 @@ def analyze(root_a: Path, root_b: Path) -> dict[str, Any]:
         "normalized_output_hashes_identical": normalized_equal,
         "matrix_shape_identical": shape_equal,
         "matrix_shape": shape_a,
+        "reference_lattice_coverage": lattice_coverage,
         "exact_bias_maximum_error_V": exact_bias_error,
         "snapshot_count": snapshot_count,
         "expected_source_comparisons": expected_source_comparisons,
@@ -285,8 +325,13 @@ def main() -> int:
     parser.add_argument("--root-a", type=Path, required=True)
     parser.add_argument("--root-b", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--require-acceptance-lattices", action="store_true")
     args = parser.parse_args()
-    result = analyze(args.root_a.resolve(), args.root_b.resolve())
+    result = analyze(
+        args.root_a.resolve(),
+        args.root_b.resolve(),
+        require_acceptance_lattices=args.require_acceptance_lattices,
+    )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(
         json.dumps(result, indent=2, sort_keys=True) + "\n",
@@ -294,7 +339,11 @@ def main() -> int:
         newline="\n",
     )
     print(json.dumps(result, indent=2, sort_keys=True))
-    return 0 if result["outcome"] == "sentaurus_process_matrix_available" else 1
+    successful_outcomes = {
+        "sentaurus_process_matrix_available",
+        "exact_reference_lattices_complete",
+    }
+    return 0 if result["outcome"] in successful_outcomes else 1
 
 
 if __name__ == "__main__":

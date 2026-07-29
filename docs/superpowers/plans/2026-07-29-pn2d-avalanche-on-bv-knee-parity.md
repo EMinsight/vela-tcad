@@ -2,8 +2,7 @@
 
 Date: 2026-07-29
 
-Status: engineering WP0-WP2 executed; exact-lattice completion and Task 2 are
-next.
+Status: engineering WP0-WP2.1 executed; scientific Task 2 is next.
 
 Starting point: local branch `codex-pn2d-minimal6-operator-audit`, commit
 `1350d11`. Commit `fa1c343` is an ancestor of this starting point.
@@ -124,7 +123,12 @@ The companion observability plan's WP0-WP2 were executed on 2026-07-29:
   generation is nonzero; avalanche-on versus `AvalDerivatives` state fields
   are also identical over 7,768 records. CurrentPlot versus Tcl/`ReadMeasure`
   source reintegration closes to `3.977747984452422e-15` relative.
-- Twenty-two focused Python tests and the complete Release suite
+- WP2.1 completed the 29-point union of both acceptance lattices in two
+  independent VM roots: 116 exact snapshots, 176,668 field records, and
+  1,044 aggregates per root. Both lattices have no missing rows, hashes match,
+  actual-bias error is zero, and 348/348 source comparisons close to
+  `4.830623899888963e-15` maximum relative error.
+- Twenty-four focused Python tests and the complete Release suite
   (`495/495`) pass.
 
 Primary evidence:
@@ -141,7 +145,7 @@ also include every integer bias from `0` through `-20 V`.
 
 | Scientific task | Engineering prerequisite | Current state |
 |---|---|---|
-| Task 1 | observability WP0, WP2, and WP2.1 | baseline and eight-point matrix sealed; exact lattices incomplete |
+| Task 1 | observability WP0, WP2, and WP2.1 | `paired_m0_reference_sealed`; exact Sentaurus lattices complete |
 | Task 2 | common WP1 contract plus dedicated curve/knee analyzer | contract complete; analyzer next |
 | Task 3 | WP0 baseline plus WP4-WP5 solver-used/attempt records | deterministic first failure sealed; full trace pending |
 | Task 4 | WP6 source-only derivative work | pending; fixed-state `-20 V` probe remains available |
@@ -336,10 +340,8 @@ Report the hashes, row counts, off-curve metrics, and model selectors. Stop on
 the second outcome; do not run avalanche-on Vela comparisons against an
 unpaired reference.
 
-Current state: the M0 hashes, off baseline, selectors, and eight-point
-Sentaurus process matrix are sealed, but `paired_m0_reference_sealed` is
-withheld until WP2.1 supplies every exact global and knee row. The current
-typed state is `incomplete_exact_lattice`, not a provenance mismatch.
+Current state: `paired_m0_reference_sealed`. WP2.1 supplies every exact global
+and knee Sentaurus row in two deterministic VM roots; Task 2 is authorized.
 
 ## Task 2 - implement the curve and knee verifier
 

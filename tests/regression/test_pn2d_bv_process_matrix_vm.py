@@ -9,6 +9,7 @@ from pathlib import Path
 
 from scripts.analyze_pn2d_bv_process_matrix_pair import (
     process_matrix_shape,
+    reference_lattice_coverage,
     source_closure,
 )
 from scripts.run_pn2d_bv_process_matrix_vm import (
@@ -18,6 +19,7 @@ from scripts.run_pn2d_bv_process_matrix_vm import (
     currentplot_aggregates,
     exact_currentplot_rows,
     make_branch_deck,
+    replace_tcl_targets,
     remote_command,
     remote_shell_text,
 )
@@ -112,6 +114,33 @@ class BVProcessMatrixVMTest(unittest.TestCase):
         self.assertEqual(incomplete["compared_records"], 0)
         self.assertEqual(incomplete["incomplete_records"], 1)
 
+    def test_reference_lattice_coverage_fails_closed(self) -> None:
+        incomplete = reference_lattice_coverage(
+            [float(-value) for value in range(21)]
+        )
+        self.assertTrue(incomplete["global_complete"])
+        self.assertFalse(incomplete["knee_complete"])
+        self.assertEqual(
+            incomplete["missing_knee_biases_V"],
+            [-18.5, -19.25, -19.5, -19.7, -19.8, -19.85, -19.9, -19.95],
+        )
+
+        complete = reference_lattice_coverage(
+            [
+                *[float(-value) for value in range(21)],
+                -18.5,
+                -19.25,
+                -19.5,
+                -19.7,
+                -19.8,
+                -19.85,
+                -19.9,
+                -19.95,
+            ]
+        )
+        self.assertTrue(complete["global_complete"])
+        self.assertTrue(complete["knee_complete"])
+
     def test_declared_branches_and_iic_controls(self) -> None:
         biases = (-10.0, -19.95)
         decks = {
@@ -144,6 +173,25 @@ class BVProcessMatrixVMTest(unittest.TestCase):
         )
         self.assertEqual(len(set(prefixes)), len(biases))
         self.assertEqual(deck.count("CurrentPlot(Time=(1))"), len(biases))
+
+    def test_global_lattice_has_explicit_equilibrium_snapshot(self) -> None:
+        biases = (0.0, -1.0, -2.0)
+        deck = make_branch_deck(TEMPLATE, "avalanche_off", biases)
+        self.assertIn(
+            'Plot(FilePrefix="snapshot_000_zero" NoOverWrite)',
+            deck,
+        )
+        self.assertNotIn('Goal { Name="Anode" Voltage=0', deck)
+        self.assertEqual(deck.count("CurrentPlot(Time=(1))"), 2)
+        self.assertIn('Goal { Name="Anode" Voltage=-1', deck)
+        self.assertIn('Goal { Name="Anode" Voltage=-2', deck)
+
+        tcl = replace_tcl_targets(
+            "foreach candidate {-1.0 -2.0} {\n}\n",
+            (-1.0, -2.0),
+            biases,
+        )
+        self.assertIn("foreach candidate {0.0 -1.0 -2.0} {", tcl)
 
     def test_grad_qf_currentplot_units_maxima_and_failure_diagnostics(self) -> None:
         deck = make_branch_deck(TEMPLATE, "avalanche_on", (-19.95,))

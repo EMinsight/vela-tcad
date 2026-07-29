@@ -94,18 +94,47 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 
 def bias_tag(index: int, bias: float) -> str:
+    if bias == 0.0:
+        return f"snapshot_{index:03d}_zero"
     magnitude = f"{abs(bias):.12g}".replace(".", "p")
     return f"snapshot_{index:03d}_minus{magnitude}"
 
 
+def validate_process_biases(biases: tuple[float, ...]) -> None:
+    if not biases:
+        raise ValueError("at least one process bias is required")
+    if len(set(biases)) != len(biases):
+        raise ValueError("process biases must be unique")
+    if any(bias > 0.0 for bias in biases):
+        raise ValueError("process biases must be nonpositive")
+    if tuple(sorted(biases, reverse=True)) != biases:
+        raise ValueError("process biases must be ordered from low to high magnitude")
+    if 0.0 in biases and biases[0] != 0.0:
+        raise ValueError("equilibrium 0 V must be the first process bias")
+
+
+def negative_process_biases(biases: tuple[float, ...]) -> tuple[float, ...]:
+    negative = tuple(bias for bias in biases if bias < 0.0)
+    if not negative:
+        raise ValueError("at least one negative process bias is required")
+    validate_biases(negative)
+    return negative
+
+
 def exact_solve_block(branch: str, biases: tuple[float, ...]) -> str:
-    validate_biases(biases)
+    validate_process_biases(biases)
     lines = [
         "Solve {",
         "  Coupled(Iterations=100) { Poisson }",
         "  Coupled(Iterations=100) { Poisson Electron Hole }",
     ]
-    for index, bias in enumerate(biases):
+    start_index = 0
+    if biases[0] == 0.0:
+        lines.append(
+            f'  Plot(FilePrefix="{bias_tag(0, 0.0)}" NoOverWrite)'
+        )
+        start_index = 1
+    for index, bias in enumerate(biases[start_index:], start=start_index):
         lines.extend(
             [
                 "  Quasistationary(",
@@ -162,10 +191,12 @@ def make_branch_deck(
 ) -> str:
     if branch not in BRANCHES:
         raise ValueError(f"unknown branch: {branch}")
+    validate_process_biases(biases)
+    physics_biases = negative_process_biases(biases)
     builder_variant = (
         "avalanche_disabled" if branch == "avalanche_off" else "explicit_grad_qf"
     )
-    deck = oracle_deck(template, builder_variant, biases)
+    deck = oracle_deck(template, builder_variant, physics_biases)
     old_stem = f"runtime_general_tri3_avalanche_probe_{builder_variant}"
     new_stem = f"pn2d_bv_process_{branch}"
     if old_stem not in deck:
@@ -211,8 +242,36 @@ def make_branch_deck(
     return deck.rstrip() + "\n"
 
 
+def replace_tcl_targets(
+    tcl: str,
+    old_biases: tuple[float, ...],
+    new_biases: tuple[float, ...],
+) -> str:
+    if old_biases == new_biases:
+        return tcl
+    old = (
+        "foreach candidate {"
+        + " ".join(str(bias) for bias in old_biases)
+        + "} {"
+    )
+    new = (
+        "foreach candidate {"
+        + " ".join(str(bias) for bias in new_biases)
+        + "} {"
+    )
+    if tcl.count(old) != 1:
+        raise ValueError("generated Tcl target list was not found exactly once")
+    return tcl.replace(old, new, 1)
+
+
 def make_branch_tcl(template: str, biases: tuple[float, ...]) -> str:
-    return oracle_tcl(template, biases)
+    validate_process_biases(biases)
+    physics_biases = negative_process_biases(biases)
+    return replace_tcl_targets(
+        oracle_tcl(template, physics_biases),
+        physics_biases,
+        biases,
+    )
 
 
 def remote_command(remote: str, argv: Sequence[str]) -> list[str]:
@@ -870,7 +929,7 @@ def normalized_case(
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     biases = tuple(args.biases)
-    validate_biases(biases)
+    validate_process_biases(biases)
     remote_root = validate_remote_root(args.remote_root)
     output = args.output_root.resolve()
     output.mkdir(parents=True, exist_ok=True)
