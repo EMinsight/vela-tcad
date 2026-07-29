@@ -1,0 +1,251 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "vela.pn2d_bv_process_run.v1.schema.json",
+  "title": "vela.pn2d_bv_process_run.v1",
+  "type": "object",
+  "required": [
+    "schema",
+    "status",
+    "outcome",
+    "run_id",
+    "simulator",
+    "release",
+    "missing_value_policy",
+    "input_hashes",
+    "normalized_output_hashes",
+    "branch_records",
+    "field_records",
+    "aggregate_records",
+    "newton_attempt_records"
+  ],
+  "properties": {
+    "schema": {"const": "vela.pn2d_bv_process_run.v1"},
+    "status": {"enum": ["passed", "failed"]},
+    "outcome": {"type": "string", "minLength": 1},
+    "run_id": {"type": "string", "minLength": 1},
+    "simulator": {"enum": ["vela", "sentaurus"]},
+    "release": {"type": "string", "minLength": 1},
+    "missing_value_policy": {"const": "reject"},
+    "input_hashes": {"$ref": "#/$defs/hashMap"},
+    "normalized_output_hashes": {"$ref": "#/$defs/hashMap"},
+    "branch_records": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/branchRecord"}
+    },
+    "field_records": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/fieldRecord"}
+    },
+    "aggregate_records": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/aggregateRecord"}
+    },
+    "newton_attempt_records": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/newtonAttemptRecord"}
+    }
+  },
+  "$defs": {
+    "branchName": {
+      "enum": [
+        "avalanche_off",
+        "iic_postprocess",
+        "avalanche_on",
+        "avalanche_on_aval_derivatives"
+      ]
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "hashMap": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {"$ref": "#/$defs/sha256"}
+    },
+    "artifact": {
+      "type": "object",
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      },
+      "additionalProperties": false
+    },
+    "biasRecord": {
+      "type": "object",
+      "required": [
+        "requested_bias_V",
+        "actual_bias_V",
+        "snapshot_tdr",
+        "currentplot",
+        "process_record"
+      ],
+      "properties": {
+        "requested_bias_V": {"type": "number"},
+        "actual_bias_V": {"type": "number"},
+        "snapshot_tdr": {"$ref": "#/$defs/artifact"},
+        "currentplot": {"$ref": "#/$defs/artifact"},
+        "process_record": {"$ref": "#/$defs/artifact"}
+      },
+      "additionalProperties": false
+    },
+    "branchRecord": {
+      "type": "object",
+      "required": ["branch", "requested_biases_V", "bias_records"],
+      "properties": {
+        "branch": {"$ref": "#/$defs/branchName"},
+        "requested_biases_V": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "number"}
+        },
+        "bias_records": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/biasRecord"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "source": {
+      "type": "object",
+      "required": ["file", "dataset", "index"],
+      "properties": {
+        "file": {"type": "string", "minLength": 1},
+        "dataset": {"type": "string", "minLength": 1},
+        "index": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "fieldRecord": {
+      "type": "object",
+      "required": [
+        "branch",
+        "requested_bias_V",
+        "actual_bias_V",
+        "support_kind",
+        "support_key",
+        "centering",
+        "provenance",
+        "carrier",
+        "quantity",
+        "components",
+        "unit",
+        "values",
+        "source"
+      ],
+      "properties": {
+        "branch": {"$ref": "#/$defs/branchName"},
+        "requested_bias_V": {"type": "number"},
+        "actual_bias_V": {"type": "number"},
+        "support_kind": {
+          "enum": [
+            "physical_node",
+            "contact_support_vertex",
+            "cell",
+            "element_local_edge",
+            "element_local_vertex",
+            "contact"
+          ]
+        },
+        "support_key": {"type": "string", "minLength": 1},
+        "centering": {
+          "enum": ["vertex", "cell", "element_edge", "element_vertex", "contact"]
+        },
+        "provenance": {
+          "enum": [
+            "native",
+            "operator_replay",
+            "reconstructed",
+            "solver_used",
+            "postprocessed"
+          ]
+        },
+        "carrier": {"enum": ["electron", "hole", "total", "none"]},
+        "quantity": {"type": "string", "minLength": 1},
+        "components": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "unit": {"type": "string", "minLength": 1},
+        "values": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "number"}
+        },
+        "coordinates_um": {
+          "type": "array",
+          "items": {"type": "number"}
+        },
+        "connectivity": {
+          "type": "array",
+          "items": {"type": "integer", "minimum": 0}
+        },
+        "source": {"$ref": "#/$defs/source"}
+      },
+      "additionalProperties": false
+    },
+    "aggregateRecord": {
+      "type": "object",
+      "required": [
+        "branch",
+        "requested_bias_V",
+        "actual_bias_V",
+        "carrier",
+        "quantity",
+        "unit",
+        "value",
+        "provenance",
+        "source"
+      ],
+      "properties": {
+        "branch": {"$ref": "#/$defs/branchName"},
+        "requested_bias_V": {"type": "number"},
+        "actual_bias_V": {"type": "number"},
+        "carrier": {"enum": ["electron", "hole", "total", "none"]},
+        "quantity": {"type": "string", "minLength": 1},
+        "unit": {"type": "string", "minLength": 1},
+        "value": {"type": "number"},
+        "provenance": {
+          "enum": [
+            "native",
+            "operator_replay",
+            "reconstructed",
+            "solver_used",
+            "postprocessed"
+          ]
+        },
+        "source": {"$ref": "#/$defs/source"}
+      },
+      "additionalProperties": false
+    },
+    "newtonAttemptRecord": {
+      "type": "object",
+      "required": [
+        "branch",
+        "attempt_id",
+        "requested_bias_V",
+        "actual_bias_V",
+        "status",
+        "reason",
+        "source"
+      ],
+      "properties": {
+        "branch": {"$ref": "#/$defs/branchName"},
+        "attempt_id": {"type": "string", "minLength": 1},
+        "requested_bias_V": {"type": "number"},
+        "actual_bias_V": {"type": "number"},
+        "status": {"enum": ["accepted", "rejected", "failed"]},
+        "reason": {"type": "string", "minLength": 1},
+        "source": {"$ref": "#/$defs/source"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
