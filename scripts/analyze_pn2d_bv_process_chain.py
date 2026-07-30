@@ -54,6 +54,15 @@ LOG_THRESHOLD_DEX = 0.05
 ABSOLUTE_FLOOR = 1.0e-30
 TAIL_FRACTION = 1.0e-12
 ACTIVE_SOURCE_FRACTION = 1.0e-3
+KNEE_BIASES_V = (-19.7, -19.8, -19.85, -19.9, -19.95, -20.0)
+PROVENANCE_PRIORITY = {
+    "solver_used": 5,
+    "native": 4,
+    "operator_replay": 3,
+    "reconstructed": 2,
+    "postprocessed": 1,
+    "unknown": 0,
+}
 
 STAGE_SUMMARY_FIELDS = (
     "comparison_id", "bias_V", "stage", "matched_records",
@@ -135,7 +144,7 @@ def from_process_run(payload: dict[str, Any]) -> dict[str, Any]:
     for field in payload.get("field_records", []):
         record = {
             "branch": field["branch"],
-            "bias_V": field["actual_bias_V"],
+            "bias_V": field["requested_bias_V"],
             "quantity": field["quantity"],
             "carrier": field["carrier"],
             "support_kind": field["support_kind"],
@@ -150,7 +159,7 @@ def from_process_run(payload: dict[str, Any]) -> dict[str, Any]:
     for aggregate in payload.get("aggregate_records", []):
         record = {
             "branch": aggregate["branch"],
-            "bias_V": aggregate["actual_bias_V"],
+            "bias_V": aggregate["requested_bias_V"],
             "quantity": aggregate["quantity"],
             "carrier": aggregate["carrier"],
             "support_kind": "aggregate",
@@ -161,11 +170,63 @@ def from_process_run(payload: dict[str, Any]) -> dict[str, Any]:
         }
         if record["quantity"] in QUANTITY_STAGE:
             records.append(normalized_record(record, simulator))
+    closures: list[dict[str, Any]] = []
+    grouped_aggregates: dict[tuple[str, float], list[dict[str, Any]]] = defaultdict(list)
+    for aggregate in payload.get("aggregate_records", []):
+        grouped_aggregates[
+            (str(aggregate["branch"]), float(aggregate["requested_bias_V"]))
+        ].append(aggregate)
+    for (branch, bias), aggregates in sorted(grouped_aggregates.items()):
+        source_totals = [
+            aggregate for aggregate in aggregates
+            if aggregate["quantity"] == "integrated_source"
+            and aggregate["carrier"] == "total"
+        ]
+        terminals = {
+            aggregate["carrier"]: float(aggregate["value"])
+            for aggregate in aggregates
+            if aggregate["quantity"] == "terminal_current"
+        }
+        native = next(
+            (
+                float(aggregate["value"])
+                for aggregate in source_totals
+                if aggregate["provenance"] in {"native", "solver_used", "postprocessed"}
+            ),
+            None,
+        )
+        replay = next(
+            (
+                float(aggregate["value"])
+                for aggregate in source_totals
+                if aggregate["provenance"] == "operator_replay"
+            ),
+            None,
+        )
+        if (
+            native is not None
+            and replay is not None
+            and {"electron", "hole", "total"} <= set(terminals)
+        ):
+            closures.append(
+                {
+                    "branch": branch,
+                    "bias_V": bias,
+                    "source_native": native,
+                    "source_reintegrated": replay,
+                    "terminal_source": (
+                        terminals["electron"] - terminals["hole"]
+                        if simulator == "vela"
+                        else terminals["electron"] + terminals["hole"]
+                    ),
+                    "terminal_current": terminals["total"],
+                }
+            )
     return {
         "schema": CHAIN_SCHEMA,
         "simulator": simulator,
         "records": records,
-        "closures": [],
+        "closures": closures,
         "newton_updates": [],
     }
 
@@ -244,7 +305,15 @@ def selected(
             continue
         key = record_key({**record, "branch": "_"})
         if key in result:
-            raise ValueError(f"duplicate normalized record {key}")
+            previous = result[key]
+            old_priority = PROVENANCE_PRIORITY.get(previous["provenance"], -1)
+            new_priority = PROVENANCE_PRIORITY.get(record["provenance"], -1)
+            if new_priority == old_priority:
+                raise ValueError(
+                    f"duplicate normalized record at equal provenance priority {key}"
+                )
+            if new_priority < old_priority:
+                continue
         result[key] = record
     return result
 
@@ -461,7 +530,10 @@ def first_departures(stage_rows: list[dict[str, Any]]) -> dict[str, Any]:
     comparisons: dict[str, Any] = {}
     causal_candidates: list[tuple[int, str, str, list[float]]] = []
     for comparison, bias_stages in sorted(by_comparison.items()):
-        ordered_biases = sorted(bias_stages, reverse=True)
+        ordered_biases = [
+            bias for bias in KNEE_BIASES_V
+            if bias in bias_stages
+        ]
         evidence: list[tuple[str, list[float]]] = []
         for first, second in zip(ordered_biases, ordered_biases[1:]):
             if bias_stages[first] == bias_stages[second]:
@@ -589,6 +661,9 @@ def analyze(
         }
         missing = True
         closures: list[dict[str, Any]] = []
+        missing_stage_observations: dict[str, list[str]] = {
+            "all": list(STAGES)
+        }
     else:
         stage_rows, detail_rows, support_rows = [], [], []
         specs = comparison_specs(sentaurus, vela)
@@ -619,6 +694,18 @@ def analyze(
             for comparison in required_comparisons
             for stage in STAGES
         )
+        missing_stage_observations = {
+            comparison: [
+                stage for stage in STAGES
+                if (comparison, stage) not in covered
+            ]
+            for comparison in sorted(required_comparisons)
+        }
+        missing_stage_observations = {
+            comparison: stages
+            for comparison, stages in missing_stage_observations.items()
+            if stages
+        }
         closures = closure_rows((sentaurus, vela))
         closure_simulators = {row["simulator"] for row in closures}
         if (
@@ -629,6 +716,21 @@ def analyze(
             missing = True
 
     outcome = classify(first, missing)
+    accepted_causal_stage = (
+        first["causal_stage"]
+        if outcome != "insufficient_observation"
+        else None
+    )
+    accepted_comparison = (
+        first["comparison_id"]
+        if outcome != "insufficient_observation"
+        else None
+    )
+    accepted_biases = (
+        first["adjacent_biases_V"]
+        if outcome != "insufficient_observation"
+        else []
+    )
     write_csv(output_root / "stage_summary.csv", STAGE_SUMMARY_FIELDS, stage_rows)
     write_csv(output_root / "support_summary.csv", SUPPORT_SUMMARY_FIELDS, support_rows)
     hotspot = [
@@ -659,7 +761,14 @@ def analyze(
     first_payload = {
         "schema": OUTPUT_SCHEMA,
         "outcome": outcome,
-        **first,
+        "causal_stage": accepted_causal_stage,
+        "comparison_id": accepted_comparison,
+        "adjacent_biases_V": accepted_biases,
+        "candidate_causal_stage": first["causal_stage"],
+        "candidate_comparison_id": first["comparison_id"],
+        "candidate_adjacent_biases_V": first["adjacent_biases_V"],
+        "comparisons": first["comparisons"],
+        "missing_stage_observations": missing_stage_observations,
     }
     (output_root / "first_departure.json").write_text(
         json.dumps(first_payload, indent=2, sort_keys=True),
@@ -692,9 +801,16 @@ def analyze(
         "outcome": outcome,
         "status": "passed" if outcome != "insufficient_observation" else "failed",
         "missing_observation": missing,
-        "causal_stage": first["causal_stage"],
-        "comparison_id": first["comparison_id"],
-        "adjacent_biases_V": first["adjacent_biases_V"],
+        "causal_stage": accepted_causal_stage,
+        "comparison_id": accepted_comparison,
+        "adjacent_biases_V": accepted_biases,
+        "candidate_causal_stage": first["causal_stage"],
+        "candidate_comparison_id": first["comparison_id"],
+        "candidate_adjacent_biases_V": first["adjacent_biases_V"],
+        "missing_stage_observations": missing_stage_observations,
+        "failed_closure_rows": sum(
+            1 for row in closures if not int(row["passed"])
+        ),
         "thresholds": {
             "relative": RELATIVE_THRESHOLD,
             "log_error_dex": LOG_THRESHOLD_DEX,

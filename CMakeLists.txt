@@ -461,6 +461,15 @@ set_tests_properties(pn2d_minimal6_transport_element_regression PROPERTIES
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 vela_set_windows_msys2_test_path(pn2d_minimal6_transport_element_regression)
 
+add_test(NAME pn2d_bv_process_observability_regression
+    COMMAND ${Python3_EXECUTABLE} -m unittest
+            tests.regression.test_pn2d_bv_process_contract
+            tests.regression.test_pn2d_bv_process_chain
+            tests.regression.test_pn2d_bv_exact_lattice_process)
+set_tests_properties(pn2d_bv_process_observability_regression PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+vela_set_windows_msys2_test_path(pn2d_bv_process_observability_regression)
+
 add_test(NAME sentaurus_vanoverstraeten_fit_regression
     COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/regression/test_sentaurus_vanoverstraeten_fit.py)

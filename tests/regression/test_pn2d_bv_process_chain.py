@@ -9,6 +9,8 @@ from scripts.analyze_pn2d_bv_process_chain import (
     CHAIN_SCHEMA,
     STAGES,
     analyze,
+    from_process_run,
+    selected,
 )
 
 
@@ -131,6 +133,71 @@ class ProcessChainTests(unittest.TestCase):
                 "acceptance.json",
             ):
                 self.assertTrue((Path(tmp) / name).is_file(), name)
+
+    def test_process_manifest_uses_requested_bias_and_provenance_priority(self) -> None:
+        payload = {
+            "schema": "vela.pn2d_bv_process_run.v1",
+            "simulator": "sentaurus",
+            "field_records": [
+                {
+                    "branch": "avalanche_on",
+                    "requested_bias_V": -19.7,
+                    "actual_bias_V": -19.700000000000003,
+                    "quantity": "current_density",
+                    "carrier": "electron",
+                    "support_kind": "cell",
+                    "support_key": "cell:0",
+                    "values": [1.0],
+                    "unit": "A/cm^2",
+                    "provenance": provenance,
+                }
+                for provenance in ("reconstructed", "operator_replay", "native")
+            ],
+            "aggregate_records": [
+                {
+                    "branch": "avalanche_on",
+                    "requested_bias_V": -19.7,
+                    "actual_bias_V": -19.700000000000003,
+                    "quantity": "integrated_source",
+                    "carrier": "total",
+                    "unit": "A/um",
+                    "value": 2.0,
+                    "provenance": provenance,
+                }
+                for provenance in ("native", "operator_replay")
+            ]
+            + [
+                {
+                    "branch": "avalanche_on",
+                    "requested_bias_V": -19.7,
+                    "actual_bias_V": -19.700000000000003,
+                    "quantity": "terminal_current",
+                    "carrier": carrier,
+                    "unit": "A/um",
+                    "value": value,
+                    "provenance": "native",
+                }
+                for carrier, value in (
+                    ("electron", 1.25),
+                    ("hole", 0.75),
+                    ("total", 2.0),
+                )
+            ],
+        }
+        converted = from_process_run(payload)
+        chosen = list(selected(converted, "avalanche_on").values())
+        cell_current = [
+            record for record in chosen
+            if record["support_key"] == "cell:0"
+        ]
+        self.assertEqual(len(cell_current), 1)
+        self.assertEqual(cell_current[0]["bias_V"], -19.7)
+        self.assertEqual(cell_current[0]["provenance"], "native")
+        self.assertEqual(len(converted["closures"]), 1)
+        self.assertEqual(converted["closures"][0]["source_native"], 2.0)
+        self.assertEqual(converted["closures"][0]["source_reintegrated"], 2.0)
+        self.assertEqual(converted["closures"][0]["terminal_source"], 2.0)
+        self.assertEqual(converted["closures"][0]["terminal_current"], 2.0)
 
 
 if __name__ == "__main__":

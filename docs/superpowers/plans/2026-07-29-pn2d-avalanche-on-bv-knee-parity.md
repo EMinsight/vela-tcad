@@ -2,7 +2,9 @@
 
 Date: 2026-07-29
 
-Status: engineering WP0-WP7 executed; Tasks 5-6 returned `insufficient_observation`, so Tasks 7-11 are not authorized.
+Status: engineering WP0-WP7 and the exact-lattice continuation follow-up
+executed. Tasks 5-6 still return `insufficient_observation` because Sentaurus
+residual/update fields are unavailable, so Tasks 7-11 are not authorized.
 
 Starting point: local branch `codex-pn2d-minimal6-operator-audit`, commit
 `1350d11`. Commit `fa1c343` is an ancestor of this starting point.
@@ -134,6 +136,13 @@ The companion observability plan's WP0-WP2 were executed on 2026-07-29:
   exact missing Vela rows recorded.
 - Thirty-six focused Python tests and the complete Release suite
   (`495/495`) pass.
+- The 2026-07-30 run-local `max_iter=80` continuation control subsequently
+  completed Vela off/IIC/on at all 29 exact points. The contract-valid Vela
+  process manifest has SHA-256
+  `b882ece81a9cd1e7633e5685adbdd1a9ffde8b4adf2d14dea4fbc2286d6ddf6d`.
+  The paired WP7 rerun passes 203/203 closure rows but remains fail-closed
+  because the Sentaurus bundle lacks spatial `residual_jacobian` and
+  `newton_update` observations.
 
 Primary evidence:
 
@@ -153,7 +162,7 @@ also include every integer bias from `0` through `-20 V`.
 | Task 2 | common WP1 contract plus dedicated curve/knee analyzer | `curve_knee_contract_verified`; current data returns `solver_first_failure` |
 | Task 3 | WP0 baseline plus WP4-WP5 solver-used/attempt records | `complete_nonlinear_trace_available`; deterministic first failure reproduced |
 | Task 4 | WP6 source-only derivative work | `source_jacobian_dependency_identified_and_closed` |
-| Tasks 5-6 | WP3-WP5 records and WP7 paired process analyzer | `insufficient_observation`: matching Vela exact-lattice process manifest absent |
+| Tasks 5-6 | WP3-WP5 records and WP7 paired process analyzer | `insufficient_observation`: exact Vela manifest now complete; Sentaurus `residual_jacobian` and `newton_update` records remain unavailable |
 | Tasks 7-11 | causal authorization from Tasks 4-6 | prohibited; no two-bias causal stage |
 
 ## Frozen production configuration

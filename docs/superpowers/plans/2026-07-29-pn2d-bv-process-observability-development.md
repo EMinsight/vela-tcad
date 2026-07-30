@@ -2,7 +2,9 @@
 
 Date: 2026-07-29
 
-Status: WP0-WP7 executed; WP7 returned `insufficient_observation`, so WP8 is not authorized.
+Status: WP0-WP7 plus the exact-lattice continuation follow-up executed. WP7
+still returns `insufficient_observation` because Sentaurus nonlinear
+residual/update fields are unavailable, so WP8 is not authorized.
 
 Starting point: branch `codex-pn2d-minimal6-operator-audit`, commit
 `1350d11`.
@@ -125,6 +127,33 @@ Primary evidence bundles:
 - `build-release/pn2d-wp2-process-matrix-pair-20260729/acceptance.json`.
 - `build-release/pn2d-wp21-full-lattice-pair-20260729/acceptance.json`.
 - `build-release/pn2d-task2-curve-knee-20260730/acceptance.json`.
+
+### 2.2 Exact-lattice continuation follow-up
+
+The continuation follow-up completed on 2026-07-30 without changing Vela
+physics or defaults:
+
+- The sealed 40-iteration failure was classified as iteration-budget
+  exhaustion. A run-local `max_iter=80` control completed the avalanche-on
+  branch at all 29 exact points through `-20 V`; its maximum accepted Newton
+  count was 59.
+- Avalanche-off and IIC/postprocess-only also completed 29/29 points. Their 29
+  state files are byte-identical at matching biases.
+- The contract-valid Vela manifest contains 68,034 field records, 783
+  aggregates, and 87 exact-target Newton-attempt records. Its SHA-256 is
+  `b882ece81a9cd1e7633e5685adbdd1a9ffde8b4adf2d14dea4fbc2286d6ddf6d`.
+- The paired WP7 rerun closes all 203 source/terminal rows. All observed
+  state-through-terminal stages are present, but Sentaurus supplies neither
+  spatial `residual_jacobian` nor `newton_update` records. The result remains
+  fail-closed with no accepted causal stage.
+- The observed-stage candidate is `state` for Sentaurus IIC versus
+  avalanche-on at `-19.7/-19.8 V`; it is not an authorization result.
+
+Evidence:
+
+- `build-release/pn2d-vela-exact-lattice-maxiter80-on-20260730/manifest.json`;
+- `build-release/pn2d-wp7-process-chain-after-continuation-20260730/acceptance.json`;
+- `docs/validation/pn2d_bv_exact_lattice_continuation_2026-07-30.md`.
 
 The source/schema/plan files implementing WP1-WP2 are currently untracked.
 They must be reviewed and committed in the boundaries defined in section 15
@@ -892,15 +921,16 @@ two adjacent biases. Synthetic tests recover an injected error independently
 at every stage, preserve the result under row reordering and unrelated tiny
 tail values, and fail closed for single-bias or missing-simulator evidence.
 
-The current real-data run binds the complete 29-point Sentaurus manifest
-(SHA-256
+The current real-data rerun binds both the complete 29-point Sentaurus
+manifest (SHA-256
 `190cb08f6c128ce64bdfd9bb8dfc6242bde95238234b7492ef5740b4fa2d3d15`)
-but has no matching Vela `avalanche_off`/`iic_postprocess`/`avalanche_on`
-process-chain manifest on the same exact lattice. In particular, the sealed
-Vela avalanche-on branch still stops before the required `-19.7 V` and later
-knee states. The analyzer therefore emits no causal stage and does not
-authorize WP8. Evidence:
-`build-release/pn2d-wp7-process-chain-20260730/acceptance.json`.
+and the matching Vela off/IIC/on manifest (SHA-256
+`b882ece81a9cd1e7633e5685adbdd1a9ffde8b4adf2d14dea4fbc2286d6ddf6d`).
+All 203 source/terminal closure rows pass. The only missing required stages
+are spatial `residual_jacobian` and `newton_update`, which the current
+Sentaurus manifest does not provide. The analyzer emits no accepted causal
+stage and does not authorize WP8. Evidence:
+`build-release/pn2d-wp7-process-chain-after-continuation-20260730/acceptance.json`.
 
 ## 12. Work package 8 - implement and qualify one minimal candidate
 
