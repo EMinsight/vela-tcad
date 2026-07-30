@@ -286,6 +286,43 @@ struct NewtonFeedbackSubstitutionEvaluation {
     Real carrierOnlyStepNorm = 0.0;
 };
 
+struct NewtonPoissonQfpCrossBlockEvaluation {
+    NewtonResidualEvaluation residual;
+    SparseMatrixd jacobianPsiPsi;
+    SparseMatrixd jacobianPsiQfp;
+    SparseMatrixd jacobianQfpPsi;
+    SparseMatrixd jacobianQfpQfp;
+    VectorXd targetDeltaPhin;
+    VectorXd targetDeltaPhip;
+    VectorXd independentDeltaPsi;
+    VectorXd independentDeltaPhin;
+    VectorXd independentDeltaPhip;
+    VectorXd noPsiQfpDeltaPsi;
+    VectorXd noPsiQfpDeltaPhin;
+    VectorXd noPsiQfpDeltaPhip;
+    VectorXd noQfpPsiDeltaPsi;
+    VectorXd noQfpPsiDeltaPhin;
+    VectorXd noQfpPsiDeltaPhip;
+    VectorXd schurDeltaPsi;
+    VectorXd schurDeltaPhin;
+    VectorXd schurDeltaPhip;
+    VectorXd fullRawDeltaPsi;
+    VectorXd fullRawDeltaPhin;
+    VectorXd fullRawDeltaPhip;
+    VectorXd fullCappedDeltaPsi;
+    VectorXd fullCappedDeltaPhin;
+    VectorXd fullCappedDeltaPhip;
+    VectorXd psiQfpProduct;
+    VectorXd qfpPsiProduct;
+    Real jacobianPsiPsiNorm = 0.0;
+    Real jacobianPsiQfpNorm = 0.0;
+    Real jacobianQfpPsiNorm = 0.0;
+    Real jacobianQfpQfpNorm = 0.0;
+    Real fullLinearClosureNorm = 0.0;
+    Real schurClosureNorm = 0.0;
+    Real schurRelativeClosure = 0.0;
+};
+
 struct NewtonDirectionalDerivativeEvaluation {
     NewtonResidualEvaluation residual;
     VectorXd perturbationPsi;
@@ -407,6 +444,10 @@ public:
     NewtonStepEvaluation evaluateStep(const DDSolution& state) const;
     std::vector<NewtonFeedbackSubstitutionEvaluation>
     evaluateFeedbackSubstitutions(
+        const DDSolution& state,
+        const DDSolution& replacementState) const;
+    NewtonPoissonQfpCrossBlockEvaluation
+    evaluatePoissonQfpCrossBlockDecomposition(
         const DDSolution& state,
         const DDSolution& replacementState) const;
     NewtonDirectionalDerivativeEvaluation evaluateDirectionalDerivative(

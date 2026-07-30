@@ -2302,6 +2302,173 @@ NewtonSolver::evaluateFeedbackSubstitutions(
     return evaluations;
 }
 
+NewtonPoissonQfpCrossBlockEvaluation
+NewtonSolver::evaluatePoissonQfpCrossBlockDecomposition(
+    const DDSolution& state,
+    const DDSolution& replacementState) const
+{
+    const int N = static_cast<int>(mesh_.numNodes());
+    const auto requireSize = [N](const VectorXd& values, const char* name) {
+        if (values.size() != N) {
+            throw std::invalid_argument(
+                std::string(
+                    "NewtonSolver::evaluatePoissonQfpCrossBlockDecomposition: ") +
+                name + " size mismatch.");
+        }
+    };
+    requireSize(state.psi, "state psi");
+    requireSize(state.phin, "state phin");
+    requireSize(state.phip, "state phip");
+    requireSize(replacementState.phin, "replacement phin");
+    requireSize(replacementState.phip, "replacement phip");
+
+    const double Vt = thermalVoltage(cfg_.temperature_K);
+    const MobilityModelConfig mobilityConfig = cfg_.mobility;
+    RecombinationModelConfig recombinationConfig =
+        recombinationModelConfig(cfg_.recombination, cfg_.taun, cfg_.taup);
+    recombinationConfig.augerCn = cfg_.augerCn;
+    recombinationConfig.augerCp = cfg_.augerCp;
+    const DDScalingSpec scaling = buildScalingSpec();
+    CoupledDDAssembler assembler(
+        mesh_,
+        matdb_,
+        doping_,
+        Vt,
+        mobilityConfig,
+        recombinationConfig,
+        cfg_.bandgapNarrowing,
+        cfg_.impactIonization,
+        fixedCharges_,
+        sheetCharges_,
+        scaling,
+        cfg_.carrierDiagonalFloor);
+    configureQuasiFermiReferences(assembler);
+    const CoupledDDBoundaryConditions bcs = buildBoundaryConditions(assembler);
+    const Real potentialScale =
+        assembler.usesScaledState() ? assembler.potentialScale() : 1.0;
+    const VectorXd x = assembler.pack({
+        state.psi / potentialScale,
+        state.phin / potentialScale,
+        state.phip / potentialScale});
+
+    CoupledDDFeedbackStateSubstitution replacement;
+    replacement.electronQuasiFermi_V = replacementState.phin;
+    replacement.holeQuasiFermi_V = replacementState.phip;
+    replacement.replaceElectronQuasiFermi = true;
+    replacement.replaceHoleQuasiFermi = true;
+    for (const auto& [node, value] : bcs.phin) {
+        (void)value;
+        replacement.electronQuasiFermi_V(static_cast<int>(node)) =
+            state.phin(static_cast<int>(node));
+    }
+    for (const auto& [node, value] : bcs.phip) {
+        (void)value;
+        replacement.holeQuasiFermi_V(static_cast<int>(node)) =
+            state.phip(static_cast<int>(node));
+    }
+
+    const VectorXd raw =
+        assembler.feedbackSubstitutionResidual(x, bcs, replacement);
+    const SparseMatrixd J = (cfg_.jacobian == "finite_difference")
+        ? assembler.finiteDifferenceJacobian(x, bcs, cfg_.finiteDifferenceStep)
+        : assembler.assembleJacobian(x, bcs);
+    const SparseMatrixd A = sparseBlock(J, 0, 0, N, N);
+    const SparseMatrixd B = sparseBlock(J, 0, N, N, 2 * N);
+    const SparseMatrixd C = sparseBlock(J, N, 0, 2 * N, N);
+    const SparseMatrixd D = sparseBlock(J, N, N, 2 * N, 2 * N);
+    const VectorXd rPsi = raw.segment(0, N);
+    const VectorXd rQfp = raw.segment(N, 2 * N);
+
+    LinearSolver linearSolver;
+    const VectorXd independentPsi = linearSolver.solve(A, -rPsi);
+    const VectorXd independentQfp = linearSolver.solve(D, -rQfp);
+    const VectorXd noPsiQfpPsi = independentPsi;
+    const VectorXd noPsiQfpQfp =
+        linearSolver.solve(D, -rQfp - C * noPsiQfpPsi);
+    const VectorXd noQfpPsiQfp = independentQfp;
+    const VectorXd noQfpPsiPsi =
+        linearSolver.solve(A, -rPsi - B * noQfpPsiQfp);
+
+    const Eigen::MatrixXd denseB = Eigen::MatrixXd(B);
+    Eigen::MatrixXd aInverseB(N, 2 * N);
+    for (int column = 0; column < 2 * N; ++column)
+        aInverseB.col(column) = linearSolver.solve(A, denseB.col(column));
+    const Eigen::MatrixXd schur =
+        Eigen::MatrixXd(D) - Eigen::MatrixXd(C) * aInverseB;
+    SparseMatrixd sparseSchur = schur.sparseView();
+    sparseSchur.makeCompressed();
+    const VectorXd schurQfp = linearSolver.solve(
+        sparseSchur, -rQfp - C * independentPsi);
+    const VectorXd schurPsi =
+        linearSolver.solve(A, -rPsi - B * schurQfp);
+
+    const VectorXd fullRaw = linearSolver.solve(J, -raw);
+    VectorXd fullCapped = fullRaw;
+    applyConfiguredStepCapsAndPoissonRecorrection(
+        fullCapped, J, raw, cfg_, N, potentialScale, doping_);
+    VectorXd schurStep(3 * N);
+    schurStep.segment(0, N) = schurPsi;
+    schurStep.segment(N, 2 * N) = schurQfp;
+
+    NewtonPoissonQfpCrossBlockEvaluation evaluation;
+    evaluation.residual.raw = raw;
+    evaluation.residual.blockNorms = blockResidualInfo(raw, mesh_.numNodes());
+    evaluation.residual.intrinsicDensity = assembler.intrinsicDensity();
+    evaluation.residual.scaledState = assembler.usesScaledState();
+    evaluation.residual.potentialScale = potentialScale;
+    evaluation.jacobianPsiPsi = A;
+    evaluation.jacobianPsiQfp = B;
+    evaluation.jacobianQfpPsi = C;
+    evaluation.jacobianQfpQfp = D;
+    evaluation.targetDeltaPhin =
+        replacement.electronQuasiFermi_V - state.phin;
+    evaluation.targetDeltaPhip =
+        replacement.holeQuasiFermi_V - state.phip;
+    evaluation.independentDeltaPsi = independentPsi * potentialScale;
+    evaluation.independentDeltaPhin =
+        independentQfp.segment(0, N) * potentialScale;
+    evaluation.independentDeltaPhip =
+        independentQfp.segment(N, N) * potentialScale;
+    evaluation.noPsiQfpDeltaPsi = noPsiQfpPsi * potentialScale;
+    evaluation.noPsiQfpDeltaPhin =
+        noPsiQfpQfp.segment(0, N) * potentialScale;
+    evaluation.noPsiQfpDeltaPhip =
+        noPsiQfpQfp.segment(N, N) * potentialScale;
+    evaluation.noQfpPsiDeltaPsi = noQfpPsiPsi * potentialScale;
+    evaluation.noQfpPsiDeltaPhin =
+        noQfpPsiQfp.segment(0, N) * potentialScale;
+    evaluation.noQfpPsiDeltaPhip =
+        noQfpPsiQfp.segment(N, N) * potentialScale;
+    evaluation.schurDeltaPsi = schurPsi * potentialScale;
+    evaluation.schurDeltaPhin =
+        schurQfp.segment(0, N) * potentialScale;
+    evaluation.schurDeltaPhip =
+        schurQfp.segment(N, N) * potentialScale;
+    evaluation.fullRawDeltaPsi =
+        fullRaw.segment(0, N) * potentialScale;
+    evaluation.fullRawDeltaPhin =
+        fullRaw.segment(N, N) * potentialScale;
+    evaluation.fullRawDeltaPhip =
+        fullRaw.segment(2 * N, N) * potentialScale;
+    evaluation.fullCappedDeltaPsi =
+        fullCapped.segment(0, N) * potentialScale;
+    evaluation.fullCappedDeltaPhin =
+        fullCapped.segment(N, N) * potentialScale;
+    evaluation.fullCappedDeltaPhip =
+        fullCapped.segment(2 * N, N) * potentialScale;
+    evaluation.psiQfpProduct = B * schurQfp;
+    evaluation.qfpPsiProduct = C * schurPsi;
+    evaluation.jacobianPsiPsiNorm = A.norm();
+    evaluation.jacobianPsiQfpNorm = B.norm();
+    evaluation.jacobianQfpPsiNorm = C.norm();
+    evaluation.jacobianQfpQfpNorm = D.norm();
+    evaluation.fullLinearClosureNorm = (J * fullRaw + raw).norm();
+    evaluation.schurClosureNorm = (J * schurStep + raw).norm();
+    evaluation.schurRelativeClosure =
+        evaluation.schurClosureNorm / std::max<Real>(raw.norm(), 1.0);
+    return evaluation;
+}
+
 NewtonDirectionalDerivativeEvaluation NewtonSolver::evaluateDirectionalDerivative(
     const DDSolution& state,
     const DDSolution& physicalPerturbation) const

@@ -1329,6 +1329,64 @@ TEST_CASE("NewtonSolver: feedback substitutions share one Jacobian and preserve 
     REQUIRE((variants[4].residual.raw - variants[0].residual.raw).norm() > 0.0);
 }
 
+TEST_CASE("NewtonSolver: Poisson-QFP cross-block decomposition closes to full Newton step",
+          "[newton][diagnostics][poisson-qfp-cross-block]")
+{
+    DeviceMesh mesh = makePNMesh();
+    MaterialDatabase matdb;
+    DopingModel doping = makePNDoping(mesh);
+    NewtonConfig cfg = newtonConfig();
+    cfg.inputScaling.mode = UnitScalingMode::UnitScaling;
+    cfg.warmStart = true;
+
+    NewtonSolver solver(mesh, matdb, doping, zeroBias(), cfg);
+    const NewtonResult equilibrium = solver.solve();
+    REQUIRE(equilibrium.converged);
+
+    DDSolution replacement = equilibrium.solution;
+    replacement.phin(4) += 0.01;
+    replacement.phip(4) -= 0.015;
+    const auto evaluation =
+        solver.evaluatePoissonQfpCrossBlockDecomposition(
+            equilibrium.solution, replacement);
+    const int N = static_cast<int>(mesh.numNodes());
+
+    REQUIRE(evaluation.residual.raw.size() == 3 * N);
+    REQUIRE(evaluation.jacobianPsiPsi.rows() == N);
+    REQUIRE(evaluation.jacobianPsiPsi.cols() == N);
+    REQUIRE(evaluation.jacobianPsiQfp.rows() == N);
+    REQUIRE(evaluation.jacobianPsiQfp.cols() == 2 * N);
+    REQUIRE(evaluation.jacobianQfpPsi.rows() == 2 * N);
+    REQUIRE(evaluation.jacobianQfpPsi.cols() == N);
+    REQUIRE(evaluation.jacobianQfpQfp.rows() == 2 * N);
+    REQUIRE(evaluation.jacobianQfpQfp.cols() == 2 * N);
+    REQUIRE(evaluation.jacobianPsiQfpNorm > 0.0);
+    REQUIRE(evaluation.jacobianQfpPsiNorm > 0.0);
+
+    REQUIRE(
+        (evaluation.noPsiQfpDeltaPsi - evaluation.independentDeltaPsi).norm()
+        == Catch::Approx(0.0).margin(1.0e-14));
+    REQUIRE(
+        (evaluation.noQfpPsiDeltaPhin - evaluation.independentDeltaPhin).norm()
+        == Catch::Approx(0.0).margin(1.0e-14));
+    REQUIRE(
+        (evaluation.noQfpPsiDeltaPhip - evaluation.independentDeltaPhip).norm()
+        == Catch::Approx(0.0).margin(1.0e-14));
+    REQUIRE(
+        (evaluation.schurDeltaPsi - evaluation.fullRawDeltaPsi).norm()
+        == Catch::Approx(0.0).margin(1.0e-10));
+    REQUIRE(
+        (evaluation.schurDeltaPhin - evaluation.fullRawDeltaPhin).norm()
+        == Catch::Approx(0.0).margin(1.0e-10));
+    REQUIRE(
+        (evaluation.schurDeltaPhip - evaluation.fullRawDeltaPhip).norm()
+        == Catch::Approx(0.0).margin(1.0e-10));
+    REQUIRE(evaluation.fullLinearClosureNorm < 1.0e-8);
+    REQUIRE(evaluation.schurRelativeClosure < 1.0e-10);
+    REQUIRE(evaluation.psiQfpProduct.size() == N);
+    REQUIRE(evaluation.qfpPsiProduct.size() == 2 * N);
+}
+
 TEST_CASE("NewtonSolver: evaluateDirectionalDerivative compares analytic and finite-difference Jv",
           "[newton][diagnostics]")
 {

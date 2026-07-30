@@ -804,6 +804,180 @@ nlohmann::json runNewtonFeedbackSubstitutionProbe(
     };
 }
 
+void writeNewtonPoissonQfpCrossBlockCsv(
+    const std::filesystem::path& path,
+    const vela::DeviceMesh& mesh,
+    const vela::DDSolution& state,
+    const vela::DDSolution& replacement,
+    const vela::NewtonPoissonQfpCrossBlockEvaluation& evaluation)
+{
+    std::ofstream out(path);
+    if (!out.is_open()) {
+        throw std::runtime_error(
+            "Cannot write Poisson-QFP cross-block probe CSV: " + path.string());
+    }
+    out << std::setprecision(17);
+    out << "node_id,x,y,is_contact,baseline_phin_V,baseline_phip_V,"
+        << "replacement_phin_V,replacement_phip_V,target_delta_phin_V,"
+        << "target_delta_phip_V,psi_residual,electron_residual,hole_residual,"
+        << "independent_delta_psi_V,independent_delta_phin_V,"
+        << "independent_delta_phip_V,no_psi_qfp_delta_psi_V,"
+        << "no_psi_qfp_delta_phin_V,no_psi_qfp_delta_phip_V,"
+        << "no_qfp_psi_delta_psi_V,no_qfp_psi_delta_phin_V,"
+        << "no_qfp_psi_delta_phip_V,schur_delta_psi_V,schur_delta_phin_V,"
+        << "schur_delta_phip_V,full_raw_delta_psi_V,full_raw_delta_phin_V,"
+        << "full_raw_delta_phip_V,full_capped_delta_psi_V,"
+        << "full_capped_delta_phin_V,full_capped_delta_phip_V,"
+        << "psi_qfp_product,qfp_psi_electron_product,qfp_psi_hole_product,"
+        << "full_minus_independent_delta_phin_V,"
+        << "full_minus_independent_delta_phip_V\n";
+    const int n = static_cast<int>(mesh.numNodes());
+    const std::vector<bool> contacts = contactNodeMask(mesh);
+    for (int i = 0; i < n; ++i) {
+        const auto nodeId = static_cast<vela::Index>(i);
+        const vela::Node& node = mesh.getNode(nodeId);
+        out << nodeId << ','
+            << node.x << ','
+            << node.y << ','
+            << static_cast<int>(contacts[static_cast<std::size_t>(i)]) << ','
+            << state.phin(i) << ','
+            << state.phip(i) << ','
+            << replacement.phin(i) << ','
+            << replacement.phip(i) << ','
+            << evaluation.targetDeltaPhin(i) << ','
+            << evaluation.targetDeltaPhip(i) << ','
+            << evaluation.residual.raw(i) << ','
+            << evaluation.residual.raw(n + i) << ','
+            << evaluation.residual.raw(2 * n + i) << ','
+            << evaluation.independentDeltaPsi(i) << ','
+            << evaluation.independentDeltaPhin(i) << ','
+            << evaluation.independentDeltaPhip(i) << ','
+            << evaluation.noPsiQfpDeltaPsi(i) << ','
+            << evaluation.noPsiQfpDeltaPhin(i) << ','
+            << evaluation.noPsiQfpDeltaPhip(i) << ','
+            << evaluation.noQfpPsiDeltaPsi(i) << ','
+            << evaluation.noQfpPsiDeltaPhin(i) << ','
+            << evaluation.noQfpPsiDeltaPhip(i) << ','
+            << evaluation.schurDeltaPsi(i) << ','
+            << evaluation.schurDeltaPhin(i) << ','
+            << evaluation.schurDeltaPhip(i) << ','
+            << evaluation.fullRawDeltaPsi(i) << ','
+            << evaluation.fullRawDeltaPhin(i) << ','
+            << evaluation.fullRawDeltaPhip(i) << ','
+            << evaluation.fullCappedDeltaPsi(i) << ','
+            << evaluation.fullCappedDeltaPhin(i) << ','
+            << evaluation.fullCappedDeltaPhip(i) << ','
+            << evaluation.psiQfpProduct(i) << ','
+            << evaluation.qfpPsiProduct(i) << ','
+            << evaluation.qfpPsiProduct(n + i) << ','
+            << evaluation.fullRawDeltaPhin(i)
+                - evaluation.independentDeltaPhin(i) << ','
+            << evaluation.fullRawDeltaPhip(i)
+                - evaluation.independentDeltaPhip(i)
+            << '\n';
+    }
+}
+
+void writeJacobianBlockEntries(
+    std::ofstream& out,
+    const std::string& name,
+    const vela::SparseMatrixd& block,
+    int rowOffset,
+    int columnOffset)
+{
+    for (int column = 0; column < block.outerSize(); ++column) {
+        for (vela::SparseMatrixd::InnerIterator it(block, column); it; ++it) {
+            out << name << ','
+                << it.row() << ','
+                << it.col() << ','
+                << rowOffset + it.row() << ','
+                << columnOffset + it.col() << ','
+                << it.value() << '\n';
+        }
+    }
+}
+
+void writeNewtonPoissonQfpJacobianBlocksCsv(
+    const std::filesystem::path& path,
+    const vela::NewtonPoissonQfpCrossBlockEvaluation& evaluation,
+    int nodeCount)
+{
+    std::ofstream out(path);
+    if (!out.is_open()) {
+        throw std::runtime_error(
+            "Cannot write Poisson-QFP Jacobian block CSV: " + path.string());
+    }
+    out << std::setprecision(17);
+    out << "block,row_local,col_local,row_global,col_global,value\n";
+    writeJacobianBlockEntries(
+        out, "J_psi_psi", evaluation.jacobianPsiPsi, 0, 0);
+    writeJacobianBlockEntries(
+        out, "J_psi_qfp", evaluation.jacobianPsiQfp, 0, nodeCount);
+    writeJacobianBlockEntries(
+        out, "J_qfp_psi", evaluation.jacobianQfpPsi, nodeCount, 0);
+    writeJacobianBlockEntries(
+        out, "J_qfp_qfp", evaluation.jacobianQfpQfp, nodeCount, nodeCount);
+}
+
+nlohmann::json runNewtonPoissonQfpCrossBlockProbe(
+    const std::string& configFile,
+    const nlohmann::json& cfg)
+{
+    const std::filesystem::path cfgDir = configDirectory(configFile);
+    NewtonProblem problem = loadNewtonProblem(configFile, cfg);
+    const vela::DDSolution state =
+        readExternalState(cfgDir, cfg, problem.mesh.numNodes());
+    const vela::DDSolution replacement = readFeedbackReplacementState(
+        cfgDir,
+        cfg,
+        problem.mesh.numNodes(),
+        problem.newton.inputScaling);
+    const vela::NewtonSolver solver(
+        problem.mesh, problem.matdb, problem.doping, problem.biases, problem.newton);
+    const auto evaluation =
+        solver.evaluatePoissonQfpCrossBlockDecomposition(state, replacement);
+    const std::filesystem::path outputPath =
+        resolvePath(cfgDir, cfg.at("output_csv").get<std::string>());
+    const std::filesystem::path blockPath = cfg.contains("jacobian_blocks_csv")
+        ? resolvePath(cfgDir, cfg.at("jacobian_blocks_csv").get<std::string>())
+        : outputPath.parent_path() /
+            (outputPath.stem().string() + "_jacobian_blocks.csv");
+    writeNewtonPoissonQfpCrossBlockCsv(
+        outputPath, problem.mesh, state, replacement, evaluation);
+    writeNewtonPoissonQfpJacobianBlocksCsv(
+        blockPath,
+        evaluation,
+        static_cast<int>(problem.mesh.numNodes()));
+
+    return {
+        {"nodes", problem.mesh.numNodes()},
+        {"output_csv", outputPath.string()},
+        {"jacobian_blocks_csv", blockPath.string()},
+        {"jacobian_block_norms", {
+            {"J_psi_psi", evaluation.jacobianPsiPsiNorm},
+            {"J_psi_qfp", evaluation.jacobianPsiQfpNorm},
+            {"J_qfp_psi", evaluation.jacobianQfpPsiNorm},
+            {"J_qfp_qfp", evaluation.jacobianQfpQfpNorm},
+        }},
+        {"full_linear_closure_norm", evaluation.fullLinearClosureNorm},
+        {"schur_closure_norm", evaluation.schurClosureNorm},
+        {"schur_relative_closure", evaluation.schurRelativeClosure},
+        {"contract", {
+            {"residual", "qfp_only_frozen_substitution"},
+            {"jacobian", "single_production_baseline_jacobian"},
+            {"partition", "psi_vs_electron_and_hole_qfp"},
+            {"counterfactuals", {
+                "independent_blocks",
+                "remove_J_psi_qfp",
+                "remove_J_qfp_psi",
+                "full_schur",
+            }},
+            {"boundary_rows", "baseline_preserved"},
+            {"production_defaults_changed", false},
+        }},
+    };
+}
+
 bool coordinateInRange(const nlohmann::json& direction,
                        const std::string& axis,
                        vela::Real value)
@@ -1801,6 +1975,8 @@ int main(int argc, char** argv)
             status.update(runNewtonStepProbe(configFile, cfg));
         } else if (type == "newton_feedback_substitution_probe") {
             status.update(runNewtonFeedbackSubstitutionProbe(configFile, cfg));
+        } else if (type == "newton_poisson_qfp_cross_block_probe") {
+            status.update(runNewtonPoissonQfpCrossBlockProbe(configFile, cfg));
         } else if (type == "newton_jvp_probe") {
             status.update(runNewtonJvpProbe(configFile, cfg));
         } else if (type == "newton_block_step_probe") {

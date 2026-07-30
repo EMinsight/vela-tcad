@@ -3,10 +3,11 @@
 Date: 2026-07-29
 
 Status: WP0-WP7, exact-lattice continuation, fixed-transition Newton, the
-Task 6 density/QFP matrix, and both Task 7 continuation schedules executed.
-The schedule control returns `continuation_invariant_cross_block_reversal`;
-Task 7 remains `no_authorized_candidate`. WP8's correction/default-change
-path is not authorized.
+Task 6 density/QFP matrix, both Task 7 continuation schedules, and the
+observation-only Poisson-QFP cross-block decomposition are executed. The
+decomposition returns `bidirectional_poisson_qfp_closed_loop_cause`; Task 7
+remains `no_authorized_candidate`. WP8's correction/default-change path is
+not authorized.
 
 Starting point: branch `codex-pn2d-minimal6-operator-audit`, commit
 `1350d11`.
@@ -1033,6 +1034,25 @@ The typed result is `continuation_invariant_cross_block_reversal`; Task 7
 remains `no_authorized_candidate`. Evidence:
 `docs/validation/pn2d_task7_continuation_schedule_control_2026-07-30.md`.
 
+Observation-only Poisson-QFP cross-block follow-up:
+
+- one production baseline Jacobian was split into `J_psi_psi`,
+  `J_psi_qfp`, `J_qfp_psi`, and `J_qfp_qfp`;
+- independent and either-single-cross-block-removed QFP directions have
+  cosine `0.7566/0.7511` toward the Sentaurus target at `-19.7/-19.8 V`;
+- the full Schur/raw direction reverses to `-0.4418/-0.4582`, before caps;
+- Schur/full agreement is within `7.32e-13 V`, relative closure is below
+  `4.60e-14`, and duplicate node/matrix hashes are identical;
+- the independent unit step is oversized by roughly five orders of magnitude
+  and is not an implementation candidate.
+
+The typed result is `bidirectional_poisson_qfp_closed_loop_cause`. This closes
+the requested cross-block observation slice but does not authorize WP8.
+Continue only with model-ownership, sign, scaling, conditioning, and
+directional-derivative review of the effective Schur term `C A^-1 B`.
+Evidence:
+`docs/validation/pn2d_poisson_qfp_cross_block_decomposition_2026-07-30.md`.
+
 ## 13. Dependency order and parallel-safe work
 
 Mandatory dependency chain:
@@ -1044,10 +1064,11 @@ WP0 -> WP1 -> WP2 -> WP2.1 -> scientific Task 2 verifier
 
 WP0-WP7 and scientific Task 2 are complete. The QFP-support and continuation
 Task 7 controls both reached `no_authorized_candidate`; the Task 6 matrix
-reached `continuation_only_cause`, and the schedule control showed that its
-cross-block reversal is continuation-invariant. After WP1 is stable, these
-implementation streams may proceed independently, but their acceptance gates
-remain ordered:
+reached `continuation_only_cause`, the schedule control showed that its
+cross-block reversal is continuation-invariant, and the observation-only
+block decomposition localized the reversal to the bidirectional Poisson-QFP
+Schur loop. After WP1 is stable, these implementation streams may proceed
+independently, but their acceptance gates remain ordered:
 
 - Sentaurus deck/runner implementation in WP2;
 - Vela postprocess-only implementation in WP3; and
@@ -1135,15 +1156,16 @@ Every work package must report before the next begins:
 
 ## 17. Next execution slice
 
-WP0-WP7, scientific Task 2, the Task 6 feedback matrix, and the two
-predeclared continuation schedules are complete. Both `standard_0p05` and
-`refined_0p025` are duplicate-run deterministic and complete all 29 exact
-points. Their `-19.7/-19.8 V` QFP states agree below `1.28e-12 V`, and both
-retain the same carrier-only versus full-coupled update reversal. The typed
-outcome is `continuation_invariant_cross_block_reversal`.
+WP0-WP7, scientific Task 2, the Task 6 feedback matrix, the two predeclared
+continuation schedules, and the observation-only Poisson-QFP cross-block
+decomposition are complete. The cross-block result is
+`bidirectional_poisson_qfp_closed_loop_cause`: removing either cross direction
+retains a positive QFP target direction, while the exact full Schur loop
+reverses it at both `-19.7/-19.8 V`.
 
 No current Task 7 axis is authorized. Do not enter Task 8, run a complete
-candidate curve campaign, or change a production default. Any continuation
-requires a separately reviewed, observation-only Poisson-QFP cross-block
-decomposition plan. Preserve the failed `c=1.0e-2` candidate and both
-continuation schedules as sealed negative controls.
+candidate curve campaign, or change a production default. Continue only with
+a separately reviewed decomposition of `C A^-1 B` by carrier, physical model,
+support, sign, scale, and conditioning, including analytical and
+finite-difference derivative checks. Preserve the failed `c=1.0e-2`
+candidate and both continuation schedules as sealed negative controls.
