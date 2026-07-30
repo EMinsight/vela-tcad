@@ -2,7 +2,7 @@
 
 Date: 2026-07-29
 
-Status: WP0-WP6 and scientific Tasks 1-4 executed; WP7 is next.
+Status: WP0-WP7 executed; WP7 returned `insufficient_observation`, so WP8 is not authorized.
 
 Starting point: branch `codex-pn2d-minimal6-operator-audit`, commit
 `1350d11`.
@@ -881,6 +881,26 @@ The analyzer must perform four comparisons:
 
 Only an outcome with two-bias causal evidence may authorize a physics/operator
 candidate.
+
+Executed outcome: `insufficient_observation`.
+
+The paired analyzer now emits the complete output contract, compares the
+three cross-simulator branches plus each simulator's IIC-versus-on branch,
+uses a fixed eleven-stage dependency order, rejects implicit tail evidence,
+requires source/terminal closure, and requires the same earliest departure at
+two adjacent biases. Synthetic tests recover an injected error independently
+at every stage, preserve the result under row reordering and unrelated tiny
+tail values, and fail closed for single-bias or missing-simulator evidence.
+
+The current real-data run binds the complete 29-point Sentaurus manifest
+(SHA-256
+`190cb08f6c128ce64bdfd9bb8dfc6242bde95238234b7492ef5740b4fa2d3d15`)
+but has no matching Vela `avalanche_off`/`iic_postprocess`/`avalanche_on`
+process-chain manifest on the same exact lattice. In particular, the sealed
+Vela avalanche-on branch still stops before the required `-19.7 V` and later
+knee states. The analyzer therefore emits no causal stage and does not
+authorize WP8. Evidence:
+`build-release/pn2d-wp7-process-chain-20260730/acceptance.json`.
 
 ## 12. Work package 8 - implement and qualify one minimal candidate
 
