@@ -1467,6 +1467,8 @@ nlohmann::json runNewtonJacobianBlockProbe(const std::string& configFile,
             problem.mesh.numNodes(),
             problem.newton.inputScaling);
     const vela::Real fdStep = cfg.value("finite_difference_step", 1.0e-7);
+    const std::string fdMode =
+        cfg.value("finite_difference_mode", std::string("double_symmetric"));
     std::vector<std::string> blocks;
     if (cfg.contains("blocks")) {
         if (!cfg.at("blocks").is_array())
@@ -1477,7 +1479,8 @@ nlohmann::json runNewtonJacobianBlockProbe(const std::string& configFile,
 
     const vela::NewtonSolver solver(
         problem.mesh, problem.matdb, problem.doping, problem.biases, problem.newton);
-    const auto rows = solver.evaluateJacobianBlockAudit(state, fdStep, blocks);
+    const auto rows =
+        solver.evaluateJacobianBlockAudit(state, fdStep, blocks, fdMode);
 
     const std::filesystem::path outputPath =
         resolvePath(cfgDir, cfg.at("output_csv").get<std::string>());
@@ -1511,11 +1514,22 @@ nlohmann::json runNewtonJacobianBlockProbe(const std::string& configFile,
             << row.relPhipColumnDiff << '\n';
     }
 
-    return {
+    nlohmann::json result = {
         {"nodes", problem.mesh.numNodes()},
         {"blocks", rows.size()},
+        {"finite_difference_mode", fdMode},
         {"output_csv", outputPath.string()},
     };
+    for (const auto& row : rows) {
+        if (!row.configurationFingerprint.empty()) {
+            result["impact_configuration_fingerprint"] =
+                row.configurationFingerprint;
+            result["impact_active_branch_fingerprint"] =
+                row.activeBranchFingerprint;
+            break;
+        }
+    }
+    return result;
 }
 
 } // namespace

@@ -2,7 +2,7 @@
 
 Date: 2026-07-29
 
-Status: WP0-WP2.1 and scientific Task 2 executed; WP3 is next.
+Status: WP0-WP6 and scientific Tasks 1-4 executed; WP7 is next.
 
 Starting point: branch `codex-pn2d-minimal6-operator-audit`, commit
 `1350d11`.
@@ -770,6 +770,35 @@ packages 1, 4, and 5 make the active branch observable.
 
 - `source_jacobian_dependency_identified_and_closed` authorizes work package 7;
 - any other companion-plan Task 4 outcome stops nonlinear candidate work.
+
+Executed outcome: `source_jacobian_dependency_identified_and_closed`.
+
+The frozen coarse7x3 `-20 V` state, mesh, doping, and materials hashes match
+the earlier Task 12 evidence. The ordinary double symmetric reference
+reproduces the historical best relative difference
+`1.839007985012764e-6` at relative step `1e-10`. The state contains eight
+exactly flat hole-QFP edges and a minimum nonzero hole-QFP edge difference of
+`4.227729278e-13 V`, so the ordinary double reference cannot simultaneously
+avoid nonzero branch crossings and source-subtraction cancellation.
+
+An audit-only 50-decimal-digit reference now evaluates the same shared local
+source formula. Nonzero abs branches use steps below the observed branch
+margin; exact-zero abs/norm branches use the symmetric semismooth derivative,
+matching the production local-forward-AD zero selection without adding
+smoothing. At relative steps `1e-14`, `3e-15`, and `1e-15`, the true relative
+analytic/reference differences are respectively
+`1.1335074719484275e-14`, `1.1989526702416226e-15`, and
+`6.476903678003707e-16`. Configuration fingerprint
+`ab2dbf93089c7fe3` and active-branch fingerprint `8e39422ae0ff24ba`
+agree across all ordinary and multiprecision probes.
+
+The mismatch is therefore classified as double-precision cancellation and
+branch-resolution loss, not a missing production Jacobian dependency or
+formula drift. Existing source-record/scatter closure tests remain at
+`1e-12`, the new exact-zero derivative test uses the `1e-12` absolute gate,
+and no production residual, Jacobian, physics default, or solver behavior was
+changed. Evidence:
+`build-release/pn2d-wp6-branch-resolved-jacobian-20260729/summary.json`.
 
 ## 11. Work package 7 - build the paired process-chain analyzer
 

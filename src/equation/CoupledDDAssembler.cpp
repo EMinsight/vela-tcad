@@ -3,6 +3,7 @@
 #include "vela/core/PhysicalConstants.h"
 #include "vela/discretization/Bernoulli.h"
 #include "vela/discretization/ScharfetterGummel.h"
+#include <boost/multiprecision/cpp_dec_float.hpp>
 #include "vela/equation/AssemblerUtils.h"
 #include "vela/physics/CarrierStatistics.h"
 #include <Eigen/Sparse>
@@ -1087,15 +1088,40 @@ SparseMatrixd CoupledDDAssembler::impactIonizationSourceFiniteDifferenceJacobian
     const CoupledDDBoundaryConditions& bcs,
     Real relativeStep) const
 {
+    return impactIonizationSourceFiniteDifferenceJacobianImpl<Real>(
+        x, bcs, relativeStep);
+}
+
+SparseMatrixd
+CoupledDDAssembler::impactIonizationSourceBranchResolvedFiniteDifferenceJacobian(
+    const VectorXd& x,
+    const CoupledDDBoundaryConditions& bcs,
+    Real relativeStep) const
+{
+    using BranchResolvedScalar =
+        boost::multiprecision::number<
+            boost::multiprecision::cpp_dec_float<50>,
+            boost::multiprecision::et_off>;
+    return impactIonizationSourceFiniteDifferenceJacobianImpl<
+        BranchResolvedScalar>(x, bcs, relativeStep);
+}
+
+template <typename Scalar>
+SparseMatrixd
+CoupledDDAssembler::impactIonizationSourceFiniteDifferenceJacobianImpl(
+    const VectorXd& x,
+    const CoupledDDBoundaryConditions& bcs,
+    Real relativeStep) const
+{
     const int N = static_cast<int>(mesh_.numNodes());
     if (x.size() != 3 * N) {
         throw std::invalid_argument(
-            "CoupledDDAssembler::impactIonizationSourceFiniteDifferenceJacobian: "
+            "CoupledDDAssembler::impactIonizationSourceFiniteDifferenceJacobianImpl: "
             "vector size mismatch.");
     }
     if (relativeStep <= 0.0 || !std::isfinite(relativeStep)) {
         throw std::invalid_argument(
-            "CoupledDDAssembler::impactIonizationSourceFiniteDifferenceJacobian: "
+            "CoupledDDAssembler::impactIonizationSourceFiniteDifferenceJacobianImpl: "
             "step must be positive and finite.");
     }
     if (!impactIonizationEnabled_ ||
@@ -1141,9 +1167,9 @@ SparseMatrixd CoupledDDAssembler::impactIonizationSourceFiniteDifferenceJacobian
     triplets.reserve(static_cast<std::size_t>(mesh_.numCells()) * 54);
     for (Index cellId = 0; cellId < mesh_.numCells(); ++cellId) {
         const Cell& cell = mesh_.getCell(cellId);
-        std::array<Real, 3> localPsi{};
-        std::array<Real, 3> localPhin{};
-        std::array<Real, 3> localPhip{};
+        std::array<Scalar, 3> localPsi{};
+        std::array<Scalar, 3> localPhin{};
+        std::array<Scalar, 3> localPhip{};
         std::array<Real, 3> localIntrinsicDensity{};
         for (std::size_t localNode = 0; localNode < 3; ++localNode) {
             const Index node = cell.node_ids[localNode];
@@ -1153,20 +1179,24 @@ SparseMatrixd CoupledDDAssembler::impactIonizationSourceFiniteDifferenceJacobian
             localPhip[localNode] = phip(nodeIndex);
             localIntrinsicDensity[localNode] = ni_[node];
         }
-        auto evaluate = [&](const std::array<Real, 3>& psiValues,
-                            const std::array<Real, 3>& phinValues,
-                            const std::array<Real, 3>& phipValues) {
-            std::array<Real, 3> electronDensity{};
-            std::array<Real, 3> holeDensity{};
+        auto evaluate = [&](const std::array<Scalar, 3>& psiValues,
+                            const std::array<Scalar, 3>& phinValues,
+                            const std::array<Scalar, 3>& phipValues) {
+            std::array<Scalar, 3> electronDensity{};
+            std::array<Scalar, 3> holeDensity{};
             for (std::size_t localNode = 0; localNode < 3; ++localNode) {
-                electronDensity[localNode] = localIntrinsicDensity[localNode] *
+                electronDensity[localNode] =
+                    Scalar(localIntrinsicDensity[localNode]) *
                     detail::localAdLimitedExp(
-                        (psiValues[localNode] - phinValues[localNode]) / Vt_);
-                holeDensity[localNode] = localIntrinsicDensity[localNode] *
+                        (psiValues[localNode] - phinValues[localNode]) /
+                        Scalar(Vt_));
+                holeDensity[localNode] =
+                    Scalar(localIntrinsicDensity[localNode]) *
                     detail::localAdLimitedExp(
-                        (phipValues[localNode] - psiValues[localNode]) / Vt_);
+                        (phipValues[localNode] - psiValues[localNode]) /
+                        Scalar(Vt_));
             }
-            return detail::elementEdgeGssLauxAvalancheSourceIntegralsLocal<Real>(
+            return detail::elementEdgeGssLauxAvalancheSourceIntegralsLocal<Scalar>(
                 impactIonizationConfig_, mobilityConfig_, *mobility_,
                 cellEdges.at(static_cast<std::size_t>(cellId)), mesh_, doping_,
                 cellMaterials_, cellId, psiValues, phinValues, phipValues,
@@ -1182,13 +1212,15 @@ SparseMatrixd CoupledDDAssembler::impactIonizationSourceFiniteDifferenceJacobian
                 auto phinMinus = localPhin;
                 auto phipPlus = localPhip;
                 auto phipMinus = localPhip;
-                const Real value = variableBlock == 0
+                const Scalar value = variableBlock == 0
                     ? localPsi[static_cast<std::size_t>(localColumn)]
                     : (variableBlock == 1
                         ? localPhin[static_cast<std::size_t>(localColumn)]
                         : localPhip[static_cast<std::size_t>(localColumn)]);
-                const Real step = detail::physicalPotentialCentralDifferenceStep(
-                    value, potentialScale, relativeStep);
+                const Real physicalValue = static_cast<Real>(value);
+                const Scalar step = Scalar(
+                    detail::physicalPotentialCentralDifferenceStep(
+                        physicalValue, potentialScale, relativeStep));
                 if (variableBlock == 0) {
                     psiPlus[static_cast<std::size_t>(localColumn)] += step;
                     psiMinus[static_cast<std::size_t>(localColumn)] -= step;
@@ -1208,9 +1240,11 @@ SparseMatrixd CoupledDDAssembler::impactIonizationSourceFiniteDifferenceJacobian
                     : (variableBlock == 1 ? phinOffset() : phipOffset());
                 for (int localRow = 0; localRow < 3; ++localRow) {
                     const Real derivative =
-                        -(plus[static_cast<std::size_t>(localRow)] -
-                          minus[static_cast<std::size_t>(localRow)]) /
-                        (2.0 * step) * sourceIntegralFactor * derivativeScale;
+                        static_cast<Real>(
+                            -(plus[static_cast<std::size_t>(localRow)] -
+                              minus[static_cast<std::size_t>(localRow)]) /
+                            (Scalar(2.0) * step) *
+                            Scalar(sourceIntegralFactor * derivativeScale));
                     const int rowNode = static_cast<int>(
                         cell.node_ids[static_cast<std::size_t>(localRow)]);
                     const int electronRow = phinOffset() + rowNode;

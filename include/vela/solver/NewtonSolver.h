@@ -350,6 +350,8 @@ struct NewtonCarrierTermDiagnosticsEvaluation {
 
 struct NewtonJacobianBlockAuditRow {
     std::string block;
+    std::string configurationFingerprint;
+    std::string activeBranchFingerprint;
     Real analyticNorm = 0.0;
     Real fdNorm = 0.0;
     Real diffNorm = 0.0;
@@ -400,7 +402,8 @@ public:
     std::vector<NewtonJacobianBlockAuditRow> evaluateJacobianBlockAudit(
         const DDSolution& state,
         Real finiteDifferenceStep = 1.0e-7,
-        std::vector<std::string> blocks = {}) const;
+        std::vector<std::string> blocks = {},
+        const std::string& finiteDifferenceMode = "double_symmetric") const;
     std::vector<CoupledDDEdgeFluxDiagnostic> evaluateSgEdgeFluxDiagnostics(
         const DDSolution& state) const;
 

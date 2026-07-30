@@ -2,7 +2,7 @@
 // Tri3 geometry/current-reconstruction helpers have been declared.
 
 template <typename Scalar>
-inline Real localAdValue(const Scalar& value)
+inline auto localAdValue(const Scalar& value)
 {
     if constexpr (std::is_same_v<Scalar, Tri3LocalForwardDual>)
         return value.value;
@@ -15,8 +15,10 @@ inline Scalar localAdAbs(const Scalar& value)
 {
     if constexpr (std::is_same_v<Scalar, Tri3LocalForwardDual>)
         return dualAbs(value);
-    else
-        return std::abs(value);
+    else {
+        using std::abs;
+        return abs(value);
+    }
 }
 
 template <typename Scalar>
@@ -24,8 +26,10 @@ inline Scalar localAdExp(const Scalar& value)
 {
     if constexpr (std::is_same_v<Scalar, Tri3LocalForwardDual>)
         return dualExp(value);
-    else
-        return std::exp(value);
+    else {
+        using std::exp;
+        return exp(value);
+    }
 }
 
 template <typename Scalar>
@@ -33,8 +37,10 @@ inline Scalar localAdExpm1(const Scalar& value)
 {
     if constexpr (std::is_same_v<Scalar, Tri3LocalForwardDual>)
         return dualExpm1(value);
-    else
-        return std::expm1(value);
+    else {
+        using std::expm1;
+        return expm1(value);
+    }
 }
 
 template <typename Scalar>
@@ -42,8 +48,10 @@ inline Scalar localAdSqrt(const Scalar& value)
 {
     if constexpr (std::is_same_v<Scalar, Tri3LocalForwardDual>)
         return dualSqrt(value);
-    else
-        return std::sqrt(value);
+    else {
+        using std::sqrt;
+        return sqrt(value);
+    }
 }
 
 template <typename Scalar>
@@ -51,8 +59,10 @@ inline Scalar localAdPow(const Scalar& value, Real exponent)
 {
     if constexpr (std::is_same_v<Scalar, Tri3LocalForwardDual>)
         return dualPow(value, exponent);
-    else
-        return std::pow(value, exponent);
+    else {
+        using std::pow;
+        return pow(value, exponent);
+    }
 }
 
 template <typename Scalar>
@@ -68,8 +78,8 @@ inline Scalar localAdLimitedExp(const Scalar& exponent)
 template <typename Scalar>
 inline Scalar localAdBernoulli(const Scalar& argument)
 {
-    const Real value = localAdValue(argument);
-    if (std::abs(value) < 1.0e-10)
+    const auto value = localAdValue(argument);
+    if (localAdValue(localAdAbs(argument)) < 1.0e-10)
         return Scalar(1.0) - argument * Scalar(0.5) +
                argument * argument / Scalar(12.0);
     if (value > 500.0)
@@ -221,15 +231,19 @@ inline Scalar localAdEndpointAveragedMobility(
             ? mobility.electronMobility(
                 material,
                 mobilityDoping,
-                localAdValue(n[static_cast<std::size_t>(localNode)]),
-                localAdValue(p[static_cast<std::size_t>(localNode)]),
+                static_cast<Real>(
+                    localAdValue(n[static_cast<std::size_t>(localNode)])),
+                static_cast<Real>(
+                    localAdValue(p[static_cast<std::size_t>(localNode)])),
                 0.0,
                 0.0)
             : mobility.holeMobility(
                 material,
                 mobilityDoping,
-                localAdValue(n[static_cast<std::size_t>(localNode)]),
-                localAdValue(p[static_cast<std::size_t>(localNode)]),
+                static_cast<Real>(
+                    localAdValue(n[static_cast<std::size_t>(localNode)])),
+                static_cast<Real>(
+                    localAdValue(p[static_cast<std::size_t>(localNode)])),
                 0.0,
                 0.0);
     };
@@ -255,7 +269,7 @@ inline Scalar localAdImpactCoefficient(
     if (inputConfig.model == "none")
         return Scalar(0.0);
     const Scalar field = localAdAbs(inputField);
-    const Real fieldValue = localAdValue(field);
+    const auto fieldValue = localAdValue(field);
     if (inputConfig.model == "selberherr") {
         if (fieldValue < inputConfig.minimumField || fieldValue <= 0.0)
             return Scalar(0.0);
@@ -347,7 +361,7 @@ inline Scalar localAdElectronSgFlux(
         (psi1 - psi0) / Scalar(Vt) + Scalar(std::log(ni1 / ni0));
 
     const Scalar qfDifference = (phin1 - phin0) / Scalar(Vt);
-    if (std::abs(localAdValue(qfDifference)) < 50.0 &&
+    if (localAdValue(localAdAbs(qfDifference)) < 50.0 &&
         localAdValue(exponent0) > -500.0 &&
         localAdValue(exponent0) < 500.0 &&
         localAdValue(exponent1) > -500.0 &&
@@ -388,7 +402,7 @@ inline Scalar localAdHoleSgFlux(
         (psi1 - psi0) / Scalar(Vt) + Scalar(std::log(ni0 / ni1));
 
     const Scalar qfDifference = (phip1 - phip0) / Scalar(Vt);
-    if (std::abs(localAdValue(qfDifference)) < 50.0 &&
+    if (localAdValue(localAdAbs(qfDifference)) < 50.0 &&
         localAdValue(exponent0) > -500.0 &&
         localAdValue(exponent0) < 500.0 &&
         localAdValue(exponent1) > -500.0 &&

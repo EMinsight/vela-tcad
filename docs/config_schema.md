@@ -49,6 +49,13 @@ Scope and conventions:
 - `dc_sweep`: adaptive curve sweep driver.
 - `newton`: single-bias coupled Newton solve.
 - `newton_solve_from_state`: single-bias coupled Newton solve initialized from `state_fields_dir`. The directory must contain `ElectrostaticPotential_region0.csv`, `eQuasiFermiPotential_region0.csv`, and `hQuasiFermiPotential_region0.csv`; each file must include `node_id` and `component0` columns with every mesh node exactly once.
+- `newton_jacobian_block_probe`: read `state_file` and write the requested
+  Jacobian `blocks` to `output_csv`. `finite_difference_step` sets the
+  relative perturbation. The optional `finite_difference_mode` is
+  `double_symmetric` by default; the audit-only
+  `multiprecision_branch_resolved` mode evaluates the canonical
+  element-edge avalanche source with a 50-decimal-digit scalar and requires a
+  caller-selected step below every nonzero active-branch margin.
 
 For `dc_sweep`, omitting `solver.method` keeps the default Gummel path. Set
 `solver.method` (or legacy alias `solver.type`) to `newton` to use the coupled

@@ -2,7 +2,7 @@
 
 Date: 2026-07-29
 
-Status: engineering WP0-WP2.1 and scientific Task 2 executed; WP3 is next.
+Status: engineering WP0-WP6 and scientific Tasks 1-4 executed; WP7/Task 5 is next.
 
 Starting point: local branch `codex-pn2d-minimal6-operator-audit`, commit
 `1350d11`. Commit `fa1c343` is an ancestor of this starting point.
@@ -91,10 +91,11 @@ breakdown voltage.
   `-19 V` to `-20 V` is electron density. Density grows `3.77935x`, current
   `5.69013x`, alpha `1.14342x`, generation `4.70196x`, field/QFP gradient only
   about `1.03x`, and mobility falls slightly.
-- The remaining nonlinear authorization blocker is the source-only Jacobian
-  outcome `nonsmooth_branch_derivative`. The best accepted nonzero
-  analytic/central-FD relative difference is `1.839007985e-6`, above the
-  frozen `1e-8` gate.
+- The historical nonlinear authorization blocker was the source-only
+  Jacobian outcome `nonsmooth_branch_derivative`. WP6 has now reproduced its
+  best ordinary-double result and closed it with a branch-resolved
+  multiprecision reference; this authorizes causal localization, not a model
+  or production-default change.
 
 These facts make carrier/QFP feedback and branch selection the primary
 investigation. They do not authorize a model change by themselves.
@@ -150,10 +151,10 @@ also include every integer bias from `0` through `-20 V`.
 |---|---|---|
 | Task 1 | observability WP0, WP2, and WP2.1 | `paired_m0_reference_sealed`; exact Sentaurus lattices complete |
 | Task 2 | common WP1 contract plus dedicated curve/knee analyzer | `curve_knee_contract_verified`; current data returns `solver_first_failure` |
-| Task 3 | WP0 baseline plus WP4-WP5 solver-used/attempt records | deterministic first failure sealed; full trace pending |
-| Task 4 | WP6 source-only derivative work | pending; fixed-state `-20 V` probe remains available |
-| Tasks 5-6 | WP3-WP5 records and WP7 paired process analyzer | pending |
-| Tasks 7-11 | causal authorization from Tasks 4-6 | prohibited until prior gates pass |
+| Task 3 | WP0 baseline plus WP4-WP5 solver-used/attempt records | `complete_nonlinear_trace_available`; deterministic first failure reproduced |
+| Task 4 | WP6 source-only derivative work | `source_jacobian_dependency_identified_and_closed` |
+| Tasks 5-6 | WP3-WP5 records and WP7 paired process analyzer | WP3-WP5 complete; WP7 pending |
+| Tasks 7-11 | causal authorization from Tasks 4-6 | prohibited until WP7/Tasks 5-6 pass |
 
 ## Frozen production configuration
 
@@ -526,6 +527,23 @@ Typed outcome:
 
 Only the first outcome may enter Task 5. Report the step-size convergence
 table and first mismatching dependency. Do not relax the gate.
+
+Executed outcome: `source_jacobian_dependency_identified_and_closed`.
+
+The ordinary double symmetric reference reproduced relative differences
+`1.0623268123382636e-2`, `1.839007985012764e-6`, and
+`3.2187014658253814e-6` at steps `1e-8`, `1e-10`, and `3e-11`.
+The shared-formula 50-decimal-digit branch-resolved reference then produced
+`1.1335074719484275e-14`, `1.1989526702416226e-15`, and
+`6.476903678003707e-16` at same-branch steps `1e-14`, `3e-15`, and
+`1e-15`. All probes used configuration fingerprint `ab2dbf93089c7fe3`
+and active-branch fingerprint `8e39422ae0ff24ba`.
+
+The remaining difference is floating-point cancellation/branch resolution in
+the ordinary double reference. There is no evidence of a missing analytic
+derivative, configuration mismatch, or residual/Jacobian formula drift.
+Exact-zero branches retain the production semismooth derivative of zero; no
+smoothing or default change was introduced. Task 5 is authorized.
 
 ## Task 5 - close the fixed-state process chain
 

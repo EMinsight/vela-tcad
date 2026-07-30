@@ -932,6 +932,24 @@ TEST_CASE("Coupled DD element-edge GSS Laux avalanche Jacobian matches finite di
     const Real scatterReference = std::max<Real>(1.0, analytic.norm());
     REQUIRE((analytic - scatteredLocalAd).norm() / scatterReference <= 1.0e-12);
 
+    const Eigen::MatrixXd directSourceJacobian =
+        Eigen::MatrixXd(assembler.impactIonizationSourceJacobian(x, bcs));
+    REQUIRE((analytic - directSourceJacobian).norm() /
+            std::max<Real>(1.0, analytic.norm()) <= 1.0e-12);
+    for (const Real step : {1.0e-14, 3.0e-15, 1.0e-15}) {
+        const Eigen::MatrixXd branchResolved =
+            Eigen::MatrixXd(
+                assembler
+                    .impactIonizationSourceBranchResolvedFiniteDifferenceJacobian(
+                        x, bcs, step));
+        const Real scale =
+            std::max(directSourceJacobian.norm(), branchResolved.norm());
+        CAPTURE(step, directSourceJacobian.norm(), branchResolved.norm());
+        REQUIRE(scale > 0.0);
+        REQUIRE((directSourceJacobian - branchResolved).norm() / scale <=
+                1.0e-8);
+    }
+
     DDScalingSpec scaling;
     scaling.enabled = true;
     scaling.V0 = Vt;
@@ -1068,6 +1086,18 @@ TEST_CASE("Coupled DD element-edge GSS Laux avalanche Jacobian matches finite di
     const Eigen::MatrixXd zeroSourceAnalytic =
         Eigen::MatrixXd(nearZeroAssembler.assembleJacobian(zeroSourceX, bcs)) -
         Eigen::MatrixXd(baselineAssembler.assembleJacobian(zeroSourceX, bcs));
+    const Eigen::MatrixXd zeroSourceDirect =
+        Eigen::MatrixXd(
+            nearZeroAssembler.impactIonizationSourceJacobian(
+                zeroSourceX, bcs));
+    const Eigen::MatrixXd zeroSourceBranchResolved =
+        Eigen::MatrixXd(
+            nearZeroAssembler
+                .impactIonizationSourceBranchResolvedFiniteDifferenceJacobian(
+                    zeroSourceX, bcs, 1.0e-15));
+    REQUIRE((zeroSourceDirect - zeroSourceBranchResolved)
+                .cwiseAbs()
+                .maxCoeff() <= nearZeroAbsoluteTolerance);
     Eigen::MatrixXd zeroSourceFiniteDifference = Eigen::MatrixXd::Zero(M, M);
     for (int col = 0; col < M; ++col) {
         const Real step =

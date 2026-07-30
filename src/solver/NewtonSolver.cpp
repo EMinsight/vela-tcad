@@ -2533,7 +2533,8 @@ NewtonCarrierTermDiagnosticsEvaluation NewtonSolver::evaluateCarrierTermDiagnost
 std::vector<NewtonJacobianBlockAuditRow> NewtonSolver::evaluateJacobianBlockAudit(
     const DDSolution& state,
     Real finiteDifferenceStep,
-    std::vector<std::string> blocks) const
+    std::vector<std::string> blocks,
+    const std::string& finiteDifferenceMode) const
 {
     const int N = static_cast<int>(mesh_.numNodes());
     if (state.psi.size() != N || state.phin.size() != N || state.phip.size() != N) {
@@ -2543,6 +2544,12 @@ std::vector<NewtonJacobianBlockAuditRow> NewtonSolver::evaluateJacobianBlockAudi
     if (finiteDifferenceStep <= 0.0 || !std::isfinite(finiteDifferenceStep)) {
         throw std::invalid_argument(
             "NewtonSolver::evaluateJacobianBlockAudit: finite difference step must be positive.");
+    }
+    if (finiteDifferenceMode != "double_symmetric" &&
+        finiteDifferenceMode != "multiprecision_branch_resolved") {
+        throw std::invalid_argument(
+            "NewtonSolver::evaluateJacobianBlockAudit: unknown finite difference "
+            "mode '" + finiteDifferenceMode + "'.");
     }
 
     const double Vt = thermalVoltage(cfg_.temperature_K);
@@ -2610,10 +2617,16 @@ std::vector<NewtonJacobianBlockAuditRow> NewtonSolver::evaluateJacobianBlockAudi
                 detail::usesElementEdgeGssLauxAvalancheSource(
                     cfg_.impactIonization);
             if (directElementEdgeImpact) {
+                const SparseMatrixd reference =
+                    finiteDifferenceMode == "multiprecision_branch_resolved"
+                    ? withTerm
+                        .impactIonizationSourceBranchResolvedFiniteDifferenceJacobian(
+                            x, bcs, finiteDifferenceStep)
+                    : withTerm.impactIonizationSourceFiniteDifferenceJacobian(
+                        x, bcs, finiteDifferenceStep);
                 return std::pair<SparseMatrixd, SparseMatrixd>{
                     withTerm.impactIonizationSourceJacobian(x, bcs),
-                    withTerm.impactIonizationSourceFiniteDifferenceJacobian(
-                        x, bcs, finiteDifferenceStep)};
+                    reference};
             }
             SparseMatrixd analytic =
                 withTerm.assembleJacobian(x, bcs) -
@@ -2710,6 +2723,8 @@ std::vector<NewtonJacobianBlockAuditRow> NewtonSolver::evaluateJacobianBlockAudi
     std::optional<std::pair<SparseMatrixd, SparseMatrixd>> base;
     std::optional<std::pair<SparseMatrixd, SparseMatrixd>> withRecombination;
     std::optional<std::pair<SparseMatrixd, SparseMatrixd>> withImpact;
+    std::string impactConfigurationFingerprint;
+    std::string impactActiveBranchFingerprint;
     if (needsBase)
         base = matrixPair(baseAssembler);
     if (needsRecombination) {
@@ -2721,6 +2736,10 @@ std::vector<NewtonJacobianBlockAuditRow> NewtonSolver::evaluateJacobianBlockAudi
     if (needsImpact) {
         CoupledDDAssembler impactAssembler =
             makeAssembler(noRecombinationConfig, cfg_.impactIonization);
+        impactConfigurationFingerprint =
+            impactAssembler.impactIonizationConfigurationFingerprint();
+        impactActiveBranchFingerprint =
+            impactAssembler.impactIonizationActiveBranchFingerprint(x);
         withImpact = matrixDifferencePair(
             impactAssembler, baseAssembler, "sg_avalanche");
     }
@@ -2741,11 +2760,14 @@ std::vector<NewtonJacobianBlockAuditRow> NewtonSolver::evaluateJacobianBlockAudi
                 withRecombination->second,
                 jacobianAuditRows(block, N)));
         } else if (block == "sg_avalanche") {
-            rows.push_back(jacobianAuditRow(
+            NewtonJacobianBlockAuditRow row = jacobianAuditRow(
                 block,
                 withImpact->first,
                 withImpact->second,
-                jacobianAuditRows(block, N)));
+                jacobianAuditRows(block, N));
+            row.configurationFingerprint = impactConfigurationFingerprint;
+            row.activeBranchFingerprint = impactActiveBranchFingerprint;
+            rows.push_back(std::move(row));
         } else if (block == "dirichlet_or_gauge") {
             rows.push_back(jacobianAuditRow(
                 block, base->first, base->second, jacobianAuditRows(block, N, bcs)));

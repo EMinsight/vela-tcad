@@ -1424,14 +1424,29 @@ TEST_CASE("NewtonSolver: element-edge avalanche block audit is independently sou
     NewtonSolver solver(mesh, matdb, doping, biases, cfg);
     const auto sourceRows = solver.evaluateJacobianBlockAudit(
         state, 1.0e-7, std::vector<std::string>{"sg_avalanche"});
+    const auto branchResolvedRows = solver.evaluateJacobianBlockAudit(
+        state,
+        1.0e-15,
+        std::vector<std::string>{"sg_avalanche"},
+        "multiprecision_branch_resolved");
     const auto transportRows = solver.evaluateJacobianBlockAudit(
         state, 1.0e-7, std::vector<std::string>{"transport"});
 
     REQUIRE(sourceRows.size() == 1);
+    REQUIRE(branchResolvedRows.size() == 1);
     REQUIRE(transportRows.size() == 1);
     REQUIRE(sourceRows.front().analyticNorm > 0.0);
     REQUIRE(sourceRows.front().fdNorm > 0.0);
     REQUIRE(sourceRows.front().relDiff <= 1.0e-8);
+    REQUIRE(branchResolvedRows.front().relDiff <= 1.0e-8);
+    REQUIRE_FALSE(sourceRows.front().configurationFingerprint.empty());
+    REQUIRE_FALSE(sourceRows.front().activeBranchFingerprint.empty());
+    REQUIRE(
+        branchResolvedRows.front().configurationFingerprint ==
+        sourceRows.front().configurationFingerprint);
+    REQUIRE(
+        branchResolvedRows.front().activeBranchFingerprint ==
+        sourceRows.front().activeBranchFingerprint);
     REQUIRE(sourceRows.front().analyticNorm != Catch::Approx(transportRows.front().analyticNorm));
     REQUIRE(sourceRows.front().fdNorm != Catch::Approx(transportRows.front().fdNorm));
 }

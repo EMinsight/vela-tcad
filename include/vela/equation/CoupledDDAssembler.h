@@ -152,6 +152,13 @@ public:
         const VectorXd& x,
         const CoupledDDBoundaryConditions& bcs,
         Real relativeStep) const;
+    // Independent high-precision reference for branch-sensitive source audits.
+    // Callers must choose a step below every nonzero active-branch margin.
+    // Exact-zero abs/norm branches use the symmetric semismooth derivative.
+    SparseMatrixd impactIonizationSourceBranchResolvedFiniteDifferenceJacobian(
+        const VectorXd& x,
+        const CoupledDDBoundaryConditions& bcs,
+        Real relativeStep) const;
 
     VectorXd electronDensity(const VectorXd& x) const;
     VectorXd holeDensity(const VectorXd& x) const;
@@ -174,6 +181,12 @@ public:
     std::string impactIonizationActiveBranchFingerprint(const VectorXd& x) const;
 
 private:
+    template <typename Scalar>
+    SparseMatrixd impactIonizationSourceFiniteDifferenceJacobianImpl(
+        const VectorXd& x,
+        const CoupledDDBoundaryConditions& bcs,
+        Real relativeStep) const;
+
     int psiOffset() const { return 0; }
     int phinOffset() const { return static_cast<int>(mesh_.numNodes()); }
     int phipOffset() const { return 2 * static_cast<int>(mesh_.numNodes()); }
