@@ -1247,6 +1247,88 @@ TEST_CASE("NewtonSolver: evaluateStep reports one physical Newton correction", "
     REQUIRE(step.trialResidual.blockNorms.combined < step.residual.blockNorms.combined);
 }
 
+TEST_CASE("NewtonSolver: feedback substitutions share one Jacobian and preserve boundary rows",
+          "[newton][diagnostics][feedback-substitution]")
+{
+    DeviceMesh mesh = makePNMesh();
+    MaterialDatabase matdb;
+    DopingModel doping = makePNDoping(mesh);
+    NewtonConfig cfg = newtonConfig();
+    cfg.inputScaling.mode = UnitScalingMode::UnitScaling;
+    cfg.warmStart = true;
+
+    NewtonSolver solver(mesh, matdb, doping, zeroBias(), cfg);
+    const NewtonResult equilibrium = solver.solve();
+    REQUIRE(equilibrium.converged);
+
+    DDSolution replacement = equilibrium.solution;
+    replacement.phin(4) += 0.01;
+    replacement.phip(4) -= 0.015;
+    replacement.n(4) *= 1.5;
+    replacement.p(4) *= 0.75;
+
+    const auto variants =
+        solver.evaluateFeedbackSubstitutions(equilibrium.solution, replacement);
+    REQUIRE(variants.size() == 8);
+    REQUIRE(variants[0].variant == "baseline");
+    REQUIRE(variants[1].variant == "electron_density_only");
+    REQUIRE(variants[2].variant == "hole_density_only");
+    REQUIRE(variants[3].variant == "density_only");
+    REQUIRE(variants[4].variant == "electron_qfp_only");
+    REQUIRE(variants[5].variant == "hole_qfp_only");
+    REQUIRE(variants[6].variant == "qfp_only");
+    REQUIRE(variants[7].variant == "density_qfp");
+    REQUIRE_FALSE(variants[0].replacesDensity);
+    REQUIRE_FALSE(variants[0].replacesQuasiFermi);
+    REQUIRE(variants[1].replacesDensity);
+    REQUIRE_FALSE(variants[1].replacesQuasiFermi);
+    REQUIRE(variants[2].replacesDensity);
+    REQUIRE_FALSE(variants[2].replacesQuasiFermi);
+    REQUIRE(variants[4].replacesQuasiFermi);
+    REQUIRE(variants[5].replacesQuasiFermi);
+    REQUIRE(variants[7].replacesDensity);
+    REQUIRE(variants[7].replacesQuasiFermi);
+
+    const int N = static_cast<int>(mesh.numNodes());
+    const std::vector<int> contactNodes = {0, 1, 2, 3};
+    for (const auto& variant : variants) {
+        REQUIRE(variant.residual.raw.size() == 3 * N);
+        REQUIRE(variant.desiredResidual.size() == 3 * N);
+        REQUIRE(variant.carrierTerms.size() == static_cast<std::size_t>(N));
+        REQUIRE(variant.deltaPsi.allFinite());
+        REQUIRE(variant.deltaPhin.allFinite());
+        REQUIRE(variant.deltaPhip.allFinite());
+        REQUIRE(variant.carrierOnlyDeltaPhin.allFinite());
+        REQUIRE(variant.carrierOnlyDeltaPhip.allFinite());
+        REQUIRE((variant.desiredResidual - variants[0].desiredResidual).norm() ==
+                Catch::Approx(0.0).margin(0.0));
+        for (const int node : contactNodes) {
+            REQUIRE(variant.residual.raw(node) == variants[0].residual.raw(node));
+            REQUIRE(variant.residual.raw(N + node) ==
+                    variants[0].residual.raw(N + node));
+            REQUIRE(variant.residual.raw(2 * N + node) ==
+                    variants[0].residual.raw(2 * N + node));
+        }
+        const auto& center = variant.carrierTerms[4];
+        const Real electronSum = center.electronFlux
+            + center.electronRecombination
+            + center.electronImpact
+            + center.electronGauge
+            + center.electronBoundary;
+        const Real holeSum = center.holeFlux
+            + center.holeRecombination
+            + center.holeImpact
+            + center.holeGauge
+            + center.holeBoundary;
+        REQUIRE(electronSum ==
+                Catch::Approx(variant.residual.raw(N + 4)).margin(1.0e-12));
+        REQUIRE(holeSum ==
+                Catch::Approx(variant.residual.raw(2 * N + 4)).margin(1.0e-12));
+    }
+    REQUIRE((variants[1].residual.raw - variants[0].residual.raw).norm() > 0.0);
+    REQUIRE((variants[4].residual.raw - variants[0].residual.raw).norm() > 0.0);
+}
+
 TEST_CASE("NewtonSolver: evaluateDirectionalDerivative compares analytic and finite-difference Jv",
           "[newton][diagnostics]")
 {

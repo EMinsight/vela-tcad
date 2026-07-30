@@ -267,14 +267,58 @@ bool CoupledDDAssembler::hasPositiveFiniteCarriers(const VectorXd& x) const
 VectorXd CoupledDDAssembler::residual(const VectorXd& x,
                                       const CoupledDDBoundaryConditions& bcs) const
 {
+    return residualImpl(x, bcs, nullptr);
+}
+
+VectorXd CoupledDDAssembler::feedbackSubstitutionResidual(
+    const VectorXd& x,
+    const CoupledDDBoundaryConditions& bcs,
+    const CoupledDDFeedbackStateSubstitution& substitution) const
+{
+    return residualImpl(x, bcs, &substitution);
+}
+
+VectorXd CoupledDDAssembler::residualImpl(
+    const VectorXd& x,
+    const CoupledDDBoundaryConditions& bcs,
+    const CoupledDDFeedbackStateSubstitution* substitution) const
+{
     const Index Nidx = mesh_.numNodes();
     const int N = static_cast<int>(Nidx);
     if (x.size() != 3 * N)
-        throw std::invalid_argument("CoupledDDAssembler::residual: vector size mismatch.");
+        throw std::invalid_argument("CoupledDDAssembler::residualImpl: vector size mismatch.");
 
     // n and p are needed for Poisson source and configured recombination.
-    const VectorXd n = electronDensity(x);
-    const VectorXd p = holeDensity(x);
+    VectorXd n = electronDensity(x);
+    VectorXd p = holeDensity(x);
+    const auto validateSubstitutionVector = [N](
+        const VectorXd& values,
+        const char* name,
+        bool requirePositive) {
+        if (values.size() != N) {
+            throw std::invalid_argument(
+                std::string("CoupledDDAssembler feedback substitution ") + name +
+                " size mismatch.");
+        }
+        for (int i = 0; i < N; ++i) {
+            if (!std::isfinite(values(i)) ||
+                (requirePositive && values(i) <= 0.0)) {
+                throw std::invalid_argument(
+                    std::string("CoupledDDAssembler feedback substitution ") + name +
+                    " must be finite" + (requirePositive ? " and positive." : "."));
+            }
+        }
+    };
+    if (substitution != nullptr && substitution->replaceElectronDensity) {
+        validateSubstitutionVector(
+            substitution->electronDensity, "electron density", true);
+        n = substitution->electronDensity;
+    }
+    if (substitution != nullptr && substitution->replaceHoleDensity) {
+        validateSubstitutionVector(
+            substitution->holeDensity, "hole density", true);
+        p = substitution->holeDensity;
+    }
     const Real potentialScale = scaling_.enabled ? scaling_.V0 : 1.0;
     const Real fieldFactor = scaling_.enabled ? scaling_.fieldFromCoordinateDeltaFactor : 1.0;
     const VectorXd psi = x.segment(psiOffset(), N) * potentialScale;
@@ -284,12 +328,30 @@ VectorXd CoupledDDAssembler::residual(const VectorXd& x,
         : std::vector<Real>{};
     const bool qfImpact =
         detail::usesQuasiFermiAvalancheDrivingForce(impactIonizationConfig_);
-    const VectorXd phinIncrement = x.segment(phinOffset(), N) * potentialScale;
-    const VectorXd phipIncrement = x.segment(phipOffset(), N) * potentialScale;
-    const VectorXd phinPhysical =
+    VectorXd phinIncrement = x.segment(phinOffset(), N) * potentialScale;
+    VectorXd phipIncrement = x.segment(phipOffset(), N) * potentialScale;
+    VectorXd phinPhysical =
         phinIncrement.array() + electronQfReference_V_;
-    const VectorXd phipPhysical =
+    VectorXd phipPhysical =
         phipIncrement.array() + holeQfReference_V_;
+    if (substitution != nullptr && substitution->replaceElectronQuasiFermi) {
+        validateSubstitutionVector(
+            substitution->electronQuasiFermi_V,
+            "electron quasi-Fermi potential",
+            false);
+        phinPhysical = substitution->electronQuasiFermi_V;
+        phinIncrement =
+            phinPhysical.array() - electronQfReference_V_;
+    }
+    if (substitution != nullptr && substitution->replaceHoleQuasiFermi) {
+        validateSubstitutionVector(
+            substitution->holeQuasiFermi_V,
+            "hole quasi-Fermi potential",
+            false);
+        phipPhysical = substitution->holeQuasiFermi_V;
+        phipIncrement =
+            phipPhysical.array() - holeQfReference_V_;
+    }
     const std::vector<Real> nodeElectronDrivingFields = (impactIonizationCoupled_ && qfImpact)
         ? detail::computeElectronAvalancheNodeQuasiFermiDrivingFields(
             impactIonizationConfig_, mesh_, nodeCells_, psi, phinPhysical, n, ni_, Vt_, fieldFactor)
@@ -342,10 +404,10 @@ VectorXd CoupledDDAssembler::residual(const VectorXd& x,
         const int j = static_cast<int>(edge.n1);
         const Real psi_i = x(psiOffset() + i) * potentialScale;
         const Real psi_j = x(psiOffset() + j) * potentialScale;
-        const Real phin_i = x(phinOffset() + i) * potentialScale;
-        const Real phin_j = x(phinOffset() + j) * potentialScale;
-        const Real phip_i = x(phipOffset() + i) * potentialScale;
-        const Real phip_j = x(phipOffset() + j) * potentialScale;
+        const Real phin_i = phinIncrement(i);
+        const Real phin_j = phinIncrement(j);
+        const Real phip_i = phipIncrement(i);
+        const Real phip_j = phipIncrement(j);
         const Real dpsi = psi_j - psi_i;
         const Real electricField = std::abs(dpsi / h) * fieldFactor;
         const Real electronMobilityField =
@@ -446,9 +508,15 @@ VectorXd CoupledDDAssembler::residual(const VectorXd& x,
             // catastrophic cancellation when phip ~= phin (near equilibrium), where
             // the naive form n*p - ni^2 is dominated by floating-point rounding
             // in exp(+u) * exp(-u) != 1.
-            const Real dPhi =
-                (holeQfReference_V_ - electronQfReference_V_)
-                + (x(phipOffset() + ii) - x(phinOffset() + ii)) * potentialScale;
+            const bool substitutedQuasiFermi =
+                substitution != nullptr &&
+                (substitution->replaceElectronQuasiFermi ||
+                 substitution->replaceHoleQuasiFermi);
+            const Real dPhi = substitutedQuasiFermi
+                ? phipPhysical(ii) - phinPhysical(ii)
+                : (holeQfReference_V_ - electronQfReference_V_)
+                    + (x(phipOffset() + ii) - x(phinOffset() + ii))
+                        * potentialScale;
             const Real excessProduct = (ni > 0.0)
                 ? ni * ni * std::expm1(dPhi / Vt_)
                 : n(ii) * p(ii);
@@ -555,6 +623,24 @@ CoupledDDAssembler::carrierContinuityTermDiagnostics(
     const VectorXd& x,
     const CoupledDDBoundaryConditions& bcs) const
 {
+    return carrierContinuityTermDiagnosticsImpl(x, bcs, nullptr);
+}
+
+std::vector<CoupledDDCarrierTermDiagnostic>
+CoupledDDAssembler::feedbackSubstitutionCarrierContinuityTermDiagnostics(
+    const VectorXd& x,
+    const CoupledDDBoundaryConditions& bcs,
+    const CoupledDDFeedbackStateSubstitution& substitution) const
+{
+    return carrierContinuityTermDiagnosticsImpl(x, bcs, &substitution);
+}
+
+std::vector<CoupledDDCarrierTermDiagnostic>
+CoupledDDAssembler::carrierContinuityTermDiagnosticsImpl(
+    const VectorXd& x,
+    const CoupledDDBoundaryConditions& bcs,
+    const CoupledDDFeedbackStateSubstitution* substitution) const
+{
     const Index Nidx = mesh_.numNodes();
     const int N = static_cast<int>(Nidx);
     if (x.size() != 3 * N)
@@ -565,8 +651,36 @@ CoupledDDAssembler::carrierContinuityTermDiagnostics(
     for (Index i = 0; i < Nidx; ++i)
         terms[i].nodeId = i;
 
-    const VectorXd n = electronDensity(x);
-    const VectorXd p = holeDensity(x);
+    VectorXd n = electronDensity(x);
+    VectorXd p = holeDensity(x);
+    const auto validateSubstitutionVector = [N](
+        const VectorXd& values,
+        const char* name,
+        bool requirePositive) {
+        if (values.size() != N) {
+            throw std::invalid_argument(
+                std::string("CoupledDDAssembler feedback substitution ") + name +
+                " size mismatch.");
+        }
+        for (int i = 0; i < N; ++i) {
+            if (!std::isfinite(values(i)) ||
+                (requirePositive && values(i) <= 0.0)) {
+                throw std::invalid_argument(
+                    std::string("CoupledDDAssembler feedback substitution ") + name +
+                    " must be finite" + (requirePositive ? " and positive." : "."));
+            }
+        }
+    };
+    if (substitution != nullptr && substitution->replaceElectronDensity) {
+        validateSubstitutionVector(
+            substitution->electronDensity, "electron density", true);
+        n = substitution->electronDensity;
+    }
+    if (substitution != nullptr && substitution->replaceHoleDensity) {
+        validateSubstitutionVector(
+            substitution->holeDensity, "hole density", true);
+        p = substitution->holeDensity;
+    }
     const Real potentialScale = scaling_.enabled ? scaling_.V0 : 1.0;
     const Real fieldFactor = scaling_.enabled ? scaling_.fieldFromCoordinateDeltaFactor : 1.0;
     const VectorXd psi = x.segment(psiOffset(), N) * potentialScale;
@@ -576,12 +690,30 @@ CoupledDDAssembler::carrierContinuityTermDiagnostics(
         : std::vector<Real>{};
     const bool qfImpact =
         detail::usesQuasiFermiAvalancheDrivingForce(impactIonizationConfig_);
-    const VectorXd phinIncrement = x.segment(phinOffset(), N) * potentialScale;
-    const VectorXd phipIncrement = x.segment(phipOffset(), N) * potentialScale;
-    const VectorXd phinPhysical =
+    VectorXd phinIncrement = x.segment(phinOffset(), N) * potentialScale;
+    VectorXd phipIncrement = x.segment(phipOffset(), N) * potentialScale;
+    VectorXd phinPhysical =
         phinIncrement.array() + electronQfReference_V_;
-    const VectorXd phipPhysical =
+    VectorXd phipPhysical =
         phipIncrement.array() + holeQfReference_V_;
+    if (substitution != nullptr && substitution->replaceElectronQuasiFermi) {
+        validateSubstitutionVector(
+            substitution->electronQuasiFermi_V,
+            "electron quasi-Fermi potential",
+            false);
+        phinPhysical = substitution->electronQuasiFermi_V;
+        phinIncrement =
+            phinPhysical.array() - electronQfReference_V_;
+    }
+    if (substitution != nullptr && substitution->replaceHoleQuasiFermi) {
+        validateSubstitutionVector(
+            substitution->holeQuasiFermi_V,
+            "hole quasi-Fermi potential",
+            false);
+        phipPhysical = substitution->holeQuasiFermi_V;
+        phipIncrement =
+            phipPhysical.array() - holeQfReference_V_;
+    }
     const std::vector<Real> nodeElectronDrivingFields = (impactIonizationEnabled_ && qfImpact)
         ? detail::computeElectronAvalancheNodeQuasiFermiDrivingFields(
             impactIonizationConfig_, mesh_, nodeCells_, psi, phinPhysical, n, ni_, Vt_, fieldFactor)
@@ -630,10 +762,10 @@ CoupledDDAssembler::carrierContinuityTermDiagnostics(
         const int j = static_cast<int>(edge.n1);
         const Real psi_i = x(psiOffset() + i) * potentialScale;
         const Real psi_j = x(psiOffset() + j) * potentialScale;
-        const Real phin_i = x(phinOffset() + i) * potentialScale;
-        const Real phin_j = x(phinOffset() + j) * potentialScale;
-        const Real phip_i = x(phipOffset() + i) * potentialScale;
-        const Real phip_j = x(phipOffset() + j) * potentialScale;
+        const Real phin_i = phinIncrement(i);
+        const Real phin_j = phinIncrement(j);
+        const Real phip_i = phipIncrement(i);
+        const Real phip_j = phipIncrement(j);
         const Real dpsi = psi_j - psi_i;
         const Real electricField = std::abs(dpsi / h) * fieldFactor;
         const Real electronMobilityField =
@@ -699,9 +831,15 @@ CoupledDDAssembler::carrierContinuityTermDiagnostics(
             continue;
 
         if (recombination_.srhEnabled() || recombination_.augerEnabled()) {
-            const Real dPhi =
-                (holeQfReference_V_ - electronQfReference_V_)
-                + (x(phipOffset() + ii) - x(phinOffset() + ii)) * potentialScale;
+            const bool substitutedQuasiFermi =
+                substitution != nullptr &&
+                (substitution->replaceElectronQuasiFermi ||
+                 substitution->replaceHoleQuasiFermi);
+            const Real dPhi = substitutedQuasiFermi
+                ? phipPhysical(ii) - phinPhysical(ii)
+                : (holeQfReference_V_ - electronQfReference_V_)
+                    + (x(phipOffset() + ii) - x(phinOffset() + ii))
+                        * potentialScale;
             const Real excessProduct = (ni > 0.0)
                 ? ni * ni * std::expm1(dPhi / Vt_)
                 : n(ii) * p(ii);

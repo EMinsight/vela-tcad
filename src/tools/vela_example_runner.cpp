@@ -447,6 +447,41 @@ vela::DDSolution readExternalState(const std::filesystem::path& cfgDir,
     return state;
 }
 
+vela::DDSolution readFeedbackReplacementState(
+    const std::filesystem::path& cfgDir,
+    const nlohmann::json& cfg,
+    vela::Index nodeCount,
+    const vela::UnitScalingConfig& scaling)
+{
+    const std::filesystem::path fieldsDir =
+        resolvePath(cfgDir, cfg.at("feedback_state_fields_dir").get<std::string>());
+    const auto read = [&](const char* field) {
+        return readNodeScalarCsv(fieldsDir / (std::string(field) + "_region0.csv"), nodeCount);
+    };
+    const std::vector<vela::Real> phin = read("eQuasiFermiPotential");
+    const std::vector<vela::Real> phip = read("hQuasiFermiPotential");
+    const std::vector<vela::Real> electrons_m3 = read("eDensity_m3");
+    const std::vector<vela::Real> holes_m3 = read("hDensity_m3");
+    const auto& units = scaling.unitSystem();
+
+    const int n = static_cast<int>(nodeCount);
+    vela::DDSolution state;
+    state.psi = vela::VectorXd::Zero(n);
+    state.phin.resize(n);
+    state.phip.resize(n);
+    state.n.resize(n);
+    state.p.resize(n);
+    for (int i = 0; i < n; ++i) {
+        state.phin(i) = phin[static_cast<std::size_t>(i)];
+        state.phip(i) = phip[static_cast<std::size_t>(i)];
+        state.n(i) = units.m3ToInternalConcentration(
+            electrons_m3[static_cast<std::size_t>(i)]);
+        state.p(i) = units.m3ToInternalConcentration(
+            holes_m3[static_cast<std::size_t>(i)]);
+    }
+    return state;
+}
+
 void writeResidualProbeCsv(const std::filesystem::path& path,
                            const vela::DeviceMesh& mesh,
                            const vela::DopingModel& doping,
@@ -618,6 +653,155 @@ std::vector<bool> contactNodeMask(const vela::DeviceMesh& mesh)
         }
     }
     return mask;
+}
+
+void writeNewtonFeedbackSubstitutionProbeCsv(
+    const std::filesystem::path& path,
+    const vela::DeviceMesh& mesh,
+    const vela::DDSolution& state,
+    const vela::DDSolution& replacement,
+    const std::vector<vela::NewtonFeedbackSubstitutionEvaluation>& evaluations,
+    const vela::UnitScalingConfig& scaling)
+{
+    std::ofstream out(path);
+    if (!out.is_open()) {
+        throw std::runtime_error(
+            "Cannot write Newton feedback-substitution probe CSV: " + path.string());
+    }
+    out << std::setprecision(17);
+    out << "variant,node_id,x,y,is_contact,"
+        << "baseline_phin_V,baseline_phip_V,replacement_phin_V,replacement_phip_V,"
+        << "replacement_electron_density_m3,replacement_hole_density_m3,"
+        << "psi_residual,electron_residual,hole_residual,"
+        << "desired_psi_residual,desired_electron_residual,desired_hole_residual,"
+        << "delta_psi_V,delta_phin_V,delta_phip_V,"
+        << "trial_phin_V,trial_phip_V,"
+        << "carrier_only_delta_phin_V,carrier_only_delta_phip_V,"
+        << "carrier_only_trial_phin_V,carrier_only_trial_phip_V,"
+        << "production_trial_psi_residual,production_trial_electron_residual,"
+        << "production_trial_hole_residual,"
+        << "electron_flux,electron_recombination,electron_impact,electron_gauge,"
+        << "electron_boundary,electron_term_sum,electron_closure_error,"
+        << "hole_flux,hole_recombination,hole_impact,hole_gauge,hole_boundary,"
+        << "hole_term_sum,hole_closure_error\n";
+    const int n = static_cast<int>(mesh.numNodes());
+    const std::vector<bool> contacts = contactNodeMask(mesh);
+    const auto& units = scaling.unitSystem();
+    for (const auto& evaluation : evaluations) {
+        if (evaluation.carrierTerms.size() != static_cast<std::size_t>(n))
+            throw std::runtime_error("feedback-substitution carrier-term support mismatch.");
+        for (int i = 0; i < n; ++i) {
+            const auto nodeId = static_cast<vela::Index>(i);
+            const vela::Node& node = mesh.getNode(nodeId);
+            const auto& term = evaluation.carrierTerms[static_cast<std::size_t>(i)];
+            const vela::Real electronTermSum =
+                term.electronFlux + term.electronRecombination +
+                term.electronImpact + term.electronGauge + term.electronBoundary;
+            const vela::Real holeTermSum =
+                term.holeFlux + term.holeRecombination +
+                term.holeImpact + term.holeGauge + term.holeBoundary;
+            const vela::Real electronResidual = evaluation.residual.raw(n + i);
+            const vela::Real holeResidual = evaluation.residual.raw(2 * n + i);
+            out << evaluation.variant << ','
+                << nodeId << ','
+                << node.x << ','
+                << node.y << ','
+                << static_cast<int>(contacts[static_cast<std::size_t>(i)]) << ','
+                << state.phin(i) << ','
+                << state.phip(i) << ','
+                << replacement.phin(i) << ','
+                << replacement.phip(i) << ','
+                << units.internalConcentrationToM3(replacement.n(i)) << ','
+                << units.internalConcentrationToM3(replacement.p(i)) << ','
+                << evaluation.residual.raw(i) << ','
+                << electronResidual << ','
+                << holeResidual << ','
+                << evaluation.desiredResidual(i) << ','
+                << evaluation.desiredResidual(n + i) << ','
+                << evaluation.desiredResidual(2 * n + i) << ','
+                << evaluation.deltaPsi(i) << ','
+                << evaluation.deltaPhin(i) << ','
+                << evaluation.deltaPhip(i) << ','
+                << state.phin(i) + evaluation.deltaPhin(i) << ','
+                << state.phip(i) + evaluation.deltaPhip(i) << ','
+                << evaluation.carrierOnlyDeltaPhin(i) << ','
+                << evaluation.carrierOnlyDeltaPhip(i) << ','
+                << state.phin(i) + evaluation.carrierOnlyDeltaPhin(i) << ','
+                << state.phip(i) + evaluation.carrierOnlyDeltaPhip(i) << ','
+                << evaluation.productionTrialResidual.raw(i) << ','
+                << evaluation.productionTrialResidual.raw(n + i) << ','
+                << evaluation.productionTrialResidual.raw(2 * n + i) << ','
+                << term.electronFlux << ','
+                << term.electronRecombination << ','
+                << term.electronImpact << ','
+                << term.electronGauge << ','
+                << term.electronBoundary << ','
+                << electronTermSum << ','
+                << electronTermSum - electronResidual << ','
+                << term.holeFlux << ','
+                << term.holeRecombination << ','
+                << term.holeImpact << ','
+                << term.holeGauge << ','
+                << term.holeBoundary << ','
+                << holeTermSum << ','
+                << holeTermSum - holeResidual
+                << '\n';
+        }
+    }
+}
+
+nlohmann::json runNewtonFeedbackSubstitutionProbe(
+    const std::string& configFile,
+    const nlohmann::json& cfg)
+{
+    const std::filesystem::path cfgDir = configDirectory(configFile);
+    NewtonProblem problem = loadNewtonProblem(configFile, cfg);
+    const vela::DDSolution state =
+        readExternalState(cfgDir, cfg, problem.mesh.numNodes());
+    const vela::DDSolution replacement = readFeedbackReplacementState(
+        cfgDir,
+        cfg,
+        problem.mesh.numNodes(),
+        problem.newton.inputScaling);
+    const vela::NewtonSolver solver(
+        problem.mesh, problem.matdb, problem.doping, problem.biases, problem.newton);
+    const auto evaluations =
+        solver.evaluateFeedbackSubstitutions(state, replacement);
+    writeNewtonFeedbackSubstitutionProbeCsv(
+        resolvePath(cfgDir, cfg.at("output_csv").get<std::string>()),
+        problem.mesh,
+        state,
+        replacement,
+        evaluations,
+        problem.newton.inputScaling);
+
+    nlohmann::json variants = nlohmann::json::array();
+    for (const auto& evaluation : evaluations) {
+        variants.push_back({
+            {"variant", evaluation.variant},
+            {"replaces_density", evaluation.replacesDensity},
+            {"replaces_quasi_fermi", evaluation.replacesQuasiFermi},
+            {"raw_step_norm", evaluation.rawStepNorm},
+            {"step_norm", evaluation.stepNorm},
+            {"carrier_only_raw_step_norm", evaluation.carrierOnlyRawStepNorm},
+            {"carrier_only_step_norm", evaluation.carrierOnlyStepNorm},
+            {"block_residuals", blockResidualsJson(evaluation.residual.blockNorms)},
+            {"production_trial_block_residuals",
+             blockResidualsJson(evaluation.productionTrialResidual.blockNorms)},
+        });
+    }
+    return {
+        {"nodes", problem.mesh.numNodes()},
+        {"variants", variants},
+        {"contract", {
+            {"baseline_state", "converged_vela_avalanche_on_exact_state"},
+            {"replacement_state", "sentaurus_avalanche_on_exact_state"},
+            {"jacobian", "single_production_baseline_jacobian"},
+            {"boundary_rows", "baseline_preserved"},
+            {"substitution", "frozen_residual_operator_inputs"},
+            {"production_defaults_changed", false},
+        }},
+    };
 }
 
 bool coordinateInRange(const nlohmann::json& direction,
@@ -1615,6 +1799,8 @@ int main(int argc, char** argv)
             status.update(runNewtonResidualProbe(configFile, cfg));
         } else if (type == "newton_step_probe") {
             status.update(runNewtonStepProbe(configFile, cfg));
+        } else if (type == "newton_feedback_substitution_probe") {
+            status.update(runNewtonFeedbackSubstitutionProbe(configFile, cfg));
         } else if (type == "newton_jvp_probe") {
             status.update(runNewtonJvpProbe(configFile, cfg));
         } else if (type == "newton_block_step_probe") {

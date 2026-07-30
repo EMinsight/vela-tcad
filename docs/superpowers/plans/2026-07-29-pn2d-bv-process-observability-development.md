@@ -2,11 +2,11 @@
 
 Date: 2026-07-29
 
-Status: WP0-WP7 plus the exact-lattice continuation, fixed-transition Newton,
-and first WP8/Task 7 single-axis candidate qualification executed. The
-documented low-density QFP support candidate returns
-`no_authorized_candidate`; WP8's correction/default-change path is therefore
-not authorized.
+Status: WP0-WP7, exact-lattice continuation, fixed-transition Newton, the
+first WP8/Task 7 candidate, and the Task 6 one-stage density/QFP feedback
+matrix executed. The new result is `continuation_only_cause`, localized to a
+coupled Poisson-QFP cross-block reversal. WP8's correction/default-change path
+is not authorized.
 
 Starting point: branch `codex-pn2d-minimal6-operator-audit`, commit
 `1350d11`.
@@ -999,6 +999,26 @@ This diagnostic result prohibits entering the companion plan's Task 8. The
 opt-in support capability may remain available for reproducible diagnostics,
 but it is not an authorized correction.
 
+Task 6 follow-up executed outcome: `continuation_only_cause`.
+
+- The matrix uses the converged Vela avalanche-on exact state as baseline and
+  the exact Sentaurus avalanche-on state as frozen density/QFP input at
+  `-19.7/-19.8 V`.
+- Electron, hole, combined density-only, QFP-only, and density+QFP variants
+  all share one production baseline Jacobian, scaling, constraints, and caps.
+- QFP-only carrier-block updates improve QFP error by
+  `13.128%/12.942%`, but full coupled updates worsen it by
+  `7.023%/7.285%` and reverse the update direction.
+- Density-only substitutions fail the no-other-carrier-worsening gate.
+- Residual decomposition closes below `4.55e-13`; six contact nodes per bias
+  have no residual-row mismatch; duplicate output hashes match.
+- The scorecard is
+  `build-release/pn2d-task6-feedback-substitution-final-scorecard-20260730/acceptance.json`.
+
+This closes the declared density/QFP substitution slice without authorizing a
+correction. The only next candidate axis permitted by the companion plan is
+the predeclared continuation-schedule branch-invariance control.
+
 ## 13. Dependency order and parallel-safe work
 
 Mandatory dependency chain:
@@ -1009,8 +1029,8 @@ WP0 -> WP1 -> WP2 -> WP2.1 -> scientific Task 2 verifier
 ```
 
 WP0-WP7 and scientific Task 2 are complete. The first WP8/Task 7 candidate
-has reached its mandatory `no_authorized_candidate` stop condition. After WP1
-is stable, these
+reached `no_authorized_candidate`, and the follow-up Task 6 matrix reached
+`continuation_only_cause`. After WP1 is stable, these
 implementation streams may proceed independently, but their acceptance gates
 remain ordered:
 
@@ -1101,14 +1121,17 @@ Every work package must report before the next begins:
 ## 17. Next execution slice
 
 WP0-WP7 and scientific Task 2 are complete. The first Task 7 candidate has
-been rejected. The next slice must not enter Task 8. It is limited to:
+been rejected and the Task 6 density/QFP matrix has localized a coupled
+Poisson-QFP path reversal. The next slice must not enter Task 8. It is limited
+to:
 
 1. preserve the failed `c=1.0e-2` QFP-support candidate as a sealed negative
    control;
-2. obtain new cross-bias causal evidence using the already-declared Task 6
-   one-stage density/QFP substitutions before proposing another candidate;
-3. require any later candidate to change the internal QFP/minority-density
-   metric before a complete curve campaign; and
+2. run only the companion plan's predeclared two continuation schedules with
+   unchanged physics;
+3. require the schedule control to remove the carrier-only versus
+   full-coupled QFP update reversal at both adjacent biases before a complete
+   curve campaign; and
 4. keep every production default unchanged.
 
 The deterministic current-branch failure is an expected observed condition,

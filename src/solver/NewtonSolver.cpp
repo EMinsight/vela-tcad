@@ -2130,6 +2130,178 @@ NewtonStepEvaluation NewtonSolver::evaluateStep(const DDSolution& state) const
     return evaluation;
 }
 
+std::vector<NewtonFeedbackSubstitutionEvaluation>
+NewtonSolver::evaluateFeedbackSubstitutions(
+    const DDSolution& state,
+    const DDSolution& replacementState) const
+{
+    const int N = static_cast<int>(mesh_.numNodes());
+    const auto requireSize = [N](const VectorXd& values, const char* name) {
+        if (values.size() != N) {
+            throw std::invalid_argument(
+                std::string("NewtonSolver::evaluateFeedbackSubstitutions: ") +
+                name + " size mismatch.");
+        }
+    };
+    requireSize(state.psi, "state psi");
+    requireSize(state.phin, "state phin");
+    requireSize(state.phip, "state phip");
+    requireSize(replacementState.phin, "replacement phin");
+    requireSize(replacementState.phip, "replacement phip");
+    requireSize(replacementState.n, "replacement electron density");
+    requireSize(replacementState.p, "replacement hole density");
+
+    const double Vt = thermalVoltage(cfg_.temperature_K);
+    const MobilityModelConfig mobilityConfig = cfg_.mobility;
+    RecombinationModelConfig recombinationConfig =
+        recombinationModelConfig(cfg_.recombination, cfg_.taun, cfg_.taup);
+    recombinationConfig.augerCn = cfg_.augerCn;
+    recombinationConfig.augerCp = cfg_.augerCp;
+    const DDScalingSpec scaling = buildScalingSpec();
+    CoupledDDAssembler assembler(
+        mesh_,
+        matdb_,
+        doping_,
+        Vt,
+        mobilityConfig,
+        recombinationConfig,
+        cfg_.bandgapNarrowing,
+        cfg_.impactIonization,
+        fixedCharges_,
+        sheetCharges_,
+        scaling,
+        cfg_.carrierDiagonalFloor);
+    configureQuasiFermiReferences(assembler);
+    const CoupledDDBoundaryConditions bcs = buildBoundaryConditions(assembler);
+    const Real potentialScale =
+        assembler.usesScaledState() ? assembler.potentialScale() : 1.0;
+    const VectorXd x = assembler.pack({
+        state.psi / potentialScale,
+        state.phin / potentialScale,
+        state.phip / potentialScale});
+
+    const VectorXd baselineElectronDensity = assembler.electronDensity(x);
+    const VectorXd baselineHoleDensity = assembler.holeDensity(x);
+    CoupledDDFeedbackStateSubstitution replacement;
+    replacement.electronDensity = replacementState.n;
+    replacement.holeDensity = replacementState.p;
+    replacement.electronQuasiFermi_V = replacementState.phin;
+    replacement.holeQuasiFermi_V = replacementState.phip;
+
+    // Keep every contact value on the baseline state.  The intervention is
+    // confined to interior operator inputs, so paired boundary rows are
+    // exactly unchanged.
+    for (const auto& [node, value] : bcs.phin) {
+        (void)value;
+        const int i = static_cast<int>(node);
+        replacement.electronDensity(i) = baselineElectronDensity(i);
+        replacement.electronQuasiFermi_V(i) = state.phin(i);
+    }
+    for (const auto& [node, value] : bcs.phip) {
+        (void)value;
+        const int i = static_cast<int>(node);
+        replacement.holeDensity(i) = baselineHoleDensity(i);
+        replacement.holeQuasiFermi_V(i) = state.phip(i);
+    }
+
+    const SparseMatrixd J = (cfg_.jacobian == "finite_difference")
+        ? assembler.finiteDifferenceJacobian(x, bcs, cfg_.finiteDifferenceStep)
+        : assembler.assembleJacobian(x, bcs);
+    const SparseMatrixd carrierBlock =
+        sparseBlock(J, N, N, 2 * N, 2 * N);
+    VectorXd targetStep = VectorXd::Zero(3 * N);
+    targetStep.segment(N, N) =
+        (replacement.electronQuasiFermi_V - state.phin) / potentialScale;
+    targetStep.segment(2 * N, N) =
+        (replacement.holeQuasiFermi_V - state.phip) / potentialScale;
+    const VectorXd desiredResidual = -(J * targetStep);
+
+    struct Variant {
+        const char* name;
+        bool electronDensity;
+        bool holeDensity;
+        bool electronQuasiFermi;
+        bool holeQuasiFermi;
+    };
+    const std::vector<Variant> variants = {
+        {"baseline", false, false, false, false},
+        {"electron_density_only", true, false, false, false},
+        {"hole_density_only", false, true, false, false},
+        {"density_only", true, true, false, false},
+        {"electron_qfp_only", false, false, true, false},
+        {"hole_qfp_only", false, false, false, true},
+        {"qfp_only", false, false, true, true},
+        {"density_qfp", true, true, true, true},
+    };
+
+    std::vector<NewtonFeedbackSubstitutionEvaluation> evaluations;
+    evaluations.reserve(variants.size());
+    LinearSolver linearSolver;
+    for (const Variant& variant : variants) {
+        CoupledDDFeedbackStateSubstitution active = replacement;
+        active.replaceElectronDensity = variant.electronDensity;
+        active.replaceHoleDensity = variant.holeDensity;
+        active.replaceElectronQuasiFermi = variant.electronQuasiFermi;
+        active.replaceHoleQuasiFermi = variant.holeQuasiFermi;
+        const bool replacesDensity =
+            variant.electronDensity || variant.holeDensity;
+        const bool replacesQuasiFermi =
+            variant.electronQuasiFermi || variant.holeQuasiFermi;
+
+        const VectorXd raw = (replacesDensity || replacesQuasiFermi)
+            ? assembler.feedbackSubstitutionResidual(x, bcs, active)
+            : assembler.residual(x, bcs);
+        const auto terms = (replacesDensity || replacesQuasiFermi)
+            ? assembler.feedbackSubstitutionCarrierContinuityTermDiagnostics(
+                x, bcs, active)
+            : assembler.carrierContinuityTermDiagnostics(x, bcs);
+        VectorXd step = linearSolver.solve(J, -raw);
+        const Real rawStepNorm = step.norm();
+        applyConfiguredStepCapsAndPoissonRecorrection(
+            step, J, raw, cfg_, N, potentialScale, doping_);
+        VectorXd carrierOnlyStep = VectorXd::Zero(3 * N);
+        carrierOnlyStep.segment(N, 2 * N) = linearSolver.solve(
+            carrierBlock, -raw.segment(N, 2 * N));
+        const Real carrierOnlyRawStepNorm = carrierOnlyStep.norm();
+        applyConfiguredStepCaps(
+            carrierOnlyStep, cfg_, N, potentialScale, doping_);
+        const VectorXd productionTrialRaw = assembler.residual(x + step, bcs);
+
+        NewtonFeedbackSubstitutionEvaluation evaluation;
+        evaluation.variant = variant.name;
+        evaluation.replacesDensity = replacesDensity;
+        evaluation.replacesQuasiFermi = replacesQuasiFermi;
+        evaluation.residual.raw = raw;
+        evaluation.residual.blockNorms = blockResidualInfo(raw, mesh_.numNodes());
+        evaluation.residual.intrinsicDensity = assembler.intrinsicDensity();
+        evaluation.residual.scaledState = assembler.usesScaledState();
+        evaluation.residual.potentialScale = potentialScale;
+        evaluation.productionTrialResidual.raw = productionTrialRaw;
+        evaluation.productionTrialResidual.blockNorms =
+            blockResidualInfo(productionTrialRaw, mesh_.numNodes());
+        evaluation.productionTrialResidual.intrinsicDensity =
+            assembler.intrinsicDensity();
+        evaluation.productionTrialResidual.scaledState =
+            assembler.usesScaledState();
+        evaluation.productionTrialResidual.potentialScale = potentialScale;
+        evaluation.carrierTerms = terms;
+        evaluation.desiredResidual = desiredResidual;
+        evaluation.deltaPsi = step.segment(0, N) * potentialScale;
+        evaluation.deltaPhin = step.segment(N, N) * potentialScale;
+        evaluation.deltaPhip = step.segment(2 * N, N) * potentialScale;
+        evaluation.carrierOnlyDeltaPhin =
+            carrierOnlyStep.segment(N, N) * potentialScale;
+        evaluation.carrierOnlyDeltaPhip =
+            carrierOnlyStep.segment(2 * N, N) * potentialScale;
+        evaluation.rawStepNorm = rawStepNorm;
+        evaluation.stepNorm = step.norm();
+        evaluation.carrierOnlyRawStepNorm = carrierOnlyRawStepNorm;
+        evaluation.carrierOnlyStepNorm = carrierOnlyStep.norm();
+        evaluations.push_back(std::move(evaluation));
+    }
+    return evaluations;
+}
+
 NewtonDirectionalDerivativeEvaluation NewtonSolver::evaluateDirectionalDerivative(
     const DDSolution& state,
     const DDSolution& physicalPerturbation) const

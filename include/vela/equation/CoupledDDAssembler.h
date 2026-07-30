@@ -30,6 +30,19 @@ struct CoupledDDBoundaryConditions {
     std::unordered_map<Index, Real> phip;
 };
 
+// Diagnostic-only frozen inputs for one-stage feedback substitutions.  The
+// production residual/Jacobian path never supplies this object.
+struct CoupledDDFeedbackStateSubstitution {
+    bool replaceElectronDensity = false;
+    bool replaceHoleDensity = false;
+    bool replaceElectronQuasiFermi = false;
+    bool replaceHoleQuasiFermi = false;
+    VectorXd electronDensity;
+    VectorXd holeDensity;
+    VectorXd electronQuasiFermi_V;
+    VectorXd holeQuasiFermi_V;
+};
+
 struct CoupledDDCarrierTermDiagnostic {
     Index nodeId = 0;
     Real electronFlux = 0.0;
@@ -130,6 +143,11 @@ public:
     VectorXd residual(const VectorXd& x,
                       const CoupledDDBoundaryConditions& bcs) const;
 
+    VectorXd feedbackSubstitutionResidual(
+        const VectorXd& x,
+        const CoupledDDBoundaryConditions& bcs,
+        const CoupledDDFeedbackStateSubstitution& substitution) const;
+
     SparseMatrixd assembleJacobian(
         const VectorXd& x,
         const CoupledDDBoundaryConditions& bcs) const;
@@ -165,6 +183,11 @@ public:
     std::vector<CoupledDDCarrierTermDiagnostic> carrierContinuityTermDiagnostics(
         const VectorXd& x,
         const CoupledDDBoundaryConditions& bcs) const;
+    std::vector<CoupledDDCarrierTermDiagnostic>
+    feedbackSubstitutionCarrierContinuityTermDiagnostics(
+        const VectorXd& x,
+        const CoupledDDBoundaryConditions& bcs,
+        const CoupledDDFeedbackStateSubstitution& substitution) const;
 
     std::vector<CoupledDDEdgeFluxDiagnostic> sgEdgeFluxDiagnostics(
         const VectorXd& x,
@@ -181,6 +204,16 @@ public:
     std::string impactIonizationActiveBranchFingerprint(const VectorXd& x) const;
 
 private:
+    VectorXd residualImpl(
+        const VectorXd& x,
+        const CoupledDDBoundaryConditions& bcs,
+        const CoupledDDFeedbackStateSubstitution* substitution) const;
+    std::vector<CoupledDDCarrierTermDiagnostic>
+    carrierContinuityTermDiagnosticsImpl(
+        const VectorXd& x,
+        const CoupledDDBoundaryConditions& bcs,
+        const CoupledDDFeedbackStateSubstitution* substitution) const;
+
     template <typename Scalar>
     SparseMatrixd impactIonizationSourceFiniteDifferenceJacobianImpl(
         const VectorXd& x,

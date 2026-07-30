@@ -267,6 +267,25 @@ struct NewtonStepEvaluation {
     Real stepNorm = 0.0;
 };
 
+struct NewtonFeedbackSubstitutionEvaluation {
+    std::string variant;
+    bool replacesDensity = false;
+    bool replacesQuasiFermi = false;
+    NewtonResidualEvaluation residual;
+    NewtonResidualEvaluation productionTrialResidual;
+    std::vector<CoupledDDCarrierTermDiagnostic> carrierTerms;
+    VectorXd desiredResidual;
+    VectorXd deltaPsi;
+    VectorXd deltaPhin;
+    VectorXd deltaPhip;
+    VectorXd carrierOnlyDeltaPhin;
+    VectorXd carrierOnlyDeltaPhip;
+    Real rawStepNorm = 0.0;
+    Real stepNorm = 0.0;
+    Real carrierOnlyRawStepNorm = 0.0;
+    Real carrierOnlyStepNorm = 0.0;
+};
+
 struct NewtonDirectionalDerivativeEvaluation {
     NewtonResidualEvaluation residual;
     VectorXd perturbationPsi;
@@ -386,6 +405,10 @@ public:
     NewtonResidualEvaluation evaluateResidual(const DDSolution& state) const;
     Real maxContactMajorityQuasiFermiDrop(const DDSolution& state) const;
     NewtonStepEvaluation evaluateStep(const DDSolution& state) const;
+    std::vector<NewtonFeedbackSubstitutionEvaluation>
+    evaluateFeedbackSubstitutions(
+        const DDSolution& state,
+        const DDSolution& replacementState) const;
     NewtonDirectionalDerivativeEvaluation evaluateDirectionalDerivative(
         const DDSolution& state,
         const DDSolution& physicalPerturbation) const;

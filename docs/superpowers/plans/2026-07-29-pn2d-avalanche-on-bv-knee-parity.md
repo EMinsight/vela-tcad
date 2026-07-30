@@ -2,11 +2,11 @@
 
 Date: 2026-07-29
 
-Status: engineering WP0-WP7 plus the exact-lattice continuation,
-fixed-transition Newton, and first Task 7 single-axis candidate qualification
-executed. The low-density QFP support candidate returns
-`no_authorized_candidate`; Task 8 and all production-default changes remain
-prohibited.
+Status: engineering WP0-WP7, exact-lattice continuation, fixed-transition
+Newton, the first Task 7 candidate, and the Task 6 density/QFP one-stage
+feedback matrix executed. The new cross-bias result is
+`continuation_only_cause`, localized to coupled Poisson-QFP cross-block
+reversal. Task 8 and all production-default changes remain prohibited.
 
 Starting point: local branch `codex-pn2d-minimal6-operator-audit`, commit
 `1350d11`. Commit `fa1c343` is an ancestor of this starting point.
@@ -165,7 +165,7 @@ also include every integer bias from `0` through `-20 V`.
 | Task 2 | common WP1 contract plus dedicated curve/knee analyzer | `curve_knee_contract_verified`; current data returns `solver_first_failure` |
 | Task 3 | WP0 baseline plus WP4-WP5 solver-used/attempt records | `complete_nonlinear_trace_available`; deterministic first failure reproduced |
 | Task 4 | WP6 source-only derivative work | `source_jacobian_dependency_identified_and_closed` |
-| Tasks 5-6 | WP3-WP5 records and WP7 paired process analyzer | `density_qfp_feedback_cause`: complete stages, 203/203 closure rows, adjacent `-19.7/-19.8 V` state departure |
+| Tasks 5-6 | WP3-WP5 records, WP7 paired analyzer, and one-stage feedback matrix | `continuation_only_cause`: QFP-only carrier-block updates improve about 13% at adjacent `-19.7/-19.8 V`, while the full coupled update reverses direction and worsens about 7% |
 | Task 7 | causal authorization from Tasks 4-6 | `no_authorized_candidate` for `quasi_fermi_carrier_truncation=1.0e-2`; exact curve and all process records unchanged |
 | Tasks 8-11 | successful Task 7 candidate | not authorized |
 
@@ -667,6 +667,24 @@ Typed outcome:
 
 Stop unless one of the first three outcomes has cross-bias causal evidence.
 
+Executed follow-up outcome: `continuation_only_cause`.
+
+At adjacent `-19.7/-19.8 V` exact avalanche-on states, the controlled matrix
+froze Sentaurus electron/hole/combined density, QFP, or both in the Vela
+residual operator. All variants shared one production baseline Jacobian,
+scaling, contact constraints, and update caps. QFP-only carrier-block updates
+reduced QFP error by `13.128%/12.942%` with update-direction cosine
+`0.6412/0.6367`; the full coupled update instead worsened error by
+`7.023%/7.285%` and reversed direction to `-0.1994/-0.2132`. Density-only
+controls showed carrier antagonism rather than a no-worsening correction.
+Residual decomposition closes below `4.55e-13`, all boundary rows are
+identical, and duplicate hashes match.
+
+The evidence therefore localizes the remaining difference to the coupled
+Poisson-QFP path. It does not authorize a density/QFP physical correction or
+Task 8. Only Task 7's already declared continuation-schedule branch-invariance
+control may proceed next.
+
 ## Task 7 - run a controlled one-axis candidate matrix
 
 ### Goal
@@ -944,12 +962,12 @@ Use the following prompt for the next execution slice:
 
 > Execute
 > `docs/superpowers/plans/2026-07-29-pn2d-avalanche-on-bv-knee-parity.md`
-> from Task 7's sealed `no_authorized_candidate` result. Do not enter Task 8.
-> Use only the already-declared Task 6 one-stage density/QFP substitutions to
-> obtain new cross-bias causal evidence, with the rejected
-> `quasi_fermi_carrier_truncation=1.0e-2` run retained as a negative control.
-> Do not introduce a new candidate until one internal QFP/minority-density
-> metric changes in the predicted direction at two adjacent knee biases.
+> from Task 6's sealed `continuation_only_cause` result. Do not enter Task 8
+> and do not introduce a density/QFP physics correction. Run only Task 7
+> candidate axis 5: two predeclared continuation schedules with unchanged
+> physics, using the carrier-only versus full-coupled QFP update reversal at
+> `-19.7/-19.8 V` as the named internal causal metric. Retain the rejected
+> `quasi_fermi_carrier_truncation=1.0e-2` run as a negative control.
 > Preserve all off/IIC/on baselines and keep BV on `net_doping`, forward IV on
 > `cell_reconstructed_total_impurity`, avalanche drive on
 > `quasi_fermi_gradient`, and Van Overstraeten coefficients unchanged. Do not
