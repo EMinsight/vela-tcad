@@ -3363,11 +3363,13 @@ TEST_CASE("Triangle GSS production source Jacobian supports mobility doping base
     impactConfig.quasiFermiGradientDiscretization = "cell_gradient";
     impactConfig.sourceVolumePolicy = "genius_truncated";
     impactConfig.sourceMappingMode = "triangle_gss_gradqf_truncated";
+    impactConfig.quasiFermiCarrierTruncation =
+        GENERATE(0.0, 1.0e-2);
 
     const auto basis = GENERATE(
         std::string("net_doping"),
         std::string("cell_reconstructed_total_impurity"));
-    CAPTURE(basis);
+    CAPTURE(basis, impactConfig.quasiFermiCarrierTruncation);
     MobilityModelConfig mobilityConfig =
         mobilityModelConfig("caughey_thomas_field");
     mobilityConfig.highFieldDrivingForce = "quasi_fermi_gradient";

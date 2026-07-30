@@ -641,6 +641,15 @@ Field meanings (Selberherr prototype):
   cell-gradient magnitude as the ionization-coefficient driving field. This
   switch only affects `solver.impact_ionization`; it does not change
   `solver.mobility.high_field_driving_force`.
+- `quasi_fermi_carrier_truncation`: default-off, non-negative low-density
+  feedback-support diagnostic. When greater than zero, the quasi-Fermi
+  potentials used only by the avalanche driving field are rebuilt with
+  `n_eff=max(n,value*ni)` and `p_eff=max(p,value*ni)`. The physical carrier
+  state, continuity transport current, contacts, and mobility driving field are
+  unchanged. It is accepted with `triangle_gss_gradqf_truncated` so a
+  controlled AvalDens-like support experiment can change this axis without
+  changing source geometry or current reconstruction. This is not declared to
+  be a Sentaurus-equivalent default.
 - `source_geometry_scale`: positive finite diagnostic multiplier for the
   Scharfetter-Gummel edge-current avalanche source geometry. The default is
   `1.0`; values other than `1.0` are intended only for BV parity probes.
@@ -694,6 +703,7 @@ Validation:
 - `generation` must be `carrier_density` or `current_density`.
 - `source_volume_policy` must be `edge_half_box` or `edge_box`.
 - `source_volume_factor` must be `0` or finite within `[0.5, 1.0]`.
+- `quasi_fermi_carrier_truncation` must be non-negative and finite.
   - `minimum_field_V_m` must be non-negative and finite.
   - `debug_raw_vanoverstraeten` requires `model: "van_overstraeten"`.
   - Non-default `parameter_set` values require `model: "van_overstraeten"`.

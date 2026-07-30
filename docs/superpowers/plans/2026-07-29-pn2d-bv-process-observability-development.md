@@ -2,10 +2,11 @@
 
 Date: 2026-07-29
 
-Status: WP0-WP7 plus the exact-lattice continuation and fixed-transition
-Newton follow-ups executed. WP7 returns `density_qfp_feedback_cause` with
-two-bias evidence. WP8's entry gate is satisfied, but no WP8 physics or
-production-default change has been executed.
+Status: WP0-WP7 plus the exact-lattice continuation, fixed-transition Newton,
+and first WP8/Task 7 single-axis candidate qualification executed. The
+documented low-density QFP support candidate returns
+`no_authorized_candidate`; WP8's correction/default-change path is therefore
+not authorized.
 
 Starting point: branch `codex-pn2d-minimal6-operator-audit`, commit
 `1350d11`.
@@ -976,6 +977,28 @@ Qualification order:
 
 The candidate remains opt-in unless every companion-plan gate passes.
 
+Executed Task 7 outcome: `no_authorized_candidate`.
+
+- The only changed axis was
+  `impact_ionization.quasi_fermi_carrier_truncation=1.0e-2`; the production
+  default remains `0`.
+- Candidate duplicate avalanche-on runs completed all 29 exact points and
+  produced identical IV SHA-256
+  `4b3bd119e201d60b523b97d5800ef92949fd5706790b30f9d015540bc34dea42`.
+- The candidate IV is also byte-identical to the baseline. Knee-window
+  log-current RMSE remains `11.400736039323265 dex`, so improvement is zero.
+- The complete candidate and baseline Vela process-chain record arrays are
+  identical. QFP RMSE remains `0.38044152394073266 V`, density log-RMSE
+  remains `5.7568129570729 dex`, and WP7 remains
+  `density_qfp_feedback_cause`.
+- All 203 WP7 closure rows still pass and no stage is missing, but none of the
+  internal or curve/knee improvement gates pass. The scorecard is
+  `build-release/pn2d-task7-qftrunc1e2-scorecard-20260730/acceptance.json`.
+
+This diagnostic result prohibits entering the companion plan's Task 8. The
+opt-in support capability may remain available for reproducible diagnostics,
+but it is not an authorized correction.
+
 ## 13. Dependency order and parallel-safe work
 
 Mandatory dependency chain:
@@ -985,7 +1008,8 @@ WP0 -> WP1 -> WP2 -> WP2.1 -> scientific Task 2 verifier
                                 -> WP3 -> WP4 -> WP5 -> WP6 -> WP7 -> WP8
 ```
 
-WP0-WP7 and scientific Task 2 are complete. WP8 is the next gate. After WP1
+WP0-WP7 and scientific Task 2 are complete. The first WP8/Task 7 candidate
+has reached its mandatory `no_authorized_candidate` stop condition. After WP1
 is stable, these
 implementation streams may proceed independently, but their acceptance gates
 remain ordered:
@@ -1076,14 +1100,16 @@ Every work package must report before the next begins:
 
 ## 17. Next execution slice
 
-WP0-WP7 and scientific Task 2 are complete. The next slice is:
+WP0-WP7 and scientific Task 2 are complete. The first Task 7 candidate has
+been rejected. The next slice must not enter Task 8. It is limited to:
 
-1. use the accepted `density_qfp_feedback_cause` evidence to define one
-   minimal opt-in WP8 candidate;
-2. require the candidate to correct the named internal QFP/minority-density
-   feedback evidence as well as the curve/knee scorecard; and
-3. keep all production defaults unchanged until the complete WP8
-   qualification and companion-plan review gates pass.
+1. preserve the failed `c=1.0e-2` QFP-support candidate as a sealed negative
+   control;
+2. obtain new cross-bias causal evidence using the already-declared Task 6
+   one-stage density/QFP substitutions before proposing another candidate;
+3. require any later candidate to change the internal QFP/minority-density
+   metric before a complete curve campaign; and
+4. keep every production default unchanged.
 
 The deterministic current-branch failure is an expected observed condition,
 not permission to relax convergence or substitute missing curve rows.

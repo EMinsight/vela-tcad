@@ -7,7 +7,7 @@ import argparse
 import copy
 import csv
 import json
-import os
+import math
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -55,6 +55,7 @@ def branch_config(
     biases: list[float],
     case_dir: Path,
     max_iter: int,
+    qf_carrier_truncation: float | None = None,
 ) -> dict[str, Any]:
     config = copy.deepcopy(base)
     solver = config["solver"]
@@ -73,6 +74,8 @@ def branch_config(
             "postprocess_only" if branch == "iic_postprocess"
             else "self_consistent"
         )
+        if qf_carrier_truncation is not None:
+            impact["quasi_fermi_carrier_truncation"] = qf_carrier_truncation
         solver["impact_ionization"] = impact
 
     case_dir = case_dir.resolve()
@@ -179,27 +182,41 @@ def run_branch(
     biases: list[float],
     output_root: Path,
     max_iter: int,
+    qf_carrier_truncation: float | None,
+    resume: bool,
 ) -> dict[str, Any]:
     case_dir = output_root / branch
     case_dir.mkdir(parents=True, exist_ok=True)
-    config = branch_config(base, branch, biases, case_dir, max_iter)
+    config = branch_config(
+        base,
+        branch,
+        biases,
+        case_dir,
+        max_iter,
+        qf_carrier_truncation,
+    )
     config_path = case_dir / "simulation.json"
     config_path.write_text(
         json.dumps(config, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
     log_path = case_dir / "runner.log"
-    environment = os.environ.copy()
-    with log_path.open("w", encoding="utf-8") as log:
-        completed = subprocess.run(
-            [str(runner), "--config", str(config_path)],
-            cwd=case_dir,
-            env=environment,
-            stdout=log,
-            stderr=subprocess.STDOUT,
-            check=False,
-        )
     output_csv = case_dir / "iv.csv"
+    resumed = False
+    returncode = 0
+    if resume and output_csv.is_file():
+        existing = qualify_rows(read_sweep_rows(output_csv), biases)
+        resumed = existing["complete_exact_lattice"]
+    if not resumed:
+        with log_path.open("w", encoding="utf-8") as log:
+            completed = subprocess.run(
+                [str(runner), "--config", str(config_path)],
+                cwd=case_dir,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+        returncode = completed.returncode
     if not output_csv.is_file():
         qualification = {
             "complete_exact_lattice": False,
@@ -219,7 +236,8 @@ def run_branch(
         qualification = qualify_rows(read_sweep_rows(output_csv), biases)
     return {
         "branch": branch,
-        "returncode": completed.returncode,
+        "returncode": returncode,
+        "resumed": resumed,
         "config": str(config_path),
         "output_csv": str(output_csv),
         "runner_log": str(log_path),
@@ -236,6 +254,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--branches", default=",".join(BRANCHES))
     parser.add_argument("--max-iter", type=int, default=80)
+    parser.add_argument("--resume", action="store_true")
+    parser.add_argument(
+        "--qf-carrier-truncation",
+        type=float,
+        help=(
+            "opt-in low-density n,p floor relative to ni used only when "
+            "rebuilding the avalanche quasi-Fermi driving field"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -243,6 +270,14 @@ def main() -> int:
     args = parse_args()
     if args.max_iter <= 0:
         raise ValueError("--max-iter must be positive")
+    if (
+        args.qf_carrier_truncation is not None
+        and (
+            not math.isfinite(args.qf_carrier_truncation)
+            or args.qf_carrier_truncation < 0.0
+        )
+    ):
+        raise ValueError("--qf-carrier-truncation must be finite and nonnegative")
     runner = args.runner.resolve()
     base_path = args.base_config.resolve()
     sentaurus_path = args.sentaurus_manifest.resolve()
@@ -260,6 +295,8 @@ def main() -> int:
             biases,
             output_root,
             args.max_iter,
+            args.qf_carrier_truncation,
+            args.resume,
         )
         for branch in selected
     ]
@@ -279,6 +316,11 @@ def main() -> int:
         "base_config": str(base_path),
         "sentaurus_manifest": str(sentaurus_path),
         "max_iter": args.max_iter,
+        "candidate": {
+            "axis": "impact_ionization.quasi_fermi_carrier_truncation",
+            "value": args.qf_carrier_truncation,
+            "default_unchanged": True,
+        },
         "requested_biases_V": biases,
         "branches": results,
     }

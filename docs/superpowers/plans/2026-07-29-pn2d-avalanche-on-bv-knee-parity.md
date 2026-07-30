@@ -2,11 +2,11 @@
 
 Date: 2026-07-29
 
-Status: engineering WP0-WP7 plus the exact-lattice continuation and
-fixed-transition Newton follow-ups executed. Tasks 5-6 return
-`density_qfp_feedback_cause` with adjacent-bias evidence. Task 7 is the next
-authorized diagnostic gate; no Tasks 7-11 physics/default change has yet been
-executed.
+Status: engineering WP0-WP7 plus the exact-lattice continuation,
+fixed-transition Newton, and first Task 7 single-axis candidate qualification
+executed. The low-density QFP support candidate returns
+`no_authorized_candidate`; Task 8 and all production-default changes remain
+prohibited.
 
 Starting point: local branch `codex-pn2d-minimal6-operator-audit`, commit
 `1350d11`. Commit `fa1c343` is an ancestor of this starting point.
@@ -166,7 +166,8 @@ also include every integer bias from `0` through `-20 V`.
 | Task 3 | WP0 baseline plus WP4-WP5 solver-used/attempt records | `complete_nonlinear_trace_available`; deterministic first failure reproduced |
 | Task 4 | WP6 source-only derivative work | `source_jacobian_dependency_identified_and_closed` |
 | Tasks 5-6 | WP3-WP5 records and WP7 paired process analyzer | `density_qfp_feedback_cause`: complete stages, 203/203 closure rows, adjacent `-19.7/-19.8 V` state departure |
-| Tasks 7-11 | causal authorization from Tasks 4-6 | Task 7 entry authorized; later tasks remain gated by their own stop conditions |
+| Task 7 | causal authorization from Tasks 4-6 | `no_authorized_candidate` for `quasi_fermi_carrier_truncation=1.0e-2`; exact curve and all process records unchanged |
+| Tasks 8-11 | successful Task 7 candidate | not authorized |
 
 ## Frozen production configuration
 
@@ -718,6 +719,19 @@ Typed outcome:
 Only the first two outcomes may enter Task 8. A prettier curve without the
 predicted internal correction is not accepted.
 
+Executed outcome: `no_authorized_candidate`.
+
+The controlled candidate changed only
+`impact_ionization.quasi_fermi_carrier_truncation` from the default `0` to
+`1.0e-2`. Two independent avalanche-on runs completed all 29 exact points and
+were byte-identical, but they were also byte-identical to the baseline. The
+knee-window log-current RMSE remained `11.400736039323265 dex`, `V_break`
+error remained `0.232 V`, `V_slope` remained unavailable, and no nonmonotonic
+interval was removed. Candidate and baseline process-chain record arrays were
+identical; QFP RMSE remained `0.38044152394073266 V`, density log-RMSE remained
+`5.7568129570729 dex`, and WP7 remained `density_qfp_feedback_cause` with
+203/203 closure rows passing. Task 8 is not authorized.
+
 ## Task 8 - implement the minimal opt-in correction
 
 ### Goal
@@ -930,14 +944,13 @@ Use the following prompt for the next execution slice:
 
 > Execute
 > `docs/superpowers/plans/2026-07-29-pn2d-avalanche-on-bv-knee-parity.md`
-> from the now-satisfied WP7/Task 6 causal classification gate. Implement only
-> Task 7's minimal, opt-in density/QFP feedback-state consistency candidate,
-> then rerun the exact-lattice and WP7 acceptance gates before considering any
-> production-default change. Preserve all sealed off/IIC/on baselines,
-> including the earlier deterministic continuation failure, as explicit
-> comparison evidence. Strictly obey every entry condition, acceptance
-> criterion, decision gate, and stop condition. Keep BV on `net_doping`,
-> forward IV on `cell_reconstructed_total_impurity`, avalanche drive on
-> `quasi_fermi_gradient`, and Van Overstraeten coefficients unchanged. Report
-> machine-readable evidence after every decision gate before proceeding. Do
-> not stage `tmp/` or commit generated simulation outputs.
+> from Task 7's sealed `no_authorized_candidate` result. Do not enter Task 8.
+> Use only the already-declared Task 6 one-stage density/QFP substitutions to
+> obtain new cross-bias causal evidence, with the rejected
+> `quasi_fermi_carrier_truncation=1.0e-2` run retained as a negative control.
+> Do not introduce a new candidate until one internal QFP/minority-density
+> metric changes in the predicted direction at two adjacent knee biases.
+> Preserve all off/IIC/on baselines and keep BV on `net_doping`, forward IV on
+> `cell_reconstructed_total_impurity`, avalanche drive on
+> `quasi_fermi_gradient`, and Van Overstraeten coefficients unchanged. Do not
+> stage `tmp/` or commit generated simulation outputs.

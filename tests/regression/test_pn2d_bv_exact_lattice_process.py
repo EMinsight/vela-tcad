@@ -58,6 +58,14 @@ class ExactLatticeProcessTests(unittest.TestCase):
             self.base, "iic_postprocess", self.biases, root / "iic", 80
         )
         on = branch_config(self.base, "avalanche_on", self.biases, root / "on", 80)
+        candidate = branch_config(
+            self.base,
+            "avalanche_on",
+            self.biases,
+            root / "candidate",
+            80,
+            1.0e-2,
+        )
 
         self.assertEqual(self.base["solver"]["max_iter"], 40)
         self.assertEqual(off["solver"]["impact_ionization"], {"model": "none"})
@@ -71,6 +79,16 @@ class ExactLatticeProcessTests(unittest.TestCase):
         self.assertEqual(
             on["solver"]["impact_ionization"]["coupling_mode"],
             "self_consistent",
+        )
+        self.assertNotIn(
+            "quasi_fermi_carrier_truncation",
+            self.base["solver"]["impact_ionization"],
+        )
+        self.assertEqual(
+            candidate["solver"]["impact_ionization"][
+                "quasi_fermi_carrier_truncation"
+            ],
+            1.0e-2,
         )
         for config in (off, iic, on):
             self.assertEqual(config["solver"]["max_iter"], 80)

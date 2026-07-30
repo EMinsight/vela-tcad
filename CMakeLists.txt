@@ -466,7 +466,8 @@ add_test(NAME pn2d_bv_process_observability_regression
             tests.regression.test_pn2d_bv_process_contract
             tests.regression.test_pn2d_bv_process_chain
             tests.regression.test_pn2d_bv_exact_lattice_process
-            tests.regression.test_pn2d_bv_newton_observations)
+            tests.regression.test_pn2d_bv_newton_observations
+            tests.regression.test_pn2d_bv_task7_candidate)
 set_tests_properties(pn2d_bv_process_observability_regression PROPERTIES
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 vela_set_windows_msys2_test_path(pn2d_bv_process_observability_regression)

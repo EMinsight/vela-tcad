@@ -1383,7 +1383,6 @@ inline void validateImpactIonizationDrivingForce(const ImpactIonizationModelConf
          config.sourceGeometryScale != 1.0 ||
          config.edgeSourcePartition != "symmetric" ||
          config.drivingForceInterpolation != "none" ||
-         config.quasiFermiCarrierTruncation != 0.0 ||
          config.minimumField != 0.0 ||
          config.electronDrivingForceRefDensity != 0.0 ||
          config.holeDrivingForceRefDensity != 0.0)) {
