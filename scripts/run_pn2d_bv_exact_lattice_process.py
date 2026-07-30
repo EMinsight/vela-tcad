@@ -135,7 +135,11 @@ def branch_config(
     case_dir: Path,
     max_iter: int,
     qf_carrier_truncation: float | None = None,
+    sg_laux_candidate: bool = False,
     continuation_schedule: str = "standard_0p05",
+    terminal_current_method_compare: bool = False,
+    newton_reltol: float | None = None,
+    newton_abstol: float | None = None,
 ) -> dict[str, Any]:
     if continuation_schedule not in CONTINUATION_SCHEDULES:
         raise ValueError(
@@ -147,6 +151,10 @@ def branch_config(
     solver["max_iter"] = max_iter
     solver["verbose"] = False
     solver["diagnostics"] = True
+    if newton_reltol is not None:
+        solver["reltol"] = newton_reltol
+    if newton_abstol is not None:
+        solver["abstol"] = newton_abstol
     handoff = solver.setdefault("handoff", {})
     handoff["newton_max_iter"] = max_iter
 
@@ -161,6 +169,14 @@ def branch_config(
         )
         if qf_carrier_truncation is not None:
             impact["quasi_fermi_carrier_truncation"] = qf_carrier_truncation
+        if sg_laux_candidate:
+            impact["current_approximation"] = "element_edge_sg_gss_laux"
+            impact["source_mapping_mode"] = "element_vertex_box_measure"
+            # The archived baseline selects gss_logistic only for the retired
+            # triangle source.  Once that source is replaced, normalize this
+            # inactive compatibility field without introducing another
+            # physical candidate axis.
+            impact["cell_reconstructed_midpoint_density"] = "bernoulli"
         solver["impact_ionization"] = impact
 
     case_dir = case_dir.resolve()
@@ -182,6 +198,11 @@ def branch_config(
         diagnostics["bv_process_probe"] = {
             "enabled": True,
             "csv_file": str(case_dir / "process_probe.csv"),
+        }
+    if terminal_current_method_compare:
+        diagnostics["terminal_current_method_compare"] = {
+            "enabled": True,
+            "csv_file": str(case_dir / "terminal_current_method_compare.csv"),
         }
 
     sweep = config["sweep"]
@@ -272,7 +293,11 @@ def run_branch(
     output_root: Path,
     max_iter: int,
     qf_carrier_truncation: float | None,
+    sg_laux_candidate: bool,
     continuation_schedule: str,
+    terminal_current_method_compare: bool,
+    newton_reltol: float | None,
+    newton_abstol: float | None,
     resume: bool,
 ) -> dict[str, Any]:
     case_dir = output_root / branch
@@ -284,7 +309,11 @@ def run_branch(
         case_dir,
         max_iter,
         qf_carrier_truncation,
+        sg_laux_candidate,
         continuation_schedule,
+        terminal_current_method_compare,
+        newton_reltol,
+        newton_abstol,
     )
     config_path = case_dir / "simulation.json"
     config_path.write_text(
@@ -427,6 +456,32 @@ def parse_args() -> argparse.Namespace:
             "rebuilding the avalanche quasi-Fermi driving field"
         ),
     )
+    parser.add_argument(
+        "--sg-laux-candidate",
+        action="store_true",
+        help=(
+            "opt in to the complete element-edge SG/GSS-Laux current vector "
+            "with matching element-vertex box source mapping"
+        ),
+    )
+    parser.add_argument(
+        "--terminal-current-method-compare",
+        action="store_true",
+        help=(
+            "emit an observation-only comparison of SG-flux and continuity-"
+            "residual terminal currents"
+        ),
+    )
+    parser.add_argument(
+        "--newton-reltol",
+        type=float,
+        help="observation-only override of solver.reltol",
+    )
+    parser.add_argument(
+        "--newton-abstol",
+        type=float,
+        help="observation-only override of solver.abstol",
+    )
     return parser.parse_args()
 
 
@@ -434,6 +489,12 @@ def main() -> int:
     args = parse_args()
     if args.max_iter <= 0:
         raise ValueError("--max-iter must be positive")
+    for name, value in (
+        ("--newton-reltol", args.newton_reltol),
+        ("--newton-abstol", args.newton_abstol),
+    ):
+        if value is not None and (not math.isfinite(value) or value <= 0.0):
+            raise ValueError(f"{name} must be positive and finite")
     if (
         args.qf_carrier_truncation is not None
         and (
@@ -460,7 +521,11 @@ def main() -> int:
             output_root,
             args.max_iter,
             args.qf_carrier_truncation,
+            args.sg_laux_candidate,
             args.continuation_schedule,
+            args.terminal_current_method_compare,
+            args.newton_reltol,
+            args.newton_abstol,
             args.resume,
         )
         for branch in selected
@@ -488,11 +553,32 @@ def main() -> int:
             "id": args.continuation_schedule,
             **CONTINUATION_SCHEDULES[args.continuation_schedule],
         },
-        "candidate": {
-            "axis": "impact_ionization.quasi_fermi_carrier_truncation",
-            "value": args.qf_carrier_truncation,
-            "default_unchanged": True,
+        "terminal_current_method_compare": {
+            "enabled": args.terminal_current_method_compare,
+            "observation_only": True,
         },
+        "newton_tolerance_override": {
+            "reltol": args.newton_reltol,
+            "abstol": args.newton_abstol,
+            "observation_only": True,
+        },
+        "candidate": (
+            {
+                "axis": "impact_ionization.element_edge_sg_gss_laux",
+                "current_approximation": "element_edge_sg_gss_laux",
+                "source_mapping_mode": "element_vertex_box_measure",
+                "inactive_compatibility_normalization": {
+                    "cell_reconstructed_midpoint_density": "bernoulli",
+                },
+                "default_unchanged": True,
+            }
+            if args.sg_laux_candidate
+            else {
+                "axis": "impact_ionization.quasi_fermi_carrier_truncation",
+                "value": args.qf_carrier_truncation,
+                "default_unchanged": True,
+            }
+        ),
         "requested_biases_V": biases,
         "branches": results,
     }

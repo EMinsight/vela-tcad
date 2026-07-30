@@ -4,8 +4,10 @@ import unittest
 
 from scripts.analyze_pn2d_bv_task7_candidate import (
     estimator_error,
+    estimator_improved,
     knee_rmse,
     paired_metric,
+    vela_on_reverse_intervals,
 )
 
 
@@ -24,6 +26,38 @@ class Task7CandidateTests(unittest.TestCase):
         self.assertAlmostEqual(knee_rmse(acceptance), 5.0 / (2.0**0.5))
         self.assertEqual(estimator_error(acceptance, "V_break"), 0.5)
         self.assertIsNone(estimator_error(acceptance, "V_slope"))
+        self.assertTrue(estimator_improved(None, 0.02))
+        self.assertTrue(estimator_improved(0.2, 0.02))
+        self.assertFalse(estimator_improved(0.2, None))
+
+    def test_reverse_interval_gate_tracks_candidate_on_curve(self) -> None:
+        acceptance = {
+            "curve_rows": [
+                {
+                    "bias_V": 0.0,
+                    "vela_on_A_per_um": 1.0,
+                },
+                {
+                    "bias_V": -1.0,
+                    "vela_on_A_per_um": -2.0,
+                },
+                {
+                    "bias_V": -2.0,
+                    "vela_on_A_per_um": -1.5,
+                },
+            ]
+        }
+        self.assertEqual(
+            vela_on_reverse_intervals(acceptance),
+            [
+                {
+                    "left_bias_V": -1.0,
+                    "right_bias_V": -2.0,
+                    "left_abs_current_A_per_um": 2.0,
+                    "right_abs_current_A_per_um": 1.5,
+                }
+            ],
+        )
 
     def test_internal_metric_matches_exact_support(self) -> None:
         def payload(offset: float) -> dict:

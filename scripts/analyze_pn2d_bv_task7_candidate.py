@@ -54,6 +54,46 @@ def estimator_error(
     return abs(float(vela) - float(sentaurus))
 
 
+def estimator_improved(
+    baseline_error: float | None,
+    candidate_error: float | None,
+) -> bool:
+    if candidate_error is None:
+        return False
+    return baseline_error is None or candidate_error < baseline_error
+
+
+def feedback_initial_qfp_rmse(payload: dict[str, Any]) -> float:
+    values = [
+        float(row["variants"]["baseline"]["initial_qfp_error_rmse_V"])
+        for row in payload["bias_results"]
+    ]
+    return rmse(values)
+
+
+def vela_on_reverse_intervals(
+    acceptance: dict[str, Any],
+) -> list[dict[str, float]]:
+    rows = sorted(
+        acceptance["curve_rows"],
+        key=lambda row: abs(float(row["bias_V"])),
+    )
+    result: list[dict[str, float]] = []
+    for left, right in zip(rows, rows[1:]):
+        left_current = abs(float(left["vela_on_A_per_um"]))
+        right_current = abs(float(right["vela_on_A_per_um"]))
+        if right_current < left_current:
+            result.append(
+                {
+                    "left_bias_V": float(left["bias_V"]),
+                    "right_bias_V": float(right["bias_V"]),
+                    "left_abs_current_A_per_um": left_current,
+                    "right_abs_current_A_per_um": right_current,
+                }
+            )
+    return result
+
+
 def chain_index(
     payload: dict[str, Any],
     *,
@@ -142,6 +182,16 @@ def score(args: argparse.Namespace) -> dict[str, Any]:
     candidate_chain = load_json(args.candidate_vela_chain)
     baseline_wp7 = load_json(args.baseline_wp7)
     candidate_wp7 = load_json(args.candidate_wp7)
+    baseline_feedback = (
+        load_json(args.baseline_feedback)
+        if args.baseline_feedback is not None
+        else None
+    )
+    candidate_feedback = (
+        load_json(args.candidate_feedback)
+        if args.candidate_feedback is not None
+        else None
+    )
 
     baseline_knee = knee_rmse(baseline_curve)
     candidate_knee = knee_rmse(candidate_curve)
@@ -187,22 +237,32 @@ def score(args: argparse.Namespace) -> dict[str, Any]:
     )
     chain_records_identical = baseline_chain["records"] == candidate_chain["records"]
     global_worsening = max_global_worsening(baseline_curve, candidate_curve)
+    baseline_feedback_qfp = (
+        feedback_initial_qfp_rmse(baseline_feedback)
+        if baseline_feedback is not None
+        else None
+    )
+    candidate_feedback_qfp = (
+        feedback_initial_qfp_rmse(candidate_feedback)
+        if candidate_feedback is not None
+        else None
+    )
+    feedback_inputs_complete = (
+        baseline_feedback is not None and candidate_feedback is not None
+    )
+    baseline_reverse_intervals = vela_on_reverse_intervals(baseline_curve)
+    candidate_reverse_intervals = vela_on_reverse_intervals(candidate_curve)
 
     gates = {
         "knee_rmse_improves_at_least_50_percent": improvement >= 0.5,
-        "V_break_error_reduced": (
-            baseline_break is not None
-            and candidate_break is not None
-            and candidate_break < baseline_break
+        "V_break_error_reduced": estimator_improved(
+            baseline_break, candidate_break
         ),
-        "V_slope_error_reduced": (
-            baseline_slope is not None
-            and candidate_slope is not None
-            and candidate_slope < baseline_slope
+        "V_slope_error_reduced": estimator_improved(
+            baseline_slope, candidate_slope
         ),
         "nonmonotonic_interval_removed": (
-            bool(candidate_curve["gates"].get("monotonicity"))
-            and not bool(baseline_curve["gates"].get("monotonicity"))
+            not candidate_reverse_intervals and bool(baseline_reverse_intervals)
         ),
         "qfp_state_metric_improved": candidate_qfp < baseline_qfp,
         "density_state_metric_improved": candidate_density < baseline_density,
@@ -213,6 +273,17 @@ def score(args: argparse.Namespace) -> dict[str, Any]:
         ),
         "duplicate_determinism": duplicate_deterministic,
         "global_error_worsening_within_0p02_dex": global_worsening <= 0.02,
+        "task6_feedback_state_metric_improved": (
+            feedback_inputs_complete
+            and candidate_feedback_qfp is not None
+            and baseline_feedback_qfp is not None
+            and candidate_feedback_qfp < baseline_feedback_qfp
+        ),
+        "task6_feedback_determinism_preserved": (
+            feedback_inputs_complete
+            and candidate_feedback["status"] == "passed"
+            and bool(candidate_feedback["determinism"]["passed"])
+        ),
     }
     authorized = all(gates.values())
     if authorized:
@@ -231,8 +302,8 @@ def score(args: argparse.Namespace) -> dict[str, Any]:
         "schema": "vela.pn2d_bv_task7_candidate_scorecard.v1",
         "status": "passed",
         "outcome": outcome,
-        "candidate_axis": "impact_ionization.quasi_fermi_carrier_truncation",
-        "candidate_value": 1.0e-2,
+        "candidate_axis": args.candidate_axis,
+        "candidate_value": args.candidate_value,
         "production_default_changed": False,
         "metrics": {
             "baseline_knee_log_current_rmse_dex": baseline_knee,
@@ -246,6 +317,20 @@ def score(args: argparse.Namespace) -> dict[str, Any]:
             "candidate_qfp_rmse_V": candidate_qfp,
             "baseline_density_log_rmse_dex": baseline_density,
             "candidate_density_log_rmse_dex": candidate_density,
+            "baseline_task6_initial_qfp_rmse_V": baseline_feedback_qfp,
+            "candidate_task6_initial_qfp_rmse_V": candidate_feedback_qfp,
+            "baseline_task6_outcome": (
+                baseline_feedback["outcome"]
+                if baseline_feedback is not None
+                else None
+            ),
+            "candidate_task6_outcome": (
+                candidate_feedback["outcome"]
+                if candidate_feedback is not None
+                else None
+            ),
+            "baseline_vela_on_reverse_intervals": baseline_reverse_intervals,
+            "candidate_vela_on_reverse_intervals": candidate_reverse_intervals,
             "maximum_global_error_worsening_dex": global_worsening,
             "chain_records_identical": chain_records_identical,
             "baseline_wp7_outcome": baseline_wp7["outcome"],
@@ -272,8 +357,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--candidate-vela-chain", type=Path, required=True)
     parser.add_argument("--baseline-wp7", type=Path, required=True)
     parser.add_argument("--candidate-wp7", type=Path, required=True)
+    parser.add_argument("--baseline-feedback", type=Path)
+    parser.add_argument("--candidate-feedback", type=Path)
     parser.add_argument("--candidate-iv-a", type=Path, required=True)
     parser.add_argument("--candidate-iv-b", type=Path, required=True)
+    parser.add_argument(
+        "--candidate-axis",
+        default="impact_ionization.quasi_fermi_carrier_truncation",
+    )
+    parser.add_argument("--candidate-value", default="1.0e-2")
     parser.add_argument("--output-root", type=Path, required=True)
     return parser.parse_args()
 

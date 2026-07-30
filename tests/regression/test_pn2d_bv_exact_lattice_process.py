@@ -103,6 +103,62 @@ class ExactLatticeProcessTests(unittest.TestCase):
             self.assertEqual(config["sweep"]["bias_points"], self.biases)
             self.assertTrue(config["sweep"]["stop_on_failure"])
 
+    def test_terminal_current_method_compare_is_opt_in(self) -> None:
+        root = Path("qualification")
+        baseline = branch_config(
+            self.base,
+            "avalanche_on",
+            self.biases,
+            root / "baseline",
+            80,
+        )
+        diagnostic = branch_config(
+            self.base,
+            "avalanche_on",
+            self.biases,
+            root / "diagnostic",
+            80,
+            terminal_current_method_compare=True,
+        )
+
+        self.assertNotIn(
+            "terminal_current_method_compare",
+            baseline["sweep"]["diagnostics"],
+        )
+        compare = diagnostic["sweep"]["diagnostics"][
+            "terminal_current_method_compare"
+        ]
+        self.assertTrue(compare["enabled"])
+        self.assertTrue(
+            compare["csv_file"].endswith(
+                "terminal_current_method_compare.csv"
+            )
+        )
+
+    def test_newton_tolerance_override_is_opt_in(self) -> None:
+        root = Path("qualification")
+        baseline = branch_config(
+            self.base,
+            "avalanche_on",
+            self.biases,
+            root / "baseline",
+            80,
+        )
+        strict = branch_config(
+            self.base,
+            "avalanche_on",
+            self.biases,
+            root / "strict",
+            80,
+            newton_reltol=1.0e-12,
+            newton_abstol=1.0e-13,
+        )
+
+        self.assertNotIn("reltol", baseline["solver"])
+        self.assertNotIn("abstol", baseline["solver"])
+        self.assertEqual(strict["solver"]["reltol"], 1.0e-12)
+        self.assertEqual(strict["solver"]["abstol"], 1.0e-13)
+
     def test_predeclared_continuation_schedules_change_only_step_controls(self) -> None:
         root = Path("qualification")
         standard = branch_config(

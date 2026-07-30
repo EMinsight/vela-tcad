@@ -4,10 +4,11 @@ Date: 2026-07-29
 
 Status: engineering WP0-WP7, exact-lattice continuation, fixed-transition
 Newton, the Task 6 density/QFP matrix, both predeclared Task 7 continuation
-schedules, the observation-only Poisson-QFP cross-block decomposition, and
-the effective Schur-loop source decomposition are executed. The latest result
-is `transport_and_avalanche_independently_sustain_reversal`; Task 7 still has
-`no_authorized_candidate`. Task 8 and all production-default changes remain
+schedules, the observation-only Poisson-QFP cross-block decomposition, the
+effective Schur-loop source decomposition, and the self-consistent
+element-edge SG/GSS-Laux Task 7 candidate are executed. The candidate returns
+`tradeoff_without_parity`: 10/11 gates pass, but the nonmonotonicity
+no-relocation gate fails. Task 8 and all production-default changes remain
 prohibited.
 
 Starting point: local branch `codex-pn2d-minimal6-operator-audit`, commit
@@ -168,7 +169,7 @@ also include every integer bias from `0` through `-20 V`.
 | Task 3 | WP0 baseline plus WP4-WP5 solver-used/attempt records | `complete_nonlinear_trace_available`; deterministic first failure reproduced |
 | Task 4 | WP6 source-only derivative work | `source_jacobian_dependency_identified_and_closed` |
 | Tasks 5-6 | WP3-WP5 records, WP7 paired analyzer, and one-stage feedback matrix | `continuation_only_cause`: QFP-only carrier-block updates improve about 13% at adjacent `-19.7/-19.8 V`, while the full coupled update reverses direction and worsens about 7% |
-| Task 7 | causal authorization from Tasks 4-6 | both `quasi_fermi_carrier_truncation=1.0e-2` and refined continuation rejected; `continuation_invariant_cross_block_reversal`, `no_authorized_candidate` |
+| Task 7 | causal authorization from Tasks 4-6 | QFP truncation and refined continuation rejected; complete SG/Laux candidate improves curve/internal metrics but moves nonmonotonicity to low-current intervals: `tradeoff_without_parity` |
 | Tasks 8-11 | successful Task 7 candidate | not authorized |
 
 ## Frozen production configuration
@@ -796,6 +797,60 @@ conditioning. The typed result is
 prohibited. Evidence:
 `docs/validation/pn2d_schur_loop_source_decomposition_2026-07-30.md`.
 
+The subsequent GSS `aux2` ownership/sign audit found that the triangle-GSS
+path reverses the archived isothermal electrostatic-potential signs for both
+electron and hole midpoint densities. The reference midpoint closes to the
+existing Vela SG-edge midpoint below `9.5e-17` relative L2, while the
+dominant production/reference ratio is `2.335e7-7.253e7`. However, a
+sign-correct midpoint-only source reaches only `0.48603-0.48739` of the
+Sentaurus integral. The complete element-edge SG/GSS-Laux vector reaches
+`1.00948-1.00954`, consistent with GSS impact ionization consuming complete
+directed SG current rather than a standalone
+`mu*n_mid*abs(grad QFP)` proxy.
+
+The typed result is
+`gss_aux2_sign_transcription_and_operator_ownership_mismatch_confirmed`.
+It rejects a sign-only candidate and does not authorize Task 8. A future
+Task 7 candidate must remain opt-in and use the complete SG current vector
+with matching geometry; the sign-correct midpoint-only result is a negative
+control. Evidence:
+`docs/validation/pn2d_gss_aux2_ownership_audit_2026-07-30.md`.
+
+The subsequent frozen-state Task 7 comparison ran the production triangle
+baseline, sign-correct midpoint-only negative control, and complete
+element-edge SG/GSS-Laux candidate twice at `-19.7/-19.8 V`. After
+conservatively projecting element-vertex current and source back to the
+physical node support, the complete candidate has:
+
+- integrated source ratios `1.009537/1.009483`;
+- electron/hole matching-current median and P95 below `0.0049 dex`;
+- active-node source maximum below `0.0052 dex`;
+- 100% nonzero vector direction agreement; and
+- 27/27 duplicate numerical/process artifacts identical.
+
+The result is insensitive to active-source floors from `1e-5` through
+`1e-8`. The sign-correct midpoint-only control remains rejected at
+`0.48603/0.48739`. The typed outcome is
+`complete_sg_vector_fixed_state_prequalified`. It authorizes the remaining
+single-axis, self-consistent Task 7 exact-lattice candidate run, but not
+Task 8 or a default change. Evidence:
+`docs/validation/pn2d_task7_frozen_sg_candidate_2026-07-30.md`.
+
+The remaining self-consistent Task 7 candidate completed duplicate
+avalanche-on global/knee exact lattices plus one complete off/IIC/on process
+campaign. It improves knee log-current RMSE from `11.400736` to
+`0.0146388 dex`, restores `V_slope` with `0.01643 V` error, reduces
+`V_break` error to `0.021 V`, and reduces the QFP/density process errors to
+`9.986e-5 V/0.001673 dex`. Duplicate IV and Task 6 outputs are byte-identical,
+and all 203 closure rows pass.
+
+However, the candidate replaces four baseline reverse intervals, including
+the high-current `-18→-19.25 V` sequence, with three low-current intervals at
+`-3→-5 V` and `-6→-7 V`. The predeclared gate requires removal rather than
+relocation. The typed outcome is therefore `tradeoff_without_parity`, and
+Task 8/default changes remain prohibited. Evidence:
+`docs/validation/pn2d_task7_self_consistent_sg_candidate_2026-07-30.md`.
+
 ## Task 8 - implement the minimal opt-in correction
 
 ### Goal
@@ -1006,16 +1061,48 @@ Before every commit:
 
 Use the following prompt for the next execution slice:
 
-> Stop Task 7 candidate execution at the sealed
-> `continuation_invariant_cross_block_reversal` result. Neither the rejected
-> `quasi_fermi_carrier_truncation=1.0e-2` control nor the refined
-> `0.025 V` continuation schedule resolves the named internal causal metric.
-> Do not enter Task 8, run a complete candidate curve campaign, or change a
-> production default. The effective-loop source decomposition is sealed as
-> `transport_and_avalanche_independently_sustain_reversal`; SRH/Auger,
-> contact rows, gross cross-derivative error, and worse Schur conditioning are
-> excluded. If work continues, compare the analytical ownership and sign
-> conventions of the interior transport and avalanche feedback paths against
-> the governing equations and an independent reference definition. Do not
-> remove a physical term or cross block. Preserve every off/IIC/on baseline
-> and do not stage generated simulation outputs or `tmp/`.
+> Continue Task 7 from the sealed `tradeoff_without_parity` result. Perform an
+> observation-only audit of the SG/Laux candidate's three low-current reverse
+> intervals at `-3/-4/-5/-6/-7 V`. Compare duplicate Newton/continuation
+> histories, terminal-current components, state hashes, and off/IIC/on
+> branches. Classify source feedback, current extraction, or numerical-floor
+> behavior without changing the candidate or adding a post-hoc current floor.
+> Keep Task 8 and all production-default changes prohibited until the
+> no-relocation gate is resolved by a separately reviewed typed outcome.
+
+## Task 7 low-current causal audit result - 2026-07-30
+
+Typed outcome:
+
+`low_current_state_precision_floor_not_avalanche_operator_or_terminal_extractor`
+
+The observation-only audit is complete:
+
+- two of three low-current reverse intervals are shared by off, IIC, and on;
+- off and IIC states are byte-identical;
+- duplicate on states are byte-identical;
+- alpha and raw source increase monotonically from `-3` to `-7 V`;
+- SG-flux and residual terminal currents agree within `4.650654e-15`
+  relative error;
+- contact hole-QFP drops are approximately `3e-14 V`;
+- strict Newton tolerances move/remove the intervals and terminate with
+  `stall_residual_floor`.
+
+The original `tradeoff_without_parity` result remains preserved because the
+predeclared no-relocation gate is not changed retrospectively. Task 8 and
+production-default changes remain prohibited pending a prospective review of
+how BV-active metrics and low-current precision-floor behavior should be
+reported separately.
+
+Evidence:
+
+`docs/validation/pn2d_task7_low_current_root_cause_audit_2026-07-30.md`.
+
+### Next execution prompt
+
+> Review the completed Task 7 low-current typed outcome alongside the original
+> `tradeoff_without_parity` score. If separately authorized, define a
+> prospective acceptance contract that retains all raw intervals but separates
+> BV-active collision-ionization parity from low-current solver precision.
+> Otherwise stop. Do not enter Task 8, add a current/minimum-field threshold,
+> or change production defaults.

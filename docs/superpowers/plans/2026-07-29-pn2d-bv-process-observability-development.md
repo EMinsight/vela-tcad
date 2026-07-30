@@ -3,12 +3,13 @@
 Date: 2026-07-29
 
 Status: WP0-WP7, exact-lattice continuation, fixed-transition Newton, the
-Task 6 density/QFP matrix, both Task 7 continuation schedules, and the
-observation-only Poisson-QFP cross-block decomposition, and the effective
-Schur-loop source decomposition are executed. The latest result is
-`transport_and_avalanche_independently_sustain_reversal`; Task 7 remains
-`no_authorized_candidate`. WP8's correction/default-change path is not
-authorized.
+Task 6 density/QFP matrix, both Task 7 continuation schedules, the
+observation-only Poisson-QFP cross-block decomposition, the effective
+Schur-loop source decomposition, and the complete self-consistent SG/Laux
+Task 7 candidate are executed. The candidate returns
+`tradeoff_without_parity`: 10/11 authorization gates pass, but
+nonmonotonicity moves to three low-current intervals. WP8's
+correction/default-change path remains unauthorized.
 
 Starting point: branch `codex-pn2d-minimal6-operator-audit`, commit
 `1350d11`.
@@ -1072,6 +1073,120 @@ requested carrier/model/support/sign/scale/conditioning slice without
 authorizing WP8. Evidence:
 `docs/validation/pn2d_schur_loop_source_decomposition_2026-07-30.md`.
 
+Sentaurus frozen-state Vela-operator follow-up:
+
+- exact `psi/phin/phip/n/p` imports and Vela QFP-gradient reconstruction close
+  to machine precision at `-19.7/-19.8 V`;
+- all 384 process records use `postprocess_only`, with zero solver-coupled
+  records and zero continuity residual feedback;
+- mobility differs by a typical `6.6%-8.6%`, while the dominant departure is
+  the `cell_reconstructed` current proxy on cross-junction supports;
+- Vela current relative-L2 ratios reach `5.21e6-2.20e7`, and total source
+  integrals exceed the Sentaurus nodal area integral by
+  `7.9271e6-2.4855e7`;
+- alpha peak ratios remain within `1.066-1.116`, so the current evidence does
+  not identify the Van Overstraeten coefficient scale as the primary cause.
+
+The typed result is `frozen_state_current_proxy_dominates_source_mismatch`.
+The subsequent observation-only external-`Jn/Jp` substitution is also
+complete:
+
+- replacing only the current consumed by the Vela alpha/source postprocessor
+  reduces the total-source ratio from `7.9271e6-2.4855e7` to
+  `1.03762-1.03982`;
+- Sentaurus alpha/current with Vela geometry gives `1.04675-1.04925`;
+- projecting Sentaurus `ImpactIonization` directly through Vela geometry
+  closes exactly to the P1 area integral; and
+- no substituted current enters residuals, Jacobians, or continuation.
+
+The typed outcome is `external_current_substitution_closes_integrated_source`.
+The authorized current-proxy factorization is also complete:
+
+- `q*mu*n_mid*edge_QFP_drive` independently closes the production proxy below
+  `1.5e-16`;
+- raw Vela SG edge current agrees with the Sentaurus edge projection to about
+  `8%` relative L2;
+- element-edge GSS/Laux reconstructed vector current has
+  `0.6%-1.5%` median error and its integrated source is only
+  `0.948%-0.954%` above Sentaurus;
+- the dominant triangle midpoint selects the high-density endpoint and exceeds
+  the SG edge midpoint by `2.335e7-7.253e7`;
+- the corresponding production proxy exceeds raw SG current by
+  `2.236e7-6.923e7`; and
+- eight records contribute more than `99.99999%` of the erroneous source.
+
+The typed outcome is `triangle_gss_midpoint_semantics_dominate_proxy_error`.
+It confirms the Vela current proxy as the dominant source mismatch but
+authorizes only a governing-equation/sign/orientation review of the GSS 0.47
+`aux2` definition. It does not authorize Task 8 or a production default
+change. Evidence:
+`docs/validation/pn2d_sentaurus_frozen_bv_operator_comparison_2026-07-30.md`.
+
+The governing-equation/sign/orientation review is complete:
+
+- GSS equations 9.100/9.103/9.107/9.108 and the archived `jflux1q.h`
+  implementation agree on the isothermal electron/hole midpoint signs;
+- the production triangle midpoint reverses those electrostatic-potential
+  signs for both carriers;
+- the GSS reference midpoint closes to the Vela SG-edge midpoint below
+  `9.5e-17` relative L2 and is exactly endpoint-swap invariant;
+- the dominant production/reference midpoint ratio is
+  `2.335e7-7.253e7`;
+- a sign-correct midpoint-only source reaches only
+  `0.48603-0.48739` of the Sentaurus source, whereas the actual SG/Laux
+  vector source reaches `1.00948-1.00954`; and
+- GSS impact ionization consumes the complete directed SG current, not an
+  independently owned `mu*n_mid*abs(grad QFP)` scalar proxy.
+
+The typed outcome is
+`gss_aux2_sign_transcription_and_operator_ownership_mismatch_confirmed`.
+It rejects a sign-only correction axis. A future separately authorized
+opt-in candidate should reuse the complete element-edge SG/GSS-Laux current
+vector with matching source geometry; the sign-correct midpoint-only formula
+is retained only as a negative control. Evidence:
+`docs/validation/pn2d_gss_aux2_ownership_audit_2026-07-30.md`.
+
+The authorized frozen-state Task 7 candidate comparison is complete:
+
+- two independent runs reproduce all 27 selected numerical/process artifacts
+  byte-for-byte;
+- the complete SG/Laux candidate source ratio is
+  `1.009537/1.009483` at `-19.7/-19.8 V`;
+- matching-node electron/hole current median and P95 errors are all below
+  `0.0049 dex`;
+- active-node source maximum error is below `0.0052 dex`;
+- nonzero electron and hole vector direction agreement is 100%;
+- active-source thresholds from `1e-5` through `1e-8` select the same nine
+  nodes and preserve the decision; and
+- sign-correct midpoint-only remains rejected at `0.48603/0.48739` of the
+  Sentaurus integral.
+
+The typed outcome is `complete_sg_vector_fixed_state_prequalified`. It
+authorizes only the remaining Task 7 single-axis, self-consistent,
+duplicate-run exact-lattice candidate. It does not authorize WP8, Task 8, or
+a default change. Evidence:
+`docs/validation/pn2d_task7_frozen_sg_candidate_2026-07-30.md`.
+
+The authorized self-consistent Task 7 candidate is also complete:
+
+- duplicate avalanche-on runs complete all 29 exact points and have identical
+  IV SHA-256
+  `de0d40cedfc7ca4f19f4c284e395877c345a4215e76bbbda9bd9d9a245f40de6`;
+- knee log-current RMSE improves from `11.400736` to `0.0146388 dex`;
+- `V_break` error improves from `0.232` to `0.021 V`, and `V_slope` is
+  restored with `0.01643 V` error;
+- QFP/density errors improve from `0.38044 V/5.75681 dex` to
+  `9.986e-5 V/0.001673 dex`;
+- all 203 process-chain closure rows and duplicate Task 6 feedback hashes
+  pass; and
+- the baseline high-field reverse intervals are removed, but three new
+  reverse intervals occur near `3e-17 A/um` at `-3→-5 V` and `-6→-7 V`.
+
+The predeclared no-relocation monotonicity gate therefore fails. The typed
+outcome is `tradeoff_without_parity`; WP8, Task 8, and production-default
+changes remain unauthorized. Evidence:
+`docs/validation/pn2d_task7_self_consistent_sg_candidate_2026-07-30.md`.
+
 ## 13. Dependency order and parallel-safe work
 
 Mandatory dependency chain:
@@ -1175,18 +1290,43 @@ Every work package must report before the next begins:
 
 ## 17. Next execution slice
 
-WP0-WP7, scientific Task 2, the Task 6 feedback matrix, the two predeclared
-continuation schedules, the observation-only Poisson-QFP cross-block
-decomposition, and the effective-loop source decomposition are complete. The
-latest result is `transport_and_avalanche_independently_sustain_reversal`:
-either interior transport or avalanche feedback alone retains an adverse
-direction at both `-19.7/-19.8 V`; SRH/Auger does not.
+WP0-WP7, scientific Task 2, the Task 6 feedback matrix, both continuation
+schedules, the Poisson-QFP block/loop decompositions, the frozen-state
+operator comparison, the GSS ownership audit, and the remaining
+self-consistent SG/Laux Task 7 candidate are complete. The latest typed result
+is `tradeoff_without_parity`: ten authorization gates pass, while three
+low-current reverse intervals violate the predeclared no-relocation gate.
 
-No current Task 7 axis is authorized. Do not enter Task 8, run a complete
-candidate curve campaign, or change a production default. Continue only with
-a separately reviewed analytical-ownership and sign-convention comparison of
-the interior transport and avalanche feedback paths against the governing
-equations and an independent reference definition. Do not remove a physical
-term, delete a cross block, or promote the carrier-only direction. Preserve
-the failed `c=1.0e-2` candidate and both continuation schedules as sealed
-negative controls.
+WP8, Task 8, and production-default changes remain unauthorized. If work
+continues, remain in Task 7 and perform an observation-only low-current
+monotonicity audit at `-3/-4/-5/-6/-7 V`. Compare duplicate solver histories,
+terminal-current decompositions, state hashes, and off/IIC/on branches to
+determine whether the three intervals come from source feedback, terminal
+current extraction, or continuation/numerical-floor behavior. Do not alter
+the SG/Laux candidate, introduce a post-hoc current floor, relax the gate, or
+enter WP8 until that audit yields a separately reviewed typed outcome.
+
+## 18. Task 7 low-current observability closure - 2026-07-30
+
+The requested read-only audit is complete with typed outcome:
+
+`low_current_state_precision_floor_not_avalanche_operator_or_terminal_extractor`.
+
+New observation-only coverage:
+
+- off/IIC/on low-current branch and state-hash comparison;
+- raw alpha, impact field, generation, and integrated-source monotonicity;
+- SG-flux versus continuity-residual terminal-current comparison;
+- contact QFP-drop capture;
+- strict Newton tolerance sensitivity and termination reason;
+- local Genius, Charon, PISCES, and DEVSIM implementation audit;
+- Sentaurus IIC semantics reverified over SSH.
+
+No collision-ionization physics setting or production default changed.
+WP8 remains unauthorized. The next allowed action is a separate review of a
+prospective acceptance contract or a separately scoped low-current nonlinear
+precision task.
+
+Evidence:
+
+`docs/validation/pn2d_task7_low_current_root_cause_audit_2026-07-30.md`.
