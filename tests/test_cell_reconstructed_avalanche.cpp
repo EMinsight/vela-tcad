@@ -55,7 +55,7 @@ TEST_CASE("Bernoulli avalanche midpoint weights stay normalized at large potenti
     REQUIRE(midpoint == Catch::Approx(1.0e3));
 }
 
-TEST_CASE("GSS logistic avalanche midpoint follows the published carrier orientation",
+TEST_CASE("Triangle GSS legacy midpoint follows its configured carrier orientation",
           "[impact][triangle_gss]")
 {
     const Real Vt = 0.025852;
@@ -85,6 +85,37 @@ TEST_CASE("GSS logistic avalanche midpoint follows the published carrier orienta
                 n0, n1, psi0, psi1, Vt) !=
             Catch::Approx(detail::bernoulliWeightedMidpointDensity(
                 n0, n1, psi0, psi1, Vt)));
+}
+
+TEST_CASE("Archived GSS isothermal midpoint maps electrostatic potential with carrier signs",
+          "[impact][triangle_gss][reference_audit]")
+{
+    const Real Vt = 0.025852;
+    const Real psi0 = -0.20;
+    const Real psi1 = 0.10;
+    const Real n0 = 1.0e12;
+    const Real n1 = 8.0e17;
+    const Real p0 = 3.0e17;
+    const Real p1 = 2.0e11;
+
+    // GSS User Guide 9.100/9.103/9.107/9.108 at uniform temperature:
+    // alpha=(psi_i-psi_j)/(2*Vt), nmid=n_i*aux2(alpha)+n_j*aux2(-alpha),
+    // pmid=p_i*aux2(-alpha)+p_j*aux2(alpha).
+    const Real electronReference =
+        detail::bernoulliWeightedMidpointDensity(
+            n0, n1, psi0, psi1, Vt);
+    const Real holeReference =
+        detail::bernoulliWeightedMidpointDensity(
+            p0, p1, psi1, psi0, Vt);
+
+    REQUIRE(electronReference ==
+            Catch::Approx(detail::bernoulliWeightedMidpointDensity(
+                n1, n0, psi1, psi0, Vt)).epsilon(1.0e-14));
+    REQUIRE(holeReference ==
+            Catch::Approx(detail::bernoulliWeightedMidpointDensity(
+                p1, p0, psi0, psi1, Vt)).epsilon(1.0e-14));
+    REQUIRE(electronReference > 0.0);
+    REQUIRE(holeReference > 0.0);
 }
 
 

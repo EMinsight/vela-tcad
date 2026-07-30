@@ -40,6 +40,7 @@ struct Arguments {
     std::filesystem::path edgeOut;
     std::filesystem::path triangleOut;
     std::optional<std::filesystem::path> elementOut;
+    std::optional<std::filesystem::path> processOut;
     bool generalTri3 = false;
 };
 
@@ -51,6 +52,7 @@ std::string usage()
         "--config audit.json --node-out vela_node_state.csv "
         "--edge-out vela_edge_audit.csv --triangle-out vela_triangle_audit.csv "
         "[--element-out vela_element_edge_gss_laux.csv] "
+        "[--process-out vela_bv_process_probe.csv] "
         "[--scope minimal6|general_tri3]";
 }
 
@@ -60,8 +62,8 @@ Arguments parseArguments(int argc, char** argv)
         std::cout << usage() << '\n';
         std::exit(0);
     }
-    if (argc != 15 && argc != 17 && argc != 19)
-        throw std::invalid_argument("expected seven to nine option/value pairs; usage: " + usage());
+    if (argc != 15 && argc != 17 && argc != 19 && argc != 21)
+        throw std::invalid_argument("expected seven to ten option/value pairs; usage: " + usage());
 
     std::map<std::string, std::filesystem::path> values;
     for (int i = 1; i < argc; i += 2) {
@@ -69,7 +71,8 @@ Arguments parseArguments(int argc, char** argv)
         if (option != "--mesh" && option != "--doping" && option != "--state" &&
             option != "--config" && option != "--node-out" &&
             option != "--edge-out" && option != "--triangle-out" &&
-            option != "--element-out" && option != "--scope") {
+            option != "--element-out" && option != "--process-out" &&
+            option != "--scope") {
             throw std::invalid_argument("unknown option '" + option + "'; usage: " + usage());
         }
         if (!values.emplace(option, argv[i + 1]).second)
@@ -103,6 +106,7 @@ Arguments parseArguments(int argc, char** argv)
         required("--edge-out"),
         required("--triangle-out"),
         optional("--element-out"),
+        optional("--process-out"),
         scope == "general_tri3",
     };
 }
@@ -469,6 +473,123 @@ void writeElementEdgeGssLaux(
         }
     }
 }
+
+void writeJoinedIndices(std::ofstream& out,
+                        const vela::BVProcessProbeRecord& record)
+{
+    for (std::size_t i = 0; i < record.scatterCount; ++i) {
+        if (i != 0)
+            out << ';';
+        out << record.scatterNodes[i];
+    }
+}
+
+void writeJoinedValues(std::ofstream& out,
+                       const vela::BVProcessProbeRecord& record,
+                       const std::array<Real, 6>& values,
+                       Real factor)
+{
+    for (std::size_t i = 0; i < record.scatterCount; ++i) {
+        if (i != 0)
+            out << ';';
+        out << values[i] * factor;
+    }
+}
+
+void writeProcessProbe(
+    const std::filesystem::path& path,
+    const vela::BVProcessProbeResult& probe,
+    const vela::PhysicalUnitSystem& units)
+{
+    std::ofstream out = openOutput(path, "BV process probe output");
+    out << "support_kind,carrier,cell_id,local_edge,edge_id,node0,node1,"
+           "psi0_V,psi1_V,quasi_fermi0_V,quasi_fermi1_V,"
+           "density0_m3,density1_m3,midpoint_density_m3,"
+           "electric_field_x_V_per_m,electric_field_y_V_per_m,"
+           "qf_gradient_x_V_per_m,qf_gradient_y_V_per_m,"
+           "low_field_mobility_m2_per_V_s,high_field_drive_V_per_m,"
+           "final_mobility_m2_per_V_s,mobility_limiter,"
+           "directed_sg_flux_per_m2_s,selected_flux_magnitude_per_m2_s,"
+           "current_vector_x_per_m2_s,current_vector_y_per_m2_s,"
+           "current_vector_provenance,impact_field_V_per_m,alpha_per_m,"
+           "source_measure_m2,generation_rate_per_m3_s,"
+           "source_integral_per_m_s,qG_contribution_A_per_m,"
+           "scatter_nodes,source_weights,"
+           "electron_residual_contributions_per_m_s,"
+           "hole_residual_contributions_per_m_s,"
+           "solver_coupled,contact_adjacent,zero_measure,zero_mobility,"
+           "zero_alpha,reconstructed_current,directional_partition,"
+           "active_branches,configuration_fingerprint,"
+           "active_branch_fingerprint\n";
+
+    const Real concentrationToSi =
+        units.internalConcentrationToM3(1.0);
+    const Real fieldToSi =
+        units.internalElectricFieldToVPerM(1.0);
+    const Real mobilityToSi =
+        units.internalMobilityToM2PerVS(1.0);
+    const Real fluxToSi =
+        units.internalContinuityParticleFluxToPerM2PerS(1.0);
+    const Real inverseLengthToSi =
+        units.inverseLengthMInvPerInternal();
+    const Real areaToSi =
+        units.areaM2PerInternal();
+    const Real sourceIntegralToSi =
+        fluxToSi * inverseLengthToSi * areaToSi;
+    const Real generationRateToSi =
+        fluxToSi * inverseLengthToSi;
+
+    for (const auto& record : probe.records) {
+        out << record.supportKind << ',' << record.carrier << ','
+            << record.cellId << ',' << record.localEdge << ','
+            << record.edgeId << ',' << record.node0 << ',' << record.node1
+            << ',' << record.psi0 << ',' << record.psi1 << ','
+            << record.quasiFermi0 << ',' << record.quasiFermi1 << ','
+            << record.density0 * concentrationToSi << ','
+            << record.density1 * concentrationToSi << ','
+            << record.midpointDensity * concentrationToSi << ','
+            << record.electricFieldVector.x() * fieldToSi << ','
+            << record.electricFieldVector.y() * fieldToSi << ','
+            << record.quasiFermiGradientVector.x() * fieldToSi << ','
+            << record.quasiFermiGradientVector.y() * fieldToSi << ','
+            << record.lowFieldMobility * mobilityToSi << ','
+            << record.highFieldDrive * fieldToSi << ','
+            << record.finalMobility * mobilityToSi << ','
+            << record.mobilityLimiter << ','
+            << record.directedSgFlux * fluxToSi << ','
+            << record.selectedFluxMagnitude * fluxToSi << ','
+            << record.currentVector.x() * fluxToSi << ','
+            << record.currentVector.y() * fluxToSi << ','
+            << record.currentVectorProvenance << ','
+            << record.impactField * fieldToSi << ','
+            << record.alpha * inverseLengthToSi << ','
+            << record.sourceMeasure * areaToSi << ','
+            << record.generationRate * generationRateToSi << ','
+            << record.sourceIntegral * sourceIntegralToSi << ','
+            << record.qGContribution * sourceIntegralToSi << ',';
+        writeJoinedIndices(out, record);
+        out << ',';
+        writeJoinedValues(out, record, record.sourceWeights, 1.0);
+        out << ',';
+        writeJoinedValues(
+            out, record, record.electronResidualContributions,
+            sourceIntegralToSi);
+        out << ',';
+        writeJoinedValues(
+            out, record, record.holeResidualContributions,
+            sourceIntegralToSi);
+        out << ',' << (record.solverCoupled ? 1 : 0)
+            << ',' << (record.contactAdjacent ? 1 : 0)
+            << ',' << (record.zeroMeasure ? 1 : 0)
+            << ',' << (record.zeroMobility ? 1 : 0)
+            << ',' << (record.zeroAlpha ? 1 : 0)
+            << ',' << (record.reconstructedCurrent ? 1 : 0)
+            << ',' << (record.directionalPartition ? 1 : 0)
+            << ',' << record.activeBranches
+            << ',' << record.configurationFingerprint
+            << ',' << record.activeBranchFingerprint << '\n';
+    }
+}
 } // namespace
 
 int main(int argc, char** argv)
@@ -504,6 +625,8 @@ int main(int argc, char** argv)
         if (args.elementOut)
             writeElementEdgeGssLaux(
                 *args.elementOut, result.elementEdgeGssLauxTriangles, mesh, units);
+        if (args.processOut)
+            writeProcessProbe(*args.processOut, result.processProbe, units);
         writeEdges(args.edgeOut, result.edges, units);
         writeTriangles(args.triangleOut, result.triangles, units);
         return 0;
