@@ -96,8 +96,8 @@ identify whether the responsible issue is model ownership, sign convention,
 state scaling, conditioning, or a legitimate local linearization of different
 physics.
 
-Task 8 remains prohibited. The next observation/review gate is to decompose
-the effective Schur term `C A^-1 B` by carrier, row support, sign, scale, and
-model contribution, then compare the responsible entries against the
-analytical residual definitions and finite-difference directional derivatives.
-Only a minimal correction with two-bias causal evidence may re-open Task 8.
+The requested next observation has been completed in
+`pn2d_schur_loop_source_decomposition_2026-07-30.md`. Transport and avalanche
+loops independently sustain the adverse direction, while SRH/Auger does not;
+directional finite differences pass. Task 8 remains prohibited pending
+analytical model-ownership and independent-reference review.

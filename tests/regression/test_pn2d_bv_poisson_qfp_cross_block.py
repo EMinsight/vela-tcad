@@ -4,7 +4,9 @@ import unittest
 
 from scripts.analyze_pn2d_bv_poisson_qfp_cross_block import (
     classify_bias,
+    leave_out_classification,
     mode_metrics,
+    schur_loop_decomposition,
 )
 
 
@@ -82,6 +84,99 @@ class PoissonQfpCrossBlockTests(unittest.TestCase):
             classify_bias(metrics),
             "J_qfp_psi_direct_feed_cause",
         )
+
+    def test_leave_out_classification_names_unique_model(self) -> None:
+        metrics = {
+            "leave_out_transport_boundary": {
+                "update_direction_cosine": 0.2,
+            },
+            "leave_out_srh_auger": {
+                "update_direction_cosine": -0.3,
+            },
+            "leave_out_sg_avalanche": {
+                "update_direction_cosine": -0.4,
+            },
+            "only_transport_boundary": {
+                "update_direction_cosine": 0.1,
+            },
+            "only_srh_auger": {
+                "update_direction_cosine": 0.2,
+            },
+            "only_sg_avalanche": {
+                "update_direction_cosine": 0.3,
+            },
+        }
+        result = leave_out_classification(metrics)
+        self.assertEqual(
+            result["classification"],
+            "transport_boundary_necessary_for_reversal",
+        )
+
+    def test_isolated_transport_and_avalanche_can_both_be_adverse(
+        self,
+    ) -> None:
+        metrics = {}
+        for component in (
+            "transport_boundary",
+            "srh_auger",
+            "sg_avalanche",
+        ):
+            metrics[f"leave_out_{component}"] = {
+                "update_direction_cosine": -0.2,
+            }
+            metrics[f"only_{component}"] = {
+                "update_direction_cosine":
+                    0.3 if component == "srh_auger" else -0.3,
+            }
+        result = leave_out_classification(metrics)
+        self.assertEqual(
+            result["classification"],
+            "transport_and_avalanche_independently_sustain_reversal",
+        )
+
+    def test_schur_loop_decomposition_splits_carrier_signs(self) -> None:
+        rows = []
+        for component, value in (
+            ("transport_boundary", 2.0),
+            ("srh_auger", -3.0),
+            ("sg_avalanche", 4.0),
+        ):
+            rows.append(
+                {
+                    "matrix": "C_Ainv_B_component",
+                    "component": component,
+                    "row_carrier": "electron",
+                    "row_node": "1",
+                    "row_x": "1",
+                    "row_y": "0",
+                    "col_carrier": "hole",
+                    "col_node": "2",
+                    "col_x": "2",
+                    "col_y": "0",
+                    "value": str(value),
+                }
+            )
+        rows.append(
+            {
+                "matrix": "C_Ainv_B",
+                "component": "all",
+                "row_carrier": "electron",
+                "row_node": "1",
+                "row_x": "1",
+                "row_y": "0",
+                "col_carrier": "hole",
+                "col_node": "2",
+                "col_x": "2",
+                "col_y": "0",
+                "value": "3",
+            }
+        )
+        result = schur_loop_decomposition(rows)
+        pair = result["components"]["srh_auger"]["carrier_pairs"][
+            "electron_from_hole"
+        ]
+        self.assertEqual(pair["negative_l1"], 3.0)
+        self.assertEqual(result["total_l2_norm"], 3.0)
 
 
 if __name__ == "__main__":

@@ -1360,6 +1360,9 @@ TEST_CASE("NewtonSolver: Poisson-QFP cross-block decomposition closes to full Ne
     REQUIRE(evaluation.jacobianQfpPsi.cols() == N);
     REQUIRE(evaluation.jacobianQfpQfp.rows() == 2 * N);
     REQUIRE(evaluation.jacobianQfpQfp.cols() == 2 * N);
+    REQUIRE(evaluation.effectiveSchurLoop.rows() == 2 * N);
+    REQUIRE(evaluation.effectiveSchurLoop.cols() == 2 * N);
+    REQUIRE(evaluation.loopComponents.size() == 3);
     REQUIRE(evaluation.jacobianPsiQfpNorm > 0.0);
     REQUIRE(evaluation.jacobianQfpPsiNorm > 0.0);
 
@@ -1383,8 +1386,24 @@ TEST_CASE("NewtonSolver: Poisson-QFP cross-block decomposition closes to full Ne
         == Catch::Approx(0.0).margin(1.0e-10));
     REQUIRE(evaluation.fullLinearClosureNorm < 1.0e-8);
     REQUIRE(evaluation.schurRelativeClosure < 1.0e-10);
+    REQUIRE(evaluation.loopComponentClosureNorm < 1.0e-8);
     REQUIRE(evaluation.psiQfpProduct.size() == N);
     REQUIRE(evaluation.qfpPsiProduct.size() == 2 * N);
+    REQUIRE(evaluation.qfpFiniteDifferenceDirectionPhin.size() == N);
+    REQUIRE(evaluation.psiFiniteDifferenceDirection.size() == N);
+    REQUIRE(
+        evaluation.psiQfpDirectionalDerivativeRelativeError < 1.0e-4);
+    INFO("C analytic norm: "
+         << evaluation.analyticQfpPsiDirectionalDerivative.norm());
+    INFO("C finite-difference norm: "
+         << evaluation.finiteDifferenceQfpPsiDirectionalDerivative.norm());
+    INFO("C relative error: "
+         << evaluation.qfpPsiDirectionalDerivativeRelativeError);
+    REQUIRE(
+        evaluation.qfpPsiDirectionalDerivativeRelativeError < 1.0e-4);
+    REQUIRE(evaluation.jacobianPsiPsiCondition.numericalRank > 0);
+    REQUIRE(evaluation.jacobianQfpQfpCondition.numericalRank > 0);
+    REQUIRE(evaluation.schurCondition.numericalRank > 0);
 }
 
 TEST_CASE("NewtonSolver: evaluateDirectionalDerivative compares analytic and finite-difference Jv",

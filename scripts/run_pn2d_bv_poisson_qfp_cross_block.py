@@ -62,6 +62,7 @@ def run_case(
     replacement_fields = case_root / "feedback_state_fields"
     output_csv = case_root / "poisson_qfp_cross_block.csv"
     blocks_csv = case_root / "jacobian_blocks.csv"
+    schur_loop_csv = case_root / "schur_loop.csv"
     config_path = case_root / "poisson_qfp_cross_block.json"
     status_path = case_root / "status.json"
     case_root.mkdir(parents=True, exist_ok=True)
@@ -86,6 +87,7 @@ def run_case(
     )
     config["feedback_state_fields_dir"] = str(replacement_fields.resolve())
     config["jacobian_blocks_csv"] = str(blocks_csv.resolve())
+    config["schur_loop_csv"] = str(schur_loop_csv.resolve())
     config_path.write_text(
         json.dumps(config, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -113,6 +115,7 @@ def run_case(
         config_path,
         output_csv,
         blocks_csv,
+        schur_loop_csv,
         status_path,
     ):
         artifact_hashes[str(path)] = sha256(path)
@@ -123,6 +126,7 @@ def run_case(
         "config": str(config_path),
         "output_csv": str(output_csv),
         "jacobian_blocks_csv": str(blocks_csv),
+        "schur_loop_csv": str(schur_loop_csv),
         "status": str(status_path),
         "artifact_hashes": artifact_hashes,
     }
@@ -177,6 +181,22 @@ def main() -> int:
                 "remove_J_psi_qfp",
                 "remove_J_qfp_psi",
                 "full_schur",
+                "leave_out_transport_boundary",
+                "leave_out_srh_auger",
+                "leave_out_sg_avalanche",
+                "only_transport_boundary",
+                "only_srh_auger",
+                "only_sg_avalanche",
+            ],
+            "effective_loop": "C_A_inverse_B",
+            "model_components": [
+                "transport_boundary",
+                "srh_auger",
+                "sg_avalanche",
+            ],
+            "directional_derivatives": [
+                "J_psi_qfp",
+                "J_qfp_psi",
             ],
             "production_defaults_changed": False,
         },

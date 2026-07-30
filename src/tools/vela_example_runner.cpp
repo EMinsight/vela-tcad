@@ -830,9 +830,30 @@ void writeNewtonPoissonQfpCrossBlockCsv(
         << "full_capped_delta_phin_V,full_capped_delta_phip_V,"
         << "psi_qfp_product,qfp_psi_electron_product,qfp_psi_hole_product,"
         << "full_minus_independent_delta_phin_V,"
-        << "full_minus_independent_delta_phip_V\n";
+        << "full_minus_independent_delta_phip_V,"
+        << "qfp_fd_direction_phin_V,qfp_fd_direction_phip_V,"
+        << "psi_fd_direction_V,B_directional_analytic,"
+        << "B_directional_finite_difference,C_directional_electron_analytic,"
+        << "C_directional_electron_finite_difference,"
+        << "C_directional_hole_analytic,"
+        << "C_directional_hole_finite_difference,"
+        << "leave_out_transport_boundary_delta_phin_V,"
+        << "leave_out_transport_boundary_delta_phip_V,"
+        << "leave_out_srh_auger_delta_phin_V,"
+        << "leave_out_srh_auger_delta_phip_V,"
+        << "leave_out_sg_avalanche_delta_phin_V,"
+        << "leave_out_sg_avalanche_delta_phip_V,"
+        << "only_transport_boundary_delta_phin_V,"
+        << "only_transport_boundary_delta_phip_V,"
+        << "only_srh_auger_delta_phin_V,"
+        << "only_srh_auger_delta_phip_V,"
+        << "only_sg_avalanche_delta_phin_V,"
+        << "only_sg_avalanche_delta_phip_V\n";
     const int n = static_cast<int>(mesh.numNodes());
     const std::vector<bool> contacts = contactNodeMask(mesh);
+    const auto& transport = evaluation.loopComponents.at(0);
+    const auto& recombination = evaluation.loopComponents.at(1);
+    const auto& avalanche = evaluation.loopComponents.at(2);
     for (int i = 0; i < n; ++i) {
         const auto nodeId = static_cast<vela::Index>(i);
         const vela::Node& node = mesh.getNode(nodeId);
@@ -874,6 +895,27 @@ void writeNewtonPoissonQfpCrossBlockCsv(
                 - evaluation.independentDeltaPhin(i) << ','
             << evaluation.fullRawDeltaPhip(i)
                 - evaluation.independentDeltaPhip(i)
+            << ',' << evaluation.qfpFiniteDifferenceDirectionPhin(i)
+            << ',' << evaluation.qfpFiniteDifferenceDirectionPhip(i)
+            << ',' << evaluation.psiFiniteDifferenceDirection(i)
+            << ',' << evaluation.analyticPsiQfpDirectionalDerivative(i)
+            << ',' << evaluation.finiteDifferencePsiQfpDirectionalDerivative(i)
+            << ',' << evaluation.analyticQfpPsiDirectionalDerivative(i)
+            << ',' << evaluation.finiteDifferenceQfpPsiDirectionalDerivative(i)
+            << ',' << evaluation.analyticQfpPsiDirectionalDerivative(n + i)
+            << ',' << evaluation.finiteDifferenceQfpPsiDirectionalDerivative(n + i)
+            << ',' << transport.leaveOutDeltaPhin(i)
+            << ',' << transport.leaveOutDeltaPhip(i)
+            << ',' << recombination.leaveOutDeltaPhin(i)
+            << ',' << recombination.leaveOutDeltaPhip(i)
+            << ',' << avalanche.leaveOutDeltaPhin(i)
+            << ',' << avalanche.leaveOutDeltaPhip(i)
+            << ',' << transport.onlyDeltaPhin(i)
+            << ',' << transport.onlyDeltaPhip(i)
+            << ',' << recombination.onlyDeltaPhin(i)
+            << ',' << recombination.onlyDeltaPhip(i)
+            << ',' << avalanche.onlyDeltaPhin(i)
+            << ',' << avalanche.onlyDeltaPhip(i)
             << '\n';
     }
 }
@@ -919,6 +961,90 @@ void writeNewtonPoissonQfpJacobianBlocksCsv(
         out, "J_qfp_qfp", evaluation.jacobianQfpQfp, nodeCount, nodeCount);
 }
 
+nlohmann::json matrixConditionJson(
+    const vela::NewtonMatrixConditionEstimate& condition)
+{
+    return {
+        {"rows", condition.rows},
+        {"columns", condition.columns},
+        {"numerical_rank", condition.numericalRank},
+        {"largest_singular_value", condition.largestSingularValue},
+        {"smallest_resolved_singular_value",
+         condition.smallestResolvedSingularValue},
+        {"resolved_condition_number", condition.resolvedConditionNumber},
+    };
+}
+
+void writeNewtonPoissonQfpSchurLoopCsv(
+    const std::filesystem::path& path,
+    const vela::DeviceMesh& mesh,
+    const vela::NewtonPoissonQfpCrossBlockEvaluation& evaluation)
+{
+    std::ofstream out(path);
+    if (!out.is_open()) {
+        throw std::runtime_error(
+            "Cannot write Poisson-QFP Schur-loop CSV: " + path.string());
+    }
+    out << std::setprecision(17);
+    out << "matrix,component,row_carrier,row_node,row_x,row_y,"
+        << "col_variable,col_carrier,col_node,col_x,col_y,value,sign\n";
+    const int n = static_cast<int>(mesh.numNodes());
+    const auto writeEntries =
+        [&](const std::string& matrixName,
+            const std::string& componentName,
+            const vela::SparseMatrixd& matrix,
+            bool qfpColumns) {
+            for (int column = 0; column < matrix.outerSize(); ++column) {
+                for (vela::SparseMatrixd::InnerIterator it(
+                         matrix, column);
+                     it;
+                     ++it) {
+                    const int rowNode = it.row() % n;
+                    const int colNode = it.col() % n;
+                    const vela::Node& row =
+                        mesh.getNode(static_cast<vela::Index>(rowNode));
+                    const vela::Node& columnNode =
+                        mesh.getNode(static_cast<vela::Index>(colNode));
+                    const std::string rowCarrier =
+                        it.row() < n ? "electron" : "hole";
+                    const std::string colCarrier = !qfpColumns
+                        ? ""
+                        : (it.col() < n ? "electron" : "hole");
+                    const double value = it.value();
+                    out << matrixName << ','
+                        << componentName << ','
+                        << rowCarrier << ','
+                        << rowNode << ','
+                        << row.x << ','
+                        << row.y << ','
+                        << (qfpColumns ? "qfp" : "psi") << ','
+                        << colCarrier << ','
+                        << colNode << ','
+                        << columnNode.x << ','
+                        << columnNode.y << ','
+                        << value << ','
+                        << (value > 0.0 ? "positive"
+                                        : (value < 0.0 ? "negative" : "zero"))
+                        << '\n';
+                }
+            }
+        };
+    writeEntries(
+        "C_Ainv_B", "all", evaluation.effectiveSchurLoop, true);
+    for (const auto& component : evaluation.loopComponents) {
+        writeEntries(
+            "C_component",
+            component.name,
+            component.jacobianQfpPsi,
+            false);
+        writeEntries(
+            "C_Ainv_B_component",
+            component.name,
+            component.effectiveLoop,
+            true);
+    }
+}
+
 nlohmann::json runNewtonPoissonQfpCrossBlockProbe(
     const std::string& configFile,
     const nlohmann::json& cfg)
@@ -942,17 +1068,32 @@ nlohmann::json runNewtonPoissonQfpCrossBlockProbe(
         ? resolvePath(cfgDir, cfg.at("jacobian_blocks_csv").get<std::string>())
         : outputPath.parent_path() /
             (outputPath.stem().string() + "_jacobian_blocks.csv");
+    const std::filesystem::path schurLoopPath = cfg.contains("schur_loop_csv")
+        ? resolvePath(cfgDir, cfg.at("schur_loop_csv").get<std::string>())
+        : outputPath.parent_path() /
+            (outputPath.stem().string() + "_schur_loop.csv");
     writeNewtonPoissonQfpCrossBlockCsv(
         outputPath, problem.mesh, state, replacement, evaluation);
     writeNewtonPoissonQfpJacobianBlocksCsv(
         blockPath,
         evaluation,
         static_cast<int>(problem.mesh.numNodes()));
+    writeNewtonPoissonQfpSchurLoopCsv(
+        schurLoopPath, problem.mesh, evaluation);
+
+    nlohmann::json componentNorms = nlohmann::json::object();
+    for (const auto& component : evaluation.loopComponents) {
+        componentNorms[component.name] = {
+            {"J_qfp_psi_norm", component.jacobianQfpPsi.norm()},
+            {"C_Ainv_B_norm", component.effectiveLoop.norm()},
+        };
+    }
 
     return {
         {"nodes", problem.mesh.numNodes()},
         {"output_csv", outputPath.string()},
         {"jacobian_blocks_csv", blockPath.string()},
+        {"schur_loop_csv", schurLoopPath.string()},
         {"jacobian_block_norms", {
             {"J_psi_psi", evaluation.jacobianPsiPsiNorm},
             {"J_psi_qfp", evaluation.jacobianPsiQfpNorm},
@@ -962,10 +1103,56 @@ nlohmann::json runNewtonPoissonQfpCrossBlockProbe(
         {"full_linear_closure_norm", evaluation.fullLinearClosureNorm},
         {"schur_closure_norm", evaluation.schurClosureNorm},
         {"schur_relative_closure", evaluation.schurRelativeClosure},
+        {"loop_component_closure_norm",
+         evaluation.loopComponentClosureNorm},
+        {"loop_component_norms", componentNorms},
+        {"condition_estimates", {
+            {"J_psi_psi",
+             matrixConditionJson(evaluation.jacobianPsiPsiCondition)},
+            {"J_psi_psi_l2_equilibrated",
+             matrixConditionJson(
+                 evaluation.jacobianPsiPsiEquilibratedCondition)},
+            {"J_qfp_qfp",
+             matrixConditionJson(evaluation.jacobianQfpQfpCondition)},
+            {"J_qfp_qfp_l2_equilibrated",
+             matrixConditionJson(
+                 evaluation.jacobianQfpQfpEquilibratedCondition)},
+            {"schur",
+             matrixConditionJson(evaluation.schurCondition)},
+            {"schur_l2_equilibrated",
+             matrixConditionJson(evaluation.schurEquilibratedCondition)},
+            {"C_Ainv_B",
+             matrixConditionJson(
+                 evaluation.effectiveSchurLoopCondition)},
+        }},
+        {"directional_derivative_check", {
+            {"relative_step",
+             evaluation.finiteDifferenceRelativeStep},
+            {"J_psi_qfp_relative_error",
+             evaluation.psiQfpDirectionalDerivativeRelativeError},
+            {"J_psi_qfp_analytic_norm",
+             evaluation.analyticPsiQfpDirectionalDerivative.norm()},
+            {"J_psi_qfp_finite_difference_norm",
+             evaluation.finiteDifferencePsiQfpDirectionalDerivative.norm()},
+            {"J_qfp_psi_relative_error",
+             evaluation.qfpPsiDirectionalDerivativeRelativeError},
+            {"J_qfp_psi_analytic_norm",
+             evaluation.analyticQfpPsiDirectionalDerivative.norm()},
+            {"J_qfp_psi_finite_difference_norm",
+             evaluation.finiteDifferenceQfpPsiDirectionalDerivative.norm()},
+            {"residual", "production_baseline"},
+            {"scheme", "double_symmetric"},
+        }},
         {"contract", {
             {"residual", "qfp_only_frozen_substitution"},
             {"jacobian", "single_production_baseline_jacobian"},
             {"partition", "psi_vs_electron_and_hole_qfp"},
+            {"effective_loop", "C_A_inverse_B"},
+            {"model_components", {
+                "transport_boundary",
+                "srh_auger",
+                "sg_avalanche",
+            }},
             {"counterfactuals", {
                 "independent_blocks",
                 "remove_J_psi_qfp",

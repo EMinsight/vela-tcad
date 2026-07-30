@@ -19,12 +19,25 @@ MODES = (
     "schur",
     "full_raw",
     "full_capped",
+    "leave_out_transport_boundary",
+    "leave_out_srh_auger",
+    "leave_out_sg_avalanche",
+    "only_transport_boundary",
+    "only_srh_auger",
+    "only_sg_avalanche",
+)
+LOOP_COMPONENTS = (
+    "transport_boundary",
+    "srh_auger",
+    "sg_avalanche",
 )
 CARRIERS = ("electron", "hole")
 CLOSURE_TOLERANCE = 1.0e-10
 SCHUR_FULL_MAX_DIFFERENCE_V = 1.0e-10
 MATERIAL_IMPROVEMENT_FRACTION = 0.05
 DIRECTION_COSINE_FLOOR = 0.05
+DIRECTIONAL_DERIVATIVE_RELATIVE_ERROR = 1.0e-4
+LOOP_COMPONENT_RELATIVE_CLOSURE = 1.0e-10
 
 
 def parse_args() -> argparse.Namespace:
@@ -75,6 +88,8 @@ def optimal_projection_scale(
 
 def carrier_columns(mode: str, carrier: str) -> str:
     suffix = "phin" if carrier == "electron" else "phip"
+    if mode.startswith("leave_out_"):
+        return f"{mode}_delta_{suffix}_V"
     return f"{mode}_delta_{suffix}_V"
 
 
@@ -224,6 +239,120 @@ def adverse_hotspot(rows: list[dict[str, str]]) -> dict[str, Any]:
     )
 
 
+def schur_loop_decomposition(
+    rows: list[dict[str, str]],
+    contact_nodes: set[int] | None = None,
+) -> dict[str, Any]:
+    contact_nodes = contact_nodes or set()
+    components: dict[str, Any] = {}
+    for component in LOOP_COMPONENTS:
+        selected = [
+            row for row in rows
+            if row["matrix"] == "C_Ainv_B_component"
+            and row["component"] == component
+        ]
+        component_c = [
+            row for row in rows
+            if row["matrix"] == "C_component"
+            and row["component"] == component
+        ]
+        carrier_pairs: dict[str, Any] = {}
+        for row_carrier in CARRIERS:
+            for col_carrier in CARRIERS:
+                pair = [
+                    row for row in selected
+                    if row["row_carrier"] == row_carrier
+                    and row["col_carrier"] == col_carrier
+                ]
+                values = [float(row["value"]) for row in pair]
+                key = f"{row_carrier}_from_{col_carrier}"
+                carrier_pairs[key] = {
+                    "l2_norm": l2(values),
+                    "positive_l1": sum(
+                        value for value in values if value > 0.0
+                    ),
+                    "negative_l1": sum(
+                        -value for value in values if value < 0.0
+                    ),
+                    "positive_entries": sum(
+                        value > 0.0 for value in values
+                    ),
+                    "negative_entries": sum(
+                        value < 0.0 for value in values
+                    ),
+                }
+        values = [float(row["value"]) for row in selected]
+        peak = max(selected, key=lambda row: abs(float(row["value"])))
+        components[component] = {
+            "l2_norm": l2(values),
+            "positive_l1": sum(value for value in values if value > 0.0),
+            "negative_l1": sum(-value for value in values if value < 0.0),
+            "carrier_pairs": carrier_pairs,
+            "maximum_absolute_entry": {
+                "value": float(peak["value"]),
+                "row_carrier": peak["row_carrier"],
+                "row_node": int(peak["row_node"]),
+                "row_x": float(peak["row_x"]),
+                "row_y": float(peak["row_y"]),
+                "col_carrier": peak["col_carrier"],
+                "col_node": int(peak["col_node"]),
+                "col_x": float(peak["col_x"]),
+                "col_y": float(peak["col_y"]),
+            },
+            "nonzero_C_contact_row_entries": sum(
+                int(row["row_node"]) in contact_nodes
+                and float(row["value"]) != 0.0
+                for row in component_c
+            ),
+        }
+    total = [
+        row for row in rows
+        if row["matrix"] == "C_Ainv_B" and row["component"] == "all"
+    ]
+    total_norm = l2([float(row["value"]) for row in total])
+    return {
+        "total_l2_norm": total_norm,
+        "components": components,
+    }
+
+
+def leave_out_classification(
+    metrics: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    restored = [
+        component for component in LOOP_COMPONENTS
+        if metrics[f"leave_out_{component}"]["update_direction_cosine"]
+        is not None
+        and metrics[f"leave_out_{component}"]["update_direction_cosine"]
+        >= DIRECTION_COSINE_FLOOR
+    ]
+    adverse_alone = [
+        component for component in LOOP_COMPONENTS
+        if metrics[f"only_{component}"]["update_direction_cosine"]
+        is not None
+        and metrics[f"only_{component}"]["update_direction_cosine"] < 0.0
+    ]
+    if set(adverse_alone) == {"transport_boundary", "sg_avalanche"}:
+        outcome = (
+            "transport_and_avalanche_independently_sustain_reversal"
+        )
+    elif len(adverse_alone) == 1:
+        outcome = f"{adverse_alone[0]}_alone_sustains_reversal"
+    elif len(adverse_alone) > 1:
+        outcome = "multiple_components_independently_sustain_reversal"
+    elif len(restored) == 1:
+        outcome = f"{restored[0]}_necessary_for_reversal"
+    elif restored:
+        outcome = "multiple_components_individually_necessary"
+    else:
+        outcome = "distributed_closed_loop_reversal"
+    return {
+        "classification": outcome,
+        "components_restoring_positive_direction": restored,
+        "components_adverse_when_isolated": adverse_alone,
+    }
+
+
 def case_index(execution: dict[str, Any]) -> dict[float, dict[str, Any]]:
     return {
         float(case["bias_V"]): case
@@ -238,6 +367,7 @@ def duplicate_hashes(execution: dict[str, Any]) -> dict[str, dict[str, str]]:
             "jacobian_blocks_csv": sha256(
                 Path(case["jacobian_blocks_csv"])
             ),
+            "schur_loop_csv": sha256(Path(case["schur_loop_csv"])),
         }
         for case in execution["cases"]
     }
@@ -303,10 +433,19 @@ def main() -> int:
     closure_passed = True
     schur_full_passed = True
     boundary_passed = True
+    directional_derivative_passed = True
+    loop_component_closure_passed = True
     for bias, case in sorted(cases.items(), reverse=True):
         rows = read_csv(Path(case["output_csv"]))
+        loop_rows = read_csv(Path(case["schur_loop_csv"]))
         status = json.loads(Path(case["status"]).read_text(encoding="utf-8"))
         metrics = {mode: mode_metrics(rows, mode) for mode in MODES}
+        contact_nodes = {
+            int(row["node_id"]) for row in rows
+            if int(row["is_contact"]) == 1
+        }
+        loop_decomposition = schur_loop_decomposition(
+            loop_rows, contact_nodes)
         schur_difference = max(
             abs(
                 float(row[f"schur_delta_{suffix}_V"])
@@ -323,6 +462,24 @@ def main() -> int:
             and schur_difference <= SCHUR_FULL_MAX_DIFFERENCE_V
         )
         boundary_passed = boundary_passed and boundary["passed"]
+        derivative_check = status["directional_derivative_check"]
+        derivative_pass = (
+            float(derivative_check["J_psi_qfp_relative_error"])
+            <= DIRECTIONAL_DERIVATIVE_RELATIVE_ERROR
+            and float(derivative_check["J_qfp_psi_relative_error"])
+            <= DIRECTIONAL_DERIVATIVE_RELATIVE_ERROR
+        )
+        directional_derivative_passed = (
+            directional_derivative_passed and derivative_pass
+        )
+        loop_relative_closure = (
+            float(status["loop_component_closure_norm"])
+            / max(loop_decomposition["total_l2_norm"], 1.0)
+        )
+        loop_component_closure_passed = (
+            loop_component_closure_passed
+            and loop_relative_closure <= LOOP_COMPONENT_RELATIVE_CLOSURE
+        )
         block_products = {
             "J_psi_qfp_delta_qfp_l2": l2(
                 [float(row["psi_qfp_product"]) for row in rows]
@@ -348,6 +505,16 @@ def main() -> int:
                 "jacobian_block_norms": status["jacobian_block_norms"],
                 "block_products": block_products,
                 "adverse_cross_block_hotspot": adverse_hotspot(rows),
+                "loop_decomposition": loop_decomposition,
+                "leave_out_classification":
+                    leave_out_classification(metrics),
+                "condition_estimates": status["condition_estimates"],
+                "directional_derivative_check": {
+                    **derivative_check,
+                    "passed": derivative_pass,
+                },
+                "loop_component_relative_closure":
+                    loop_relative_closure,
                 "modes": metrics,
             }
         )
@@ -366,6 +533,17 @@ def main() -> int:
         and closure_passed
         and schur_full_passed
         and boundary_passed
+        and directional_derivative_passed
+        and loop_component_closure_passed
+    )
+    loop_source_classifications = {
+        result["leave_out_classification"]["classification"]
+        for result in bias_results
+    }
+    cross_bias_loop_source = (
+        next(iter(loop_source_classifications))
+        if len(loop_source_classifications) == 1
+        else "inconsistent_loop_source_across_biases"
     )
     outcome = (
         next(iter(classifications))
@@ -377,6 +555,7 @@ def main() -> int:
         "status": "passed" if controls_valid else "failed",
         "outcome": outcome,
         "cross_bias_causal_evidence": cross_bias_cause,
+        "cross_bias_loop_source": cross_bias_loop_source,
         "task8_authorized": False,
         "production_defaults_changed": False,
         "gates": {
@@ -384,6 +563,9 @@ def main() -> int:
             "schur_relative_closure": closure_passed,
             "schur_matches_full_raw_step": schur_full_passed,
             "boundary_target_preserved": boundary_passed,
+            "cross_directional_derivatives":
+                directional_derivative_passed,
+            "loop_component_closure": loop_component_closure_passed,
             "same_localization_at_adjacent_biases": cross_bias_cause,
         },
         "thresholds": {
@@ -393,6 +575,10 @@ def main() -> int:
             "material_qfp_error_improvement_fraction":
                 MATERIAL_IMPROVEMENT_FRACTION,
             "direction_cosine_floor": DIRECTION_COSINE_FLOOR,
+            "directional_derivative_relative_error":
+                DIRECTIONAL_DERIVATIVE_RELATIVE_ERROR,
+            "loop_component_relative_closure":
+                LOOP_COMPONENT_RELATIVE_CLOSURE,
         },
         "bias_results": bias_results,
         "determinism": {
@@ -410,7 +596,7 @@ def main() -> int:
             },
         },
         "next_gate": (
-            "review_bidirectional_cross_block_model_ownership"
+            "review_localized_schur_loop_model_ownership"
             if outcome == "bidirectional_poisson_qfp_closed_loop_cause"
             else "retain_task8_stop_expand_observation"
         ),

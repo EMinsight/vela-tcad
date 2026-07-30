@@ -4,10 +4,11 @@ Date: 2026-07-29
 
 Status: WP0-WP7, exact-lattice continuation, fixed-transition Newton, the
 Task 6 density/QFP matrix, both Task 7 continuation schedules, and the
-observation-only Poisson-QFP cross-block decomposition are executed. The
-decomposition returns `bidirectional_poisson_qfp_closed_loop_cause`; Task 7
-remains `no_authorized_candidate`. WP8's correction/default-change path is
-not authorized.
+observation-only Poisson-QFP cross-block decomposition, and the effective
+Schur-loop source decomposition are executed. The latest result is
+`transport_and_avalanche_independently_sustain_reversal`; Task 7 remains
+`no_authorized_candidate`. WP8's correction/default-change path is not
+authorized.
 
 Starting point: branch `codex-pn2d-minimal6-operator-audit`, commit
 `1350d11`.
@@ -1053,6 +1054,24 @@ directional-derivative review of the effective Schur term `C A^-1 B`.
 Evidence:
 `docs/validation/pn2d_poisson_qfp_cross_block_decomposition_2026-07-30.md`.
 
+Effective Schur-loop source follow-up:
+
+- transport-only and avalanche-only loops each keep a negative target
+  direction at both adjacent biases;
+- SRH/Auger-only retains a positive target direction;
+- transport and avalanche loop norms are about `1.13e4` and `2.23e3`,
+  versus about `5e-4` for SRH/Auger;
+- `B/C` directional finite differences pass below `2.24e-6`;
+- transport `C` has no nonzero contact-row entries;
+- the equilibrated Schur condition is `135-138`, substantially better than
+  the equilibrated carrier-only `D` condition near `2.8e6`.
+
+The typed result is
+`transport_and_avalanche_independently_sustain_reversal`. This closes the
+requested carrier/model/support/sign/scale/conditioning slice without
+authorizing WP8. Evidence:
+`docs/validation/pn2d_schur_loop_source_decomposition_2026-07-30.md`.
+
 ## 13. Dependency order and parallel-safe work
 
 Mandatory dependency chain:
@@ -1157,15 +1176,17 @@ Every work package must report before the next begins:
 ## 17. Next execution slice
 
 WP0-WP7, scientific Task 2, the Task 6 feedback matrix, the two predeclared
-continuation schedules, and the observation-only Poisson-QFP cross-block
-decomposition are complete. The cross-block result is
-`bidirectional_poisson_qfp_closed_loop_cause`: removing either cross direction
-retains a positive QFP target direction, while the exact full Schur loop
-reverses it at both `-19.7/-19.8 V`.
+continuation schedules, the observation-only Poisson-QFP cross-block
+decomposition, and the effective-loop source decomposition are complete. The
+latest result is `transport_and_avalanche_independently_sustain_reversal`:
+either interior transport or avalanche feedback alone retains an adverse
+direction at both `-19.7/-19.8 V`; SRH/Auger does not.
 
 No current Task 7 axis is authorized. Do not enter Task 8, run a complete
 candidate curve campaign, or change a production default. Continue only with
-a separately reviewed decomposition of `C A^-1 B` by carrier, physical model,
-support, sign, scale, and conditioning, including analytical and
-finite-difference derivative checks. Preserve the failed `c=1.0e-2`
-candidate and both continuation schedules as sealed negative controls.
+a separately reviewed analytical-ownership and sign-convention comparison of
+the interior transport and avalanche feedback paths against the governing
+equations and an independent reference definition. Do not remove a physical
+term, delete a cross block, or promote the carrier-only direction. Preserve
+the failed `c=1.0e-2` candidate and both continuation schedules as sealed
+negative controls.

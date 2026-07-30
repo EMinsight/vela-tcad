@@ -7,6 +7,7 @@
 #include "vela/solver/LinearSolver.h"
 #include <nlohmann/json.hpp>
 #include <Eigen/SparseLU>
+#include <Eigen/SVD>
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -386,6 +387,64 @@ SparseMatrixd sparseBlock(const SparseMatrixd& matrix,
     SparseMatrixd block = matrix.block(rowStart, colStart, rows, cols);
     block.makeCompressed();
     return block;
+}
+
+NewtonMatrixConditionEstimate matrixConditionEstimate(
+    const Eigen::MatrixXd& matrix)
+{
+    NewtonMatrixConditionEstimate estimate;
+    estimate.rows = static_cast<Index>(matrix.rows());
+    estimate.columns = static_cast<Index>(matrix.cols());
+    if (matrix.rows() == 0 || matrix.cols() == 0)
+        return estimate;
+
+    const Eigen::JacobiSVD<Eigen::MatrixXd> svd(
+        matrix, Eigen::ComputeThinU | Eigen::ComputeThinV);
+    const VectorXd singular = svd.singularValues();
+    if (singular.size() == 0)
+        return estimate;
+    estimate.largestSingularValue = singular(0);
+    const Real threshold =
+        std::numeric_limits<Real>::epsilon() *
+        static_cast<Real>(std::max(matrix.rows(), matrix.cols())) *
+        estimate.largestSingularValue;
+    for (int i = 0; i < singular.size(); ++i) {
+        if (singular(i) > threshold) {
+            ++estimate.numericalRank;
+            estimate.smallestResolvedSingularValue = singular(i);
+        }
+    }
+    if (estimate.smallestResolvedSingularValue > 0.0) {
+        estimate.resolvedConditionNumber =
+            estimate.largestSingularValue /
+            estimate.smallestResolvedSingularValue;
+    }
+    return estimate;
+}
+
+Eigen::MatrixXd l2Equilibrated(const Eigen::MatrixXd& matrix)
+{
+    Eigen::MatrixXd equilibrated = matrix;
+    for (int row = 0; row < equilibrated.rows(); ++row) {
+        const Real norm = equilibrated.row(row).norm();
+        if (norm > 0.0)
+            equilibrated.row(row) /= norm;
+    }
+    for (int column = 0; column < equilibrated.cols(); ++column) {
+        const Real norm = equilibrated.col(column).norm();
+        if (norm > 0.0)
+            equilibrated.col(column) /= norm;
+    }
+    return equilibrated;
+}
+
+Real relativeVectorDifference(
+    const VectorXd& left,
+    const VectorXd& right)
+{
+    const Real reference = std::max<Real>(
+        1.0, std::max(left.norm(), right.norm()));
+    return (left - right).norm() / reference;
 }
 
 Real addCarrierRowRegularization(SparseMatrixd& matrix,
@@ -2395,6 +2454,8 @@ NewtonSolver::evaluatePoissonQfpCrossBlockDecomposition(
         aInverseB.col(column) = linearSolver.solve(A, denseB.col(column));
     const Eigen::MatrixXd schur =
         Eigen::MatrixXd(D) - Eigen::MatrixXd(C) * aInverseB;
+    const Eigen::MatrixXd effectiveLoop =
+        Eigen::MatrixXd(C) * aInverseB;
     SparseMatrixd sparseSchur = schur.sparseView();
     sparseSchur.makeCompressed();
     const VectorXd schurQfp = linearSolver.solve(
@@ -2410,6 +2471,136 @@ NewtonSolver::evaluatePoissonQfpCrossBlockDecomposition(
     schurStep.segment(0, N) = schurPsi;
     schurStep.segment(N, 2 * N) = schurQfp;
 
+    const auto makeDiagnosticAssembler =
+        [&](const RecombinationModelConfig& recombination,
+            const ImpactIonizationModelConfig& impact) {
+            CoupledDDAssembler diagnostic(
+                mesh_,
+                matdb_,
+                doping_,
+                Vt,
+                mobilityConfig,
+                recombination,
+                cfg_.bandgapNarrowing,
+                impact,
+                fixedCharges_,
+                sheetCharges_,
+                scaling,
+                cfg_.carrierDiagonalFloor);
+            configureQuasiFermiReferences(diagnostic);
+            return diagnostic;
+        };
+    RecombinationModelConfig noRecombination =
+        recombinationModelConfig({"none"}, cfg_.taun, cfg_.taup);
+    const ImpactIonizationModelConfig noImpact{};
+    CoupledDDAssembler transportAssembler =
+        makeDiagnosticAssembler(noRecombination, noImpact);
+    CoupledDDAssembler recombinationAssembler =
+        makeDiagnosticAssembler(recombinationConfig, noImpact);
+    CoupledDDAssembler impactAssembler =
+        makeDiagnosticAssembler(noRecombination, cfg_.impactIonization);
+    const SparseMatrixd transportJ =
+        transportAssembler.assembleJacobian(x, bcs);
+    const SparseMatrixd recombinationJ =
+        recombinationAssembler.assembleJacobian(x, bcs);
+    const SparseMatrixd impactJ =
+        impactAssembler.assembleJacobian(x, bcs);
+    const SparseMatrixd transportC =
+        sparseBlock(transportJ, N, 0, 2 * N, N);
+    SparseMatrixd recombinationC = sparseBlock(
+        recombinationJ - transportJ, N, 0, 2 * N, N);
+    SparseMatrixd impactC = sparseBlock(
+        impactJ - transportJ, N, 0, 2 * N, N);
+    recombinationC.makeCompressed();
+    impactC.makeCompressed();
+
+    std::vector<NewtonSchurLoopComponentEvaluation> loopComponents;
+    loopComponents.reserve(3);
+    SparseMatrixd componentSum(2 * N, N);
+    componentSum.setZero();
+    const auto addLoopComponent =
+        [&](const std::string& name, const SparseMatrixd& componentC) {
+            const Eigen::MatrixXd componentLoop =
+                Eigen::MatrixXd(componentC) * aInverseB;
+            const Eigen::MatrixXd leaveOutC =
+                Eigen::MatrixXd(C) - Eigen::MatrixXd(componentC);
+            SparseMatrixd leaveOutSchur =
+                (Eigen::MatrixXd(D) - leaveOutC * aInverseB).sparseView();
+            leaveOutSchur.makeCompressed();
+            const VectorXd leaveOutQfp = linearSolver.solve(
+                leaveOutSchur,
+                -rQfp - leaveOutC * independentPsi);
+            SparseMatrixd onlySchur =
+                (Eigen::MatrixXd(D)
+                 - Eigen::MatrixXd(componentC) * aInverseB).sparseView();
+            onlySchur.makeCompressed();
+            const VectorXd onlyQfp = linearSolver.solve(
+                onlySchur,
+                -rQfp - Eigen::MatrixXd(componentC) * independentPsi);
+
+            NewtonSchurLoopComponentEvaluation component;
+            component.name = name;
+            component.jacobianQfpPsi = componentC;
+            component.effectiveLoop = componentLoop.sparseView();
+            component.effectiveLoop.makeCompressed();
+            component.leaveOutDeltaPhin =
+                leaveOutQfp.segment(0, N) * potentialScale;
+            component.leaveOutDeltaPhip =
+                leaveOutQfp.segment(N, N) * potentialScale;
+            component.onlyDeltaPhin =
+                onlyQfp.segment(0, N) * potentialScale;
+            component.onlyDeltaPhip =
+                onlyQfp.segment(N, N) * potentialScale;
+            loopComponents.push_back(std::move(component));
+            componentSum += componentC;
+        };
+    addLoopComponent("transport_boundary", transportC);
+    addLoopComponent("srh_auger", recombinationC);
+    addLoopComponent("sg_avalanche", impactC);
+    const Eigen::MatrixXd componentLoopClosure =
+        effectiveLoop - Eigen::MatrixXd(componentSum) * aInverseB;
+
+    VectorXd qfpDirection = independentQfp;
+    if (qfpDirection.norm() == 0.0) {
+        qfpDirection.segment(0, N) =
+            (replacement.electronQuasiFermi_V - state.phin) / potentialScale;
+        qfpDirection.segment(N, N) =
+            (replacement.holeQuasiFermi_V - state.phip) / potentialScale;
+    }
+    if (qfpDirection.norm() == 0.0) {
+        throw std::runtime_error(
+            "NewtonSolver::evaluatePoissonQfpCrossBlockDecomposition: "
+            "cannot form a non-zero QFP finite-difference direction.");
+    }
+    qfpDirection.normalize();
+    VectorXd psiDirection =
+        -linearSolver.solve(A, B * qfpDirection);
+    if (psiDirection.norm() == 0.0) {
+        throw std::runtime_error(
+            "NewtonSolver::evaluatePoissonQfpCrossBlockDecomposition: "
+            "cannot form a non-zero Poisson-response finite-difference direction.");
+    }
+    psiDirection.normalize();
+    constexpr Real directionalStep = 1.0e-7;
+    VectorXd qfpPerturbation = VectorXd::Zero(3 * N);
+    qfpPerturbation.segment(N, 2 * N) = qfpDirection;
+    const VectorXd psiQfpFiniteDifference =
+        (assembler.residual(x + directionalStep * qfpPerturbation, bcs)
+         - assembler.residual(x - directionalStep * qfpPerturbation, bcs))
+        / (2.0 * directionalStep);
+    VectorXd psiPerturbation = VectorXd::Zero(3 * N);
+    psiPerturbation.segment(0, N) = psiDirection;
+    const VectorXd qfpPsiFiniteDifference =
+        (assembler.residual(x + directionalStep * psiPerturbation, bcs)
+         - assembler.residual(x - directionalStep * psiPerturbation, bcs))
+        / (2.0 * directionalStep);
+    const VectorXd analyticPsiQfp = B * qfpDirection;
+    const VectorXd analyticQfpPsi = C * psiDirection;
+    const VectorXd finiteDifferencePsiQfp =
+        psiQfpFiniteDifference.segment(0, N);
+    const VectorXd finiteDifferenceQfpPsi =
+        qfpPsiFiniteDifference.segment(N, 2 * N);
+
     NewtonPoissonQfpCrossBlockEvaluation evaluation;
     evaluation.residual.raw = raw;
     evaluation.residual.blockNorms = blockResidualInfo(raw, mesh_.numNodes());
@@ -2420,6 +2611,9 @@ NewtonSolver::evaluatePoissonQfpCrossBlockDecomposition(
     evaluation.jacobianPsiQfp = B;
     evaluation.jacobianQfpPsi = C;
     evaluation.jacobianQfpQfp = D;
+    evaluation.effectiveSchurLoop = effectiveLoop.sparseView();
+    evaluation.effectiveSchurLoop.makeCompressed();
+    evaluation.loopComponents = std::move(loopComponents);
     evaluation.targetDeltaPhin =
         replacement.electronQuasiFermi_V - state.phin;
     evaluation.targetDeltaPhip =
@@ -2458,6 +2652,31 @@ NewtonSolver::evaluatePoissonQfpCrossBlockDecomposition(
         fullCapped.segment(2 * N, N) * potentialScale;
     evaluation.psiQfpProduct = B * schurQfp;
     evaluation.qfpPsiProduct = C * schurPsi;
+    evaluation.qfpFiniteDifferenceDirectionPhin =
+        qfpDirection.segment(0, N) * potentialScale;
+    evaluation.qfpFiniteDifferenceDirectionPhip =
+        qfpDirection.segment(N, N) * potentialScale;
+    evaluation.psiFiniteDifferenceDirection =
+        psiDirection * potentialScale;
+    evaluation.analyticPsiQfpDirectionalDerivative = analyticPsiQfp;
+    evaluation.finiteDifferencePsiQfpDirectionalDerivative =
+        finiteDifferencePsiQfp;
+    evaluation.analyticQfpPsiDirectionalDerivative = analyticQfpPsi;
+    evaluation.finiteDifferenceQfpPsiDirectionalDerivative =
+        finiteDifferenceQfpPsi;
+    evaluation.jacobianPsiPsiCondition =
+        matrixConditionEstimate(Eigen::MatrixXd(A));
+    evaluation.jacobianPsiPsiEquilibratedCondition =
+        matrixConditionEstimate(l2Equilibrated(Eigen::MatrixXd(A)));
+    evaluation.jacobianQfpQfpCondition =
+        matrixConditionEstimate(Eigen::MatrixXd(D));
+    evaluation.jacobianQfpQfpEquilibratedCondition =
+        matrixConditionEstimate(l2Equilibrated(Eigen::MatrixXd(D)));
+    evaluation.schurCondition = matrixConditionEstimate(schur);
+    evaluation.schurEquilibratedCondition =
+        matrixConditionEstimate(l2Equilibrated(schur));
+    evaluation.effectiveSchurLoopCondition =
+        matrixConditionEstimate(effectiveLoop);
     evaluation.jacobianPsiPsiNorm = A.norm();
     evaluation.jacobianPsiQfpNorm = B.norm();
     evaluation.jacobianQfpPsiNorm = C.norm();
@@ -2466,6 +2685,12 @@ NewtonSolver::evaluatePoissonQfpCrossBlockDecomposition(
     evaluation.schurClosureNorm = (J * schurStep + raw).norm();
     evaluation.schurRelativeClosure =
         evaluation.schurClosureNorm / std::max<Real>(raw.norm(), 1.0);
+    evaluation.loopComponentClosureNorm = componentLoopClosure.norm();
+    evaluation.finiteDifferenceRelativeStep = directionalStep;
+    evaluation.psiQfpDirectionalDerivativeRelativeError =
+        relativeVectorDifference(analyticPsiQfp, finiteDifferencePsiQfp);
+    evaluation.qfpPsiDirectionalDerivativeRelativeError =
+        relativeVectorDifference(analyticQfpPsi, finiteDifferenceQfpPsi);
     return evaluation;
 }
 

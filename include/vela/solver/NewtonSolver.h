@@ -286,12 +286,33 @@ struct NewtonFeedbackSubstitutionEvaluation {
     Real carrierOnlyStepNorm = 0.0;
 };
 
+struct NewtonMatrixConditionEstimate {
+    Real largestSingularValue = 0.0;
+    Real smallestResolvedSingularValue = 0.0;
+    Real resolvedConditionNumber = 0.0;
+    Index numericalRank = 0;
+    Index rows = 0;
+    Index columns = 0;
+};
+
+struct NewtonSchurLoopComponentEvaluation {
+    std::string name;
+    SparseMatrixd jacobianQfpPsi;
+    SparseMatrixd effectiveLoop;
+    VectorXd leaveOutDeltaPhin;
+    VectorXd leaveOutDeltaPhip;
+    VectorXd onlyDeltaPhin;
+    VectorXd onlyDeltaPhip;
+};
+
 struct NewtonPoissonQfpCrossBlockEvaluation {
     NewtonResidualEvaluation residual;
     SparseMatrixd jacobianPsiPsi;
     SparseMatrixd jacobianPsiQfp;
     SparseMatrixd jacobianQfpPsi;
     SparseMatrixd jacobianQfpQfp;
+    SparseMatrixd effectiveSchurLoop;
+    std::vector<NewtonSchurLoopComponentEvaluation> loopComponents;
     VectorXd targetDeltaPhin;
     VectorXd targetDeltaPhip;
     VectorXd independentDeltaPsi;
@@ -314,6 +335,20 @@ struct NewtonPoissonQfpCrossBlockEvaluation {
     VectorXd fullCappedDeltaPhip;
     VectorXd psiQfpProduct;
     VectorXd qfpPsiProduct;
+    VectorXd qfpFiniteDifferenceDirectionPhin;
+    VectorXd qfpFiniteDifferenceDirectionPhip;
+    VectorXd psiFiniteDifferenceDirection;
+    VectorXd analyticPsiQfpDirectionalDerivative;
+    VectorXd finiteDifferencePsiQfpDirectionalDerivative;
+    VectorXd analyticQfpPsiDirectionalDerivative;
+    VectorXd finiteDifferenceQfpPsiDirectionalDerivative;
+    NewtonMatrixConditionEstimate jacobianPsiPsiCondition;
+    NewtonMatrixConditionEstimate jacobianPsiPsiEquilibratedCondition;
+    NewtonMatrixConditionEstimate jacobianQfpQfpCondition;
+    NewtonMatrixConditionEstimate jacobianQfpQfpEquilibratedCondition;
+    NewtonMatrixConditionEstimate schurCondition;
+    NewtonMatrixConditionEstimate schurEquilibratedCondition;
+    NewtonMatrixConditionEstimate effectiveSchurLoopCondition;
     Real jacobianPsiPsiNorm = 0.0;
     Real jacobianPsiQfpNorm = 0.0;
     Real jacobianQfpPsiNorm = 0.0;
@@ -321,6 +356,10 @@ struct NewtonPoissonQfpCrossBlockEvaluation {
     Real fullLinearClosureNorm = 0.0;
     Real schurClosureNorm = 0.0;
     Real schurRelativeClosure = 0.0;
+    Real loopComponentClosureNorm = 0.0;
+    Real finiteDifferenceRelativeStep = 0.0;
+    Real psiQfpDirectionalDerivativeRelativeError = 0.0;
+    Real qfpPsiDirectionalDerivativeRelativeError = 0.0;
 };
 
 struct NewtonDirectionalDerivativeEvaluation {
