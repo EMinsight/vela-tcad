@@ -2,9 +2,10 @@
 
 Date: 2026-07-29
 
-Status: WP0-WP7 plus the exact-lattice continuation follow-up executed. WP7
-still returns `insufficient_observation` because Sentaurus nonlinear
-residual/update fields are unavailable, so WP8 is not authorized.
+Status: WP0-WP7 plus the exact-lattice continuation and fixed-transition
+Newton follow-ups executed. WP7 returns `density_qfp_feedback_cause` with
+two-bias evidence. WP8's entry gate is satisfied, but no WP8 physics or
+production-default change has been executed.
 
 Starting point: branch `codex-pn2d-minimal6-operator-audit`, commit
 `1350d11`.
@@ -142,23 +143,30 @@ physics or defaults:
 - The contract-valid Vela manifest contains 68,034 field records, 783
   aggregates, and 87 exact-target Newton-attempt records. Its SHA-256 is
   `b882ece81a9cd1e7633e5685adbdd1a9ffde8b4adf2d14dea4fbc2286d6ddf6d`.
-- The paired WP7 rerun closes all 203 source/terminal rows. All observed
-  state-through-terminal stages are present, but Sentaurus supplies neither
-  spatial `residual_jacobian` nor `newton_update` records. The result remains
-  fail-closed with no accepted causal stage.
-- The observed-stage candidate is `state` for Sentaurus IIC versus
-  avalanche-on at `-19.7/-19.8 V`; it is not an authorization result.
+- Sentaurus `NewtonPlot(Error Residual Update)` and Vela
+  `newton_step_probe` were run as fixed transitions from each previous exact
+  accepted state to the six knee targets. Both sides contribute 2,916
+  per-node normalized residual/update observations; node coordinates match
+  exactly and off/IIC signatures are identical.
+- The paired WP7 rerun closes all 203 source/terminal rows and has no missing
+  process stage in any of the five comparisons. It accepts `state` as the
+  first departure for Sentaurus IIC versus avalanche-on at the adjacent
+  `-19.7/-19.8 V` points and returns `density_qfp_feedback_cause`.
+- Sentaurus 2018.06 does not export the full Jacobian matrix in NewtonPlot.
+  The recorded Jacobian evidence is the native residual and first inverse
+  action `delta_x = -J^-1 R`; this limitation is explicit in the artifact
+  contract and is not represented as matrix-entry coverage.
 
 Evidence:
 
 - `build-release/pn2d-vela-exact-lattice-maxiter80-on-20260730/manifest.json`;
-- `build-release/pn2d-wp7-process-chain-after-continuation-20260730/acceptance.json`;
+- `build-release/pn2d-wp7-process-chain-newton-complete-20260730/acceptance.json`;
 - `docs/validation/pn2d_bv_exact_lattice_continuation_2026-07-30.md`.
 
-The source/schema/plan files implementing WP1-WP2 are currently untracked.
-They must be reviewed and committed in the boundaries defined in section 15
-before WP3 changes are mixed into the worktree. `tmp/` remains user-owned and
-must not be staged.
+The prior WP1-WP2 and continuation changes are committed. The current Newton
+observation slice must be reviewed and committed within the boundaries defined
+in section 15 before WP8 solver changes are mixed into the worktree. `tmp/`
+remains user-owned and must not be staged.
 
 ## 3. Architecture and artifact contract
 
@@ -911,7 +919,7 @@ The analyzer must perform four comparisons:
 Only an outcome with two-bias causal evidence may authorize a physics/operator
 candidate.
 
-Executed outcome: `insufficient_observation`.
+Executed outcome: `density_qfp_feedback_cause`.
 
 The paired analyzer now emits the complete output contract, compares the
 three cross-simulator branches plus each simulator's IIC-versus-on branch,
@@ -926,11 +934,15 @@ manifest (SHA-256
 `190cb08f6c128ce64bdfd9bb8dfc6242bde95238234b7492ef5740b4fa2d3d15`)
 and the matching Vela off/IIC/on manifest (SHA-256
 `b882ece81a9cd1e7633e5685adbdd1a9ffde8b4adf2d14dea4fbc2286d6ddf6d`).
-All 203 source/terminal closure rows pass. The only missing required stages
-are spatial `residual_jacobian` and `newton_update`, which the current
-Sentaurus manifest does not provide. The analyzer emits no accepted causal
-stage and does not authorize WP8. Evidence:
-`build-release/pn2d-wp7-process-chain-after-continuation-20260730/acceptance.json`.
+All 203 source/terminal closure rows pass. Fixed-transition probes add native
+Sentaurus RHS/update fields and Vela residual/update fields at all six knee
+targets for all three branches. The normalized chain inputs each add 2,916
+records; all 2,916 cross-simulator node coordinates match exactly, and both
+simulators have zero off/IIC observation difference over 972 records.
+No required stage is missing. The accepted first departure is `state` for
+Sentaurus IIC versus avalanche-on at `-19.7/-19.8 V`, so WP7 returns
+`density_qfp_feedback_cause`. Evidence:
+`build-release/pn2d-wp7-process-chain-newton-complete-20260730/acceptance.json`.
 
 ## 12. Work package 8 - implement and qualify one minimal candidate
 
@@ -940,6 +952,7 @@ axis only and keeps defaults unchanged until final review.
 Authorized candidate categories are limited to evidence produced by work
 package 7:
 
+- a density/QFP feedback-state consistency correction;
 - a source-Jacobian correction;
 - a solver-used source/current support correction;
 - a missing high-field mobility feedback derivative;
@@ -972,7 +985,7 @@ WP0 -> WP1 -> WP2 -> WP2.1 -> scientific Task 2 verifier
                                 -> WP3 -> WP4 -> WP5 -> WP6 -> WP7 -> WP8
 ```
 
-WP0-WP4 and scientific Task 2 are complete. WP5 is the next gate. After WP1
+WP0-WP7 and scientific Task 2 are complete. WP8 is the next gate. After WP1
 is stable, these
 implementation streams may proceed independently, but their acceptance gates
 remain ordered:
@@ -1063,10 +1076,14 @@ Every work package must report before the next begins:
 
 ## 17. Next execution slice
 
-WP0-WP4 and scientific Task 2 are complete. The next slice is:
+WP0-WP7 and scientific Task 2 are complete. The next slice is:
 
-1. implement WP5 without changing a production physics formula; and
-2. stop at WP6's authorization gate before any nonlinear correction.
+1. use the accepted `density_qfp_feedback_cause` evidence to define one
+   minimal opt-in WP8 candidate;
+2. require the candidate to correct the named internal QFP/minority-density
+   feedback evidence as well as the curve/knee scorecard; and
+3. keep all production defaults unchanged until the complete WP8
+   qualification and companion-plan review gates pass.
 
 The deterministic current-branch failure is an expected observed condition,
 not permission to relax convergence or substitute missing curve rows.

@@ -76,15 +76,16 @@ The run now has complete Sentaurus and Vela state-through-terminal process
 records on the same exact lattice. All 203 independently derived
 source-reintegration and carrier/total terminal-current closure rows pass.
 
-The final result remains `insufficient_observation`, for a narrower reason:
-the accepted Sentaurus manifest has no spatial `residual_jacobian` or
-`newton_update` records. Those two stages are missing in all five required
-comparisons. The analyzer therefore reports no accepted causal stage.
+This initial rerun returned `insufficient_observation` because the accepted
+Sentaurus manifest had no spatial `residual_jacobian` or `newton_update`
+records. A subsequent fixed-transition Newton follow-up supplied those
+stages for both simulators at all six knee targets.
 
-The raw observed-stage candidate is `state` for Sentaurus IIC versus
-avalanche-on at adjacent knee biases `-19.7/-19.8 V`. It is retained only as a
-candidate and does not authorize WP8 while the two downstream nonlinear
-stages are unavailable.
+The final WP7 report is now under
+`build-release/pn2d-wp7-process-chain-newton-complete-20260730`. It has no
+missing stage observations and accepts `state` for Sentaurus IIC versus
+avalanche-on at adjacent `-19.7/-19.8 V` biases. Its typed outcome is
+`density_qfp_feedback_cause`.
 
 The Vela `-20 V` avalanche-on solver-used integrated source is
 `4.719448196205013e-5 A/um`; its independently scattered/reintegrated value

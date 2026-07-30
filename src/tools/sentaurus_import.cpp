@@ -26,7 +26,8 @@ int regionTypeCode(SentaurusTdrRegionType type)
     return 99;
 }
 
-nlohmann::json inventoryJson(const SentaurusTdrInventory& inventory)
+nlohmann::json inventoryJson(const SentaurusTdrInventory& inventory,
+                             bool includeFieldValues = false)
 {
     nlohmann::json data;
     data["vertex_count"] = inventory.vertices.size();
@@ -79,7 +80,7 @@ nlohmann::json inventoryJson(const SentaurusTdrInventory& inventory)
             {"values", field.value_count},
             {"components", field.component_count},
         };
-        if (field.value_count <= 4 && field.values.size() <= 16) {
+        if (includeFieldValues || (field.value_count <= 4 && field.values.size() <= 16)) {
             fieldJson["raw_values"] = field.values;
         }
         data["fields"].push_back(std::move(fieldJson));
@@ -91,6 +92,7 @@ void usage()
 {
     std::cerr
         << "Usage: sentaurus_import --tdr FILE [--inventory-json FILE] [--export-dir DIR] "
+           "[--field-values-json FILE] "
            "[--compensated-doping-policy reported|dominant_signed_region]\n";
 }
 
@@ -101,6 +103,7 @@ int main(int argc, char** argv)
     try {
         std::string tdrPath;
         std::string inventoryPath;
+        std::string fieldValuesPath;
         std::string exportDir;
         SentaurusTdrExportOptions exportOptions;
         for (int i = 1; i < argc; ++i) {
@@ -115,6 +118,8 @@ int main(int argc, char** argv)
                 tdrPath = requireValue("--tdr");
             } else if (arg == "--inventory-json") {
                 inventoryPath = requireValue("--inventory-json");
+            } else if (arg == "--field-values-json") {
+                fieldValuesPath = requireValue("--field-values-json");
             } else if (arg == "--export-dir") {
                 exportDir = requireValue("--export-dir");
             } else if (arg == "--compensated-doping-policy") {
@@ -142,6 +147,14 @@ int main(int argc, char** argv)
             out << json.dump(2) << "\n";
         } else {
             std::cout << json.dump(2) << "\n";
+        }
+        if (!fieldValuesPath.empty()) {
+            std::ofstream out(fieldValuesPath);
+            if (!out.is_open()) {
+                throw std::runtime_error(
+                    "cannot open field-values JSON: " + fieldValuesPath);
+            }
+            out << inventoryJson(inventory, true).dump(2) << "\n";
         }
     } catch (const std::exception& ex) {
         std::cerr << "sentaurus_import: " << ex.what() << "\n";

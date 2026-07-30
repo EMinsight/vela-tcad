@@ -2,9 +2,11 @@
 
 Date: 2026-07-29
 
-Status: engineering WP0-WP7 and the exact-lattice continuation follow-up
-executed. Tasks 5-6 still return `insufficient_observation` because Sentaurus
-residual/update fields are unavailable, so Tasks 7-11 are not authorized.
+Status: engineering WP0-WP7 plus the exact-lattice continuation and
+fixed-transition Newton follow-ups executed. Tasks 5-6 return
+`density_qfp_feedback_cause` with adjacent-bias evidence. Task 7 is the next
+authorized diagnostic gate; no Tasks 7-11 physics/default change has yet been
+executed.
 
 Starting point: local branch `codex-pn2d-minimal6-operator-audit`, commit
 `1350d11`. Commit `fa1c343` is an ancestor of this starting point.
@@ -140,9 +142,10 @@ The companion observability plan's WP0-WP2 were executed on 2026-07-29:
   completed Vela off/IIC/on at all 29 exact points. The contract-valid Vela
   process manifest has SHA-256
   `b882ece81a9cd1e7633e5685adbdd1a9ffde8b4adf2d14dea4fbc2286d6ddf6d`.
-  The paired WP7 rerun passes 203/203 closure rows but remains fail-closed
-  because the Sentaurus bundle lacks spatial `residual_jacobian` and
-  `newton_update` observations.
+  Fixed-transition Sentaurus/Vela probes subsequently added per-node
+  residual and first-update signatures at all six knee targets. The paired
+  WP7 rerun passes 203/203 closure rows, has no missing stages, and accepts
+  `state` for Sentaurus IIC versus avalanche-on at `-19.7/-19.8 V`.
 
 Primary evidence:
 
@@ -162,8 +165,8 @@ also include every integer bias from `0` through `-20 V`.
 | Task 2 | common WP1 contract plus dedicated curve/knee analyzer | `curve_knee_contract_verified`; current data returns `solver_first_failure` |
 | Task 3 | WP0 baseline plus WP4-WP5 solver-used/attempt records | `complete_nonlinear_trace_available`; deterministic first failure reproduced |
 | Task 4 | WP6 source-only derivative work | `source_jacobian_dependency_identified_and_closed` |
-| Tasks 5-6 | WP3-WP5 records and WP7 paired process analyzer | `insufficient_observation`: exact Vela manifest now complete; Sentaurus `residual_jacobian` and `newton_update` records remain unavailable |
-| Tasks 7-11 | causal authorization from Tasks 4-6 | prohibited; no two-bias causal stage |
+| Tasks 5-6 | WP3-WP5 records and WP7 paired process analyzer | `density_qfp_feedback_cause`: complete stages, 203/203 closure rows, adjacent `-19.7/-19.8 V` state departure |
+| Tasks 7-11 | causal authorization from Tasks 4-6 | Task 7 entry authorized; later tasks remain gated by their own stop conditions |
 
 ## Frozen production configuration
 
@@ -927,12 +930,14 @@ Use the following prompt for the next execution slice:
 
 > Execute
 > `docs/superpowers/plans/2026-07-29-pn2d-avalanche-on-bv-knee-parity.md`
-> from WP2.1/Task 1's incomplete exact-lattice gate, then implement Task 2.
-> Preserve the sealed deterministic Vela failure at
-> `-19.692187499999644 -> -19.693749999999643 V` as an explicit baseline
-> result. Strictly obey every entry condition, acceptance criterion, decision
-> gate, and stop condition. Keep BV on `net_doping`, forward IV on
-> `cell_reconstructed_total_impurity`, avalanche drive on
+> from the now-satisfied WP7/Task 6 causal classification gate. Implement only
+> Task 7's minimal, opt-in density/QFP feedback-state consistency candidate,
+> then rerun the exact-lattice and WP7 acceptance gates before considering any
+> production-default change. Preserve all sealed off/IIC/on baselines,
+> including the earlier deterministic continuation failure, as explicit
+> comparison evidence. Strictly obey every entry condition, acceptance
+> criterion, decision gate, and stop condition. Keep BV on `net_doping`,
+> forward IV on `cell_reconstructed_total_impurity`, avalanche drive on
 > `quasi_fermi_gradient`, and Van Overstraeten coefficients unchanged. Report
 > machine-readable evidence after every decision gate before proceeding. Do
 > not stage `tmp/` or commit generated simulation outputs.
