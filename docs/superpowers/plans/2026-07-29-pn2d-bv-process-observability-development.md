@@ -3,10 +3,10 @@
 Date: 2026-07-29
 
 Status: WP0-WP7, exact-lattice continuation, fixed-transition Newton, the
-first WP8/Task 7 candidate, and the Task 6 one-stage density/QFP feedback
-matrix executed. The new result is `continuation_only_cause`, localized to a
-coupled Poisson-QFP cross-block reversal. WP8's correction/default-change path
-is not authorized.
+Task 6 density/QFP matrix, and both Task 7 continuation schedules executed.
+The schedule control returns `continuation_invariant_cross_block_reversal`;
+Task 7 remains `no_authorized_candidate`. WP8's correction/default-change
+path is not authorized.
 
 Starting point: branch `codex-pn2d-minimal6-operator-audit`, commit
 `1350d11`.
@@ -1016,8 +1016,22 @@ Task 6 follow-up executed outcome: `continuation_only_cause`.
   `build-release/pn2d-task6-feedback-substitution-final-scorecard-20260730/acceptance.json`.
 
 This closes the declared density/QFP substitution slice without authorizing a
-correction. The only next candidate axis permitted by the companion plan is
-the predeclared continuation-schedule branch-invariance control.
+correction.
+
+The subsequent continuation-schedule control executed with unchanged physics:
+
+- `standard_0p05` and `refined_0p025` each completed 29/29 exact points in two
+  deterministic runs;
+- the two schedules share one physics hash and one non-schedule configuration
+  hash;
+- their maximum QFP difference at `-19.7/-19.8 V` is `1.28e-12 V`;
+- their 29-point maximum log-current difference is `0.0045211 dex`; and
+- both schedules retain the same `13%` carrier-only improvement and `7%`
+  full-coupled worsening.
+
+The typed result is `continuation_invariant_cross_block_reversal`; Task 7
+remains `no_authorized_candidate`. Evidence:
+`docs/validation/pn2d_task7_continuation_schedule_control_2026-07-30.md`.
 
 ## 13. Dependency order and parallel-safe work
 
@@ -1028,9 +1042,10 @@ WP0 -> WP1 -> WP2 -> WP2.1 -> scientific Task 2 verifier
                                 -> WP3 -> WP4 -> WP5 -> WP6 -> WP7 -> WP8
 ```
 
-WP0-WP7 and scientific Task 2 are complete. The first WP8/Task 7 candidate
-reached `no_authorized_candidate`, and the follow-up Task 6 matrix reached
-`continuation_only_cause`. After WP1 is stable, these
+WP0-WP7 and scientific Task 2 are complete. The QFP-support and continuation
+Task 7 controls both reached `no_authorized_candidate`; the Task 6 matrix
+reached `continuation_only_cause`, and the schedule control showed that its
+cross-block reversal is continuation-invariant. After WP1 is stable, these
 implementation streams may proceed independently, but their acceptance gates
 remain ordered:
 
@@ -1120,19 +1135,15 @@ Every work package must report before the next begins:
 
 ## 17. Next execution slice
 
-WP0-WP7 and scientific Task 2 are complete. The first Task 7 candidate has
-been rejected and the Task 6 density/QFP matrix has localized a coupled
-Poisson-QFP path reversal. The next slice must not enter Task 8. It is limited
-to:
+WP0-WP7, scientific Task 2, the Task 6 feedback matrix, and the two
+predeclared continuation schedules are complete. Both `standard_0p05` and
+`refined_0p025` are duplicate-run deterministic and complete all 29 exact
+points. Their `-19.7/-19.8 V` QFP states agree below `1.28e-12 V`, and both
+retain the same carrier-only versus full-coupled update reversal. The typed
+outcome is `continuation_invariant_cross_block_reversal`.
 
-1. preserve the failed `c=1.0e-2` QFP-support candidate as a sealed negative
-   control;
-2. run only the companion plan's predeclared two continuation schedules with
-   unchanged physics;
-3. require the schedule control to remove the carrier-only versus
-   full-coupled QFP update reversal at both adjacent biases before a complete
-   curve campaign; and
-4. keep every production default unchanged.
-
-The deterministic current-branch failure is an expected observed condition,
-not permission to relax convergence or substitute missing curve rows.
+No current Task 7 axis is authorized. Do not enter Task 8, run a complete
+candidate curve campaign, or change a production default. Any continuation
+requires a separately reviewed, observation-only Poisson-QFP cross-block
+decomposition plan. Preserve the failed `c=1.0e-2` candidate and both
+continuation schedules as sealed negative controls.

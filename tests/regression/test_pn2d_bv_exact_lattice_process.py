@@ -8,9 +8,14 @@ from scripts.build_pn2d_bv_exact_lattice_manifest import (
     triangle_gradient,
 )
 from scripts.run_pn2d_bv_exact_lattice_process import (
+    CONTINUATION_SCHEDULES,
     branch_config,
+    build_state_manifest,
     exact_bias_lattice,
+    normalized_non_schedule_config,
     parse_branch_list,
+    payload_sha256,
+    physics_config,
     qualify_rows,
 )
 
@@ -97,6 +102,71 @@ class ExactLatticeProcessTests(unittest.TestCase):
             )
             self.assertEqual(config["sweep"]["bias_points"], self.biases)
             self.assertTrue(config["sweep"]["stop_on_failure"])
+
+    def test_predeclared_continuation_schedules_change_only_step_controls(self) -> None:
+        root = Path("qualification")
+        standard = branch_config(
+            self.base,
+            "avalanche_on",
+            self.biases,
+            root / "standard",
+            80,
+            continuation_schedule="standard_0p05",
+        )
+        refined = branch_config(
+            self.base,
+            "avalanche_on",
+            self.biases,
+            root / "refined",
+            80,
+            continuation_schedule="refined_0p025",
+        )
+        self.assertEqual(
+            CONTINUATION_SCHEDULES["standard_0p05"]["maximum_step_V"],
+            0.05,
+        )
+        self.assertEqual(
+            CONTINUATION_SCHEDULES["refined_0p025"]["maximum_step_V"],
+            0.025,
+        )
+        self.assertEqual(standard["sweep"]["max_step"], 0.05)
+        self.assertEqual(refined["sweep"]["max_step"], 0.025)
+        self.assertEqual(
+            payload_sha256(normalized_non_schedule_config(standard)),
+            payload_sha256(normalized_non_schedule_config(refined)),
+        )
+        self.assertEqual(
+            payload_sha256(physics_config(standard)),
+            payload_sha256(physics_config(refined)),
+        )
+
+    def test_state_manifest_preserves_exact_bias_and_relative_paths(self) -> None:
+        root = Path("qualification").resolve()
+        results = [
+            {
+                "branch": "avalanche_on",
+                "state_files": {
+                    f"{bias:.17g}": {
+                        "path": str(
+                            root
+                            / "avalanche_on"
+                            / "states"
+                            / f"state_bias_{index}.csv"
+                        ),
+                        "sha256": f"hash-{index}",
+                    }
+                    for index, bias in enumerate(self.biases)
+                },
+            }
+        ]
+        manifest = build_state_manifest(results, self.biases, root)
+        record = manifest["branch_records"][0]["bias_records"][2]
+        self.assertEqual(record["requested_bias_V"], -19.7)
+        self.assertEqual(record["actual_bias_V"], -19.7)
+        self.assertEqual(
+            record["snapshot_tdr"]["path"],
+            str(Path("avalanche_on/states/state_bias_2.csv")),
+        )
 
     def test_qualification_rejects_missing_or_inexact_rows(self) -> None:
         rows = [

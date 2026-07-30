@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import copy
 import csv
+import hashlib
 import json
 import math
 import subprocess
@@ -15,6 +16,84 @@ from typing import Any
 
 BRANCHES = ("avalanche_off", "iic_postprocess", "avalanche_on")
 EXACT_BIAS_TOLERANCE_V = 1.0e-10
+CONTINUATION_SCHEDULES = {
+    "standard_0p05": {
+        "initial_step_V": 0.05,
+        "minimum_step_V": 1.0e-10,
+        "maximum_step_V": 0.05,
+        "growth_factor": 1.2,
+        "shrink_factor": 0.5,
+    },
+    "refined_0p025": {
+        "initial_step_V": 0.025,
+        "minimum_step_V": 1.0e-10,
+        "maximum_step_V": 0.025,
+        "growth_factor": 1.2,
+        "shrink_factor": 0.5,
+    },
+}
+SCHEDULE_KEYS = {
+    "step",
+    "initial_step",
+    "min_step",
+    "max_step",
+    "growth_factor",
+    "shrink_factor",
+}
+
+
+def sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def payload_sha256(payload: Any) -> str:
+    encoded = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def bias_token(bias: float) -> str:
+    sign = "m" if bias < 0.0 else ""
+    return f"{sign}{abs(bias):.6f}".replace(".", "p")
+
+
+def normalized_non_schedule_config(config: dict[str, Any]) -> dict[str, Any]:
+    normalized = copy.deepcopy(config)
+    normalized.pop("output_csv", None)
+    normalized.pop("output_vtk_prefix", None)
+    sweep = normalized.get("sweep", {})
+    for key in SCHEDULE_KEYS:
+        sweep.pop(key, None)
+    for key in (
+        "write_state_file",
+        "write_state_every_point_prefix",
+        "vtk_prefix",
+        "csv_file",
+    ):
+        sweep.pop(key, None)
+    diagnostics = sweep.get("diagnostics", {})
+    for value in diagnostics.values():
+        if isinstance(value, dict):
+            for key in tuple(value):
+                if key.endswith("_file") or key == "csv_file":
+                    value.pop(key, None)
+    return normalized
+
+
+def physics_config(config: dict[str, Any]) -> dict[str, Any]:
+    normalized = normalized_non_schedule_config(config)
+    normalized.pop("sweep", None)
+    solver = normalized.get("solver", {})
+    for key in ("max_iter", "verbose", "diagnostics", "handoff"):
+        solver.pop(key, None)
+    return normalized
 
 
 def parse_branch_list(raw: str) -> tuple[str, ...]:
@@ -56,7 +135,13 @@ def branch_config(
     case_dir: Path,
     max_iter: int,
     qf_carrier_truncation: float | None = None,
+    continuation_schedule: str = "standard_0p05",
 ) -> dict[str, Any]:
+    if continuation_schedule not in CONTINUATION_SCHEDULES:
+        raise ValueError(
+            f"unknown continuation schedule: {continuation_schedule}"
+        )
+    schedule = CONTINUATION_SCHEDULES[continuation_schedule]
     config = copy.deepcopy(base)
     solver = config["solver"]
     solver["max_iter"] = max_iter
@@ -104,13 +189,17 @@ def branch_config(
         {
             "start": biases[0],
             "stop": biases[-1],
-            "step": -0.05 if biases[-1] < biases[0] else 0.05,
+            "step": (
+                -schedule["maximum_step_V"]
+                if biases[-1] < biases[0]
+                else schedule["maximum_step_V"]
+            ),
             "bias_points": biases,
-            "initial_step": 0.05,
-            "min_step": 1.0e-10,
-            "max_step": 0.05,
-            "growth_factor": 1.2,
-            "shrink_factor": 0.5,
+            "initial_step": schedule["initial_step_V"],
+            "min_step": schedule["minimum_step_V"],
+            "max_step": schedule["maximum_step_V"],
+            "growth_factor": schedule["growth_factor"],
+            "shrink_factor": schedule["shrink_factor"],
             "max_retries": 30,
             "stop_on_failure": True,
             "write_vtk": False,
@@ -183,6 +272,7 @@ def run_branch(
     output_root: Path,
     max_iter: int,
     qf_carrier_truncation: float | None,
+    continuation_schedule: str,
     resume: bool,
 ) -> dict[str, Any]:
     case_dir = output_root / branch
@@ -194,6 +284,7 @@ def run_branch(
         case_dir,
         max_iter,
         qf_carrier_truncation,
+        continuation_schedule,
     )
     config_path = case_dir / "simulation.json"
     config_path.write_text(
@@ -234,6 +325,15 @@ def run_branch(
         }
     else:
         qualification = qualify_rows(read_sweep_rows(output_csv), biases)
+    state_files: dict[str, dict[str, str]] = {}
+    states_dir = case_dir / "states"
+    for bias in biases:
+        state_path = states_dir / f"state_bias_{bias_token(bias)}.csv"
+        if state_path.is_file():
+            state_files[f"{bias:.17g}"] = {
+                "path": str(state_path),
+                "sha256": sha256(state_path),
+            }
     return {
         "branch": branch,
         "returncode": returncode,
@@ -242,7 +342,66 @@ def run_branch(
         "output_csv": str(output_csv),
         "runner_log": str(log_path),
         "max_iter": max_iter,
+        "continuation_schedule": continuation_schedule,
+        "continuation_schedule_parameters": CONTINUATION_SCHEDULES[
+            continuation_schedule
+        ],
+        "physics_config_sha256": payload_sha256(physics_config(config)),
+        "non_schedule_config_sha256": payload_sha256(
+            normalized_non_schedule_config(config)
+        ),
+        "config_sha256": sha256(config_path),
+        "output_csv_sha256": (
+            sha256(output_csv) if output_csv.is_file() else None
+        ),
+        "state_files": state_files,
         **qualification,
+    }
+
+
+def build_state_manifest(
+    results: list[dict[str, Any]],
+    biases: list[float],
+    output_root: Path,
+) -> dict[str, Any]:
+    branches: list[dict[str, Any]] = []
+    for result in results:
+        states = result["state_files"]
+        records: list[dict[str, Any]] = []
+        for bias in biases:
+            matches = [
+                record
+                for raw_bias, record in states.items()
+                if abs(float(raw_bias) - bias) <= EXACT_BIAS_TOLERANCE_V
+            ]
+            if len(matches) != 1:
+                raise ValueError(
+                    f"{result['branch']} {bias:g} V: missing exact state file"
+                )
+            state = matches[0]
+            state_path = Path(state["path"]).resolve()
+            records.append(
+                {
+                    "requested_bias_V": bias,
+                    "actual_bias_V": bias,
+                    "snapshot_tdr": {
+                        "path": str(state_path.relative_to(output_root)),
+                        "sha256": state["sha256"],
+                    },
+                }
+            )
+        branches.append(
+            {
+                "branch": result["branch"],
+                "requested_biases_V": biases,
+                "bias_records": records,
+            }
+        )
+    return {
+        "schema": "vela.pn2d_bv_exact_state_manifest.v1",
+        "status": "passed",
+        "outcome": "complete_exact_state_manifest",
+        "branch_records": branches,
     }
 
 
@@ -254,6 +413,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--branches", default=",".join(BRANCHES))
     parser.add_argument("--max-iter", type=int, default=80)
+    parser.add_argument(
+        "--continuation-schedule",
+        choices=tuple(CONTINUATION_SCHEDULES),
+        default="standard_0p05",
+    )
     parser.add_argument("--resume", action="store_true")
     parser.add_argument(
         "--qf-carrier-truncation",
@@ -296,6 +460,7 @@ def main() -> int:
             output_root,
             args.max_iter,
             args.qf_carrier_truncation,
+            args.continuation_schedule,
             args.resume,
         )
         for branch in selected
@@ -313,9 +478,16 @@ def main() -> int:
             else "incomplete_exact_lattice"
         ),
         "runner": str(runner),
+        "runner_sha256": sha256(runner),
         "base_config": str(base_path),
+        "base_config_sha256": sha256(base_path),
         "sentaurus_manifest": str(sentaurus_path),
+        "sentaurus_manifest_sha256": sha256(sentaurus_path),
         "max_iter": args.max_iter,
+        "continuation_schedule": {
+            "id": args.continuation_schedule,
+            **CONTINUATION_SCHEDULES[args.continuation_schedule],
+        },
         "candidate": {
             "axis": "impact_ionization.quasi_fermi_carrier_truncation",
             "value": args.qf_carrier_truncation,
@@ -329,6 +501,13 @@ def main() -> int:
         json.dumps(execution, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+    if complete:
+        state_manifest = build_state_manifest(results, biases, output_root)
+        state_manifest_path = output_root / "state_manifest.json"
+        state_manifest_path.write_text(
+            json.dumps(state_manifest, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
     print(json.dumps(execution, indent=2, sort_keys=True))
     return 0 if complete else 2
 
