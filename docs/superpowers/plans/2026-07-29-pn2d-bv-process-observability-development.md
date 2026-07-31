@@ -1330,3 +1330,40 @@ precision task.
 Evidence:
 
 `docs/validation/pn2d_task7_low_current_root_cause_audit_2026-07-30.md`.
+
+## 19. Dual-domain prospective acceptance contract - 2026-07-31
+
+The separately scoped review is complete. Typed decision:
+
+`bv_model_consistent_low_current_precision_floor_open`.
+
+The machine-readable contract and independent replay evaluator now separate:
+
+1. BV-active curve, gain, knee, current-vector, source, state-feedback,
+   closure, and determinism gates on the exact `-15` through `-20 V` lattice;
+2. low-current solver-precision classification on
+   `-3/-4/-5/-6/-7 V`.
+
+All gates in both domains pass for the sealed SG/Laux artifacts. The replay
+preserves the original `tradeoff_without_parity` outcome and does not mutate
+its no-relocation gate. A low-current classification is eligible only while
+all exact-domain currents remain below `1e-15 A/um`, preventing a physical
+runaway from being hidden by the solver-precision classification.
+
+Authorized next scope:
+
+`opt_in_bv_model_validation_only`.
+
+Still prohibited:
+
+- WP8/production-default changes without a separate deployment contract;
+- minimum-field/current thresholds;
+- fitted ionization/source scales;
+- post-result bias removal or schedule changes; and
+- closing the low-current nonlinear precision task on the basis of BV parity.
+
+Evidence:
+
+- `docs/validation/contracts/pn2d_bv_dual_domain_acceptance_v1.json`;
+- `docs/validation/pn2d_bv_dual_domain_acceptance_contract_review_2026-07-31.md`;
+- `build-release/pn2d-bv-dual-domain-contract-replay-20260731/acceptance.json`.

@@ -1,0 +1,106 @@
+{
+  "schema": "vela.pn2d_bv_dual_domain_acceptance_contract.v1",
+  "contract_id": "pn2d_bv_dual_domain_acceptance_20260731",
+  "frozen_date": "2026-07-31",
+  "prospective_only": true,
+  "retroactive_score_mutation_forbidden": true,
+  "production_default_change_authorized": false,
+  "domains": {
+    "bv_model_consistency": {
+      "exact_biases_V": [
+        -15.0,
+        -16.0,
+        -17.0,
+        -18.0,
+        -18.5,
+        -19.0,
+        -19.25,
+        -19.5,
+        -19.7,
+        -19.8,
+        -19.85,
+        -19.9,
+        -19.95,
+        -20.0
+      ],
+      "thresholds": {
+        "effective_curve_median_abs_log_error_dex": 0.05,
+        "effective_curve_p95_abs_log_error_dex": 0.1,
+        "effective_curve_max_abs_log_error_dex": 0.15,
+        "effective_gain_median_abs_log_error_dex": 0.05,
+        "effective_gain_max_abs_log_error_dex": 0.1,
+        "knee_median_abs_log_error_dex": 0.05,
+        "knee_max_abs_log_error_dex": 0.1,
+        "V_break_abs_error_V": 0.1,
+        "V_slope_abs_error_V": 0.1,
+        "adjacent_slope_rmse_dex_per_V": 0.2
+      },
+      "required_fixed_state_gates": [
+        "observation_only",
+        "duplicate_run_determinism",
+        "integrated_source_within_0p02_relative",
+        "matching_current_median_p95",
+        "active_source_median_maximum",
+        "nonzero_vector_direction_agreement",
+        "sign_only_negative_control_rejected"
+      ],
+      "required_self_consistent_gates": [
+        "qfp_state_metric_improved",
+        "density_state_metric_improved",
+        "wp7_closure_preserved",
+        "duplicate_determinism",
+        "task6_feedback_state_metric_improved",
+        "task6_feedback_determinism_preserved"
+      ],
+      "excluded_gates": [
+        "whole_lattice_monotonicity",
+        "low_current_nonmonotonic_interval_removed"
+      ]
+    },
+    "low_current_solver_precision": {
+      "exact_biases_V": [
+        -3.0,
+        -4.0,
+        -5.0,
+        -6.0,
+        -7.0
+      ],
+      "eligibility_max_abs_current_A_per_um": 1e-15,
+      "required_evidence_gates": [
+        "at_least_one_reverse_interval_shared_by_off_and_on",
+        "contact_qf_drop_at_precision_floor",
+        "duplicate_on_state_hashes",
+        "hole_drift_diffusion_cancellation_above_1e5",
+        "no_continuation_retries",
+        "off_iic_state_hashes_identical",
+        "raw_avalanche_source_increases_with_reverse_bias",
+        "sg_and_residual_terminal_currents_agree",
+        "strict_tolerance_changes_reverse_pattern",
+        "strict_tolerance_stalls_at_residual_floor"
+      ],
+      "required_typed_outcome": "low_current_state_precision_floor_not_avalanche_operator_or_terminal_extractor",
+      "raw_monotonicity_is_not_a_model_gate": true
+    }
+  },
+  "decision_policy": {
+    "bv_pass_low_current_classified": "bv_model_consistent_low_current_precision_floor_open",
+    "bv_pass_low_current_unclassified": "bv_model_consistent_low_current_unclassified_fail_closed",
+    "bv_fail": "bv_model_consistency_failed",
+    "next_stage_authorized_by_pass": "opt_in_bv_model_validation_only",
+    "production_default_change_requires_separate_contract": true
+  },
+  "threshold_provenance": {
+    "curve_and_knee": "scripts/analyze_pn2d_avalanche_on_bv_parity.py frozen gates",
+    "fixed_state_intermediates": "scripts/score_pn2d_task7_frozen_sg_candidate.py frozen gates",
+    "self_consistent_state": "scripts/analyze_pn2d_bv_task7_candidate.py frozen gates",
+    "low_current_classification": "scripts/audit_pn2d_task7_low_current_nonmonotonicity.py causal evidence gates"
+  },
+  "prohibited_post_result_changes": [
+    "add a current floor to the historical Task 7 score",
+    "remove exact bias rows after observing a failure",
+    "fit avalanche coefficients or source scale",
+    "translate the voltage axis",
+    "change the continuation schedule to hide a failed branch",
+    "treat a high-current low-bias runaway as a low-current precision waiver"
+  ]
+}

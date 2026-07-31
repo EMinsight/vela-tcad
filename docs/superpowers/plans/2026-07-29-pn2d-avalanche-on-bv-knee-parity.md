@@ -1106,3 +1106,46 @@ Evidence:
 > BV-active collision-ionization parity from low-current solver precision.
 > Otherwise stop. Do not enter Task 8, add a current/minimum-field threshold,
 > or change production defaults.
+
+## Task 7 dual-domain prospective contract review - 2026-07-31
+
+The prospective contract review is complete with typed decision:
+
+`bv_model_consistent_low_current_precision_floor_open`.
+
+The contract freezes disjoint exact domains:
+
+- BV model consistency: `-15` through `-20 V` on the declared 14-point
+  effective lattice; and
+- low-current solver precision: `-3/-4/-5/-6/-7 V`.
+
+It reuses the previously frozen curve, knee, fixed-state current/source,
+self-consistent state, closure, and determinism thresholds. It does not edit
+the historical `tradeoff_without_parity` result. The low-current
+classification additionally requires every exact-domain on/off current to
+remain below `1e-15 A/um`, so a high-current low-bias runaway cannot receive a
+precision-floor waiver.
+
+Replay result:
+
+- every BV-active model-consistency gate passes;
+- every low-current precision-floor classification gate passes;
+- the historical Task 7 score remains preserved; and
+- production-default changes remain unauthorized.
+
+The only newly authorized scope is:
+
+`opt_in_bv_model_validation_only`.
+
+Contract and review:
+
+- `docs/validation/contracts/pn2d_bv_dual_domain_acceptance_v1.json`;
+- `docs/validation/pn2d_bv_dual_domain_acceptance_contract_review_2026-07-31.md`.
+
+### Next execution prompt
+
+> Continue only with a separately scoped opt-in BV model-validation task under
+> the frozen dual-domain contract. Preserve the historical Task 7 score and
+> report low-current solver precision separately. Do not change the production
+> default, add a minimum-field/current threshold, fit model coefficients, or
+> treat the low-current nonlinear precision task as closed.
