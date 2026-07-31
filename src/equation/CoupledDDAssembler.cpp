@@ -623,7 +623,17 @@ CoupledDDAssembler::carrierContinuityTermDiagnostics(
     const VectorXd& x,
     const CoupledDDBoundaryConditions& bcs) const
 {
-    return carrierContinuityTermDiagnosticsImpl(x, bcs, nullptr);
+    return carrierContinuityTermDiagnosticsImpl(
+        x, bcs, nullptr, impactIonizationEnabled_);
+}
+
+std::vector<CoupledDDCarrierTermDiagnostic>
+CoupledDDAssembler::carrierContinuityEquationTermDiagnostics(
+    const VectorXd& x,
+    const CoupledDDBoundaryConditions& bcs) const
+{
+    return carrierContinuityTermDiagnosticsImpl(
+        x, bcs, nullptr, impactIonizationCoupled_);
 }
 
 std::vector<CoupledDDCarrierTermDiagnostic>
@@ -632,14 +642,16 @@ CoupledDDAssembler::feedbackSubstitutionCarrierContinuityTermDiagnostics(
     const CoupledDDBoundaryConditions& bcs,
     const CoupledDDFeedbackStateSubstitution& substitution) const
 {
-    return carrierContinuityTermDiagnosticsImpl(x, bcs, &substitution);
+    return carrierContinuityTermDiagnosticsImpl(
+        x, bcs, &substitution, impactIonizationEnabled_);
 }
 
 std::vector<CoupledDDCarrierTermDiagnostic>
 CoupledDDAssembler::carrierContinuityTermDiagnosticsImpl(
     const VectorXd& x,
     const CoupledDDBoundaryConditions& bcs,
-    const CoupledDDFeedbackStateSubstitution* substitution) const
+    const CoupledDDFeedbackStateSubstitution* substitution,
+    bool includeImpactIonization) const
 {
     const Index Nidx = mesh_.numNodes();
     const int N = static_cast<int>(Nidx);
@@ -685,7 +697,7 @@ CoupledDDAssembler::carrierContinuityTermDiagnosticsImpl(
     const Real fieldFactor = scaling_.enabled ? scaling_.fieldFromCoordinateDeltaFactor : 1.0;
     const VectorXd psi = x.segment(psiOffset(), N) * potentialScale;
 
-    const std::vector<Real> nodeElectricFields = impactIonizationEnabled_
+    const std::vector<Real> nodeElectricFields = includeImpactIonization
         ? detail::computeNodeElectricFields(psi, mesh_, fieldFactor)
         : std::vector<Real>{};
     const bool qfImpact =
@@ -714,11 +726,11 @@ CoupledDDAssembler::carrierContinuityTermDiagnosticsImpl(
         phipIncrement =
             phipPhysical.array() - holeQfReference_V_;
     }
-    const std::vector<Real> nodeElectronDrivingFields = (impactIonizationEnabled_ && qfImpact)
+    const std::vector<Real> nodeElectronDrivingFields = (includeImpactIonization && qfImpact)
         ? detail::computeElectronAvalancheNodeQuasiFermiDrivingFields(
             impactIonizationConfig_, mesh_, nodeCells_, psi, phinPhysical, n, ni_, Vt_, fieldFactor)
         : nodeElectricFields;
-    const std::vector<Real> nodeHoleDrivingFields = (impactIonizationEnabled_ && qfImpact)
+    const std::vector<Real> nodeHoleDrivingFields = (includeImpactIonization && qfImpact)
         ? detail::computeHoleAvalancheNodeQuasiFermiDrivingFields(
             impactIonizationConfig_, mesh_, nodeCells_, psi, phipPhysical, p, ni_, Vt_, fieldFactor)
         : nodeElectricFields;
@@ -726,7 +738,7 @@ CoupledDDAssembler::carrierContinuityTermDiagnosticsImpl(
     const Real sourceIntegralFactor = scaling_.enabled
         ? scaling_.unitSystem.continuitySourceIntegralFactor()
         : 1.0;
-    const bool sgCurrentAvalanche = impactIonizationEnabled_ &&
+    const bool sgCurrentAvalanche = includeImpactIonization &&
         detail::usesEdgeCurrentAvalancheSource(impactIonizationConfig_);
     const detail::SgAvalancheSourceComponentIntegrals sgAvalancheSourceComponents =
         sgCurrentAvalanche
@@ -854,7 +866,7 @@ CoupledDDAssembler::carrierContinuityTermDiagnosticsImpl(
             }
         }
 
-        if (impactIonizationEnabled_ && sgCurrentAvalanche) {
+        if (includeImpactIonization && sgCurrentAvalanche) {
             const Real source =
                 sgAvalancheSourceComponents.combined[i] * sourceIntegralFactor;
             const Real contribution = -source;
@@ -869,7 +881,7 @@ CoupledDDAssembler::carrierContinuityTermDiagnosticsImpl(
                 hasElectronContribution[static_cast<std::size_t>(ii)] = true;
                 hasHoleContribution[static_cast<std::size_t>(ii)] = true;
             }
-        } else if (impactIonizationEnabled_) {
+        } else if (includeImpactIonization) {
             const Real G = detail::impactIonizationGenerationRate(
                 impactIonizationConfig_,
                 *impactIonization_,

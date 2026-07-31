@@ -874,7 +874,8 @@ VectorXd continuityRowWeights(
     if (!cfg.enabled)
         return weights;
 
-    const auto terms = assembler.carrierContinuityTermDiagnostics(state, bcs);
+    const auto terms =
+        assembler.carrierContinuityEquationTermDiagnostics(state, bcs);
     auto rowWeight = [&](Real fluxAbsSum, Real recombination, Real impact) {
         const Real sourceScale = std::max(std::abs(recombination), std::abs(impact));
         if (sourceScale < cfg.minSourceScale ||
@@ -3527,7 +3528,7 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
         if (cfg_.carrierRowConvergence.mode == "off")
             return NewtonCarrierRowConvergenceEvaluation{};
         return evaluateCarrierRowConvergence(
-            assembler.carrierContinuityTermDiagnostics(state, bcs),
+            assembler.carrierContinuityEquationTermDiagnostics(state, bcs),
             cfg_.carrierRowConvergence);
     };
     auto carrierRowsAcceptConvergence = [](const NewtonCarrierRowConvergenceEvaluation& evaluation) {
@@ -3545,7 +3546,7 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
         if (cfg_.globalContinuityClosure.mode == "off")
             return NewtonGlobalContinuityClosureEvaluation{};
         return evaluateGlobalContinuityClosure(
-            assembler.carrierContinuityTermDiagnostics(
+            assembler.carrierContinuityEquationTermDiagnostics(
                 state, CoupledDDBoundaryConditions{}),
             electronContactNodes,
             holeContactNodes,
@@ -3625,7 +3626,8 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
                 << "electron_residual,electron_scale,electron_ratio,electron_flux,electron_srh,electron_impact,"
                 << "hole_residual,hole_scale,hole_ratio,hole_flux,hole_srh,hole_impact\n";
         }
-        const auto terms = assembler.carrierContinuityTermDiagnostics(state, bcs);
+        const auto terms =
+            assembler.carrierContinuityEquationTermDiagnostics(state, bcs);
         const VectorXd n = assembler.electronDensity(state);
         const VectorXd p = assembler.holeDensity(state);
         const CoupledDDState unpacked = assembler.unpack(state);

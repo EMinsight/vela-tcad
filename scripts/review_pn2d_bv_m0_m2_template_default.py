@@ -223,6 +223,7 @@ def parity_evidence(
     parity: Mapping[str, Any],
     biases: tuple[float, ...],
     thresholds: Mapping[str, Any],
+    slope_policy: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     rows = exact_rows(parity["curve_rows"], biases)
     curve_errors = [
@@ -240,11 +241,22 @@ def parity_evidence(
     estimators = parity["knee_estimators"]
     vela_slope = estimators["vela"].get("V_slope")
     sentaurus_slope = estimators["sentaurus"].get("V_slope")
-    slope_error = (
-        None
-        if vela_slope is None or sentaurus_slope is None
-        else abs(float(vela_slope) - float(sentaurus_slope))
-    )
+    if vela_slope is not None and sentaurus_slope is not None:
+        slope_error = abs(float(vela_slope) - float(sentaurus_slope))
+        slope_outcome = "both_slope_crossings_present"
+        slope_gate = slope_error <= float(thresholds["V_slope_abs_error_V"])
+    elif vela_slope is None and sentaurus_slope is None:
+        slope_error = None
+        slope_outcome = "shared_no_slope_crossing_in_frozen_window"
+        slope_gate = bool(
+            slope_policy
+            and slope_policy.get("both_absent_typed_outcome") == slope_outcome
+            and slope_policy.get("both_absent_is_accepted") is True
+        )
+    else:
+        slope_error = None
+        slope_outcome = "one_sided_no_slope_crossing_in_frozen_window"
+        slope_gate = False
     break_error = abs(
         float(estimators["vela"]["V_break"])
         - float(estimators["sentaurus"]["V_break"])
@@ -278,7 +290,13 @@ def parity_evidence(
         name: metrics[name] is not None and metrics[name] <= float(limit)
         for name, limit in thresholds.items()
     }
-    return {"passed": all(gates.values()), "metrics": metrics, "gates": gates}
+    gates["V_slope_abs_error_V"] = slope_gate
+    return {
+        "passed": all(gates.values()),
+        "metrics": metrics,
+        "gates": gates,
+        "V_slope_outcome": slope_outcome,
+    }
 
 
 def evaluate_level(
@@ -344,6 +362,12 @@ def evaluate_level(
                 and execution_b.get("current_support", {}).get("origin")
                 == "base_config"
             ),
+            "default_render_has_no_profile_override": (
+                contract.get("schema")
+                != "vela.pn2d_bv_m0_m2_template_default_acceptance_contract.v2"
+                or required_profile["profile_parameter"]
+                not in render_manifest.get("overrides", {})
+            ),
             "execution_current_support_matches_profile": all(
                 execution.get("current_support", {}).get(key) == expected
                 for execution in (execution_a, execution_b)
@@ -400,7 +424,10 @@ def evaluate_level(
     closure["passed"] = all(closure["gates"].values())
     closure["process_probe_evidence"] = probe_result_a
     parity_result = parity_evidence(
-        parity, biases, contract["bv_domain"]["thresholds"]
+        parity,
+        biases,
+        contract["bv_domain"]["thresholds"],
+        contract["bv_domain"].get("V_slope_policy"),
     )
 
     sentaurus_hash = sha256(sentaurus_manifest_path)
@@ -600,8 +627,10 @@ def main() -> int:
     args = parse_args()
     contract = load_json(args.contract)
     if (
-        contract.get("schema")
-        != "vela.pn2d_bv_m0_m2_template_default_acceptance_contract.v1"
+        contract.get("schema") not in {
+            "vela.pn2d_bv_m0_m2_template_default_acceptance_contract.v1",
+            "vela.pn2d_bv_m0_m2_template_default_acceptance_contract.v2",
+        }
         or not contract.get("prospective_only")
         or not contract.get("retroactive_threshold_mutation_forbidden")
     ):
@@ -632,8 +661,13 @@ def main() -> int:
     )
     accepted = all_levels_passed and low_passed
     policy = contract["decision_policy"]
+    result_schema = (
+        "vela.pn2d_bv_m0_m2_template_default_acceptance.v2"
+        if contract["schema"].endswith(".v2")
+        else "vela.pn2d_bv_m0_m2_template_default_acceptance.v1"
+    )
     result = {
-        "schema": "vela.pn2d_bv_m0_m2_template_default_acceptance.v1",
+        "schema": result_schema,
         "status": "passed" if accepted else "failed",
         "decision": (
             policy["all_levels_pass"] if accepted else policy["any_level_fail"]

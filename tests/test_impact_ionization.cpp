@@ -737,6 +737,12 @@ TEST_CASE("Postprocess-only avalanche observes source without solver feedback",
 
     const auto observedTerms = observed->carrierContinuityTermDiagnostics(x, bcs);
     const auto coupledTerms = coupled->carrierContinuityTermDiagnostics(x, bcs);
+    const auto disabledEquationTerms =
+        disabled->carrierContinuityEquationTermDiagnostics(x, bcs);
+    const auto observedEquationTerms =
+        observed->carrierContinuityEquationTermDiagnostics(x, bcs);
+    const auto coupledEquationTerms =
+        coupled->carrierContinuityEquationTermDiagnostics(x, bcs);
     bool sawSource = false;
     for (std::size_t node = 0; node < observedTerms.size(); ++node) {
         REQUIRE(
@@ -747,6 +753,16 @@ TEST_CASE("Postprocess-only avalanche observes source without solver feedback",
             Catch::Approx(coupledTerms[node].holeImpact));
         sawSource = sawSource || observedTerms[node].electronImpact != 0.0 ||
             observedTerms[node].holeImpact != 0.0;
+        REQUIRE(observedEquationTerms[node].electronResidual ==
+                Catch::Approx(disabledEquationTerms[node].electronResidual));
+        REQUIRE(observedEquationTerms[node].holeResidual ==
+                Catch::Approx(disabledEquationTerms[node].holeResidual));
+        REQUIRE(observedEquationTerms[node].electronImpact == 0.0);
+        REQUIRE(observedEquationTerms[node].holeImpact == 0.0);
+        REQUIRE(coupledEquationTerms[node].electronImpact ==
+                Catch::Approx(coupledTerms[node].electronImpact));
+        REQUIRE(coupledEquationTerms[node].holeImpact ==
+                Catch::Approx(coupledTerms[node].holeImpact));
     }
     REQUIRE(sawSource);
 }

@@ -183,6 +183,13 @@ public:
     std::vector<CoupledDDCarrierTermDiagnostic> carrierContinuityTermDiagnostics(
         const VectorXd& x,
         const CoupledDDBoundaryConditions& bcs) const;
+    // Terms in the continuity equations actually solved by Newton.  In
+    // postprocess_only mode the observable impact-ionization source is omitted
+    // so convergence checks and row scaling remain identical to avalanche-off.
+    std::vector<CoupledDDCarrierTermDiagnostic>
+    carrierContinuityEquationTermDiagnostics(
+        const VectorXd& x,
+        const CoupledDDBoundaryConditions& bcs) const;
     std::vector<CoupledDDCarrierTermDiagnostic>
     feedbackSubstitutionCarrierContinuityTermDiagnostics(
         const VectorXd& x,
@@ -212,7 +219,8 @@ private:
     carrierContinuityTermDiagnosticsImpl(
         const VectorXd& x,
         const CoupledDDBoundaryConditions& bcs,
-        const CoupledDDFeedbackStateSubstitution* substitution) const;
+        const CoupledDDFeedbackStateSubstitution* substitution,
+        bool includeImpactIonization) const;
 
     template <typename Scalar>
     SparseMatrixd impactIonizationSourceFiniteDifferenceJacobianImpl(

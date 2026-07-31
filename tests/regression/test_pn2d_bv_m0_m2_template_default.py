@@ -33,6 +33,9 @@ CONTRACT_PATH = (
     / "contracts"
     / "pn2d_bv_m0_m2_template_default_acceptance_v1.json"
 )
+CONTRACT_V2_PATH = CONTRACT_PATH.with_name(
+    "pn2d_bv_m0_m2_template_default_acceptance_v2.json"
+)
 
 
 def write_json(path: Path, payload) -> None:
@@ -80,6 +83,39 @@ class Pn2dBvM0M2TemplateDefaultTest(unittest.TestCase):
             self.contract["bv_domain"]["thresholds"],
         )
         self.assertTrue(result["passed"])
+
+    def test_v2_accepts_predeclared_shared_absent_slope_crossing(self) -> None:
+        contract = json.loads(CONTRACT_V2_PATH.read_text(encoding="utf-8"))
+        parity = self._parity()
+        parity["knee_estimators"]["vela"]["V_slope"] = None
+        parity["knee_estimators"]["sentaurus"]["V_slope"] = None
+        result = parity_evidence(
+            parity,
+            tuple(self.biases),
+            contract["bv_domain"]["thresholds"],
+            contract["bv_domain"]["V_slope_policy"],
+        )
+        self.assertTrue(result["gates"]["V_slope_abs_error_V"])
+        self.assertEqual(
+            result["V_slope_outcome"],
+            "shared_no_slope_crossing_in_frozen_window",
+        )
+
+    def test_v2_rejects_one_sided_absent_slope_crossing(self) -> None:
+        contract = json.loads(CONTRACT_V2_PATH.read_text(encoding="utf-8"))
+        parity = self._parity()
+        parity["knee_estimators"]["vela"]["V_slope"] = None
+        result = parity_evidence(
+            parity,
+            tuple(self.biases),
+            contract["bv_domain"]["thresholds"],
+            contract["bv_domain"]["V_slope_policy"],
+        )
+        self.assertFalse(result["gates"]["V_slope_abs_error_V"])
+        self.assertEqual(
+            result["V_slope_outcome"],
+            "one_sided_no_slope_crossing_in_frozen_window",
+        )
 
     def test_closure_requires_machine_readable_global_columns(self) -> None:
         with tempfile.TemporaryDirectory(prefix="vela_m0_m2_closure_") as td:
@@ -154,6 +190,18 @@ class Pn2dBvM0M2TemplateDefaultTest(unittest.TestCase):
             rejected = evaluate_level("M2", self.contract, **paths)
             self.assertFalse(rejected["binding_checks"]["curve_input_paths_valid"])
             self.assertEqual(rejected["status"], "failed")
+
+    def test_v2_rejects_explicit_profile_override_as_default_evidence(self) -> None:
+        contract = json.loads(CONTRACT_V2_PATH.read_text(encoding="utf-8"))
+        with tempfile.TemporaryDirectory(prefix="vela_m0_m2_default_path_") as td:
+            paths = self._level_fixture(Path(td))
+            result = evaluate_level("M0", contract, **paths)
+            self.assertFalse(
+                result["configuration"]["gates"][
+                    "default_render_has_no_profile_override"
+                ]
+            )
+            self.assertEqual(result["status"], "failed")
 
     def _parity(self):
         return {
