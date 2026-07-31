@@ -8,7 +8,7 @@ The corrected balanced-junction M1/M2 sequence was regenerated and evaluated.
 The M0 continuation blocker remains closed: Vela reaches `-20 V` on both finer
 levels for avalanche-off, IIC, and SG/Laux avalanche-on.
 
-The mesh-independence gate nevertheless fails with:
+The original mesh-independence characterization returns:
 
 ```text
 primary:   mesh_dependent_knee
@@ -19,6 +19,13 @@ The failure is caused by a nonmonotonic avalanche-on branch on M1, observed in
 both simulators at different biases. M2 is monotonic and has good
 Vela/Sentaurus agreement, but one passing fine level cannot establish
 convergence between the two finest levels.
+
+The project acceptance priority was subsequently clarified: Sentaurus is the
+golden reference, and the primary question is Vela/Sentaurus parity on the same
+mesh and physical inputs. Under that priority, the common M1 nonmonotonic
+behavior is retained as a nonblocking mesh/continuation observation. It does
+not prevent Task 11 from proceeding. M0 and M2 provide the stable same-grid
+golden comparisons; M1 is not used to claim a physical mesh-converged knee.
 
 ## Corrected physical inputs
 
@@ -143,8 +150,18 @@ the resolved M0 continuation defect.
 
 ## Decision
 
-Task 10 does not pass. Task 11 and a production-default change remain
-unauthorized. SG/Laux remains opt-in.
+For the original mesh-independence question, convergence is not demonstrated.
+For the project-level Sentaurus-golden objective, Task 10 returns:
+
+```text
+golden_same_grid_parity_passed_mesh_observation_open
+```
+
+Task 11 may proceed using stable same-grid M0/M2 comparisons as the primary
+golden evidence and retaining the M1 anomaly as a recorded nonblocking
+observation. This reclassification does not itself authorize a
+production-default change; SG/Laux remains opt-in pending Task 11 regression
+and review.
 
 The next useful experiment is a focused M1 topology/continuation audit:
 

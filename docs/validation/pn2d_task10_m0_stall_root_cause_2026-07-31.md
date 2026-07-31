@@ -221,3 +221,9 @@ reach `-20 V`, confirming that the M0-style continuation blocker is gone, but
 M1 remains a deterministic nonmonotonic avalanche-on branch in both
 simulators. Mesh independence therefore still fails independently of this M0
 fix. See `pn2d_task10_balanced_mesh_independence_2026-07-31.md`.
+
+The project acceptance priority was later clarified to use Sentaurus as the
+golden reference on identical meshes and physical inputs. The common M1
+nonmonotonic behavior remains recorded but is nonblocking for Task 11. Stable
+M0/M2 same-grid comparisons are the primary parity evidence; this does not
+authorize changing the production default before Task 11 review.

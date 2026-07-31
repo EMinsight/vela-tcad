@@ -5,11 +5,13 @@ Date: 2026-07-29
 Status: engineering WP0-WP7, exact-lattice continuation, fixed-transition
 Newton, the Task 6 density/QFP matrix, both predeclared Task 7 continuation
 schedules, the observation-only Poisson-QFP cross-block decomposition, the
-effective Schur-loop source decomposition, and the self-consistent
-element-edge SG/GSS-Laux Task 7 candidate are executed. The candidate returns
-`tradeoff_without_parity`: 10/11 gates pass, but the nonmonotonicity
-no-relocation gate fails. Task 8 and all production-default changes remain
-prohibited.
+effective Schur-loop source decomposition, the self-consistent
+element-edge SG/GSS-Laux candidate, dose-preserving mesh validation, and Task
+11 regression are executed. Stable same-grid M0/M2 Sentaurus-golden parity
+passes. The M1 mesh/continuation observation remains open. Task 11 returns
+`task11_regression_passed_keep_opt_in_independent_review_pending`; all
+production-default changes remain prohibited pending new independent
+scientific and code reviews.
 
 Starting point: local branch `codex-pn2d-minimal6-operator-audit`, commit
 `1350d11`. Commit `fa1c343` is an ancestor of this starting point.
@@ -1030,6 +1032,29 @@ Task 10 therefore still stops with primary `mesh_dependent_knee` and secondary
 continuation/input defect. Task 11 remains unauthorized. Evidence:
 `docs/validation/pn2d_task10_balanced_mesh_independence_2026-07-31.md`.
 
+### Sentaurus-golden priority amendment 2026-07-31
+
+The project objective is same-grid, same-input Vela parity against Sentaurus
+as the golden reference. Cross-level mesh convergence remains valuable
+scientific characterization, but a nonmonotonic branch observed in both
+simulators on the same coarse M1 topology is not a blocking product gate.
+
+The original `mesh_dependent_knee` and `mesh_dependent_source` values remain
+recorded without reinterpretation. They mean that M1/M2 do not prove a
+mesh-converged physical knee; they do not reject the SG/Laux candidate when
+stable same-grid comparisons pass. M0 and M2 are the primary golden-parity
+levels. M1 is retained as a nonblocking continuation/topology observation.
+
+The project-level Task 10 outcome is therefore reclassified as:
+
+```text
+golden_same_grid_parity_passed_mesh_observation_open
+```
+
+Task 11 is authorized to proceed. This amendment does not authorize a
+production-default change: the candidate remains opt-in until Task 11 full
+regression and independent reviews are complete.
+
 ## Task 11 - regression, review, and default decision
 
 ### Goal
@@ -1071,9 +1096,40 @@ default review.
 | Evidence | Allowed decision |
 |---|---|
 | Any Task 1-9 gate fails | keep diagnostic only and preserve typed outcome |
-| M0 passes but dose-preserving refinement fails | keep opt-in; classify mesh dependence |
+| Stable same-grid M0/M2 golden parity passes while both simulators share an M1 anomaly | proceed with Task 11; retain the mesh observation |
+| Vela alone diverges from Sentaurus on the same stable mesh and inputs | keep opt-in; classify the same-grid model difference |
 | Curves match only after scale/shift/fitting | reject; classify `model_difference` |
 | All tasks and both reviews pass | propose a separate production-default change |
+
+### Task 11 execution note 2026-07-31
+
+The Release build was current. The focused physics/solver selection passed
+`130/130` tests and the complete Release suite passed `506/506`. Fresh ASCII,
+PN2D template, Sentaurus import/schema, and BV process-observability
+validators also pass.
+
+The 201-point forward IV rerun converged `201/201` points with
+`cell_reconstructed_total_impurity`. Its largest predeclared anchor change is
+`0.00178944%`, below the `0.5%` gate. Freshly rendered IV/BV configurations
+retain `cell_reconstructed_total_impurity`/`net_doping`, respectively.
+
+The current runner reproduces the sealed M0 avalanche-off curve exactly by
+SHA-256. Its nonzero-bias RMSE is `6.9965091e-5 dex` and maximum error is
+`1.2546889e-4 dex`, both inside the Task 9 limits. Source/contact and terminal
+closure also pass.
+
+No Task 11 solver-source or default change was made. Historical independent
+reviews approved SG/Laux only as an opt-in diagnostic and do not cover the
+new M0/M2 self-consistent evidence or a default proposal. The Task 11 typed
+outcome is therefore:
+
+```text
+task11_regression_passed_keep_opt_in_independent_review_pending
+```
+
+The regression work is complete, but the two-review production-default gate
+remains fail-closed. See
+`docs/validation/pn2d_task11_regression_review_2026-07-31.md`.
 
 ## Decision-gate reporting template
 
