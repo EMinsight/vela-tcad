@@ -1350,3 +1350,48 @@ Evidence:
 > family recovers most of the `0.082516 dex` improvement at `-20 V` and whether
 > the first update moves it in the direction of the final self-consistent
 > deficit.  Do not modify production defaults.
+
+## M2 single-family state substitution - 2026-07-31
+
+The one-family fixed-state substitutions and first coupled Newton probes are
+complete with typed outcome:
+
+`qfp_dominant__density_feedback_moves_qfp_away_from_sentaurus`
+
+At `-20 V`, substituting Sentaurus electron/hole QFP alone recovers
+`0.738076` of the source-error removal obtained from the full Sentaurus state.
+QFP wins three of four predeclared bias comparisons.  The QFP-only recovery is
+bias dependent: it is negative at `-18 V`, then rises to `0.465512`,
+`0.580240`, and `0.738076` at `-19.5`, `-19.7`, and `-20 V`.
+
+Density-only substitution leaves the frozen SG/Laux source unchanged.  This is
+expected for the current Masetti plus field-dependent mobility configuration:
+the canonical SG edge flux is reconstructed from `psi`, QFP, and intrinsic
+density, while mobility depends on doping and field rather than imported
+`n/p`.  Density still affects other residual paths.
+
+The first coupled update rejects rather than preserves the imported golden QFP
+direction.  Density-only residual feedback produces a negative QFP target
+projection at every bias (`-0.0025435` at `-20 V`).  Direct QFP feedback has a
+larger negative projection, and an independent Sentaurus-QFP start increases
+the combined target distance at all four biases.  At `-19.5` through `-20 V`,
+its first production trial residual is `3.91-4.05` times the initial residual.
+
+All 120 repeated artifacts are byte-identical.  No physics model, production
+default, continuation schedule, or acceptance threshold was changed.  This
+localizes the next investigation to carrier-QFP residual/Jacobian coupling and
+state consistency, not to a frozen SG/Laux source formula change.
+
+Evidence:
+
+- `docs/validation/pn2d_bv_m2_single_family_state_substitution_2026-07-31.md`;
+- `docs/validation/pn2d_bv_m2_single_family_state_substitution_2026-07-31.html`.
+
+### Next execution prompt
+
+> Keep SG/Laux and all production defaults unchanged.  On the same M2 states,
+> split electron and hole QFP substitutions, decompose the first carrier
+> residual into transport, recombination, avalanche, and boundary terms, and
+> finite-difference the carrier-QFP and Poisson-QFP Jacobian blocks on both the
+> Vela baseline and mixed Sentaurus-QFP state.  Identify the first derivative
+> or residual term whose sign/scale differs before proposing any correction.

@@ -105,6 +105,84 @@ class ReferenceTcadToolsTest(unittest.TestCase):
         verdict = module.classify(rows)
         self.assertEqual(verdict["typed_outcome"], "state_feedback_dominant")
 
+    def test_m2_single_family_substitution_preserves_families_and_classifies_qfp(self) -> None:
+        module_path = (
+            REPO / "scripts" / "run_pn2d_bv_m2_single_family_state_substitution.py"
+        )
+        spec = importlib.util.spec_from_file_location(
+            "run_pn2d_bv_m2_single_family_state_substitution", module_path
+        )
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        vela = [
+            {
+                "node_id": 0,
+                "psi_V": 1.0,
+                "phin_V": 2.0,
+                "phip_V": 3.0,
+                "n_m3": 4.0,
+                "p_m3": 5.0,
+            }
+        ]
+        sentaurus = [
+            {
+                "node_id": 0,
+                "psi_V": 10.0,
+                "phin_V": 20.0,
+                "phip_V": 30.0,
+                "n_m3": 40.0,
+                "p_m3": 50.0,
+            }
+        ]
+        qfp = module.mixed_state(vela, sentaurus, "sent_qfp_only")[0]
+        density = module.mixed_state(vela, sentaurus, "sent_density_only")[0]
+        self.assertEqual(qfp["psi_V"], 1.0)
+        self.assertEqual((qfp["phin_V"], qfp["phip_V"]), (20.0, 30.0))
+        self.assertEqual((qfp["n_m3"], qfp["p_m3"]), (4.0, 5.0))
+        self.assertEqual(density["psi_V"], 1.0)
+        self.assertEqual((density["phin_V"], density["phip_V"]), (2.0, 3.0))
+        self.assertEqual((density["n_m3"], density["p_m3"]), (40.0, 50.0))
+
+        source_rows = []
+        recoveries = {
+            -18.0: (-1.0, -0.5, 0.0),
+            -19.5: (-0.5, 0.4, 0.0),
+            -19.7: (-0.2, 0.6, 0.0),
+            -20.0: (0.2, 0.75, 0.0),
+        }
+        for bias, (psi_recovery, qfp_recovery, density_recovery) in recoveries.items():
+            for variant, recovery in (
+                ("sent_psi_only", psi_recovery),
+                ("sent_qfp_only", qfp_recovery),
+                ("sent_density_only", density_recovery),
+            ):
+                source_rows.append(
+                    {
+                        "bias_V": bias,
+                        "variant": variant,
+                        "fraction_of_all_sent_error_removal": recovery,
+                    }
+                )
+        newton_rows = [
+            {
+                "bias_V": bias,
+                "variant": "feedback_density_only",
+                "qfp_target_projection_fraction": (
+                    -0.01 if bias == -20.0 else 0.0
+                ),
+            }
+            for bias in module.DEFAULT_BIASES
+        ]
+        verdict = module.classify(source_rows, newton_rows)
+        self.assertEqual(
+            verdict["typed_outcome"],
+            "qfp_dominant__density_feedback_moves_qfp_away_from_sentaurus",
+        )
+        self.assertEqual(verdict["source_family_win_count"]["sent_qfp_only"], 3)
+
     def test_previous_full20_config_uses_poisson_block_initialization(self) -> None:
         module_path = REPO / "scripts" / "run_pn2d_coarse7x3_previous_full20_compare.py"
         spec = importlib.util.spec_from_file_location("run_pn2d_coarse7x3_previous_full20_compare", module_path)
