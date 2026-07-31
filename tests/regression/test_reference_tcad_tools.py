@@ -20,6 +20,91 @@ if str(REPO) not in sys.path:
 
 
 class ReferenceTcadToolsTest(unittest.TestCase):
+    def test_m2_sentaurus_frozen_replay_maps_contact_support_and_classifies_state_feedback(self) -> None:
+        module_path = REPO / "scripts" / "run_pn2d_bv_m2_sentaurus_frozen_sg_laux.py"
+        spec = importlib.util.spec_from_file_location(
+            "run_pn2d_bv_m2_sentaurus_frozen_sg_laux", module_path
+        )
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        mesh = {
+            "nodes": [
+                {"id": 0, "x": 0.0, "y": 0.0},
+                {"id": 1, "x": 1.0, "y": 0.0},
+            ],
+            "triangles": [],
+            "contacts": [],
+        }
+        field_records = []
+        definitions = (
+            ("potential", "none", "V", (0.1, 0.2, 0.1)),
+            ("quasi_fermi", "electron", "V", (0.01, 0.02, 0.01)),
+            ("quasi_fermi", "hole", "V", (-0.01, -0.02, -0.01)),
+            ("density", "electron", "cm^-3", (1.0e10, 2.0e10, 1.0e10)),
+            ("density", "hole", "cm^-3", (3.0e10, 4.0e10, 3.0e10)),
+        )
+        for quantity, carrier, unit, values in definitions:
+            for node, (coordinate, value) in enumerate(
+                zip(((0.0, 0.0), (1.0, 0.0), (0.0, 0.0)), values)
+            ):
+                field_records.append(
+                    {
+                        "branch": "avalanche_on",
+                        "requested_bias_V": -18.0,
+                        "support_kind": "physical_node",
+                        "support_key": f"node:{node}",
+                        "coordinates_um": list(coordinate),
+                        "quantity": quantity,
+                        "carrier": carrier,
+                        "unit": unit,
+                        "values": [value],
+                    }
+                )
+        aggregate_records = [
+            {
+                "branch": "avalanche_on",
+                "requested_bias_V": -18.0,
+                "quantity": "integrated_source",
+                "carrier": carrier,
+                "provenance": "native",
+                "unit": "A/um",
+                "value": value,
+            }
+            for carrier, value in (
+                ("electron", 6.0e-16),
+                ("hole", 4.0e-16),
+                ("total", 1.0e-15),
+            )
+        ]
+        states, sources, mapping = module.extract_sentaurus_inputs(
+            {"field_records": field_records, "aggregate_records": aggregate_records},
+            mesh,
+            (-18.0,),
+        )
+        self.assertEqual(len(states["-18"]), 2)
+        self.assertEqual(states["-18"][0]["n_m3"], 1.0e16)
+        self.assertEqual(sources["-18"]["total"], 1.0e-15)
+        self.assertEqual(mapping["per_bias"]["-18"]["excluded_extra_node_count"], 1)
+        self.assertEqual(
+            mapping["per_bias"]["-18"]["excluded_coordinate_duplicate_count"], 1
+        )
+
+        rows = []
+        for bias in (-18.0, -19.5, -19.7, -20.0):
+            rows.append(
+                {
+                    "bias_V": bias,
+                    "carrier": "total",
+                    "frozen_abs_log10_error_dex": 0.001,
+                    "self_consistent_abs_log10_error_dex": 0.06,
+                }
+            )
+        verdict = module.classify(rows)
+        self.assertEqual(verdict["typed_outcome"], "state_feedback_dominant")
+
     def test_previous_full20_config_uses_poisson_block_initialization(self) -> None:
         module_path = REPO / "scripts" / "run_pn2d_coarse7x3_previous_full20_compare.py"
         spec = importlib.util.spec_from_file_location("run_pn2d_coarse7x3_previous_full20_compare", module_path)

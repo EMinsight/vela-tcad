@@ -1310,3 +1310,43 @@ Contract and review:
 > report low-current solver precision separately. Do not change the production
 > default, add a minimum-field/current threshold, fit model coefficients, or
 > treat the low-current nonlinear precision task as closed.
+
+## M2 Sentaurus-state SG/Laux frozen replay - 2026-07-31
+
+The predeclared four-point discriminating experiment is complete with typed
+outcome:
+
+`state_feedback_dominant`
+
+Sentaurus avalanche-on states at `-18`, `-19.5`, `-19.7`, and `-20 V` were
+imported on the shared M2 mesh and evaluated by the complete Vela SG/Laux
+operator with `coupling_mode=postprocess_only`.  The imported state was not
+advanced, every process record has `solver_coupled=0`, and no residual feedback
+contribution is nonzero.
+
+The frozen Vela/Sentaurus total-source ratios are `1.002481`, `1.002381`,
+`1.002404`, and `1.002371`.  Mean frozen-state error is `0.001045 dex`, versus
+`0.057445 dex` for self-consistent Vela; the frozen replay removes
+`0.056400 dex` on average.  The self-consistent total-source ratio decreases
+from `0.936135` at `-18 V` to `0.825003` at `-20 V`, while the frozen ratio
+remains flat near one.  All 20 node/edge/triangle/element/process artifacts are
+byte-identical across two independent runs.
+
+This evidence localizes the dominant M2 knee discrepancy to coupled state
+formation/feedback rather than frozen SG/Laux source evaluation.  It does not
+authorize changing SG/Laux, a production default, or an acceptance threshold.
+
+Evidence:
+
+- `docs/validation/pn2d_bv_m2_sentaurus_frozen_sg_laux_2026-07-31.md`;
+- `docs/validation/pn2d_bv_m2_sentaurus_frozen_sg_laux_2026-07-31.html`.
+
+### Next execution prompt
+
+> Keep SG/Laux and all acceptance thresholds unchanged.  On the same four M2
+> frozen states, perform one-family-at-a-time substitutions for electrostatic
+> potential, quasi-Fermi potentials, and carrier densities, then compare the
+> first coupled Newton update and carrier-row residual.  Determine which state
+> family recovers most of the `0.082516 dex` improvement at `-20 V` and whether
+> the first update moves it in the direction of the final self-consistent
+> deficit.  Do not modify production defaults.
