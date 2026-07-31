@@ -12,6 +12,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tarfile
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -267,11 +268,63 @@ def replace_tcl_targets(
 def make_branch_tcl(template: str, biases: tuple[float, ...]) -> str:
     validate_process_biases(biases)
     physics_biases = negative_process_biases(biases)
-    return replace_tcl_targets(
+    tcl = replace_tcl_targets(
         oracle_tcl(template, physics_biases),
         physics_biases,
         biases,
     )
+    return bind_probe_bias_to_anode_contact(tcl)
+
+
+def bind_probe_bias_to_anode_contact(tcl: str) -> str:
+    """Bind process records to the applied Anode QFP, not a domain extremum."""
+
+    old = """\
+    set eqfp [$data ReadScalar $::des_data_vertex "eQuasiFermiPotential"]
+    set qfp_min 1.0e100
+    set qfp_vertex_count [$mesh size_vertex]
+    for {set qfp_index 0} {$qfp_index < $qfp_vertex_count} {incr qfp_index} {
+        set qfp_value [tcl_cp_get_double $eqfp $qfp_index]
+        if {$qfp_value < $qfp_min} {
+            set qfp_min $qfp_value
+        }
+    }
+
+"""
+    new = """\
+    set eqfp [$data ReadScalar $::des_data_vertex "eQuasiFermiPotential"]
+    set qfp_vertex_count [$mesh size_vertex]
+    set anode_x 1.0e100
+    for {set qfp_index 0} {$qfp_index < $qfp_vertex_count} {incr qfp_index} {
+        set qfp_vertex [$mesh vertex $qfp_index]
+        set qfp_x [$qfp_vertex coord 0]
+        if {$qfp_x < $anode_x} {
+            set anode_x $qfp_x
+        }
+    }
+    set anode_qfp_sum 0.0
+    set anode_qfp_count 0
+    for {set qfp_index 0} {$qfp_index < $qfp_vertex_count} {incr qfp_index} {
+        set qfp_vertex [$mesh vertex $qfp_index]
+        if {[expr {abs([$qfp_vertex coord 0]-$anode_x)}] < 1.0e-12} {
+            set anode_qfp_sum [expr {$anode_qfp_sum
+                + [tcl_cp_get_double $eqfp $qfp_index]}]
+            incr anode_qfp_count
+        }
+    }
+    if {$anode_qfp_count == 0} {
+        return {0.0}
+    }
+    set anode_qfp [expr {$anode_qfp_sum/double($anode_qfp_count)}]
+
+"""
+    if tcl.count(old) != 1:
+        raise ValueError("QFP probe-bias observer block was not found exactly once")
+    tcl = tcl.replace(old, new, 1)
+    old_selector = "abs($qfp_min-$candidate)"
+    if tcl.count(old_selector) != 1:
+        raise ValueError("QFP probe-bias selector was not found exactly once")
+    return tcl.replace(old_selector, "abs($anode_qfp-$candidate)", 1)
 
 
 def remote_command(remote: str, argv: Sequence[str]) -> list[str]:
@@ -792,6 +845,7 @@ def list_remote_files(
 
 
 def copy_remote_files(
+    ssh_bin: Path,
     scp_bin: Path,
     ssh_target: str,
     remote: str,
@@ -799,13 +853,43 @@ def copy_remote_files(
     destination: Path,
 ) -> None:
     destination.mkdir(parents=True, exist_ok=True)
-    sources: list[str] = []
     for name in names:
         if SAFE_FILE_RE.fullmatch(name) is None:
             raise ValueError(f"unsafe remote artifact name: {name!r}")
-        sources.append(f"{ssh_target}:{remote}/{name}")
-    if sources:
-        run_checked([str(scp_bin), *sources, str(destination)])
+    if not names:
+        return
+    archive_name = "pn2d_process_artifacts.tar.gz"
+    run_checked(
+        [
+            str(ssh_bin),
+            ssh_target,
+            remote_shell_text(
+                remote,
+                ["tar", "-czf", archive_name, "--", *names],
+            ),
+        ]
+    )
+    archive_path = destination / archive_name
+    run_checked(
+        [
+            str(scp_bin),
+            f"{ssh_target}:{remote}/{archive_name}",
+            str(archive_path),
+        ]
+    )
+    with tarfile.open(archive_path, "r:gz") as archive:
+        members = archive.getmembers()
+        archived_names = [member.name for member in members]
+        if any(
+            not member.isfile()
+            or SAFE_FILE_RE.fullmatch(member.name) is None
+            or member.name not in names
+            for member in members
+        ):
+            raise ValueError("remote artifact archive contains an unsafe member")
+        if sorted(archived_names) != sorted(names):
+            raise ValueError("remote artifact archive is incomplete")
+        archive.extractall(destination, members=members, filter="data")
 
 
 def completed_run_text(path: Path) -> bool:
@@ -1029,7 +1113,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             if name == "run.out"
             or name.endswith((".plt", ".tdr", ".log", ".cmd", ".par", ".tcl"))
         ]
-        copy_remote_files(args.scp_bin, args.ssh_target, remote, retained, raw)
+        copy_remote_files(
+            args.ssh_bin,
+            args.scp_bin,
+            args.ssh_target,
+            remote,
+            retained,
+            raw,
+        )
         if returncode:
             raise RuntimeError(
                 f"{branch}: sdevice failed with {returncode}; "

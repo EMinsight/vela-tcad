@@ -50,7 +50,23 @@ class TestMeshMatrix(unittest.TestCase):
         updated = matrix.replace_size(source, "Junction.Mesh", 0.125)
         self.assertIn("0.125 0.125 0.125 0.125", updated)
 
-    def test_m0_is_unchanged_and_refined_levels_add_window(self):
+    def test_all_levels_use_single_owner_dose_preserving_junction(self):
+        source = (
+            "(define XJ 1.0)      ; PN junction position\n"
+            '(sdedr:define-refeval-window "P.Window" "Rectangle"\n'
+            "  (position 0.0 0.0 0.0)\n"
+            "  (position XJ H 0.0))\n"
+            '(sdedr:define-refeval-window "N.Window" "Rectangle"\n'
+            "  (position XJ 0.0 0.0)\n"
+            "  (position L H 0.0))\n"
+        )
+        updated = matrix.make_dose_preserving_junction(source)
+        self.assertIn("(define XJ_P (- XJ 0.001))", updated)
+        self.assertIn("(position XJ_P H 0.0)", updated)
+        self.assertEqual(updated.count("(position XJ H 0.0)"), 0)
+        self.assertEqual(updated.count("(position XJ 0.0 0.0)"), 1)
+
+    def test_refined_levels_add_window_without_changing_profile_contract(self):
         source = "; header\n;----------------------------------------------------------\n; Build mesh\n"
         refined = matrix.add_junction_refinement(source, 1.0 / 6.0, 0.125)
         self.assertIn('"Junction.Window"', refined)

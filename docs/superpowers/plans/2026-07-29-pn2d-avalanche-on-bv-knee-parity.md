@@ -974,6 +974,22 @@ Typed outcome:
 Stop on any outcome except the first. Do not reuse the rejected M1/M2 results
 as substitutes.
 
+### Execution note 2026-07-31
+
+The prospective dual-domain M0 confirmation passed, but the replacement
+dose-preserving mesh sequence stopped with `mesh_dependent_knee`.
+
+The new single-owner junction construction preserved discrete dose to
+floating-point precision and eliminated double-counted junction nodes.
+Nevertheless, Sentaurus M1 and M2 changed fitted `V_break` by `0.402 V`,
+exceeded the two-finest integrated-source gate by orders of magnitude, and
+M1 developed a discontinuous/nonmonotonic avalanche-on branch. Vela
+avalanche-off and IIC completed the new M0 lattice, while the SG/Laux
+self-consistent branch stalled near `-17.1053958 V` when targeting `-18 V`.
+
+Task 11 is therefore not authorized. See
+`docs/validation/pn2d_task10_dose_preserving_mesh_gate_2026-07-31.md`.
+
 ## Task 11 - regression, review, and default decision
 
 ### Goal

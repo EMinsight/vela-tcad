@@ -18,6 +18,7 @@ from scripts.run_pn2d_bv_process_matrix_vm import (
     bias_tag,
     currentplot_aggregates,
     exact_currentplot_rows,
+    bind_probe_bias_to_anode_contact,
     make_branch_deck,
     replace_tcl_targets,
     remote_command,
@@ -192,6 +193,27 @@ class BVProcessMatrixVMTest(unittest.TestCase):
             biases,
         )
         self.assertIn("foreach candidate {0.0 -1.0 -2.0} {", tcl)
+
+    def test_probe_bias_uses_anode_contact_not_domain_minimum(self) -> None:
+        source = """\
+    set eqfp [$data ReadScalar $::des_data_vertex "eQuasiFermiPotential"]
+    set qfp_min 1.0e100
+    set qfp_vertex_count [$mesh size_vertex]
+    for {set qfp_index 0} {$qfp_index < $qfp_vertex_count} {incr qfp_index} {
+        set qfp_value [tcl_cp_get_double $eqfp $qfp_index]
+        if {$qfp_value < $qfp_min} {
+            set qfp_min $qfp_value
+        }
+    }
+
+    if {[expr {abs($qfp_min-$candidate)}] < 1.0e-8} {
+    }
+"""
+        updated = bind_probe_bias_to_anode_contact(source)
+        self.assertIn("set anode_qfp_sum 0.0", updated)
+        self.assertIn("$mesh vertex $qfp_index", updated)
+        self.assertIn("abs($anode_qfp-$candidate)", updated)
+        self.assertNotIn("qfp_min", updated)
 
     def test_grad_qf_currentplot_units_maxima_and_failure_diagnostics(self) -> None:
         deck = make_branch_deck(TEMPLATE, "avalanche_on", (-19.95,))

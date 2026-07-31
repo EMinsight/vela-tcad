@@ -108,6 +108,30 @@ def parse_branch_list(raw: str) -> tuple[str, ...]:
     return branches
 
 
+def apply_physical_input_overrides(
+    base: dict[str, Any],
+    mesh_file: Path | None,
+    doping_file: Path | None,
+) -> tuple[dict[str, Any], dict[str, dict[str, str]]]:
+    config = copy.deepcopy(base)
+    records: dict[str, dict[str, str]] = {}
+    for key, path in (
+        ("mesh_file", mesh_file),
+        ("node_doping_file", doping_file),
+    ):
+        if path is None:
+            continue
+        resolved = path.resolve()
+        if not resolved.is_file():
+            raise FileNotFoundError(f"missing physical input override: {resolved}")
+        config[key] = str(resolved)
+        records[key] = {
+            "path": str(resolved),
+            "sha256": sha256(resolved),
+        }
+    return config, records
+
+
 def exact_bias_lattice(manifest: dict[str, Any]) -> list[float]:
     requested: dict[str, list[float]] = {}
     for branch in manifest.get("branch_records", []):
@@ -440,6 +464,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--base-config", type=Path, required=True)
     parser.add_argument("--sentaurus-manifest", type=Path, required=True)
     parser.add_argument("--output-root", type=Path, required=True)
+    parser.add_argument(
+        "--mesh-file",
+        type=Path,
+        help="override base-config mesh_file with an exact paired physical mesh",
+    )
+    parser.add_argument(
+        "--doping-file",
+        type=Path,
+        help="override base-config node_doping_file with paired nodal doping",
+    )
     parser.add_argument("--branches", default=",".join(BRANCHES))
     parser.add_argument("--max-iter", type=int, default=80)
     parser.add_argument(
@@ -508,7 +542,11 @@ def main() -> int:
     sentaurus_path = args.sentaurus_manifest.resolve()
     output_root = args.output_root.resolve()
     output_root.mkdir(parents=True, exist_ok=True)
-    base = json.loads(base_path.read_text(encoding="utf-8-sig"))
+    base, physical_input_overrides = apply_physical_input_overrides(
+        json.loads(base_path.read_text(encoding="utf-8-sig")),
+        args.mesh_file,
+        args.doping_file,
+    )
     sentaurus = json.loads(sentaurus_path.read_text(encoding="utf-8"))
     biases = exact_bias_lattice(sentaurus)
     selected = parse_branch_list(args.branches)
@@ -546,6 +584,7 @@ def main() -> int:
         "runner_sha256": sha256(runner),
         "base_config": str(base_path),
         "base_config_sha256": sha256(base_path),
+        "physical_input_overrides": physical_input_overrides,
         "sentaurus_manifest": str(sentaurus_path),
         "sentaurus_manifest_sha256": sha256(sentaurus_path),
         "max_iter": args.max_iter,

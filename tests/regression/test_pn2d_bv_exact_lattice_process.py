@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+import tempfile
 from pathlib import Path
 
 from scripts.build_pn2d_bv_exact_lattice_manifest import (
@@ -9,6 +10,7 @@ from scripts.build_pn2d_bv_exact_lattice_manifest import (
 )
 from scripts.run_pn2d_bv_exact_lattice_process import (
     CONTINUATION_SCHEDULES,
+    apply_physical_input_overrides,
     branch_config,
     build_state_manifest,
     exact_bias_lattice,
@@ -49,6 +51,30 @@ class ExactLatticeProcessTests(unittest.TestCase):
                 "contact": "Anode",
             },
         }
+
+    def test_physical_input_overrides_are_hashed_without_mutating_base(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            mesh = root / "mesh.json"
+            doping = root / "doping.csv"
+            mesh.write_text("{}\n", encoding="ascii")
+            doping.write_text(
+                "node_id,donors_cm3,acceptors_cm3\n",
+                encoding="ascii",
+            )
+            base = {"mesh_file": "old.json", "node_doping_file": "old.csv"}
+            updated, records = apply_physical_input_overrides(
+                base,
+                mesh,
+                doping,
+            )
+            resolved_mesh = str(mesh.resolve())
+            resolved_doping = str(doping.resolve())
+        self.assertEqual(base["mesh_file"], "old.json")
+        self.assertEqual(updated["mesh_file"], resolved_mesh)
+        self.assertEqual(updated["node_doping_file"], resolved_doping)
+        self.assertEqual(len(records["mesh_file"]["sha256"]), 64)
+        self.assertEqual(len(records["node_doping_file"]["sha256"]), 64)
 
     def test_extracts_only_a_common_exact_lattice(self) -> None:
         self.assertEqual(exact_bias_lattice(self.manifest), self.biases)
