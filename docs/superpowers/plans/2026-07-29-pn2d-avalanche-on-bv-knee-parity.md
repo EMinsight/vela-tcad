@@ -7,11 +7,12 @@ Newton, the Task 6 density/QFP matrix, both predeclared Task 7 continuation
 schedules, the observation-only Poisson-QFP cross-block decomposition, the
 effective Schur-loop source decomposition, the self-consistent
 element-edge SG/GSS-Laux candidate, dose-preserving mesh validation, and Task
-11 regression are executed. Stable same-grid M0/M2 Sentaurus-golden parity
-passes. The M1 mesh/continuation observation remains open. Task 11 returns
-`task11_regression_passed_keep_opt_in_independent_review_pending`; all
-production-default changes remain prohibited pending new independent
-scientific and code reviews.
+11 regression are executed. Stable same-grid M0/M2 BV-effective metrics
+support Sentaurus-golden agreement; the raw M0 composite outcome remains
+`ill_conditioned_knee_metric`. The M1 mesh/continuation observation remains
+open. Both new independent reviews return `APPROVE_WITH_CONDITIONS`. A
+separate PN2D BV template default proposal and prospective dual-domain
+contract are authorized; direct production-default changes remain prohibited.
 
 Starting point: local branch `codex-pn2d-minimal6-operator-audit`, commit
 `1350d11`. Commit `fa1c343` is an ancestor of this starting point.
@@ -1118,18 +1119,30 @@ SHA-256. Its nonzero-bias RMSE is `6.9965091e-5 dex` and maximum error is
 `1.2546889e-4 dex`, both inside the Task 9 limits. Source/contact and terminal
 closure also pass.
 
-No Task 11 solver-source or default change was made. Historical independent
-reviews approved SG/Laux only as an opt-in diagnostic and do not cover the
-new M0/M2 self-consistent evidence or a default proposal. The Task 11 typed
-outcome is therefore:
+No Task 11 solver-source or default change was made. Two new independent
+reviews were then completed against commit `ec00347`; both return
+`APPROVE_WITH_CONDITIONS`. The Task 11 typed outcome is therefore:
 
 ```text
-task11_regression_passed_keep_opt_in_independent_review_pending
+task11_regression_passed_independent_reviews_approve_with_conditions
 ```
 
-The regression work is complete, but the two-review production-default gate
-remains fail-closed. See
-`docs/validation/pn2d_task11_regression_review_2026-07-31.md`.
+The reviews authorize a separate PN2D BV template default proposal and a
+prospective M0/M2 dual-domain acceptance contract, not a direct default
+switch. Required conditions include:
+
+- rescore balanced M0 and M2 under one contract with bound closure evidence;
+- save a unified M2 acceptance artifact;
+- keep same-grid golden agreement distinct from mesh convergence;
+- change the PN2D template SG/Laux configuration atomically;
+- retain the global C++ defaults and an explicit legacy/rollback path; and
+- add fresh-render, compatibility, rollback, and default-path M0/M2 tests.
+
+See:
+
+- `docs/validation/pn2d_task11_regression_review_2026-07-31.md`;
+- `docs/validation/pn2d_task11_independent_scientific_review_2026-07-31.md`;
+- `docs/validation/pn2d_task11_independent_code_review_2026-07-31.md`.
 
 ## Decision-gate reporting template
 

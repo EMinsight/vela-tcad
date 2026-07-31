@@ -5,17 +5,16 @@ Date: 2026-07-31
 Typed outcome:
 
 ```text
-task11_regression_passed_keep_opt_in_independent_review_pending
+task11_regression_passed_independent_reviews_approve_with_conditions
 ```
 
 ## Decision
 
-The Task 11 implementation and regression gates pass. The
-`element_edge_sg_gss_laux` candidate remains opt-in because the historical
-independent scientific and code reviews approved the operator only as a
-diagnostic with unchanged production defaults. They do not cover the new M0
-and M2 self-consistent golden-parity evidence or authorize a production
-default change.
+The Task 11 implementation and regression gates pass. Two new independent,
+read-only reviews now return `APPROVE_WITH_CONDITIONS`. The
+`element_edge_sg_gss_laux` candidate remains opt-in. The reviews authorize a
+separate prospective production-default proposal and contract; they do not
+authorize a production-default patch directly.
 
 No physical parameter, numerical tolerance, empirical scale, voltage shift,
 or production default was changed during Task 11.
@@ -48,7 +47,8 @@ or production default was changed during Task 11.
 | avalanche-off nonzero-bias RMSE | `<= 0.001 dex` | `6.9965091e-5 dex` | pass |
 | avalanche-off maximum error | `<= 0.002 dex` | `1.2546889e-4 dex` | pass |
 | generated output or `tmp/` staged | none | none | pass |
-| new independent scientific and code review | both accept | not yet obtained | pending |
+| independent scientific review | accept evidence scope | `APPROVE_WITH_CONDITIONS` | pass with conditions |
+| independent code review | accept implementation scope | `APPROVE_WITH_CONDITIONS` | pass with conditions |
 
 Commands:
 
@@ -196,10 +196,13 @@ The current evidence supports the following limited claims:
    parameters, and physical inputs were not fitted.
 2. SG/Laux changes the element-local current/source support semantics; it does
    not change the Van Overstraeten coefficient law.
-3. The stable same-grid M0 and M2 comparisons support Vela-versus-Sentaurus
-   golden parity. M0 has `|delta V_break|=0.032 V`; M2 has
+3. The stable same-grid M0 and M2 BV-effective comparisons support
+   Vela-versus-Sentaurus golden agreement. M0 has
+   `|delta V_break|=0.032 V`; M2 has
    `|delta V_break|=0.014 V`, median current error `0.05663 dex`, and maximum
-   current error `0.07953 dex`.
+   current error `0.07953 dex`. The raw M0 composite analyzer outcome remains
+   `ill_conditioned_knee_metric`; this distinction is part of the independent
+   scientific-review conditions.
 4. The shared M1 nonmonotonic branch is retained as a topology/continuation
    observation. It is not evidence that Vela alone differs from Sentaurus.
 5. M1-to-M2 source and knee changes still mean that a mesh-converged physical
@@ -210,8 +213,8 @@ The current evidence supports the following limited claims:
    terminal-current-extraction defect.
 
 This review finds no regression or contradiction requiring rejection of the
-opt-in candidate. It does not replace an independent review of the new
-self-consistent evidence.
+opt-in candidate. This was the Task 11 internal evidence review; its claims
+were subsequently checked by the independent scientific review below.
 
 ## Code evidence review
 
@@ -227,25 +230,47 @@ self-consistent evidence.
   pass.
 - No generated simulation artifact is included in the source diff.
 
-This review finds no code regression and no accidental default change. A
-fresh independent code reviewer must still approve any later proposal to
-change the production default.
+This review finds no code regression and no accidental default change. The
+independent code review below confirms the current opt-in implementation; the
+actual default-change patch must still receive a separate fresh review.
 
-## Independent-review boundary
+## Independent-review result
 
-The 2026-07-25 historical independent scientific and code reviews approved
-the SG/Laux implementation with the explicit conclusion
-`production default unchanged`. They did not evaluate the later
-self-consistent M0/M2 parity, the corrected balanced-junction contract, or a
-new default proposal.
+Two new independent reviews were completed against commit `ec00347`.
 
-Therefore the Task 11 regression work is complete, but the final acceptance
-criterion requiring two new independent approvals is intentionally left
-pending. The allowed decision is:
+The scientific review returns `APPROVE_WITH_CONDITIONS`:
+
+- balanced M0's raw composite result is
+  `ill_conditioned_knee_metric`, although its BV-effective current and knee
+  metrics are strong;
+- M2 needs a unified, independently saved `acceptance.json`;
+- balanced M0 and M2 must be rescored with the same prospective dual-domain
+  contract and closure evidence bound to exact hashes;
+- same-grid golden agreement and cross-grid physical convergence must remain
+  separate claims.
+
+The code review returns `APPROVE_WITH_CONDITIONS`:
+
+- the first proposal must be limited to the PN2D BV template, not the global
+  C++ defaults;
+- the template's current approximation, source mapping, and inactive
+  midpoint-compatibility field must change atomically;
+- the proposal needs fresh-render default assertions, explicit legacy
+  behavior, omitted-field compatibility, rollback, and default-path M0/M2
+  end-to-end tests.
+
+The detailed reviews are:
+
+- `docs/validation/pn2d_task11_independent_scientific_review_2026-07-31.md`;
+- `docs/validation/pn2d_task11_independent_code_review_2026-07-31.md`.
+
+The allowed decision is:
 
 ```text
 keep element_edge_sg_gss_laux opt-in;
 do not change the production default;
 preserve the M1 mesh/continuation observation;
-request separate scientific and code review before any default-change patch.
+authorize a separate PN2D BV template default proposal and prospective
+dual-domain acceptance contract;
+require a second review of the actual patch and its fresh acceptance results.
 ```
