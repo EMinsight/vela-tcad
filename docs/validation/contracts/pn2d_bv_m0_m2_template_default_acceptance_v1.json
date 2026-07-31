@@ -1,0 +1,129 @@
+{
+  "schema": "vela.pn2d_bv_m0_m2_template_default_acceptance_contract.v1",
+  "contract_id": "pn2d_bv_m0_m2_template_default_acceptance_20260731",
+  "frozen_date": "2026-07-31",
+  "prospective_only": true,
+  "retroactive_threshold_mutation_forbidden": true,
+  "scope": {
+    "authorized_default_surface": "configs/templates/pn2d_bv.template.json",
+    "global_cpp_default_change_authorized": false,
+    "other_template_default_change_authorized": false,
+    "required_levels": [
+      "M0",
+      "M2"
+    ],
+    "same_grid_sentaurus_is_golden": true,
+    "cross_mesh_convergence_is_observation_only": true
+  },
+  "required_default_profile": {
+    "profile_parameter": "avalanche_current_support_profile",
+    "profile_value": "element_edge_sg_gss_laux",
+    "atomic_fields": {
+      "cell_reconstructed_midpoint_density": "bernoulli",
+      "current_approximation": "element_edge_sg_gss_laux",
+      "source_mapping_mode": "element_vertex_box_measure"
+    },
+    "mobility_doping_concentration_basis": "net_doping"
+  },
+  "required_rollback_profile": {
+    "profile_value": "legacy_cell_reconstructed",
+    "atomic_fields": {
+      "cell_reconstructed_midpoint_density": "gss_logistic",
+      "current_approximation": "cell_reconstructed",
+      "source_mapping_mode": "triangle_gss_gradqf_truncated"
+    }
+  },
+  "bv_domain": {
+    "exact_biases_V": [
+      -15.0,
+      -16.0,
+      -17.0,
+      -18.0,
+      -18.5,
+      -19.0,
+      -19.25,
+      -19.5,
+      -19.7,
+      -19.8,
+      -19.85,
+      -19.9,
+      -19.95,
+      -20.0
+    ],
+    "thresholds": {
+      "effective_curve_median_abs_log_error_dex": 0.05,
+      "effective_curve_p95_abs_log_error_dex": 0.1,
+      "effective_curve_max_abs_log_error_dex": 0.15,
+      "effective_gain_median_abs_log_error_dex": 0.05,
+      "effective_gain_max_abs_log_error_dex": 0.1,
+      "knee_median_abs_log_error_dex": 0.05,
+      "knee_max_abs_log_error_dex": 0.1,
+      "V_break_abs_error_V": 0.1,
+      "V_slope_abs_error_V": 0.1,
+      "adjacent_slope_rmse_dex_per_V": 0.2
+    },
+    "excluded_gates": [
+      "whole_lattice_monotonicity",
+      "cross_mesh_V_break_change",
+      "cross_mesh_integrated_source_change"
+    ]
+  },
+  "execution_evidence": {
+    "required_branches": [
+      "avalanche_off",
+      "iic_postprocess",
+      "avalanche_on"
+    ],
+    "require_complete_exact_lattice": true,
+    "require_duplicate_iv_hash_identity": true,
+    "require_duplicate_state_hash_identity": true,
+    "require_duplicate_physics_config_hash_identity": true,
+    "required_hash_bindings": [
+      "contract",
+      "pn2d_bv_template",
+      "render_manifest",
+      "base_config",
+      "branch_configs",
+      "mesh",
+      "doping",
+      "materials",
+      "vela_iv",
+      "vela_state_manifest",
+      "sentaurus_manifest",
+      "sentaurus_on_off_aggregate",
+      "curve_acceptance"
+    ]
+  },
+  "closure": {
+    "global_continuity_required": true,
+    "maximum_electron_closure_ratio": 0.01,
+    "maximum_hole_closure_ratio": 0.01,
+    "required_exact_biases_only": true,
+    "process_probe_hash_binding_required": true
+  },
+  "low_current_domain": {
+    "classification_artifact_required": true,
+    "required_typed_outcome": "low_current_state_precision_floor_not_avalanche_operator_or_terminal_extractor",
+    "raw_monotonicity_is_not_a_model_gate": true
+  },
+  "decision_policy": {
+    "all_levels_pass": "pn2d_bv_template_default_evidence_complete",
+    "any_level_fail": "pn2d_bv_template_default_not_accepted",
+    "production_default_surface_if_passed": "pn2d_bv_template_only",
+    "global_cpp_default_change_requires_separate_contract": true
+  },
+  "threshold_provenance": {
+    "source_contract": "docs/validation/contracts/pn2d_bv_dual_domain_acceptance_v1.json",
+    "curve_and_knee": "scripts/analyze_pn2d_avalanche_on_bv_parity.py",
+    "low_current_classification": "scripts/audit_pn2d_task7_low_current_nonmonotonicity.py"
+  },
+  "prohibited_post_result_changes": [
+    "remove M0 or M2 after observing a failure",
+    "change an exact bias after observing a failure",
+    "relax a threshold after observing a failure",
+    "fit avalanche coefficients or source scale",
+    "translate the voltage axis",
+    "replace a failed default-render run with an opt-in candidate run",
+    "treat cross-mesh agreement as a substitute for same-grid golden agreement"
+  ]
+}

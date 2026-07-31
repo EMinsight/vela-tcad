@@ -458,10 +458,59 @@ def build_state_manifest(
     }
 
 
+def build_partial_state_manifest(
+    results: list[dict[str, Any]],
+    biases: list[float],
+    output_root: Path,
+) -> dict[str, Any]:
+    """Preserve hash evidence when an exact-lattice execution fails closed."""
+    branches: list[dict[str, Any]] = []
+    for result in results:
+        records: list[dict[str, Any]] = []
+        for bias in biases:
+            matches = [
+                record
+                for raw_bias, record in result["state_files"].items()
+                if abs(float(raw_bias) - bias) <= EXACT_BIAS_TOLERANCE_V
+            ]
+            if len(matches) != 1:
+                continue
+            state = matches[0]
+            state_path = Path(state["path"]).resolve()
+            records.append(
+                {
+                    "requested_bias_V": bias,
+                    "actual_bias_V": bias,
+                    "snapshot_tdr": {
+                        "path": str(state_path.relative_to(output_root)),
+                        "sha256": state["sha256"],
+                    },
+                }
+            )
+        branches.append(
+            {
+                "branch": result["branch"],
+                "requested_biases_V": biases,
+                "bias_records": records,
+            }
+        )
+    return {
+        "schema": "vela.pn2d_bv_exact_state_manifest.v1",
+        "status": "failed",
+        "outcome": "incomplete_exact_state_manifest",
+        "branch_records": branches,
+    }
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runner", type=Path, required=True)
     parser.add_argument("--base-config", type=Path, required=True)
+    parser.add_argument(
+        "--base-config-manifest",
+        type=Path,
+        help="bind the template-render manifest used to create --base-config",
+    )
     parser.add_argument("--sentaurus-manifest", type=Path, required=True)
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument(
@@ -539,6 +588,15 @@ def main() -> int:
         raise ValueError("--qf-carrier-truncation must be finite and nonnegative")
     runner = args.runner.resolve()
     base_path = args.base_config.resolve()
+    base_manifest_path = (
+        args.base_config_manifest.resolve()
+        if args.base_config_manifest is not None
+        else None
+    )
+    if base_manifest_path is not None and not base_manifest_path.is_file():
+        raise FileNotFoundError(
+            f"missing base config render manifest: {base_manifest_path}"
+        )
     sentaurus_path = args.sentaurus_manifest.resolve()
     output_root = args.output_root.resolve()
     output_root.mkdir(parents=True, exist_ok=True)
@@ -572,6 +630,24 @@ def main() -> int:
         result["returncode"] == 0 and result["complete_exact_lattice"]
         for result in results
     )
+    active_impact = base.get("solver", {}).get("impact_ionization", {})
+    current_support = (
+        {
+            "current_approximation": "element_edge_sg_gss_laux",
+            "source_mapping_mode": "element_vertex_box_measure",
+            "cell_reconstructed_midpoint_density": "bernoulli",
+            "origin": "cli_opt_in",
+        }
+        if args.sg_laux_candidate
+        else {
+            "current_approximation": active_impact.get("current_approximation"),
+            "source_mapping_mode": active_impact.get("source_mapping_mode"),
+            "cell_reconstructed_midpoint_density": active_impact.get(
+                "cell_reconstructed_midpoint_density"
+            ),
+            "origin": "base_config",
+        }
+    )
     execution = {
         "schema": "vela.pn2d_bv_exact_lattice_execution.v1",
         "status": "passed" if complete else "failed",
@@ -584,6 +660,14 @@ def main() -> int:
         "runner_sha256": sha256(runner),
         "base_config": str(base_path),
         "base_config_sha256": sha256(base_path),
+        "base_config_manifest": (
+            {
+                "path": str(base_manifest_path),
+                "sha256": sha256(base_manifest_path),
+            }
+            if base_manifest_path is not None
+            else None
+        ),
         "physical_input_overrides": physical_input_overrides,
         "sentaurus_manifest": str(sentaurus_path),
         "sentaurus_manifest_sha256": sha256(sentaurus_path),
@@ -601,6 +685,7 @@ def main() -> int:
             "abstol": args.newton_abstol,
             "observation_only": True,
         },
+        "current_support": current_support,
         "candidate": (
             {
                 "axis": "impact_ionization.element_edge_sg_gss_laux",
@@ -623,17 +708,20 @@ def main() -> int:
     }
     execution_path = output_root / "execution.json"
     execution_path.write_text(
-        json.dumps(execution, indent=2, sort_keys=True) + "\n",
+        json.dumps(execution, indent=2, sort_keys=True, allow_nan=False) + "\n",
         encoding="utf-8",
     )
-    if complete:
-        state_manifest = build_state_manifest(results, biases, output_root)
-        state_manifest_path = output_root / "state_manifest.json"
-        state_manifest_path.write_text(
-            json.dumps(state_manifest, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-    print(json.dumps(execution, indent=2, sort_keys=True))
+    state_manifest = (
+        build_state_manifest(results, biases, output_root)
+        if complete
+        else build_partial_state_manifest(results, biases, output_root)
+    )
+    state_manifest_path = output_root / "state_manifest.json"
+    state_manifest_path.write_text(
+        json.dumps(state_manifest, indent=2, sort_keys=True, allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
+    print(json.dumps(execution, indent=2, sort_keys=True, allow_nan=False))
     return 0 if complete else 2
 
 

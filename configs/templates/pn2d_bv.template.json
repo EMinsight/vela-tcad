@@ -128,6 +128,14 @@
     }
   },
   "parameters": {
+    "avalanche_current_support_profile": {
+      "choices": [
+        "element_edge_sg_gss_laux",
+        "legacy_cell_reconstructed"
+      ],
+      "default": "legacy_cell_reconstructed",
+      "type": "string"
+    },
     "continuity_balance_csv": {
       "default": "pn2d_bv_continuity.csv",
       "path": true,
@@ -223,5 +231,5 @@
   },
   "template": "pn2d_bv",
   "template_schema": "vela.simulation-template.v1",
-  "version": 1
+  "version": 2
 }

@@ -17,8 +17,10 @@ if str(REPO / "scripts") not in sys.path:
     sys.path.insert(0, str(REPO / "scripts"))
 
 from generate_pn2d_config import (  # noqa: E402
+    BV_AVALANCHE_CURRENT_SUPPORT_PROFILES,
     TemplateError,
     render_named_template,
+    validate_pn2d_config,
     write_rendered_config,
 )
 
@@ -51,7 +53,7 @@ class Pn2dConfigTemplatesTest(unittest.TestCase):
         self.assertEqual(manifest["template_version"], 1)
 
     def test_bv_defaults_capture_sentaurus_aligned_models(self) -> None:
-        config, _ = render_named_template("pn2d_bv")
+        config, manifest = render_named_template("pn2d_bv")
         self.assertEqual(config["sweep"]["mode"], "bv_reverse")
         self.assertEqual(config["sweep"]["initial_step"], 1.0e-4)
         self.assertEqual(config["sweep"]["min_step"], 1.0e-10)
@@ -66,6 +68,16 @@ class Pn2dConfigTemplatesTest(unittest.TestCase):
         self.assertEqual(
             config["solver"]["impact_ionization"]["model"], "van_overstraeten"
         )
+        impact = config["solver"]["impact_ionization"]
+        for name, value in BV_AVALANCHE_CURRENT_SUPPORT_PROFILES[
+            "legacy_cell_reconstructed"
+        ].items():
+            self.assertEqual(impact[name], value)
+        self.assertEqual(
+            manifest["parameters"]["avalanche_current_support_profile"],
+            "legacy_cell_reconstructed",
+        )
+        self.assertEqual(manifest["template_version"], 2)
         self.assertEqual(
             config["sweep"]["write_state_every_point_prefix"],
             "pn2d_bv_states/state",
@@ -79,6 +91,53 @@ class Pn2dConfigTemplatesTest(unittest.TestCase):
             newton_history["iterations_csv_file"],
             "pn2d_bv_newton_iterations.csv",
         )
+
+    def test_bv_legacy_profile_is_an_atomic_rollback(self) -> None:
+        config, manifest = render_named_template(
+            "pn2d_bv",
+            {"avalanche_current_support_profile": "legacy_cell_reconstructed"},
+        )
+        impact = config["solver"]["impact_ionization"]
+        for name, value in BV_AVALANCHE_CURRENT_SUPPORT_PROFILES[
+            "legacy_cell_reconstructed"
+        ].items():
+            self.assertEqual(impact[name], value)
+        self.assertEqual(
+            manifest["overrides"],
+            {"avalanche_current_support_profile": "legacy_cell_reconstructed"},
+        )
+
+    def test_bv_sg_laux_profile_is_an_atomic_opt_in(self) -> None:
+        config, manifest = render_named_template(
+            "pn2d_bv",
+            {"avalanche_current_support_profile": "element_edge_sg_gss_laux"},
+        )
+        impact = config["solver"]["impact_ionization"]
+        for name, value in BV_AVALANCHE_CURRENT_SUPPORT_PROFILES[
+            "element_edge_sg_gss_laux"
+        ].items():
+            self.assertEqual(impact[name], value)
+        self.assertEqual(
+            manifest["overrides"],
+            {"avalanche_current_support_profile": "element_edge_sg_gss_laux"},
+        )
+
+    def test_bv_legacy_config_remains_valid_but_mixed_profiles_fail_closed(self) -> None:
+        legacy, _ = render_named_template(
+            "pn2d_bv",
+            {"avalanche_current_support_profile": "legacy_cell_reconstructed"},
+        )
+        validate_pn2d_config(legacy, "pn2d_bv")
+        mixed = json.loads(json.dumps(legacy))
+        mixed["solver"]["impact_ionization"]["current_approximation"] = (
+            "element_edge_sg_gss_laux"
+        )
+        with self.assertRaisesRegex(TemplateError, "complete profile"):
+            validate_pn2d_config(mixed, "pn2d_bv")
+        omitted = json.loads(json.dumps(legacy))
+        del omitted["solver"]["impact_ionization"]["source_mapping_mode"]
+        with self.assertRaisesRegex(TemplateError, "complete profile"):
+            validate_pn2d_config(omitted, "pn2d_bv")
 
     def test_defaults_contain_no_absolute_paths_or_placeholders(self) -> None:
         for template in ("pn2d_iv", "pn2d_bv"):
@@ -99,6 +158,11 @@ class Pn2dConfigTemplatesTest(unittest.TestCase):
             )
         with self.assertRaisesRegex(TemplateError, "positive sweep.step"):
             render_named_template("pn2d_bv", {"stop_voltage": 20.0})
+        with self.assertRaisesRegex(TemplateError, "must be one of"):
+            render_named_template(
+                "pn2d_bv",
+                {"avalanche_current_support_profile": "half_migrated"},
+            )
 
     def test_rendering_is_byte_deterministic_and_manifest_is_separate(self) -> None:
         with tempfile.TemporaryDirectory(prefix="vela_pn2d_template_") as td:

@@ -12,6 +12,7 @@ from scripts.run_pn2d_bv_exact_lattice_process import (
     CONTINUATION_SCHEDULES,
     apply_physical_input_overrides,
     branch_config,
+    build_partial_state_manifest,
     build_state_manifest,
     exact_bias_lattice,
     normalized_non_schedule_config,
@@ -249,6 +250,22 @@ class ExactLatticeProcessTests(unittest.TestCase):
             record["snapshot_tdr"]["path"],
             str(Path("avalanche_on/states/state_bias_2.csv")),
         )
+
+    def test_partial_state_manifest_preserves_available_failure_evidence(self) -> None:
+        root = Path("qualification").resolve()
+        result = {
+            "branch": "avalanche_on",
+            "state_files": {
+                f"{self.biases[0]:.17g}": {
+                    "path": str(root / "state0.csv"),
+                    "sha256": "state-zero",
+                }
+            },
+        }
+        manifest = build_partial_state_manifest([result], self.biases, root)
+        self.assertEqual(manifest["status"], "failed")
+        self.assertEqual(manifest["outcome"], "incomplete_exact_state_manifest")
+        self.assertEqual(len(manifest["branch_records"][0]["bias_records"]), 1)
 
     def test_qualification_rejects_missing_or_inexact_rows(self) -> None:
         rows = [

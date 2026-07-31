@@ -19,6 +19,18 @@ TEMPLATES = {
     "pn2d_bv": TEMPLATE_DIR / "pn2d_bv.template.json",
 }
 PLACEHOLDER = re.compile(r"^\$\{([a-zA-Z_][a-zA-Z0-9_]*)\}$")
+BV_AVALANCHE_CURRENT_SUPPORT_PROFILES = {
+    "element_edge_sg_gss_laux": {
+        "current_approximation": "element_edge_sg_gss_laux",
+        "source_mapping_mode": "element_vertex_box_measure",
+        "cell_reconstructed_midpoint_density": "bernoulli",
+    },
+    "legacy_cell_reconstructed": {
+        "current_approximation": "cell_reconstructed",
+        "source_mapping_mode": "triangle_gss_gradqf_truncated",
+        "cell_reconstructed_midpoint_density": "gss_logistic",
+    },
+}
 
 
 class TemplateError(ValueError):
@@ -128,6 +140,19 @@ def validate_pn2d_config(config: dict[str, Any], template_name: str) -> None:
             raise TemplateError("pn2d_bv must enable van_overstraeten")
         if mobility.get("model") != "masetti_field":
             raise TemplateError("pn2d_bv must use masetti_field")
+        active_support = {
+            name: impact.get(name)
+            for name in (
+                "current_approximation",
+                "source_mapping_mode",
+                "cell_reconstructed_midpoint_density",
+            )
+        }
+        if active_support not in BV_AVALANCHE_CURRENT_SUPPORT_PROFILES.values():
+            raise TemplateError(
+                "pn2d_bv avalanche current support must match one complete "
+                "profile; mixed or omitted profile fields are forbidden"
+            )
     else:
         raise TemplateError(f"unsupported PN2D template: {template_name}")
 
@@ -163,6 +188,10 @@ def render_named_template(
         parameters[name] = value
 
     config = _substitute(document["config"], parameters)
+    if template_name == "pn2d_bv":
+        profile = parameters["avalanche_current_support_profile"]
+        impact = config["solver"]["impact_ionization"]
+        impact.update(copy.deepcopy(BV_AVALANCHE_CURRENT_SUPPORT_PROFILES[profile]))
     validate_pn2d_config(config, template_name)
     manifest = {
         "generator": "scripts/generate_pn2d_config.py",

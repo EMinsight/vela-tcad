@@ -1144,6 +1144,42 @@ See:
 - `docs/validation/pn2d_task11_independent_scientific_review_2026-07-31.md`;
 - `docs/validation/pn2d_task11_independent_code_review_2026-07-31.md`.
 
+### Prospective template-default proposal execution note 2026-07-31
+
+A separate M0/M2 contract was frozen before candidate execution:
+
+```text
+docs/validation/contracts/pn2d_bv_m0_m2_template_default_acceptance_v1.json
+```
+
+The atomic PN2D BV profile, explicit legacy rollback, default-render tests,
+contract-domain analyzer, exact-lattice hash bindings, partial failure state
+manifest, and strict machine evaluator were implemented.  No global C++
+default was changed.
+
+Two independent default-render SG/Laux runs were executed for balanced M0 and
+M2.  Avalanche-off and avalanche-on complete 29/29 points and are deterministic
+at both levels.  M0 same-grid parity and closure pass all gates.  M2 fails the
+frozen knee median and required `V_slope` gates.  IIC/postprocess is incomplete
+and its partial IV hash is not deterministic at both levels.  The unified
+typed outcome is:
+
+```text
+pn2d_bv_template_default_not_accepted
+```
+
+Both second independent reviews return `REJECT_DEFAULT_CHANGE`.  The PN2D BV
+template default was therefore rolled back atomically to
+`legacy_cell_reconstructed`; SG/Laux remains an explicit opt-in.  The failed
+evidence is preserved.  Focused Python tests pass 28/28 and the post-rollback
+Release CTest passes 506/506.
+
+See:
+
+- `docs/validation/pn2d_bv_m0_m2_template_default_acceptance_2026-07-31.md`;
+- `docs/validation/pn2d_bv_template_default_second_scientific_review_2026-07-31.md`;
+- `docs/validation/pn2d_bv_template_default_second_code_review_2026-07-31.md`.
+
 ## Decision-gate reporting template
 
 After every task, report before continuing:

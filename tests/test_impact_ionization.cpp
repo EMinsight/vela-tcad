@@ -1900,6 +1900,12 @@ TEST_CASE("JSON solver config selects impact ionization model", "[impact][json]"
     REQUIRE(ImpactIonizationModelConfig{}.sourceVolumePolicy == "genius_truncated");
     REQUIRE(ImpactIonizationModelConfig{}.edgeSourcePartition == "symmetric");
     REQUIRE(ImpactIonizationModelConfig{}.couplingMode == "self_consistent");
+    REQUIRE(ImpactIonizationModelConfig{}.currentApproximation ==
+            "mobility_density_gradient");
+    REQUIRE(ImpactIonizationModelConfig{}.cellReconstructedMidpointDensity ==
+            "bernoulli");
+    REQUIRE(ImpactIonizationModelConfig{}.sourceMappingMode ==
+            "node_F_node_alpha_node_G");
 
     const GummelConfig cfg = gummelConfigFromJson(nlohmann::json{
         {"impact_ionization", {
