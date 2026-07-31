@@ -19,6 +19,13 @@ This correction resolves the M0 continuation blocker. It does not retroactively
 pass the separate M1-to-M2 source/knee mesh-independence gates; those results
 must be regenerated with the corrected junction contract.
 
+The corrected balanced-junction M1/M2 rerun has now been completed. Both
+levels reach `-20 V`, but M1 develops a deterministic nonmonotonic
+avalanche-on branch in both simulators while M2 remains monotonic. The rerun
+still returns primary `mesh_dependent_knee` and secondary
+`mesh_dependent_source`. See
+`pn2d_task10_balanced_mesh_independence_2026-07-31.md`.
+
 ## Decision
 
 Task 10 stops with the typed outcome:

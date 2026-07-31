@@ -1012,6 +1012,24 @@ single-owner junction contract and remain secondary/open until regenerated.
 They do not authorize Task 11 or a production-default change. See
 `docs/validation/pn2d_task10_m0_stall_root_cause_2026-07-31.md`.
 
+### Balanced-junction M1/M2 execution note 2026-07-31
+
+The M1/M2 sequence was regenerated with `ND=NA=5e16 cm^-3` at every
+`x=1 um` junction node. Both levels preserve the total dose and Vela completes
+all 29 exact off/IIC/on points through `-20 V`. Duplicate Vela runs match all
+174 state hashes and all six IV hashes.
+
+M2 is monotonic in both simulators and has a cross-simulator `V_break`
+difference of `0.014 V`. M1 is nonmonotonic in both simulators, with branch
+jumps at different biases. M1-to-M2 `V_break` changes are `0.123 V` for Vela
+and `0.191 V` for Sentaurus. Maximum knee-lattice integrated-source changes
+are `3835%` and `165471%`, respectively.
+
+Task 10 therefore still stops with primary `mesh_dependent_knee` and secondary
+`mesh_dependent_source`. This result is distinct from the resolved M0
+continuation/input defect. Task 11 remains unauthorized. Evidence:
+`docs/validation/pn2d_task10_balanced_mesh_independence_2026-07-31.md`.
+
 ## Task 11 - regression, review, and default decision
 
 ### Goal

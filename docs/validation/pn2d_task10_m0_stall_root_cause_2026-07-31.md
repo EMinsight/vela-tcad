@@ -215,3 +215,9 @@ The M0 Vela blocker is closed. The prior M1-to-M2 mesh-independence result is a
 separate, secondary gate and remains open because the earlier M1/M2 runs used
 the superseded single-owner junction contract. No production default changes
 are authorized by this result.
+
+The balanced-junction M1/M2 rerun was subsequently completed. Both Vela levels
+reach `-20 V`, confirming that the M0-style continuation blocker is gone, but
+M1 remains a deterministic nonmonotonic avalanche-on branch in both
+simulators. Mesh independence therefore still fails independently of this M0
+fix. See `pn2d_task10_balanced_mesh_independence_2026-07-31.md`.
