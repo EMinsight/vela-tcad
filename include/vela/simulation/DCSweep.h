@@ -90,6 +90,9 @@ struct NewtonHistoryDiagnosticsConfig {
     std::string csvFile;
     std::string attemptsCsvFile;
     std::string iterationsCsvFile;
+    /// Optional directory for parent, initial, and final states of rejected
+    /// nonlinear attempts. Empty keeps the diagnostic disabled.
+    std::string rejectedStateDirectory;
 };
 
 struct ContactCurrentQfFloorDiagnosticsConfig {

@@ -2,6 +2,23 @@
 
 Date: 2026-07-31
 
+## Superseding correction
+
+The original `N.Window`-only junction construction below is not a valid
+finite-element representation of the intended junction position. Although it
+preserves the integrated total-impurity dose, it assigns a nonzero net doping
+of `+1e17 cm^-3` to the `x=1 um` junction nodes. Linear interpolation therefore
+moves the zero-net-doping location away from the geometric junction.
+
+The M0 Vela stall reported below has since been reproduced and removed by the
+balanced-half construction (`ND=NA=5e16 cm^-3` at the junction nodes), which
+preserves both the `1e17 cm^-3` total impurity and zero net doping. See
+`pn2d_task10_m0_stall_root_cause_2026-07-31.md`.
+
+This correction resolves the M0 continuation blocker. It does not retroactively
+pass the separate M1-to-M2 source/knee mesh-independence gates; those results
+must be regenerated with the corrected junction contract.
+
 ## Decision
 
 Task 10 stops with the typed outcome:

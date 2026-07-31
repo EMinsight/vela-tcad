@@ -71,13 +71,13 @@ def add_junction_refinement(text: str, spacing_x: float, spacing_y: float) -> st
 
 
 def make_dose_preserving_junction(text: str) -> str:
-    """Assign the x=XJ nodes to exactly one constant-profile window.
+    """Give x=XJ nodes zero net doping and one full impurity concentration.
 
-    SDE rectangle windows include their boundaries.  The historical deck used
-    XJ as both the P-window end and N-window start, so junction nodes received
-    both active-species profiles.  Moving only the P-window end by a
-    sub-mesh epsilon keeps the continuum junction at XJ while making nodal
-    ownership unambiguous and the total-impurity dose mesh independent.
+    SDE rectangle windows include their boundaries.  Full P/N profiles on the
+    same junction nodes make the total impurity 2*C, while assigning the nodes
+    to only one side makes the nodal net doping +/-C and shifts the zero of a
+    linear finite-element interpolation away from XJ.  A sub-mesh junction
+    window instead assigns C/2 of each species: ND+NA=C and ND-NA=0.
     """
 
     define_anchor = "(define XJ 1.0)      ; PN junction position"
@@ -86,14 +86,84 @@ def make_dose_preserving_junction(text: str) -> str:
     text = text.replace(
         define_anchor,
         define_anchor
-        + f"\n(define XJ_P (- XJ {JUNCTION_EPSILON_UM:.17g}))"
-        + " ; exclusive P-window end",
+        + f"\n(define XJ_LEFT (- XJ {JUNCTION_EPSILON_UM:.17g}))"
+        + " ; full P-window end"
+        + f"\n(define XJ_RIGHT (+ XJ {JUNCTION_EPSILON_UM:.17g}))"
+        + " ; full N-window start",
         1,
     )
     p_window_end = "(position XJ H 0.0)"
     if text.count(p_window_end) != 1:
         raise RuntimeError("expected exactly one P-window XJ endpoint")
-    return text.replace(p_window_end, "(position XJ_P H 0.0)", 1)
+    text = text.replace(p_window_end, "(position XJ_LEFT H 0.0)", 1)
+    n_window_start = "(position XJ 0.0 0.0)"
+    if text.count(n_window_start) != 1:
+        raise RuntimeError("expected exactly one N-window XJ endpoint")
+    text = text.replace(
+        n_window_start, "(position XJ_RIGHT 0.0 0.0)", 1
+    )
+
+    window_anchor = """(sdedr:define-refeval-window
+  "N.Window"
+  "Rectangle"
+  (position XJ_RIGHT 0.0 0.0)
+  (position L H 0.0)
+)"""
+    if text.count(window_anchor) != 1:
+        raise RuntimeError("expected exactly one N.Window definition")
+    junction_window = """(sdedr:define-refeval-window
+  "Junction.Doping.Window"
+  "Rectangle"
+  (position XJ_LEFT 0.0 0.0)
+  (position XJ_RIGHT H 0.0)
+)"""
+    text = text.replace(
+        window_anchor, window_anchor + "\n\n" + junction_window, 1
+    )
+
+    profile_anchor = """(sdedr:define-constant-profile
+  "N.Doping"
+  "PhosphorusActiveConcentration"
+  1e17
+)"""
+    if text.count(profile_anchor) != 1:
+        raise RuntimeError("expected exactly one N.Doping definition")
+    half_profiles = """(sdedr:define-constant-profile
+  "Junction.P.Half"
+  "BoronActiveConcentration"
+  5e16
+)
+
+(sdedr:define-constant-profile
+  "Junction.N.Half"
+  "PhosphorusActiveConcentration"
+  5e16
+)"""
+    text = text.replace(
+        profile_anchor, profile_anchor + "\n\n" + half_profiles, 1
+    )
+
+    placement_anchor = """(sdedr:define-constant-profile-placement
+  "N.Place"
+  "N.Doping"
+  "N.Window"
+)"""
+    if text.count(placement_anchor) != 1:
+        raise RuntimeError("expected exactly one N.Place definition")
+    half_placements = """(sdedr:define-constant-profile-placement
+  "Junction.P.Half.Place"
+  "Junction.P.Half"
+  "Junction.Doping.Window"
+)
+
+(sdedr:define-constant-profile-placement
+  "Junction.N.Half.Place"
+  "Junction.N.Half"
+  "Junction.Doping.Window"
+)"""
+    return text.replace(
+        placement_anchor, placement_anchor + "\n\n" + half_placements, 1
+    )
 
 
 def main() -> int:
@@ -141,10 +211,18 @@ def main() -> int:
         "geometry_um": {"length": 2.0, "height": 0.5, "junction_x": 1.0},
         "doping_cm3": {"p": 1.0e17, "n": 1.0e17},
         "junction_profile_contract": {
-            "mode": "single_owner_submesh_epsilon",
-            "junction_owner": "N.Window",
+            "mode": "balanced_half_species_submesh_window",
+            "junction_owner": "Junction.Doping.Window",
             "p_window_end_um": 1.0 - JUNCTION_EPSILON_UM,
-            "n_window_start_um": 1.0,
+            "n_window_start_um": 1.0 + JUNCTION_EPSILON_UM,
+            "junction_window_um": [
+                1.0 - JUNCTION_EPSILON_UM,
+                1.0 + JUNCTION_EPSILON_UM,
+            ],
+            "junction_donors_cm3": 0.5e17,
+            "junction_acceptors_cm3": 0.5e17,
+            "junction_net_doping_cm3": 0.0,
+            "junction_total_impurity_cm3": 1.0e17,
             "epsilon_um": JUNCTION_EPSILON_UM,
             "expected_nodes_in_gap": 0,
             "double_counted_junction_nodes_allowed": False,

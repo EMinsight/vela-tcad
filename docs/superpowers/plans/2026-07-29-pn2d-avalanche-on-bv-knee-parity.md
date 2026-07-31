@@ -990,6 +990,28 @@ self-consistent branch stalled near `-17.1053958 V` when targeting `-18 V`.
 Task 11 is therefore not authorized. See
 `docs/validation/pn2d_task10_dose_preserving_mesh_gate_2026-07-31.md`.
 
+### Corrective execution note 2026-07-31
+
+The M0 continuation failure above was traced to the single-owner junction
+contract, not to a Vela solver limit. Assigning `+1e17 cm^-3` or
+`-1e17 cm^-3` net doping to the geometric junction nodes moves the
+zero-net-doping contour under linear finite-element interpolation. Both signs
+stall near `-17.105 V`; zero-net controls reach `-20 V`.
+
+The mesh generator now uses a balanced-half junction window:
+`ND=NA=5e16 cm^-3`. This preserves the intended zero-net junction, total
+impurity, and integrated dose. Two independent Vela runs using the actual
+Sentaurus-imported corrected M0 input completed all 29 exact points for off,
+IIC, and SG/Laux-on, with zero rejected attempts and matching all 87 state
+hashes. The paired corrected Sentaurus curve also reaches `-20 V`; Vela and
+Sentaurus give `V_break=-19.622/-19.654 V` and differ by `0.032 V`.
+
+The immediate M0 blocker is therefore closed. The earlier M1/M2
+`mesh_dependent_knee` and `mesh_dependent_source` results used the superseded
+single-owner junction contract and remain secondary/open until regenerated.
+They do not authorize Task 11 or a production-default change. See
+`docs/validation/pn2d_task10_m0_stall_root_cause_2026-07-31.md`.
+
 ## Task 11 - regression, review, and default decision
 
 ### Goal

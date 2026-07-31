@@ -50,21 +50,43 @@ class TestMeshMatrix(unittest.TestCase):
         updated = matrix.replace_size(source, "Junction.Mesh", 0.125)
         self.assertIn("0.125 0.125 0.125 0.125", updated)
 
-    def test_all_levels_use_single_owner_dose_preserving_junction(self):
+    def test_all_levels_use_balanced_half_species_junction(self):
         source = (
             "(define XJ 1.0)      ; PN junction position\n"
-            '(sdedr:define-refeval-window "P.Window" "Rectangle"\n'
+            "(sdedr:define-refeval-window\n"
+            '  "P.Window"\n'
+            '  "Rectangle"\n'
             "  (position 0.0 0.0 0.0)\n"
-            "  (position XJ H 0.0))\n"
-            '(sdedr:define-refeval-window "N.Window" "Rectangle"\n'
+            "  (position XJ H 0.0)\n"
+            ")\n"
+            "(sdedr:define-refeval-window\n"
+            '  "N.Window"\n'
+            '  "Rectangle"\n'
             "  (position XJ 0.0 0.0)\n"
-            "  (position L H 0.0))\n"
+            "  (position L H 0.0)\n"
+            ")\n"
+            '(sdedr:define-constant-profile\n'
+            '  "N.Doping"\n'
+            '  "PhosphorusActiveConcentration"\n'
+            "  1e17\n"
+            ")\n"
+            '(sdedr:define-constant-profile-placement\n'
+            '  "N.Place"\n'
+            '  "N.Doping"\n'
+            '  "N.Window"\n'
+            ")\n"
         )
         updated = matrix.make_dose_preserving_junction(source)
-        self.assertIn("(define XJ_P (- XJ 0.001))", updated)
-        self.assertIn("(position XJ_P H 0.0)", updated)
+        self.assertIn("(define XJ_LEFT (- XJ 0.001))", updated)
+        self.assertIn("(define XJ_RIGHT (+ XJ 0.001))", updated)
+        self.assertIn("(position XJ_LEFT H 0.0)", updated)
+        self.assertIn("(position XJ_RIGHT 0.0 0.0)", updated)
         self.assertEqual(updated.count("(position XJ H 0.0)"), 0)
-        self.assertEqual(updated.count("(position XJ 0.0 0.0)"), 1)
+        self.assertEqual(updated.count("(position XJ 0.0 0.0)"), 0)
+        self.assertIn('"Junction.Doping.Window"', updated)
+        self.assertIn('"Junction.P.Half"', updated)
+        self.assertIn('"Junction.N.Half"', updated)
+        self.assertEqual(updated.count("  5e16"), 2)
 
     def test_refined_levels_add_window_without_changing_profile_contract(self):
         source = "; header\n;----------------------------------------------------------\n; Build mesh\n"

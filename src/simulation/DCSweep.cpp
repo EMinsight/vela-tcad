@@ -1521,6 +1521,9 @@ DCSweepConfig dcSweepConfigFromJson(const nlohmann::json& cfg,
             newtonHistoryCfg.value("attempts_csv_file", std::string{});
         sweep.diagnostics.newtonHistory.iterationsCsvFile =
             newtonHistoryCfg.value("iterations_csv_file", std::string{});
+        sweep.diagnostics.newtonHistory.rejectedStateDirectory =
+            newtonHistoryCfg.value(
+                "rejected_state_directory", std::string{});
     }
     if (diagnosticsCfg.contains("qf_bounds")) {
         const auto& qfBoundsCfg = diagnosticsCfg.at("qf_bounds");
@@ -2948,7 +2951,10 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
             "final_residual_norm",
             "final_state_hash",
             "newton_iterations",
-            "iteration_trace_rows"});
+            "iteration_trace_rows",
+            "rejected_parent_state_file",
+            "rejected_initial_state_file",
+            "rejected_final_state_file"});
 
         const std::filesystem::path iterationsPath(
             sweep.diagnostics.newtonHistory.iterationsCsvFile);
@@ -3047,6 +3053,8 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
         Real initialResidualNorm = 0.0;
         Real finalResidualNorm = 0.0;
         std::string initialStateHash;
+        DDSolution initialSolution;
+        bool hasInitialSolution = false;
         bool predictedInitialState = false;
         std::string branchAcceptanceStatus;
         std::string branchAcceptanceReason;
@@ -3093,6 +3101,11 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
             attempt.initialStateHash =
                 initial != nullptr ? ddSolutionStateHash(*initial)
                                    : std::string("solver_default");
+            if (initial != nullptr &&
+                !sweep.diagnostics.newtonHistory.rejectedStateDirectory.empty()) {
+                attempt.initialSolution = *initial;
+                attempt.hasInitialSolution = true;
+            }
             if ((sweep.diagnostics.contactCurrentQfFloor.enabled ||
                  sweep.diagnostics.terminalCurrentMethodCompare.enabled) &&
                 allowContactCurrentQfFloorCapture &&
@@ -3572,6 +3585,39 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
             attempt.solution.psi.size() > 0
             ? ddSolutionStateHash(attempt.solution)
             : std::string();
+        std::string rejectedParentStateFile;
+        std::string rejectedInitialStateFile;
+        std::string rejectedFinalStateFile;
+        if (!attempt.ok &&
+            !sweep.diagnostics.newtonHistory.rejectedStateDirectory.empty()) {
+            const std::filesystem::path stateDir(
+                sweep.diagnostics.newtonHistory.rejectedStateDirectory);
+            std::filesystem::create_directories(stateDir);
+            const std::string stem =
+                "attempt_" + std::to_string(attempt.attemptId) +
+                "_bias_" + biasToken(actualTargetBias);
+            if (parentAcceptedState != nullptr) {
+                const std::filesystem::path path =
+                    stateDir / (stem + "_parent.csv");
+                writeDDSolutionStateCsv(
+                    path.string(), *parentAcceptedState, sweep.scaling);
+                rejectedParentStateFile = path.string();
+            }
+            if (attempt.hasInitialSolution) {
+                const std::filesystem::path path =
+                    stateDir / (stem + "_initial.csv");
+                writeDDSolutionStateCsv(
+                    path.string(), attempt.initialSolution, sweep.scaling);
+                rejectedInitialStateFile = path.string();
+            }
+            if (attempt.solution.psi.size() == mesh.numNodes()) {
+                const std::filesystem::path path =
+                    stateDir / (stem + "_final.csv");
+                writeDDSolutionStateCsv(
+                    path.string(), attempt.solution, sweep.scaling);
+                rejectedFinalStateFile = path.string();
+            }
+        }
 
         newtonAttemptsCsv->writeRow({
             "run_0",
@@ -3601,7 +3647,10 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
             formatReal(attempt.finalResidualNorm),
             finalHash,
             std::to_string(attempt.newtonIterations),
-            std::to_string(attempt.newtonTrace.size())});
+            std::to_string(attempt.newtonTrace.size()),
+            rejectedParentStateFile,
+            rejectedInitialStateFile,
+            rejectedFinalStateFile});
 
         for (const NewtonIterationInfo& info : attempt.newtonTrace) {
             newtonIterationsCsv->writeRow({

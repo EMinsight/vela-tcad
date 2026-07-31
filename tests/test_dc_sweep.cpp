@@ -4033,7 +4033,9 @@ TEST_CASE("DCSweep: nonlinear trace records rejected attempts before determinist
             diagnostics["newton_history"] = {
                 {"enabled", true},
                 {"attempts_csv_file", (dir / (name + "_attempts.csv")).string()},
-                {"iterations_csv_file", (dir / (name + "_iterations.csv")).string()}
+                {"iterations_csv_file", (dir / (name + "_iterations.csv")).string()},
+                {"rejected_state_directory",
+                 (dir / "rejected_states").string()}
             };
         }
         const auto cfgPath = writeSweepConfig(dir, meshPath, csvPath, {
@@ -4088,6 +4090,12 @@ TEST_CASE("DCSweep: nonlinear trace records rejected attempts before determinist
     const std::size_t retryCol = csvColumnIndex(attemptHeader, "retry_number");
     const std::size_t traceRowsCol =
         csvColumnIndex(attemptHeader, "iteration_trace_rows");
+    const std::size_t rejectedParentStateCol =
+        csvColumnIndex(attemptHeader, "rejected_parent_state_file");
+    const std::size_t rejectedInitialStateCol =
+        csvColumnIndex(attemptHeader, "rejected_initial_state_file");
+    const std::size_t rejectedFinalStateCol =
+        csvColumnIndex(attemptHeader, "rejected_final_state_file");
 
     std::string retrySegment;
     std::string retryParentHash;
@@ -4120,8 +4128,16 @@ TEST_CASE("DCSweep: nonlinear trace records rejected attempts before determinist
         REQUIRE(row.at(initialHashCol) == retryParentHash);
         REQUIRE(std::stod(row.at(requestedCol)) == Catch::Approx(0.5));
         REQUIRE(std::stoi(row.at(traceRowsCol)) > 1);
-        if (firstRejectedAttemptId.empty())
+        REQUIRE(std::filesystem::exists(row.at(rejectedParentStateCol)));
+        REQUIRE(std::filesystem::exists(row.at(rejectedInitialStateCol)));
+        REQUIRE(std::filesystem::exists(row.at(rejectedFinalStateCol)));
+        REQUIRE(readTextFile(row.at(rejectedParentStateCol)) ==
+                readTextFile(row.at(rejectedInitialStateCol)));
+        if (firstRejectedAttemptId.empty()) {
             firstRejectedAttemptId = row.at(attemptIdCol);
+            REQUIRE(readTextFile(row.at(rejectedFinalStateCol)) !=
+                    readTextFile(row.at(rejectedInitialStateCol)));
+        }
         ++rejectedBeforeSuccess;
     }
     REQUIRE(rejectedBeforeSuccess == 3);
