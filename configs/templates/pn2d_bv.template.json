@@ -133,7 +133,7 @@
         "element_edge_sg_gss_laux",
         "legacy_cell_reconstructed"
       ],
-      "default": "legacy_cell_reconstructed",
+      "default": "element_edge_sg_gss_laux",
       "type": "string"
     },
     "continuity_balance_csv": {
@@ -231,5 +231,5 @@
   },
   "template": "pn2d_bv",
   "template_schema": "vela.simulation-template.v1",
-  "version": 2
+  "version": 3
 }

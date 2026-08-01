@@ -1,0 +1,50 @@
+{
+  "schema": "vela.pn2d_bv_m2_mixed_voronoi_self_consistent_control_contract.v1",
+  "contract_id": "pn2d_bv_m2_mixed_voronoi_self_consistent_control_v1",
+  "frozen_at": "2026-08-01",
+  "decision_scope": "observation_only_node_volume_policy_control",
+  "golden_standard": "Sentaurus 2018.06 on the identical M2 mesh and nodal doping",
+  "candidate": {
+    "mesh_geometry.node_volume_policy": "mixed_voronoi",
+    "impact_ionization.current_approximation": "element_edge_sg_gss_laux",
+    "impact_ionization.source_mapping_mode": "element_vertex_box_measure",
+    "production_default_unchanged": true
+  },
+  "execution_order": [
+    "avalanche_off",
+    "iic_postprocess",
+    "avalanche_on"
+  ],
+  "common_requirements": {
+    "independent_runs": 2,
+    "requested_bias_count": 29,
+    "last_requested_bias_V": -20.0,
+    "require_complete_exact_lattice": true,
+    "require_identical_iv_sha256": true,
+    "require_identical_state_sha256_per_bias": true,
+    "maximum_global_continuity_closure_ratio": 0.01
+  },
+  "avalanche_off_gate": {
+    "sentaurus_branch": "avalanche_off",
+    "compare_quantity": "native total terminal_current A/um",
+    "exclude_zero_bias_from_log_metrics": true,
+    "maximum_log10_current_rmse_dex": 0.01,
+    "maximum_log10_current_error_dex": 0.015,
+    "failure_action": "stop_before_iic_postprocess"
+  },
+  "iic_postprocess_gate": {
+    "require_iv_sha256_equal_to_avalanche_off": true,
+    "require_state_sha256_equal_to_avalanche_off_per_bias": true,
+    "failure_action": "stop_before_avalanche_on"
+  },
+  "avalanche_on_stage": {
+    "run_only_after_both_control_gates_pass": true,
+    "decision_role": "observation_only",
+    "default_change_authorized": false
+  },
+  "typed_outcomes": [
+    "stopped_at_avalanche_off_gate",
+    "stopped_at_iic_postprocess_gate",
+    "completed_all_stages"
+  ]
+}

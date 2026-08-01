@@ -31,6 +31,26 @@ BV_AVALANCHE_CURRENT_SUPPORT_PROFILES = {
         "cell_reconstructed_midpoint_density": "gss_logistic",
     },
 }
+BV_CONFIGURATION_PROFILES = {
+    "element_edge_sg_gss_laux": {
+        "impact_ionization": BV_AVALANCHE_CURRENT_SUPPORT_PROFILES[
+            "element_edge_sg_gss_laux"
+        ],
+        "mesh_geometry": {
+            "node_volume_policy": "mixed_voronoi",
+            "require_non_obtuse": True,
+        },
+    },
+    "legacy_cell_reconstructed": {
+        "impact_ionization": BV_AVALANCHE_CURRENT_SUPPORT_PROFILES[
+            "legacy_cell_reconstructed"
+        ],
+        "mesh_geometry": {
+            "node_volume_policy": "barycentric",
+            "require_non_obtuse": False,
+        },
+    },
+}
 
 
 class TemplateError(ValueError):
@@ -140,18 +160,39 @@ def validate_pn2d_config(config: dict[str, Any], template_name: str) -> None:
             raise TemplateError("pn2d_bv must enable van_overstraeten")
         if mobility.get("model") != "masetti_field":
             raise TemplateError("pn2d_bv must use masetti_field")
-        active_support = {
-            name: impact.get(name)
-            for name in (
-                "current_approximation",
-                "source_mapping_mode",
-                "cell_reconstructed_midpoint_density",
-            )
-        }
-        if active_support not in BV_AVALANCHE_CURRENT_SUPPORT_PROFILES.values():
+        geometry = config.get("mesh_geometry", {})
+        if not isinstance(geometry, dict):
+            raise TemplateError("pn2d_bv mesh_geometry must be an object")
+        if not isinstance(geometry.get("node_volume_policy"), str):
             raise TemplateError(
-                "pn2d_bv avalanche current support must match one complete "
-                "profile; mixed or omitted profile fields are forbidden"
+                "pn2d_bv mesh_geometry.node_volume_policy must be a string"
+            )
+        if not isinstance(geometry.get("require_non_obtuse"), bool):
+            raise TemplateError(
+                "pn2d_bv mesh_geometry.require_non_obtuse must be boolean"
+            )
+        active_profile = {
+            "impact_ionization": {
+                name: impact.get(name)
+                for name in (
+                    "current_approximation",
+                    "source_mapping_mode",
+                    "cell_reconstructed_midpoint_density",
+                )
+            },
+            "mesh_geometry": {
+                "node_volume_policy": geometry.get(
+                    "node_volume_policy", "barycentric"
+                ),
+                "require_non_obtuse": geometry.get(
+                    "require_non_obtuse", False
+                ),
+            },
+        }
+        if active_profile not in BV_CONFIGURATION_PROFILES.values():
+            raise TemplateError(
+                "pn2d_bv solver and mesh geometry must match one complete atomic "
+                "profile; half-migrated or omitted profile fields are forbidden"
             )
     else:
         raise TemplateError(f"unsupported PN2D template: {template_name}")
@@ -190,8 +231,10 @@ def render_named_template(
     config = _substitute(document["config"], parameters)
     if template_name == "pn2d_bv":
         profile = parameters["avalanche_current_support_profile"]
+        bundle = BV_CONFIGURATION_PROFILES[profile]
         impact = config["solver"]["impact_ionization"]
-        impact.update(copy.deepcopy(BV_AVALANCHE_CURRENT_SUPPORT_PROFILES[profile]))
+        impact.update(copy.deepcopy(bundle["impact_ionization"]))
+        config["mesh_geometry"] = copy.deepcopy(bundle["mesh_geometry"])
     validate_pn2d_config(config, template_name)
     manifest = {
         "generator": "scripts/generate_pn2d_config.py",
@@ -201,6 +244,10 @@ def render_named_template(
         "template_schema": document["template_schema"],
         "template_version": document["version"],
     }
+    if template_name == "pn2d_bv":
+        manifest["resolved_profile"] = copy.deepcopy(
+            BV_CONFIGURATION_PROFILES[parameters["avalanche_current_support_profile"]]
+        )
     return config, manifest
 
 

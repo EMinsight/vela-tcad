@@ -1,11 +1,14 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 
 #include "vela/mesh/BoxGeometryBuilder.h"
 #include "vela/mesh/DeviceMesh.h"
+#include "vela/simulation/ConfigParsing.h"
 
 #include <cmath>
 #include <iostream>
+#include <nlohmann/json.hpp>
 #include <sstream>
 #include <streambuf>
 
@@ -57,7 +60,7 @@ DeviceMesh makeUnitSquareTwoTriangles()
     return mesh;
 }
 
-DeviceMesh makeObtuseTriangle()
+DeviceMesh makeObtuseTriangle(bool reverseWinding = false)
 {
     DeviceMesh mesh;
 
@@ -66,7 +69,8 @@ DeviceMesh makeObtuseTriangle()
     Node n2; n2.id = 2; n2.x = 0.2; n2.y = 0.1; mesh.addNode(n2);
 
     Cell c; c.id = 0; c.type = CellType::Tri3; c.region_id = 0;
-    c.node_ids = {0, 1, 2};
+    c.node_ids = reverseWinding ? std::vector<Index>{2, 1, 0}
+                                : std::vector<Index>{0, 1, 2};
     mesh.addCell(c);
 
     Region r; r.id = 0; r.name = "body"; r.material = "Si"; r.cell_ids = {0};
@@ -176,6 +180,82 @@ TEST_CASE("BoxGeometryBuilder: mixed Voronoi node volumes are opt-in and conserv
     for (const Node& node : mesh.nodes())
         volumeSum += node.volume;
     REQUIRE(volumeSum == Catch::Approx(2.0));
+}
+
+TEST_CASE("BoxGeometryBuilder: mixed Voronoi obtuse shares are positive and winding invariant",
+          "[box_geometry][mixed_voronoi]")
+{
+    for (const bool reverseWinding : {false, true}) {
+        DeviceMesh mesh = makeObtuseTriangle(reverseWinding);
+        BoxGeometryBuilder::Options options;
+        options.nodeVolumePolicy = BoxGeometryBuilder::NodeVolumePolicy::MixedVoronoi;
+        mesh.buildBoxGeometry(options);
+
+        REQUIRE(mesh.getNode(0).volume == Catch::Approx(0.025));
+        REQUIRE(mesh.getNode(1).volume == Catch::Approx(0.025));
+        REQUIRE(mesh.getNode(2).volume == Catch::Approx(0.050));
+
+        Real volumeSum = 0.0;
+        for (const Node& node : mesh.nodes()) {
+            REQUIRE(node.volume > 0.0);
+            volumeSum += node.volume;
+        }
+        REQUIRE(volumeSum == Catch::Approx(0.1));
+    }
+}
+
+TEST_CASE("ConfigParsing: omitted node volume policy preserves explicit barycentric legacy behavior",
+          "[box_geometry][config]")
+{
+    const auto omitted = parseBoxGeometryOptions(nlohmann::json::object());
+    const auto emptyObject = parseBoxGeometryOptions(
+        nlohmann::json{{"mesh_geometry", nlohmann::json::object()}});
+    const auto explicitBarycentric = parseBoxGeometryOptions(
+        nlohmann::json{{"mesh_geometry", {{"node_volume_policy", "barycentric"}}}});
+    const auto explicitMixed = parseBoxGeometryOptions(
+        nlohmann::json{{"mesh_geometry", {{"node_volume_policy", "mixed_voronoi"}}}});
+    const auto qualifiedMixed = parseBoxGeometryOptions(
+        nlohmann::json{{"mesh_geometry",
+                        {{"node_volume_policy", "mixed_voronoi"},
+                         {"require_non_obtuse", true}}}});
+
+    REQUIRE(omitted.nodeVolumePolicy == BoxGeometryBuilder::NodeVolumePolicy::Barycentric);
+    REQUIRE(emptyObject.nodeVolumePolicy == BoxGeometryBuilder::NodeVolumePolicy::Barycentric);
+    REQUIRE(explicitBarycentric.nodeVolumePolicy ==
+            BoxGeometryBuilder::NodeVolumePolicy::Barycentric);
+    REQUIRE(explicitMixed.nodeVolumePolicy ==
+            BoxGeometryBuilder::NodeVolumePolicy::MixedVoronoi);
+    REQUIRE_FALSE(omitted.requireNonObtuse);
+    REQUIRE_FALSE(explicitMixed.requireNonObtuse);
+    REQUIRE(qualifiedMixed.requireNonObtuse);
+    REQUIRE_THROWS_WITH(
+        parseBoxGeometryOptions(
+            nlohmann::json{{"mesh_geometry", {{"node_volume_policy", "unknown"}}}}),
+        "ConfigParsing: mesh_geometry.node_volume_policy must be 'barycentric' or "
+        "'mixed_voronoi'.");
+    REQUIRE_THROWS_WITH(
+        parseBoxGeometryOptions(
+            nlohmann::json{{"mesh_geometry", {{"require_non_obtuse", "yes"}}}}),
+        "ConfigParsing: mesh_geometry.require_non_obtuse must be boolean.");
+}
+
+TEST_CASE("BoxGeometryBuilder: non-obtuse qualification accepts eligible meshes and rejects obtuse cells",
+          "[box_geometry][mixed_voronoi][qualification]")
+{
+    BoxGeometryBuilder::Options options;
+    options.nodeVolumePolicy = BoxGeometryBuilder::NodeVolumePolicy::MixedVoronoi;
+    options.requireNonObtuse = true;
+
+    DeviceMesh acute = makeSingleEquilateralTriangle();
+    REQUIRE_NOTHROW(acute.buildBoxGeometry(options));
+
+    DeviceMesh right = makeUnitSquareTwoTriangles();
+    REQUIRE_NOTHROW(right.buildBoxGeometry(options));
+
+    DeviceMesh obtuse = makeObtuseTriangle();
+    REQUIRE_THROWS_WITH(
+        obtuse.buildBoxGeometry(options),
+        Catch::Matchers::ContainsSubstring("mesh_geometry.require_non_obtuse rejected cell 0"));
 }
 
 TEST_CASE("BoxGeometryBuilder: all edge couplings are non-negative", "[box_geometry]")

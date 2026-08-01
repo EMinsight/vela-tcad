@@ -1,0 +1,36 @@
+{
+  "schema": "vela.pn2d_bv_m2_node_volume_policy_first_step.v1",
+  "date": "2026-08-01",
+  "scope": "frozen_state_opt_in_node_volume_policy_comparison",
+  "production_defaults_modified": false,
+  "biases_V": [-18.0, -19.5, -19.7, -20.0],
+  "state_variants": ["vela_baseline", "sent_qfp_only"],
+  "node_volume_policies": ["barycentric", "mixed_voronoi"],
+  "fixed_inputs": {
+    "mesh_sha256": "feae2486632ff6f6f45191d41a62fb606cb67e91bcb919a7005995005d8796f9",
+    "doping_sha256": "c4fe644a164b90ea954b6f844326349224ac957f0b06da99d53851799e8b1165",
+    "base_config_sha256": "4d837e7088bdcdabd598694cc0eafbe0ad682ac7445b3436d1766c20df569646"
+  },
+  "required_observations": [
+    "initial_poisson_electron_hole_residuals",
+    "trial_poisson_electron_hole_residuals",
+    "full_first_newton_step",
+    "carrier_only_first_newton_step",
+    "two_dominant_carrier_modal_projections",
+    "integrated_frozen_impact_source",
+    "two_run_byte_determinism"
+  ],
+  "classification": {
+    "negligible_max_relative_change": 0.01,
+    "material_min_relative_change": 0.05,
+    "intermediate": "otherwise",
+    "decision_rule": "maximum across full-step norm, carrier-step norm, initial carrier residual norm, and integrated impact source"
+  },
+  "guards": {
+    "frozen_external_state_only": true,
+    "no_state_advance": true,
+    "no_doping_redistribution": true,
+    "no_physics_parameter_change": true,
+    "no_acceptance_threshold_change": true
+  }
+}

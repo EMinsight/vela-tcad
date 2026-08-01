@@ -18,6 +18,7 @@ if str(REPO / "scripts") not in sys.path:
 
 from generate_pn2d_config import (  # noqa: E402
     BV_AVALANCHE_CURRENT_SUPPORT_PROFILES,
+    BV_CONFIGURATION_PROFILES,
     TemplateError,
     render_named_template,
     validate_pn2d_config,
@@ -70,14 +71,23 @@ class Pn2dConfigTemplatesTest(unittest.TestCase):
         )
         impact = config["solver"]["impact_ionization"]
         for name, value in BV_AVALANCHE_CURRENT_SUPPORT_PROFILES[
-            "legacy_cell_reconstructed"
+            "element_edge_sg_gss_laux"
         ].items():
             self.assertEqual(impact[name], value)
         self.assertEqual(
-            manifest["parameters"]["avalanche_current_support_profile"],
-            "legacy_cell_reconstructed",
+            config["mesh_geometry"],
+            {"node_volume_policy": "mixed_voronoi", "require_non_obtuse": True},
         )
-        self.assertEqual(manifest["template_version"], 2)
+        self.assertEqual(
+            manifest["parameters"]["avalanche_current_support_profile"],
+            "element_edge_sg_gss_laux",
+        )
+        self.assertEqual(manifest["template_version"], 3)
+        self.assertEqual(manifest["overrides"], {})
+        self.assertEqual(
+            manifest["resolved_profile"],
+            BV_CONFIGURATION_PROFILES["element_edge_sg_gss_laux"],
+        )
         self.assertEqual(
             config["sweep"]["write_state_every_point_prefix"],
             "pn2d_bv_states/state",
@@ -103,11 +113,15 @@ class Pn2dConfigTemplatesTest(unittest.TestCase):
         ].items():
             self.assertEqual(impact[name], value)
         self.assertEqual(
+            config["mesh_geometry"],
+            {"node_volume_policy": "barycentric", "require_non_obtuse": False},
+        )
+        self.assertEqual(
             manifest["overrides"],
             {"avalanche_current_support_profile": "legacy_cell_reconstructed"},
         )
 
-    def test_bv_sg_laux_profile_is_an_atomic_opt_in(self) -> None:
+    def test_bv_sg_laux_default_profile_is_atomic(self) -> None:
         config, manifest = render_named_template(
             "pn2d_bv",
             {"avalanche_current_support_profile": "element_edge_sg_gss_laux"},
@@ -117,6 +131,10 @@ class Pn2dConfigTemplatesTest(unittest.TestCase):
             "element_edge_sg_gss_laux"
         ].items():
             self.assertEqual(impact[name], value)
+        self.assertEqual(
+            config["mesh_geometry"],
+            {"node_volume_policy": "mixed_voronoi", "require_non_obtuse": True},
+        )
         self.assertEqual(
             manifest["overrides"],
             {"avalanche_current_support_profile": "element_edge_sg_gss_laux"},
@@ -132,12 +150,34 @@ class Pn2dConfigTemplatesTest(unittest.TestCase):
         mixed["solver"]["impact_ionization"]["current_approximation"] = (
             "element_edge_sg_gss_laux"
         )
-        with self.assertRaisesRegex(TemplateError, "complete profile"):
+        with self.assertRaisesRegex(TemplateError, "complete atomic profile"):
             validate_pn2d_config(mixed, "pn2d_bv")
         omitted = json.loads(json.dumps(legacy))
         del omitted["solver"]["impact_ionization"]["source_mapping_mode"]
-        with self.assertRaisesRegex(TemplateError, "complete profile"):
+        with self.assertRaisesRegex(TemplateError, "complete atomic profile"):
             validate_pn2d_config(omitted, "pn2d_bv")
+
+        half_migrated = json.loads(json.dumps(legacy))
+        half_migrated["mesh_geometry"] = {
+            "node_volume_policy": "mixed_voronoi",
+            "require_non_obtuse": True,
+        }
+        with self.assertRaisesRegex(TemplateError, "complete atomic profile"):
+            validate_pn2d_config(half_migrated, "pn2d_bv")
+
+        default, _ = render_named_template("pn2d_bv")
+        default["mesh_geometry"]["node_volume_policy"] = "barycentric"
+        with self.assertRaisesRegex(TemplateError, "complete atomic profile"):
+            validate_pn2d_config(default, "pn2d_bv")
+
+        wrong_type, _ = render_named_template("pn2d_bv")
+        wrong_type["mesh_geometry"]["require_non_obtuse"] = 1
+        with self.assertRaisesRegex(TemplateError, "must be boolean"):
+            validate_pn2d_config(wrong_type, "pn2d_bv")
+
+    def test_iv_template_does_not_inherit_bv_mesh_policy(self) -> None:
+        config, _ = render_named_template("pn2d_iv")
+        self.assertNotIn("mesh_geometry", config)
 
     def test_defaults_contain_no_absolute_paths_or_placeholders(self) -> None:
         for template in ("pn2d_iv", "pn2d_bv"):

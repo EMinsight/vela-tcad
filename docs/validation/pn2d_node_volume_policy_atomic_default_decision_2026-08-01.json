@@ -1,0 +1,35 @@
+{
+  "schema": "vela.pn2d_node_volume_policy_atomic_default_decision.v1",
+  "date": "2026-08-01",
+  "status": "passed",
+  "decision": "pn2d_bv_atomic_default_authorized",
+  "production_default_change_authorized": true,
+  "authorized_surface": "pn2d_bv_template_version_3_only",
+  "profile": {
+    "impact_ionization.current_approximation": "element_edge_sg_gss_laux",
+    "impact_ionization.source_mapping_mode": "element_vertex_box_measure",
+    "impact_ionization.cell_reconstructed_midpoint_density": "bernoulli",
+    "mesh_geometry.node_volume_policy": "mixed_voronoi",
+    "mesh_geometry.require_non_obtuse": true
+  },
+  "rollback_profile": "legacy_cell_reconstructed_plus_barycentric",
+  "reviews": {
+    "independent_scientific": "APPROVE",
+    "independent_code": "APPROVE"
+  },
+  "evidence": {
+    "contract_sha256": "f7b2c356876892ab0293c244c0446ace3aab73ca2669692095600318b1dcc12c",
+    "acceptance_sha256": "b08b7dd7b5616cd7ad29697189fd2c7e4fd04d36f21a6d0016f21debea81c450",
+    "m0_gate_sha256": "7574eaa8238bb8aebef9830068810bbec9e090498aff60adce57966875669a4b",
+    "m2_gate_sha256": "a8892ae6d11d2006bea0b4be65678e1ab6a4884c47652d86c44bdd6a9eb689c5",
+    "forward_iv_sha256": "c012a6a0a1dc7f78791e8347b07ca6eb29b6b6d42adfe8552f7ff6aebce875c6",
+    "release_ctest_sha256": "d9d4ea6328a4b21f41a7091e6014c6711cfa332a9bc69823ad44a117cb6754d3",
+    "release_test_count": 512
+  },
+  "not_authorized": [
+    "global_cpp_node_volume_default_change",
+    "pn2d_iv_template_change",
+    "arbitrary_obtuse_or_non_delaunay_mesh_equivalence",
+    "other_device_material_or_bias_domains"
+  ]
+}

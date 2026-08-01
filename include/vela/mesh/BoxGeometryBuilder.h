@@ -39,6 +39,7 @@ public:
     struct Options {
         bool fallbackNegativeCotangent = true;
         bool warnOnNegativeCotangent = false;
+        bool requireNonObtuse = false;
         NodeVolumePolicy nodeVolumePolicy = NodeVolumePolicy::Barycentric;
     };
 

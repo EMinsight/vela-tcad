@@ -28,6 +28,21 @@
       "minLength": 1,
       "type": "string"
     },
+    "mesh_geometry": {
+      "additionalProperties": true,
+      "properties": {
+        "node_volume_policy": {
+          "enum": [
+            "barycentric",
+            "mixed_voronoi"
+          ]
+        },
+        "require_non_obtuse": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
     "mesh_file": {
       "minLength": 1,
       "type": "string"

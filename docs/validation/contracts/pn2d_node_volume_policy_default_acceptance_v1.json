@@ -1,0 +1,107 @@
+{
+  "schema": "vela.pn2d_node_volume_policy_default_acceptance_contract.v1",
+  "contract_id": "pn2d_node_volume_policy_default_acceptance_v1",
+  "frozen_at": "2026-08-01",
+  "decision_scope": "prospective_default_policy_review_evidence",
+  "golden_standard": "Sentaurus 2018.06 on identical mesh, nodal doping, materials, contacts, physics, and bias lattice",
+  "candidate": {
+    "mesh_geometry.node_volume_policy": "mixed_voronoi",
+    "impact_ionization.current_approximation": "element_edge_sg_gss_laux",
+    "impact_ionization.source_mapping_mode": "element_vertex_box_measure",
+    "production_defaults_unchanged_during_execution": true
+  },
+  "execution_order": [
+    "geometry_and_legacy_compatibility",
+    "M0_avalanche_off",
+    "M0_iic_postprocess",
+    "M0_avalanche_on",
+    "M2_avalanche_off",
+    "M2_iic_postprocess",
+    "M2_avalanche_on",
+    "forward_iv_201",
+    "complete_release_ctest",
+    "independent_reviews"
+  ],
+  "common_requirements": {
+    "independent_runs": 2,
+    "requested_bias_count": 29,
+    "last_requested_bias_V": -20.0,
+    "require_complete_exact_lattice": true,
+    "require_identical_iv_sha256": true,
+    "require_identical_state_sha256_per_bias": true,
+    "maximum_global_continuity_closure_ratio": 0.01
+  },
+  "geometry_gate": {
+    "mixed_voronoi_total_area_relative_error_maximum": 1e-12,
+    "require_strictly_positive_node_volume_for_nondegenerate_cells": true,
+    "require_obtuse_split": "one_half_to_obtuse_one_quarter_to_each_other_vertex",
+    "require_triangle_winding_invariance": true,
+    "require_boundary_patch_conservation": true
+  },
+  "legacy_gate": {
+    "omitted_policy": "barycentric",
+    "empty_mesh_geometry_policy": "barycentric",
+    "explicit_barycentric_must_match_omitted": true,
+    "invalid_policy_must_fail_closed": true
+  },
+  "avalanche_off_gate": {
+    "sentaurus_branch": "avalanche_off",
+    "compare_quantity": "native total terminal_current A/um",
+    "exclude_zero_bias_from_log_metrics": true,
+    "maximum_log10_current_rmse_dex": 0.01,
+    "maximum_log10_current_error_dex": 0.015,
+    "failure_action": "stop_grid_before_iic_postprocess"
+  },
+  "iic_postprocess_gate": {
+    "require_iv_sha256_equal_to_avalanche_off": true,
+    "require_state_sha256_equal_to_avalanche_off_per_bias": true,
+    "failure_action": "stop_grid_before_avalanche_on"
+  },
+  "avalanche_on_gate": {
+    "maximum_all_nonzero_log10_current_rmse_dex": 0.01,
+    "maximum_all_nonzero_log10_current_error_dex": 0.03,
+    "maximum_knee_log10_current_rmse_dex": 0.01,
+    "maximum_knee_log10_current_error_dex": 0.03,
+    "maximum_V_break_absolute_error_V": 0.10,
+    "V_slope_policy": "both_cross_or_typed_no_crossing",
+    "require_monotonic_exact_lattice": true
+  },
+  "forward_iv_gate": {
+    "bias_start_V": 0.0,
+    "bias_stop_V": 20.0,
+    "bias_step_V": 0.1,
+    "required_point_count": 201,
+    "independent_candidate_runs": 2,
+    "require_all_points_converged": true,
+    "require_identical_candidate_iv_sha256": true,
+    "sentaurus_anchor_biases_V": [1, 2, 5, 10, 15, 20],
+    "maximum_anchor_median_relative_error": 0.005,
+    "maximum_anchor_relative_error": 0.01,
+    "maximum_degradation_over_barycentric_at_anchor": 0.0005
+  },
+  "release_gate": {
+    "configuration": "build-release",
+    "require_zero_failed_tests": true,
+    "required_focused_tests": [
+      "BoxGeometryBuilder: mixed Voronoi node volumes are opt-in and conservative",
+      "BoxGeometryBuilder: mixed Voronoi obtuse shares are positive and winding invariant",
+      "ConfigParsing: omitted node volume policy preserves explicit barycentric legacy behavior",
+      "DCSweep: mesh_geometry node_volume_policy selects mixed Voronoi volumes"
+    ]
+  },
+  "authorization": {
+    "automatic_default_change": false,
+    "require_independent_scientific_review": true,
+    "require_independent_code_review": true
+  },
+  "typed_outcomes": [
+    "geometry_or_legacy_gate_failed",
+    "M0_control_gate_failed",
+    "M0_avalanche_on_gate_failed",
+    "M2_control_gate_failed",
+    "M2_avalanche_on_gate_failed",
+    "forward_iv_gate_failed",
+    "release_gate_failed",
+    "ready_for_independent_default_policy_reviews"
+  ]
+}

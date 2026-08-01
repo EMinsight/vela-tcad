@@ -153,6 +153,13 @@ BoxGeometryBuilder::Options parseBoxGeometryOptions(const nlohmann::json& cfg)
             "'barycentric' or 'mixed_voronoi'.");
     }
 
+    if (geometry.contains("require_non_obtuse") &&
+        !geometry.at("require_non_obtuse").is_boolean()) {
+        throw std::runtime_error(
+            "ConfigParsing: mesh_geometry.require_non_obtuse must be boolean.");
+    }
+    options.requireNonObtuse = geometry.value("require_non_obtuse", false);
+
     return options;
 }
 

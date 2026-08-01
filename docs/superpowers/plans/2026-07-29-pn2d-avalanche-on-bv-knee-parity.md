@@ -1528,3 +1528,259 @@ Evidence:
 > audit triangle-level nodal-doping interpolation, control-volume dose, and
 > compensated-junction ownership against the Sentaurus export semantics.  Any
 > doping counterfactual must remain frozen-state, opt-in, and dose preserving.
+
+## M2 P0-P2 soft-mode and doping-semantics audit - 2026-08-01
+
+P0-P2 are complete under the frozen contract
+`docs/validation/contracts/pn2d_bv_m2_soft_mode_p0_freeze_v1.json`.
+
+The carrier-mode decomposition now exports signed modal projections for
+transport, recombination, avalanche diagonal, and avalanche cross-carrier
+Jacobians, plus the corresponding residual projections and counterfactual
+solve amplitudes.  Two independent runs are byte-identical.  Maximum modal
+Jacobian and RHS relative closure errors are `5.96e-15` and `9.62e-14`.
+
+At `-20 V`, the two dominant joint-QFP modes carry `94.88%` of the production
+step energy.  Transport contributes `8.35-9.18` times the net singular
+stiffness.  Avalanche diagonal contributes `-3.19` to `-3.27` times and
+avalanche cross-carrier contributes `-4.16` to `-4.91` times.  Recombination
+Jacobian contribution is below `3e-6` of net stiffness.  The near-null modes
+therefore arise from signed cancellation between transport and avalanche
+Jacobian components, not from a local derivative sign defect.
+
+The M2 Sentaurus mesh TDR was independently imported with the `reported`
+compensated-doping policy.  Vela and Sentaurus have exactly the same 115 node
+IDs, coordinates, 191 unordered triangle connectivities, donor values,
+acceptor values, nodal net doping, and junction-edge endpoint averages.  The
+maximum discrepancy between Sentaurus's reported net field and `ND-NA` is
+`1.92e-15` relative.  The Vela and Sentaurus doping CSV files are byte
+identical.  This excludes a nodal-input, topology, compensated-node ownership,
+or edge-average mismatch.
+
+The active Vela node-volume policy is barycentric `area/3`.  The same TDR
+export does not expose Sentaurus node control volumes, so exact control-volume
+parity is not directly observable.  On the six nodes selected by the dominant
+soft modes, the mixed-Voronoi-to-barycentric volume ratio spans `1.0-1.5`.
+This is a bounded geometry-policy sensitivity to test next; it is not evidence
+of a doping smoothing defect.
+
+Evidence:
+
+- `docs/validation/pn2d_bv_m2_soft_mode_doping_semantics_2026-08-01.md`;
+- `build-release/pn2d-bv-m2-soft-mode-component-projection-20260801/result.json`;
+- `build-release/pn2d-bv-m2-doping-control-volume-audit-20260801/result.json`.
+
+### Next execution prompt
+
+> Keep nodal doping and SG/Laux unchanged.  First obtain or reconstruct the
+> Sentaurus box-node volumes.  If they cannot be exported, run a frozen-state,
+> opt-in barycentric-versus-mixed-Voronoi first-step comparison on the same M2
+> states.  Measure the two dominant modal stiffnesses, QFP step amplitudes,
+> Poisson/carrier residuals, and integrated source.  Do not enter a doping
+> redistribution counterfactual unless the volume-policy control fails to
+> explain the sensitivity.
+
+## M2 barycentric versus mixed-Voronoi frozen first step - 2026-08-01
+
+The predeclared dual-policy experiment is complete with typed outcome:
+
+`material_node_volume_policy_sensitivity`
+
+The classification is driven by the Poisson block.  Re-evaluating a
+barycentric-converged Vela state with mixed-Voronoi node volumes raises the
+initial Poisson residual from about `2e-8` to `26`, changing the complete first
+step by `277-286x`.  This demonstrates that the frozen state is not stationary
+under the alternative control-volume discretization.
+
+The discriminating joint Sentaurus-QFP carrier result is much narrower.  From
+`-19.5` through `-20 V`, the carrier-only step magnitude changes by
+`1.65-1.80%`, its direction cosine remains at least `0.999994`, and the
+L2-equilibrated carrier-block condition number changes by less than `2.1e-8`
+relative.  At `-20 V`, the dominant normalized modal terms remain
+`+9.1821` transport, `-3.2702` avalanche diagonal, and `-4.9119` avalanche
+cross-carrier under both policies.  The integrated frozen SG/Laux source is
+exactly unchanged at every policy, state, and bias.
+
+The result therefore does not explain away the carrier soft mode: the signed
+transport-avalanche cancellation survives the volume-policy change.  It does
+show that control-volume policy can move the self-consistent branch indirectly
+through Poisson.  Nodal doping redistribution remains unauthorized.
+
+Evidence:
+
+- `docs/validation/pn2d_bv_m2_node_volume_policy_first_step_2026-08-01.md`;
+- `docs/validation/contracts/pn2d_bv_m2_node_volume_policy_first_step_v1.json`;
+- `build-release/pn2d-bv-m2-node-volume-policy-first-step-20260801/result.json`.
+
+### Next execution prompt
+
+> Keep the production barycentric default, nodal doping, SG/Laux, and all
+> thresholds unchanged.  If exact Sentaurus box volumes remain unavailable,
+> run a separately contracted, opt-in M2 mixed-Voronoi self-consistent control:
+> avalanche-off first, IIC second, and SG/Laux-on only if off/IIC do not degrade
+> same-grid golden agreement.  Reject the candidate if it improves the on knee
+> by sacrificing the already closed avalanche-off baseline.
+
+## M2 mixed-Voronoi self-consistent control - 2026-08-01
+
+The predeclared off -> IIC -> SG/Laux-on sequence completed with typed outcome
+`completed_all_stages`.  Every branch reached all 29 exact-lattice points in
+two independent runs; IV files and all per-bias state hashes were identical
+between repetitions.  IIC was also byte-identical to avalanche-off in both IV
+and every state hash, proving that its ionization calculation did not feed back
+into the solved state.
+
+Mixed-Voronoi did not sacrifice the Sentaurus avalanche-off baseline.  Across
+all 28 nonzero points, its off log-current RMSE is `3.868e-5 dex` and maximum
+error is `9.223e-5 dex`.  The previous barycentric M2 off RMSE was
+`0.01008 dex`.
+
+After both controls passed, the mixed-Voronoi SG/Laux-on branch also completed
+twice.  Its all-point and knee log-current RMSE values against Sentaurus are
+`0.001923 dex` and `0.003051 dex`; the maximum error is `0.004647 dex`.
+Fitted V_break is `-19.390 V` versus Sentaurus `-19.391 V`, a `0.001 V`
+difference.  Neither simulator has a V_slope crossing in the declared range.
+
+The result supports a control-volume geometry mismatch as the dominant
+remaining M2 difference.  It does not authorize changing the production
+default; M0, forward IV, mixed-Voronoi boundary/obtuse-cell behavior, legacy
+fallback, and the full Release suite remain outside this observation-only
+contract.
+
+Evidence:
+
+- `docs/validation/pn2d_bv_m2_mixed_voronoi_self_consistent_control_2026-08-01.md`;
+- `docs/validation/contracts/pn2d_bv_m2_mixed_voronoi_self_consistent_control_v1.json`;
+- `build-release/pn2d-bv-m2-mixed-voronoi-self-consistent-control-20260801/gate_report.json`.
+
+### Next execution prompt
+
+> Keep both production defaults unchanged.  Draft a separate prospective
+> node-volume-policy acceptance contract covering M0 and M2 BV, 201-point
+> forward IV, obtuse/boundary mixed-Voronoi geometry invariants, explicit
+> barycentric legacy fallback, and the complete Release test suite.  Only
+> after that contract and an independent code/scientific review pass should a
+> PN2D BV template default change be considered.
+
+## PN2D node-volume default acceptance - 2026-08-01
+
+The unified prospective acceptance contract completed with typed outcome
+`ready_for_independent_default_policy_reviews`.  The contract hash is
+`3a2d65879d1d7446a259afb6f81af9c17e7da2686536e9f6832eb5b5810f6c22`.
+
+The new obtuse/winding, boundary conservation, parser fallback, and explicit
+mixed selection tests pass.  M0 and M2 were both freshly run twice through the
+off -> IIC -> SG/Laux-on sequence.  Every branch completed 29/29 points and was
+deterministic; IIC was exactly state- and IV-equivalent to off on both grids.
+
+M0/M2 SG/Laux-on log-current RMSE values are `0.001766/0.001923 dex`.
+Both fitted V_break errors are `0.001 V`; M0 has matching V_slope crossings
+within `0.00082 V`, while neither M2 curve crosses.  Both exact lattices are
+monotonic.
+
+The prospective forward-IV control completed one barycentric and two mixed
+runs at 201/201 points.  The mixed runs are byte deterministic.  Their six-
+anchor median/maximum Sentaurus errors are `0.2700%/0.4066%`, with no material
+degradation relative to barycentric.
+
+The complete Release suite passed `509/509` twice.  The aggregate machine
+outcome is stored at
+`build-release/pn2d-node-volume-default-acceptance-v1-20260801/acceptance.json`.
+
+No production default was changed.  The remaining required work is two truly
+independent reviews of the scientific evidence and of an atomic PN2D BV
+template/default-render patch.
+
+Evidence:
+
+- `docs/validation/pn2d_node_volume_policy_default_acceptance_2026-08-01.md`;
+- `docs/validation/contracts/pn2d_node_volume_policy_default_acceptance_v1.json`;
+- `build-release/pn2d-node-volume-default-acceptance-v1-20260801/acceptance.json`.
+
+### Next execution prompt
+
+> Conduct independent scientific and code reviews against the frozen node-
+> volume-policy contract.  If both approve, design an atomic patch that changes
+> only the PN2D BV template/default render to `mixed_voronoi`, retains explicit
+> barycentric rollback and legacy omission behavior, then rerun the frozen
+> acceptance without changing thresholds.
+
+## Direct Sentaurus box-measure export - 2026-08-01
+
+The previously unavailable Sentaurus control volumes were exported directly
+with `BoxMeasureFromFile(GrdNumbering)`.  On the actual M0 and M2 meshes,
+Sentaurus element-vertex `Measure` and Vela `mixed_voronoi` agree to a maximum
+assembled node-volume difference of `1.39e-17 um^2`.  Both meshes have maximum
+triangle angle `90 degrees` and contain no obtuse elements.  The corresponding
+barycentric L1 node-volume differences are `0.02083 um^2` on M0 and
+`0.09668 um^2` on M2.
+
+A topology- and doping-preserving synthetic M0 deformation created two obtuse
+non-Delaunay triangles.  Sentaurus default `AverageBoxMethod` exported no
+negative `Measure` entries, but reported signed `CoeffIntersection=-0.4` and a
+2% overlapping-box volume excess.  `MixAverageBoxMethod` restored exact volume
+conservation.  The raw circumcentric construction had three negative local
+area contributions.  Vela's current per-triangle half/quarter/quarter obtuse
+rule did not reproduce Sentaurus MixAverage truncation on this synthetic mesh.
+
+This converts the actual M0/M2 node-volume conclusion from an inference to a
+direct measurement.  It also limits the equivalence claim: current
+`mixed_voronoi` is Sentaurus-equivalent for the non-obtuse PN2D grid family,
+not yet for arbitrary non-Delaunay grids.
+
+Evidence:
+
+- `docs/validation/sentaurus_box_measure_direct_export_2026-08-01.md`;
+- `build-release/pn2d-box-measure-probe-20260801/audit/m0_direct_compare.json`;
+- `build-release/pn2d-box-measure-probe-20260801/audit/m2_direct_compare.json`;
+- `build-release/pn2d-box-measure-probe-20260801/audit/box_measure_audit.json`.
+
+### Next execution prompt
+
+> Keep production defaults unchanged.  For current M0/M2 validation, treat the
+> mixed-Voronoi node box measure as closed against Sentaurus and continue any
+> remaining BV discrepancy localization in transport, source mapping, and
+> coupled feedback.  If support for arbitrary obtuse grids is required, open a
+> separate contracted task to reproduce Sentaurus MixAverageBoxMethod's
+> neighborhood-aware truncation; do not silently relabel the current local
+> half/quarter/quarter fallback as Sentaurus MixAverage.
+
+## Independent node-volume default reviews - 2026-08-01
+
+The two required read-only reviews are complete and were performed without
+sharing verdicts.
+
+- Scientific review: `APPROVE_WITH_CONDITIONS`.  It authorizes only a
+  qualified non-obtuse PN2D M0/M2 template proposal.  Direct Sentaurus box
+  measures close the actual M0/M2 geometry question, but the synthetic obtuse
+  control forbids a general MixAverage-equivalence claim.
+- Code review: `APPROVE_WITH_CONDITIONS`, current worktree authorization `no`.
+  The actual atomic default patch is absent: the template still defaults to
+  legacy, does not render `mesh_geometry.node_volume_policy`, and the
+  acceptance aggregator does not bind the candidate runs to the actual default
+  render.
+
+Combined typed outcome:
+
+`independent_reviews_complete_atomic_patch_and_rereview_required`
+
+The reviews permit an isolated patch that binds SG/Laux plus mixed-Voronoi
+through one PN2D BV profile selector, preserves explicit
+legacy-plus-barycentric rollback, rejects half-migrations, qualifies the mesh
+scope, and binds acceptance to the real rendered configs.  They do not yet
+authorize changing the production default.
+
+Evidence:
+
+- `docs/validation/pn2d_node_volume_policy_independent_scientific_review_2026-08-01.md`;
+- `docs/validation/pn2d_node_volume_policy_independent_code_review_2026-08-01.md`;
+- `docs/validation/pn2d_node_volume_policy_independent_review_decision_2026-08-01.json`.
+
+### Next execution prompt
+
+> Implement only the isolated atomic PN2D BV profile patch identified by the
+> code review.  Keep global C++ defaults, PN2D IV, solver physics, algorithms,
+> and thresholds unchanged.  Add default-render, rollback, half-migration,
+> mutation, mesh-qualification, and artifact-binding tests; rerun the frozen
+> M0/M2 and forward acceptance against the actual default render, then perform
+> fresh patch-level code and scientific-scope reviews.

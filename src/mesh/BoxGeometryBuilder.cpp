@@ -16,6 +16,7 @@ namespace {
 
 constexpr Real kDegenerateTol = 1.0e-30;
 constexpr Real kPi = 3.141592653589793238462643383279502884;
+constexpr Real kNonObtuseAngleToleranceDegrees = 1.0e-10;
 
 std::pair<Index, Index> edgeKey(Index a, Index b)
 {
@@ -178,6 +179,14 @@ GeometryBuildReport BoxGeometryBuilder::buildWithReport(DeviceMesh& mesh, const 
             angleDegreesAt(n1, n2, n0),
             angleDegreesAt(n2, n0, n1),
         };
+        const Real maxCellAngle = *std::max_element(angles.begin(), angles.end());
+        if (options.requireNonObtuse &&
+            maxCellAngle > 90.0 + kNonObtuseAngleToleranceDegrees) {
+            std::ostringstream os;
+            os << "BoxGeometryBuilder: mesh_geometry.require_non_obtuse rejected cell "
+               << cell.id << " with maximum angle " << maxCellAngle << " degrees.";
+            throw std::runtime_error(os.str());
+        }
         for (Real angle : angles) {
             if (!hasAngle) {
                 report.minAngleDegrees = angle;

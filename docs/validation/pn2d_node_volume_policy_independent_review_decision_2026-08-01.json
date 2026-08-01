@@ -1,0 +1,45 @@
+{
+  "schema": "vela.pn2d_node_volume_policy_independent_review_decision.v1",
+  "date": "2026-08-01",
+  "review_mode": "two_independent_read_only_reviews",
+  "scientific_review": {
+    "verdict": "APPROVE_WITH_CONDITIONS",
+    "path": "docs/validation/pn2d_node_volume_policy_independent_scientific_review_2026-08-01.md",
+    "sha256": "fea94ea8307e405480b8f0c545fd236c0b2d870336e1ec178d21c0e9bac71987",
+    "authorized_scope": "qualified_non_obtuse_pn2d_m0_m2_bv_mesh_family"
+  },
+  "code_review": {
+    "verdict": "APPROVE_WITH_CONDITIONS",
+    "path": "docs/validation/pn2d_node_volume_policy_independent_code_review_2026-08-01.md",
+    "sha256": "85e39623ef5adf8ba5b8e709c1472aeebafca6c50b6c369ab3e998d9c4a0d0a0",
+    "current_worktree_authorized": false,
+    "blocking_reason": "actual_atomic_default_patch_is_absent"
+  },
+  "combined_outcome": "independent_reviews_complete_atomic_patch_and_rereview_required",
+  "production_default_change_authorized": false,
+  "global_cpp_default_change_authorized": false,
+  "next_authorized_task": "implement_isolated_atomic_pn2d_bv_profile_patch_bind_actual_default_render_and_rereview",
+  "evidence_bindings": {
+    "contract": {
+      "path": "docs/validation/contracts/pn2d_node_volume_policy_default_acceptance_v1.json",
+      "sha256": "3a2d65879d1d7446a259afb6f81af9c17e7da2686536e9f6832eb5b5810f6c22"
+    },
+    "aggregate_acceptance": {
+      "path": "build-release/pn2d-node-volume-default-acceptance-v1-20260801/acceptance.json",
+      "sha256": "59788e3509b4ce02b9988c85c84b939aec4d52b8e0ccfe648896f817225e1a5f"
+    },
+    "m0_direct_box_measure": {
+      "path": "build-release/pn2d-box-measure-probe-20260801/audit/m0_direct_compare.json",
+      "sha256": "b0bf0497e98418cdd508827d37a768c369c1ad2c28c269993fcec3527d5d31b6"
+    },
+    "m2_direct_box_measure": {
+      "path": "build-release/pn2d-box-measure-probe-20260801/audit/m2_direct_compare.json",
+      "sha256": "3722f3cbb359cdc991706fcacc556429b7cb471d24b4d5aa2eccb62b9a3d4e2b"
+    }
+  },
+  "verification": {
+    "focused_ctest": "12/12 passed",
+    "focused_python": "9/9 passed",
+    "full_ctest_split": "tests 1-496 passed before invocation timeout; tests 497-509 rerun 13/13 passed"
+  }
+}
