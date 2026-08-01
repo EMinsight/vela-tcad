@@ -3100,6 +3100,344 @@ NewtonCarrierRowDiagnosticsEvaluation NewtonSolver::evaluateCarrierRowDiagnostic
     return evaluation;
 }
 
+NewtonCarrierBlockDecompositionEvaluation
+NewtonSolver::evaluateCarrierBlockDecomposition(const DDSolution& state) const
+{
+    const int N = static_cast<int>(mesh_.numNodes());
+    if (state.psi.size() != N || state.phin.size() != N || state.phip.size() != N) {
+        throw std::invalid_argument(
+            "NewtonSolver::evaluateCarrierBlockDecomposition: state size must "
+            "match the mesh node count.");
+    }
+
+    const double Vt = thermalVoltage(cfg_.temperature_K);
+    const MobilityModelConfig mobilityConfig = cfg_.mobility;
+    const DDScalingSpec scaling = buildScalingSpec();
+    const auto makeRecombinationConfig =
+        [&](const std::vector<std::string>& models) {
+            RecombinationModelConfig config =
+                recombinationModelConfig(models, cfg_.taun, cfg_.taup);
+            config.augerCn = cfg_.augerCn;
+            config.augerCp = cfg_.augerCp;
+            return config;
+        };
+    const RecombinationModelConfig noRecombinationConfig =
+        makeRecombinationConfig({"none"});
+    const RecombinationModelConfig recombinationConfig =
+        makeRecombinationConfig(cfg_.recombination);
+    const ImpactIonizationModelConfig noImpactConfig{};
+    const auto makeAssembler =
+        [&](const RecombinationModelConfig& recombination,
+            const ImpactIonizationModelConfig& impact) {
+            CoupledDDAssembler assembler(
+                mesh_, matdb_, doping_, Vt, mobilityConfig, recombination,
+                cfg_.bandgapNarrowing, impact, fixedCharges_, sheetCharges_,
+                scaling, cfg_.carrierDiagonalFloor);
+            configureQuasiFermiReferences(assembler);
+            return assembler;
+        };
+
+    CoupledDDAssembler fullAssembler =
+        makeAssembler(recombinationConfig, cfg_.impactIonization);
+    CoupledDDAssembler noRecombinationAssembler =
+        makeAssembler(noRecombinationConfig, cfg_.impactIonization);
+    CoupledDDAssembler noImpactAssembler =
+        makeAssembler(recombinationConfig, noImpactConfig);
+    CoupledDDAssembler transportAssembler =
+        makeAssembler(noRecombinationConfig, noImpactConfig);
+    const CoupledDDBoundaryConditions bcs = buildBoundaryConditions(fullAssembler);
+    const Real potentialScale =
+        fullAssembler.usesScaledState() ? fullAssembler.potentialScale() : 1.0;
+    const VectorXd x = fullAssembler.pack({
+        state.psi / potentialScale,
+        state.phin / potentialScale,
+        state.phip / potentialScale});
+    const VectorXd raw = fullAssembler.residual(x, bcs);
+
+    const auto carrierBlock = [&](CoupledDDAssembler& assembler) {
+        return sparseBlock(
+            assembler.assembleJacobian(x, bcs), N, N, 2 * N, 2 * N);
+    };
+    const SparseMatrixd fullBlock = carrierBlock(fullAssembler);
+    const SparseMatrixd noRecombinationBlock =
+        carrierBlock(noRecombinationAssembler);
+    const SparseMatrixd noImpactBlock = carrierBlock(noImpactAssembler);
+    const SparseMatrixd transportBlock = carrierBlock(transportAssembler);
+    const VectorXd carrierResidual = raw.segment(N, 2 * N);
+    const VectorXd allRowWeights = continuityRowWeights(
+        fullAssembler, x, bcs, cfg_.continuityRowScaling);
+    const VectorXd carrierRowWeights = allRowWeights.segment(N, 2 * N);
+
+    std::vector<int> freeUnknowns;
+    freeUnknowns.reserve(static_cast<std::size_t>(2 * N));
+    for (int node = 0; node < N; ++node) {
+        if (bcs.phin.find(static_cast<Index>(node)) == bcs.phin.end())
+            freeUnknowns.push_back(node);
+    }
+    const int freeElectronUnknowns = static_cast<int>(freeUnknowns.size());
+    for (int node = 0; node < N; ++node) {
+        if (bcs.phip.find(static_cast<Index>(node)) == bcs.phip.end())
+            freeUnknowns.push_back(N + node);
+    }
+    const int freeHoleUnknowns =
+        static_cast<int>(freeUnknowns.size()) - freeElectronUnknowns;
+
+    const auto reduceMatrix = [&](const SparseMatrixd& matrix) {
+        Eigen::MatrixXd reduced = Eigen::MatrixXd::Zero(
+            static_cast<int>(freeUnknowns.size()),
+            static_cast<int>(freeUnknowns.size()));
+        for (int row = 0; row < reduced.rows(); ++row) {
+            for (int col = 0; col < reduced.cols(); ++col) {
+                reduced(row, col) = matrix.coeff(
+                    freeUnknowns[static_cast<std::size_t>(row)],
+                    freeUnknowns[static_cast<std::size_t>(col)]);
+            }
+        }
+        return reduced;
+    };
+    const auto reduceVector = [&](const VectorXd& vector) {
+        VectorXd reduced(static_cast<int>(freeUnknowns.size()));
+        for (int row = 0; row < reduced.size(); ++row)
+            reduced(row) = vector(freeUnknowns[static_cast<std::size_t>(row)]);
+        return reduced;
+    };
+    const Eigen::MatrixXd fullReduced = reduceMatrix(fullBlock);
+    const Eigen::MatrixXd noRecombinationReduced =
+        reduceMatrix(noRecombinationBlock);
+    const Eigen::MatrixXd noImpactReduced = reduceMatrix(noImpactBlock);
+    const Eigen::MatrixXd transportReduced = reduceMatrix(transportBlock);
+    const VectorXd reducedRowWeights = reduceVector(carrierRowWeights);
+    Eigen::MatrixXd rowScaledReduced = fullReduced;
+    for (int row = 0; row < rowScaledReduced.rows(); ++row)
+        rowScaledReduced.row(row) *= reducedRowWeights(row);
+
+    NewtonCarrierBlockDecompositionEvaluation evaluation;
+    evaluation.residual.raw = raw;
+    evaluation.residual.blockNorms = blockResidualInfo(raw, mesh_.numNodes());
+    evaluation.residual.intrinsicDensity = fullAssembler.intrinsicDensity();
+    evaluation.residual.scaledState = fullAssembler.usesScaledState();
+    evaluation.residual.potentialScale = potentialScale;
+    evaluation.freeElectronUnknowns = static_cast<Index>(freeElectronUnknowns);
+    evaluation.freeHoleUnknowns = static_cast<Index>(freeHoleUnknowns);
+    evaluation.rawCondition = matrixConditionEstimate(fullReduced);
+    evaluation.rowScaledCondition = matrixConditionEstimate(rowScaledReduced);
+    evaluation.l2EquilibratedCondition =
+        matrixConditionEstimate(l2Equilibrated(fullReduced));
+
+    const auto subBlockNorm = [&](const Eigen::MatrixXd& matrix,
+                                  int rowStart,
+                                  int rowCount,
+                                  int colStart,
+                                  int colCount) {
+        if (rowCount == 0 || colCount == 0)
+            return Real{0.0};
+        return matrix.block(rowStart, colStart, rowCount, colCount).norm();
+    };
+    evaluation.electronElectronNorm = subBlockNorm(
+        fullReduced, 0, freeElectronUnknowns, 0, freeElectronUnknowns);
+    evaluation.electronHoleNorm = subBlockNorm(
+        fullReduced, 0, freeElectronUnknowns,
+        freeElectronUnknowns, freeHoleUnknowns);
+    evaluation.holeElectronNorm = subBlockNorm(
+        fullReduced, freeElectronUnknowns, freeHoleUnknowns,
+        0, freeElectronUnknowns);
+    evaluation.holeHoleNorm = subBlockNorm(
+        fullReduced, freeElectronUnknowns, freeHoleUnknowns,
+        freeElectronUnknowns, freeHoleUnknowns);
+    const auto crossNorm = [&](const Eigen::MatrixXd& matrix) {
+        return std::hypot(
+            subBlockNorm(matrix, 0, freeElectronUnknowns,
+                         freeElectronUnknowns, freeHoleUnknowns),
+            subBlockNorm(matrix, freeElectronUnknowns, freeHoleUnknowns,
+                         0, freeElectronUnknowns));
+    };
+    evaluation.crossCarrierNormFraction = fullReduced.norm() > 0.0
+        ? crossNorm(fullReduced) / fullReduced.norm()
+        : 0.0;
+    evaluation.recombinationCrossNorm =
+        crossNorm(fullReduced - noRecombinationReduced);
+    evaluation.avalancheCrossNorm = crossNorm(fullReduced - noImpactReduced);
+    evaluation.transportCrossNorm = crossNorm(transportReduced);
+
+    const auto positiveSpread = [](const VectorXd& values) {
+        Real smallest = std::numeric_limits<Real>::infinity();
+        Real largest = 0.0;
+        for (int i = 0; i < values.size(); ++i) {
+            if (values(i) > 0.0 && std::isfinite(values(i))) {
+                smallest = std::min(smallest, values(i));
+                largest = std::max(largest, values(i));
+            }
+        }
+        return std::isfinite(smallest) && smallest > 0.0
+            ? largest / smallest
+            : Real{0.0};
+    };
+    VectorXd columnNorms(fullReduced.cols());
+    VectorXd rowNorms(fullReduced.rows());
+    for (int i = 0; i < fullReduced.cols(); ++i)
+        columnNorms(i) = fullReduced.col(i).norm();
+    for (int i = 0; i < fullReduced.rows(); ++i)
+        rowNorms(i) = fullReduced.row(i).norm();
+    evaluation.freeColumnNormSpread = positiveSpread(columnNorms);
+    evaluation.freeRowNormSpread = positiveSpread(rowNorms);
+    evaluation.rowWeightSpread = positiveSpread(reducedRowWeights);
+
+    LinearSolver linearSolver;
+    const auto solve = [&](const std::string& name,
+                           const SparseMatrixd& matrix,
+                           const VectorXd& equationResidual) {
+        NewtonCarrierBlockSolveVariantEvaluation result;
+        result.name = name;
+        const VectorXd delta = linearSolver.solve(matrix, -equationResidual);
+        result.deltaPhin = delta.head(N) * potentialScale;
+        result.deltaPhip = delta.tail(N) * potentialScale;
+        result.scaledStepNorm = delta.norm();
+        result.physicalStepNorm_V = delta.norm() * potentialScale;
+        result.relativeLinearClosure = equationResidual.norm() > 0.0
+            ? (matrix * delta + equationResidual).norm() /
+                equationResidual.norm()
+            : (matrix * delta).norm();
+        return std::pair<NewtonCarrierBlockSolveVariantEvaluation, VectorXd>{
+            std::move(result), delta};
+    };
+    auto [fullSolve, fullDelta] = solve("full", fullBlock, carrierResidual);
+    evaluation.solveVariants.push_back(std::move(fullSolve));
+    auto appendVariant = [&](NewtonCarrierBlockSolveVariantEvaluation variant,
+                             const VectorXd& delta) {
+        const Real fullNorm = fullDelta.norm();
+        variant.relativeDifferenceFromFull = fullNorm > 0.0
+            ? (delta - fullDelta).norm() / fullNorm
+            : delta.norm();
+        const Real denominator = delta.norm() * fullNorm;
+        variant.cosineWithFull = denominator > 0.0
+            ? delta.dot(fullDelta) / denominator
+            : 0.0;
+        evaluation.solveVariants.push_back(std::move(variant));
+    };
+    evaluation.solveVariants.front().relativeDifferenceFromFull = 0.0;
+    evaluation.solveVariants.front().cosineWithFull = 1.0;
+
+    const SparseMatrixd rowScaledBlock =
+        leftScaleRows(fullBlock, carrierRowWeights);
+    const VectorXd rowScaledResidual =
+        carrierResidual.cwiseProduct(carrierRowWeights);
+    auto [rowScaledSolve, rowScaledDelta] =
+        solve("row_scaled", rowScaledBlock, rowScaledResidual);
+    appendVariant(std::move(rowScaledSolve), rowScaledDelta);
+
+    Eigen::MatrixXd noCrossDense(fullBlock);
+    noCrossDense.block(0, N, N, N).setZero();
+    noCrossDense.block(N, 0, N, N).setZero();
+    SparseMatrixd noCrossBlock = noCrossDense.sparseView();
+    auto [noCrossSolve, noCrossDelta] =
+        solve("no_cross_carrier", noCrossBlock, carrierResidual);
+    appendVariant(std::move(noCrossSolve), noCrossDelta);
+    auto [noRecombinationSolve, noRecombinationDelta] =
+        solve("no_recombination", noRecombinationBlock, carrierResidual);
+    appendVariant(std::move(noRecombinationSolve), noRecombinationDelta);
+    auto [noAvalancheSolve, noAvalancheDelta] =
+        solve("no_avalanche", noImpactBlock, carrierResidual);
+    appendVariant(std::move(noAvalancheSolve), noAvalancheDelta);
+    auto [transportSolve, transportDelta] =
+        solve("transport_only", transportBlock, carrierResidual);
+    appendVariant(std::move(transportSolve), transportDelta);
+
+    evaluation.columns.reserve(freeUnknowns.size());
+    for (int reducedColumn = 0;
+         reducedColumn < fullReduced.cols(); ++reducedColumn) {
+        const int carrierDof =
+            freeUnknowns[static_cast<std::size_t>(reducedColumn)];
+        const bool electron = carrierDof < N;
+        const Real columnNorm = fullReduced.col(reducedColumn).norm();
+        const Real electronRows = freeElectronUnknowns > 0
+            ? fullReduced.col(reducedColumn).head(freeElectronUnknowns).norm()
+            : 0.0;
+        const Real holeRows = freeHoleUnknowns > 0
+            ? fullReduced.col(reducedColumn).tail(freeHoleUnknowns).norm()
+            : 0.0;
+        NewtonCarrierBlockColumnDiagnostic column;
+        column.carrier = electron ? "electron" : "hole";
+        column.nodeId = static_cast<Index>(electron ? carrierDof : carrierDof - N);
+        column.reducedColumn = static_cast<Index>(reducedColumn);
+        column.diagonal = fullReduced(reducedColumn, reducedColumn);
+        column.columnL2Norm = columnNorm;
+        column.electronRowL2Norm = electronRows;
+        column.holeRowL2Norm = holeRows;
+        column.diagonalFraction = columnNorm > 0.0
+            ? std::abs(column.diagonal) / columnNorm
+            : 0.0;
+        column.crossCarrierRowFraction = columnNorm > 0.0
+            ? (electron ? holeRows : electronRows) / columnNorm
+            : 0.0;
+        column.continuityRowWeight = carrierRowWeights(carrierDof);
+        column.residual = carrierResidual(carrierDof);
+        column.fullDeltaQfp_V = fullDelta(carrierDof) * potentialScale;
+        evaluation.columns.push_back(std::move(column));
+    }
+
+    if (!freeUnknowns.empty()) {
+        const Eigen::JacobiSVD<Eigen::MatrixXd> svd(
+            fullReduced, Eigen::ComputeFullU | Eigen::ComputeFullV);
+        const VectorXd singular = svd.singularValues();
+        const VectorXd reducedRhs = -reduceVector(carrierResidual);
+        const VectorXd reducedDelta = reduceVector(fullDelta);
+        const Real rhsEnergy = reducedRhs.squaredNorm();
+        const Real stepEnergy = reducedDelta.squaredNorm();
+        const Real largest = singular.size() > 0 ? singular(0) : 0.0;
+        evaluation.singularModes.reserve(
+            static_cast<std::size_t>(singular.size()));
+        for (int mode = 0; mode < singular.size(); ++mode) {
+            const VectorXd right = svd.matrixV().col(mode);
+            const VectorXd left = svd.matrixU().col(mode);
+            const Real rhsProjection = left.dot(reducedRhs);
+            // Project the step produced by the production sparse solver rather
+            // than reconstructing it as U^T b / sigma.  The raw carrier block
+            // spans many scale-separated directions below the dense-SVD rank
+            // threshold; dropping those modes would hide where the actual
+            // Newton update lives.
+            const Real stepAmplitude = right.dot(reducedDelta);
+            Eigen::Index topRight = 0;
+            Eigen::Index topLeft = 0;
+            right.cwiseAbs().maxCoeff(&topRight);
+            left.cwiseAbs().maxCoeff(&topLeft);
+            const int topRightDof =
+                freeUnknowns[static_cast<std::size_t>(topRight)];
+            const int topLeftDof =
+                freeUnknowns[static_cast<std::size_t>(topLeft)];
+            NewtonCarrierBlockSingularModeDiagnostic record;
+            record.modeIndex = static_cast<Index>(mode);
+            record.singularValue = singular(mode);
+            record.relativeSingularValue = largest > 0.0
+                ? singular(mode) / largest
+                : 0.0;
+            record.rhsProjection = rhsProjection;
+            record.rhsEnergyFraction = rhsEnergy > 0.0
+                ? rhsProjection * rhsProjection / rhsEnergy
+                : 0.0;
+            record.stepAmplitude = stepAmplitude;
+            record.stepEnergyFraction = stepEnergy > 0.0
+                ? stepAmplitude * stepAmplitude / stepEnergy
+                : 0.0;
+            record.rightElectronFraction = freeElectronUnknowns > 0
+                ? right.head(freeElectronUnknowns).squaredNorm()
+                : 0.0;
+            record.leftElectronFraction = freeElectronUnknowns > 0
+                ? left.head(freeElectronUnknowns).squaredNorm()
+                : 0.0;
+            record.topRightCarrier = topRightDof < N ? "electron" : "hole";
+            record.topRightNode = static_cast<Index>(
+                topRightDof < N ? topRightDof : topRightDof - N);
+            record.topRightValue = right(topRight);
+            record.topLeftCarrier = topLeftDof < N ? "electron" : "hole";
+            record.topLeftNode = static_cast<Index>(
+                topLeftDof < N ? topLeftDof : topLeftDof - N);
+            record.topLeftValue = left(topLeft);
+            evaluation.singularModes.push_back(std::move(record));
+        }
+    }
+    return evaluation;
+}
+
 NewtonCarrierTermDiagnosticsEvaluation NewtonSolver::evaluateCarrierTermDiagnostics(
     const DDSolution& state) const
 {

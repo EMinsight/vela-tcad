@@ -1960,6 +1960,62 @@ TEST_CASE("NewtonSolver: evaluateCarrierRowDiagnostics reports carrier row stiff
             cfg.maxUpdate * rows.potentialScale + 1.0e-12);
 }
 
+TEST_CASE("NewtonSolver: carrier block decomposition separates scale and coupling",
+          "[newton][diagnostics]")
+{
+    DeviceMesh mesh = makePNMesh();
+    MaterialDatabase matdb;
+    DopingModel doping = makePNDoping(mesh);
+    std::unordered_map<std::string, Real> biases = {
+        {"anode", -0.1},
+        {"cathode", 0.0},
+    };
+
+    NewtonConfig cfg;
+    cfg.inputScaling.mode = UnitScalingMode::UnitScaling;
+    cfg.recombination = {"srh"};
+    cfg.warmStart = true;
+
+    DDSolution state;
+    const int N = static_cast<int>(mesh.numNodes());
+    state.psi = VectorXd::LinSpaced(N, -0.02, 0.02);
+    state.phin = VectorXd::Constant(N, -0.01);
+    state.phip = VectorXd::Constant(N, 0.01);
+
+    NewtonSolver solver(mesh, matdb, doping, biases, cfg);
+    const NewtonCarrierBlockDecompositionEvaluation decomposition =
+        solver.evaluateCarrierBlockDecomposition(state);
+
+    const Index freeUnknowns =
+        decomposition.freeElectronUnknowns + decomposition.freeHoleUnknowns;
+    REQUIRE(freeUnknowns > 0);
+    REQUIRE(decomposition.columns.size() ==
+            static_cast<std::size_t>(freeUnknowns));
+    REQUIRE(decomposition.singularModes.size() ==
+            static_cast<std::size_t>(freeUnknowns));
+    REQUIRE(decomposition.rawCondition.rows == freeUnknowns);
+    REQUIRE(decomposition.rawCondition.columns == freeUnknowns);
+    REQUIRE(decomposition.rawCondition.largestSingularValue > 0.0);
+    REQUIRE(decomposition.freeColumnNormSpread >= 1.0);
+    REQUIRE(decomposition.freeRowNormSpread >= 1.0);
+    REQUIRE(decomposition.solveVariants.size() == 6);
+    REQUIRE(decomposition.solveVariants[0].name == "full");
+    REQUIRE(decomposition.solveVariants[1].name == "row_scaled");
+    REQUIRE(decomposition.solveVariants[1].relativeDifferenceFromFull ==
+            Catch::Approx(0.0).margin(1.0e-9));
+    REQUIRE(decomposition.solveVariants[1].cosineWithFull ==
+            Catch::Approx(1.0).margin(1.0e-9));
+    Real stepEnergySum = 0.0;
+    Real rhsEnergySum = 0.0;
+    for (const auto& mode : decomposition.singularModes) {
+        stepEnergySum += mode.stepEnergyFraction;
+        rhsEnergySum += mode.rhsEnergyFraction;
+    }
+    REQUIRE(stepEnergySum == Catch::Approx(1.0).margin(1.0e-10));
+    REQUIRE(rhsEnergySum == Catch::Approx(1.0).margin(1.0e-10));
+    REQUIRE(decomposition.transportCrossNorm == Catch::Approx(0.0).margin(1.0e-18));
+}
+
 TEST_CASE("NewtonSolver: evaluateCarrierTermDiagnostics decomposes continuity residual",
           "[newton][diagnostics]")
 {

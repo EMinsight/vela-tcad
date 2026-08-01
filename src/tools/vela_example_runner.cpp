@@ -1654,6 +1654,157 @@ nlohmann::json runNewtonCarrierRowProbe(const std::string& configFile, const nlo
     };
 }
 
+void writeNewtonCarrierBlockColumnsCsv(
+    const std::filesystem::path& path,
+    const vela::DeviceMesh& mesh,
+    const vela::NewtonCarrierBlockDecompositionEvaluation& diagnostics)
+{
+    std::ofstream out(path);
+    if (!out.is_open())
+        throw std::runtime_error("Cannot write carrier-block columns CSV: " + path.string());
+    out << std::setprecision(17);
+    out << "reduced_column,carrier,node_id,x,y,diagonal,column_l2_norm,"
+        << "electron_row_l2_norm,hole_row_l2_norm,diagonal_fraction,"
+        << "cross_carrier_row_fraction,continuity_row_weight,residual,"
+        << "full_delta_qfp_V\n";
+    for (const auto& column : diagnostics.columns) {
+        const vela::Node& node = mesh.getNode(column.nodeId);
+        out << column.reducedColumn << ',' << column.carrier << ','
+            << column.nodeId << ',' << node.x << ',' << node.y << ','
+            << column.diagonal << ',' << column.columnL2Norm << ','
+            << column.electronRowL2Norm << ',' << column.holeRowL2Norm << ','
+            << column.diagonalFraction << ',' << column.crossCarrierRowFraction << ','
+            << column.continuityRowWeight << ',' << column.residual << ','
+            << column.fullDeltaQfp_V << '\n';
+    }
+}
+
+void writeNewtonCarrierBlockSingularModesCsv(
+    const std::filesystem::path& path,
+    const vela::NewtonCarrierBlockDecompositionEvaluation& diagnostics)
+{
+    std::ofstream out(path);
+    if (!out.is_open())
+        throw std::runtime_error("Cannot write carrier-block singular modes CSV: " + path.string());
+    out << std::setprecision(17);
+    out << "mode_index,singular_value,relative_singular_value,rhs_projection,"
+        << "rhs_energy_fraction,step_amplitude,step_energy_fraction,"
+        << "right_electron_fraction,left_electron_fraction,"
+        << "top_right_carrier,top_right_node,top_right_value,"
+        << "top_left_carrier,top_left_node,top_left_value\n";
+    for (const auto& mode : diagnostics.singularModes) {
+        out << mode.modeIndex << ',' << mode.singularValue << ','
+            << mode.relativeSingularValue << ',' << mode.rhsProjection << ','
+            << mode.rhsEnergyFraction << ',' << mode.stepAmplitude << ','
+            << mode.stepEnergyFraction << ',' << mode.rightElectronFraction << ','
+            << mode.leftElectronFraction << ',' << mode.topRightCarrier << ','
+            << mode.topRightNode << ',' << mode.topRightValue << ','
+            << mode.topLeftCarrier << ',' << mode.topLeftNode << ','
+            << mode.topLeftValue << '\n';
+    }
+}
+
+void writeNewtonCarrierBlockSolveVariantsCsv(
+    const std::filesystem::path& path,
+    const vela::NewtonCarrierBlockDecompositionEvaluation& diagnostics)
+{
+    std::ofstream out(path);
+    if (!out.is_open())
+        throw std::runtime_error("Cannot write carrier-block solve variants CSV: " + path.string());
+    out << std::setprecision(17);
+    out << "variant,scaled_step_norm,physical_step_norm_V,"
+        << "relative_difference_from_full,cosine_with_full,"
+        << "relative_linear_closure\n";
+    for (const auto& variant : diagnostics.solveVariants) {
+        out << variant.name << ',' << variant.scaledStepNorm << ','
+            << variant.physicalStepNorm_V << ','
+            << variant.relativeDifferenceFromFull << ','
+            << variant.cosineWithFull << ','
+            << variant.relativeLinearClosure << '\n';
+    }
+}
+
+void writeNewtonCarrierBlockSolveNodesCsv(
+    const std::filesystem::path& path,
+    const vela::DeviceMesh& mesh,
+    const vela::NewtonCarrierBlockDecompositionEvaluation& diagnostics)
+{
+    std::ofstream out(path);
+    if (!out.is_open())
+        throw std::runtime_error("Cannot write carrier-block solve nodes CSV: " + path.string());
+    out << std::setprecision(17);
+    out << "variant,node_id,x,y,delta_phin_V,delta_phip_V\n";
+    for (const auto& variant : diagnostics.solveVariants) {
+        for (int nodeId = 0; nodeId < variant.deltaPhin.size(); ++nodeId) {
+            const vela::Node& node = mesh.getNode(static_cast<vela::Index>(nodeId));
+            out << variant.name << ',' << nodeId << ',' << node.x << ',' << node.y
+                << ',' << variant.deltaPhin(nodeId) << ','
+                << variant.deltaPhip(nodeId) << '\n';
+        }
+    }
+}
+
+nlohmann::json runNewtonCarrierBlockDecompositionProbe(
+    const std::string& configFile,
+    const nlohmann::json& cfg)
+{
+    const std::filesystem::path cfgDir = configDirectory(configFile);
+    NewtonProblem problem = loadNewtonProblem(configFile, cfg);
+    const vela::DDSolution state =
+        readExternalState(cfgDir, cfg, problem.mesh.numNodes());
+    const vela::NewtonSolver solver(
+        problem.mesh, problem.matdb, problem.doping, problem.biases, problem.newton);
+    const auto diagnostics =
+        solver.evaluateCarrierBlockDecomposition(state);
+    const std::filesystem::path prefix =
+        resolvePath(cfgDir, cfg.at("output_prefix").get<std::string>());
+    if (!prefix.parent_path().empty())
+        std::filesystem::create_directories(prefix.parent_path());
+    const auto suffixed = [&](const std::string& suffix) {
+        return std::filesystem::path(prefix.string() + suffix);
+    };
+    writeNewtonCarrierBlockColumnsCsv(
+        suffixed("_columns.csv"), problem.mesh, diagnostics);
+    writeNewtonCarrierBlockSingularModesCsv(
+        suffixed("_singular_modes.csv"), diagnostics);
+    writeNewtonCarrierBlockSolveVariantsCsv(
+        suffixed("_solve_variants.csv"), diagnostics);
+    writeNewtonCarrierBlockSolveNodesCsv(
+        suffixed("_solve_nodes.csv"), problem.mesh, diagnostics);
+
+    nlohmann::json summary = {
+        {"nodes", problem.mesh.numNodes()},
+        {"free_electron_unknowns", diagnostics.freeElectronUnknowns},
+        {"free_hole_unknowns", diagnostics.freeHoleUnknowns},
+        {"raw_condition", matrixConditionJson(diagnostics.rawCondition)},
+        {"row_scaled_condition", matrixConditionJson(diagnostics.rowScaledCondition)},
+        {"l2_equilibrated_condition", matrixConditionJson(diagnostics.l2EquilibratedCondition)},
+        {"electron_electron_norm", diagnostics.electronElectronNorm},
+        {"electron_hole_norm", diagnostics.electronHoleNorm},
+        {"hole_electron_norm", diagnostics.holeElectronNorm},
+        {"hole_hole_norm", diagnostics.holeHoleNorm},
+        {"cross_carrier_norm_fraction", diagnostics.crossCarrierNormFraction},
+        {"recombination_cross_norm", diagnostics.recombinationCrossNorm},
+        {"avalanche_cross_norm", diagnostics.avalancheCrossNorm},
+        {"transport_cross_norm", diagnostics.transportCrossNorm},
+        {"free_column_norm_spread", diagnostics.freeColumnNormSpread},
+        {"free_row_norm_spread", diagnostics.freeRowNormSpread},
+        {"row_weight_spread", diagnostics.rowWeightSpread},
+        {"block_residuals", {
+            {"psi", diagnostics.residual.blockNorms.psi},
+            {"phin", diagnostics.residual.blockNorms.phin},
+            {"phip", diagnostics.residual.blockNorms.phip},
+            {"combined", diagnostics.residual.blockNorms.combined},
+        }},
+    };
+    std::ofstream summaryOut(suffixed("_summary.json"));
+    if (!summaryOut.is_open())
+        throw std::runtime_error("Cannot write carrier-block summary JSON: " +
+                                 suffixed("_summary.json").string());
+    summaryOut << std::setw(2) << summary << '\n';
+    return summary;
+}
+
 void writeNewtonCarrierTermProbeCsv(
     const std::filesystem::path& path,
     const vela::DeviceMesh& mesh,
@@ -2279,6 +2430,8 @@ int main(int argc, char** argv)
             status.update(runNewtonRegularizedCarrierStepProbe(configFile, cfg));
         } else if (type == "newton_carrier_row_probe") {
             status.update(runNewtonCarrierRowProbe(configFile, cfg));
+        } else if (type == "newton_carrier_block_decomposition_probe") {
+            status.update(runNewtonCarrierBlockDecompositionProbe(configFile, cfg));
         } else if (type == "newton_carrier_term_probe") {
             status.update(runNewtonCarrierTermProbe(configFile, cfg));
         } else if (type == "sg_edge_flux_probe") {

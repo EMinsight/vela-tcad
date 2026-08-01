@@ -1481,3 +1481,50 @@ Evidence:
 > common avalanche rows, and the carrier-only Newton update projected onto the
 > population-derivative directions.  Do not modify production defaults before
 > a wrong sign, missing derivative, or inconsistent scale is demonstrated.
+
+## M2 complete carrier-block linear-solve decomposition - 2026-08-01
+
+The free-carrier solve decomposition is complete with typed outcome:
+
+`carrier_block_linear_solve_decomposed`
+
+The full linear closure is `7.195e-16`, row-scaled and unscaled carrier steps
+agree within `2.098e-13`, and all five output families are byte-identical over
+two independent runs.  The transport-only electron-hole cross block is exactly
+zero.  No production setting was changed.
+
+At `-19.5` through `-20 V`, the joint-QFP state has an L2 row/column
+equilibrated condition number of `381.5-543.3`, versus `65.8-105.1` for the
+baseline.  Its carrier step is `1.30-1.43 V`, versus about `0.002 V` for the
+baseline.  The two dominant joint-QFP singular directions have relative
+singular values of about `6.9e-16` to `1.1e-15` and carry `94.88-96.34%` of
+the actual production sparse-solver step energy.
+
+Avalanche supplies approximately all electron-hole cross-block norm.  Removing
+cross-carrier entries changes the joint-QFP step by `38.0-46.4%`, and removing
+the avalanche matrix changes it by `25.1-31.5%`; direction cosines remain above
+`0.992`.  Recombination changes the step by only about `1e-6`.  The evidence is
+therefore a magnitude amplification on near-null junction modes, not a sign
+reversal or a local SG derivative defect.
+
+All 40 joint-QFP top-10 update nodes lie within `0.25 um` of the `x=1.0 um`
+junction, while none of the corresponding baseline top-10 updates do.  The
+two strongest modes generally peak on the uniformly doped `x=0.75/1.25 um`
+junction shoulders, four triangle-graph steps from the compensated column.
+This supports junction discretization as an indirect amplifier, but does not
+identify local compensated-triangle doping smoothing as the direct defect.
+
+Evidence:
+
+- `docs/validation/pn2d_bv_m2_carrier_block_decomposition_2026-08-01.md`;
+- `build-release/pn2d-bv-m2-carrier-block-decomposition-20260801/report.html`.
+
+### Next execution prompt
+
+> Keep SG/Laux, production defaults, mesh, nodal doping, and acceptance
+> thresholds unchanged.  On the M2 `x=0.75-1.25 um` junction-shoulder support,
+> project the two dominant carrier soft modes onto transport, avalanche
+> diagonal, and avalanche cross-carrier Jacobian components.  In parallel,
+> audit triangle-level nodal-doping interpolation, control-volume dose, and
+> compensated-junction ownership against the Sentaurus export semantics.  Any
+> doping counterfactual must remain frozen-state, opt-in, and dose preserving.

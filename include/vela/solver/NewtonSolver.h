@@ -438,6 +438,73 @@ struct NewtonCarrierRowDiagnosticsEvaluation {
     Real cappedCarrierStepNorm = 0.0;
 };
 
+struct NewtonCarrierBlockColumnDiagnostic {
+    std::string carrier;
+    Index nodeId = 0;
+    Index reducedColumn = 0;
+    Real diagonal = 0.0;
+    Real columnL2Norm = 0.0;
+    Real electronRowL2Norm = 0.0;
+    Real holeRowL2Norm = 0.0;
+    Real diagonalFraction = 0.0;
+    Real crossCarrierRowFraction = 0.0;
+    Real continuityRowWeight = 1.0;
+    Real residual = 0.0;
+    Real fullDeltaQfp_V = 0.0;
+};
+
+struct NewtonCarrierBlockSingularModeDiagnostic {
+    Index modeIndex = 0;
+    Real singularValue = 0.0;
+    Real relativeSingularValue = 0.0;
+    Real rhsProjection = 0.0;
+    Real rhsEnergyFraction = 0.0;
+    Real stepAmplitude = 0.0;
+    Real stepEnergyFraction = 0.0;
+    Real rightElectronFraction = 0.0;
+    Real leftElectronFraction = 0.0;
+    std::string topRightCarrier;
+    Index topRightNode = 0;
+    Real topRightValue = 0.0;
+    std::string topLeftCarrier;
+    Index topLeftNode = 0;
+    Real topLeftValue = 0.0;
+};
+
+struct NewtonCarrierBlockSolveVariantEvaluation {
+    std::string name;
+    VectorXd deltaPhin;
+    VectorXd deltaPhip;
+    Real scaledStepNorm = 0.0;
+    Real physicalStepNorm_V = 0.0;
+    Real relativeDifferenceFromFull = 0.0;
+    Real cosineWithFull = 0.0;
+    Real relativeLinearClosure = 0.0;
+};
+
+struct NewtonCarrierBlockDecompositionEvaluation {
+    NewtonResidualEvaluation residual;
+    std::vector<NewtonCarrierBlockColumnDiagnostic> columns;
+    std::vector<NewtonCarrierBlockSingularModeDiagnostic> singularModes;
+    std::vector<NewtonCarrierBlockSolveVariantEvaluation> solveVariants;
+    NewtonMatrixConditionEstimate rawCondition;
+    NewtonMatrixConditionEstimate rowScaledCondition;
+    NewtonMatrixConditionEstimate l2EquilibratedCondition;
+    Index freeElectronUnknowns = 0;
+    Index freeHoleUnknowns = 0;
+    Real electronElectronNorm = 0.0;
+    Real electronHoleNorm = 0.0;
+    Real holeElectronNorm = 0.0;
+    Real holeHoleNorm = 0.0;
+    Real crossCarrierNormFraction = 0.0;
+    Real recombinationCrossNorm = 0.0;
+    Real avalancheCrossNorm = 0.0;
+    Real transportCrossNorm = 0.0;
+    Real freeColumnNormSpread = 0.0;
+    Real freeRowNormSpread = 0.0;
+    Real rowWeightSpread = 0.0;
+};
+
 struct NewtonCarrierTermDiagnosticsEvaluation {
     NewtonResidualEvaluation residual;
     std::vector<CoupledDDCarrierTermDiagnostic> rows;
@@ -516,6 +583,8 @@ public:
         Real regularizationScale) const;
     NewtonCarrierRowDiagnosticsEvaluation evaluateCarrierRowDiagnostics(
         const DDSolution& state) const;
+    NewtonCarrierBlockDecompositionEvaluation
+    evaluateCarrierBlockDecomposition(const DDSolution& state) const;
     NewtonCarrierTermDiagnosticsEvaluation evaluateCarrierTermDiagnostics(
         const DDSolution& state) const;
     std::vector<NewtonJacobianBlockAuditRow> evaluateJacobianBlockAudit(

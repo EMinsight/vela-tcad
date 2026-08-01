@@ -11643,6 +11643,99 @@ LOOKUP_TABLE default
         self.assertIn("capped_delta_phin_V", rows[0])
         self.assertLessEqual(abs(float(rows[0]["capped_delta_phin_V"])), 0.026)
 
+    def test_runner_writes_newton_carrier_block_decomposition_probe(self) -> None:
+        exe_name = "vela_example_runner.exe" if sys.platform.startswith("win") else "vela_example_runner"
+        runner = REPO / "build-release" / exe_name
+        if not runner.is_file():
+            runner = REPO / "build" / exe_name
+        if not runner.is_file():
+            self.skipTest(f"missing built runner: {runner}")
+
+        with tempfile.TemporaryDirectory(prefix="vela_newton_carrier_block_probe_") as tmp:
+            root = Path(tmp)
+            fields = root / "fields"
+            fields.mkdir()
+            self._write_csv(root / "doping.csv", ["node_id", "donors_cm3", "acceptors_cm3"], [
+                [0, 2.0e17, 0.0],
+                [1, 1.0e17, 0.0],
+                [2, 0.0, 1.0e17],
+                [3, 0.0, 2.0e17],
+            ])
+            (root / "mesh.json").write_text(json.dumps({
+                "nodes": [
+                    {"id": 0, "x": 0.0, "y": 0.0},
+                    {"id": 1, "x": 1.0, "y": 0.0},
+                    {"id": 2, "x": 0.0, "y": 1.0},
+                    {"id": 3, "x": 1.0, "y": 1.0},
+                ],
+                "triangles": [
+                    {"id": 0, "node_ids": [0, 1, 2], "region_id": 0},
+                    {"id": 1, "node_ids": [1, 3, 2], "region_id": 0},
+                ],
+                "regions": [{"id": 0, "name": "Si", "material": "Si", "cell_ids": [0, 1]}],
+                "contacts": [
+                    {"id": 0, "name": "Cathode", "region_id": 0, "node_ids": [3]},
+                    {"id": 1, "name": "Anode", "region_id": 0, "node_ids": [0]},
+                ],
+            }) + "\n")
+            for name, values in {
+                "ElectrostaticPotential": [-0.1, 0.1, -0.08, 0.08],
+                "eQuasiFermiPotential": [0.0, 0.0, 0.0, 0.0],
+                "hQuasiFermiPotential": [0.0, 0.0, 0.0, 0.0],
+            }.items():
+                self._write_csv(
+                    fields / f"{name}_region0.csv",
+                    ["node_id", "component0"],
+                    [[idx, value] for idx, value in enumerate(values)],
+                )
+            prefix = root / "carrier_block"
+            config = root / "probe.json"
+            config.write_text(json.dumps({
+                "simulation_type": "newton_carrier_block_decomposition_probe",
+                "mesh_file": "mesh.json",
+                "node_doping_file": "doping.csv",
+                "output_prefix": str(prefix),
+                "state_fields_dir": "fields",
+                "scaling": {"mode": "unit_scaling"},
+                "doping": [{"region": "Si", "donors": 1.0e17, "acceptors": 1.0e17}],
+                "contacts": [
+                    {"name": "Cathode", "bias": 0.0},
+                    {"name": "Anode", "bias": 0.0},
+                ],
+                "solver": {
+                    "method": "gummel_newton",
+                    "bandgap_narrowing": "slotboom",
+                    "mobility": {"model": "caughey_thomas_field"},
+                    "recombination": ["srh"],
+                },
+            }, indent=2) + "\n")
+
+            result = subprocess.run(
+                [str(runner), "--config", str(config)],
+                cwd=REPO,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            status = json.loads(result.stdout)
+            columns = self._read_csv(Path(str(prefix) + "_columns.csv"))
+            modes = self._read_csv(Path(str(prefix) + "_singular_modes.csv"))
+            variants = self._read_csv(Path(str(prefix) + "_solve_variants.csv"))
+            summary_exists = Path(str(prefix) + "_summary.json").is_file()
+            solve_nodes_exists = Path(str(prefix) + "_solve_nodes.csv").is_file()
+
+        self.assertEqual(status["free_electron_unknowns"], 2)
+        self.assertEqual(status["free_hole_unknowns"], 2)
+        self.assertEqual(len(columns), 4)
+        self.assertEqual(len(modes), 4)
+        self.assertEqual(len(variants), 6)
+        self.assertEqual(variants[0]["variant"], "full")
+        self.assertEqual(variants[1]["variant"], "row_scaled")
+        self.assertTrue(summary_exists)
+        self.assertTrue(solve_nodes_exists)
+
     def test_runner_writes_newton_carrier_term_probe_for_external_state(self) -> None:
         exe_name = "vela_example_runner.exe" if sys.platform.startswith("win") else "vela_example_runner"
         runner = REPO / "build-release" / exe_name
