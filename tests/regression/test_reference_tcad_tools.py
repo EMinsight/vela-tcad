@@ -11733,6 +11733,10 @@ LOOKUP_TABLE default
         self.assertEqual(len(variants), 6)
         self.assertEqual(variants[0]["variant"], "full")
         self.assertEqual(variants[1]["variant"], "row_scaled")
+        self.assertIn("transport_jacobian_projection", modes[0])
+        self.assertIn("avalanche_cross_jacobian_projection", modes[0])
+        self.assertIn("transport_rhs_projection", modes[0])
+        self.assertIn("no_avalanche_step_amplitude", modes[0])
         self.assertTrue(summary_exists)
         self.assertTrue(solve_nodes_exists)
 

@@ -30,6 +30,7 @@ ROW_SCALED_STEP_TOLERANCE = 1.0e-8
 LINEAR_CLOSURE_TOLERANCE = 1.0e-8
 TRANSPORT_CROSS_RELATIVE_TOLERANCE = 1.0e-12
 SVD_ENERGY_CLOSURE_TOLERANCE = 1.0e-10
+MODAL_COMPONENT_CLOSURE_TOLERANCE = 1.0e-10
 
 
 def read_rows(path: Path) -> list[dict[str, str]]:
@@ -237,8 +238,23 @@ def summarize_case(
             "mode_index": int(row["mode_index"]),
             "singular_value": f(row, "singular_value"),
             "relative_singular_value": f(row, "relative_singular_value"),
+            "rhs_projection": f(row, "rhs_projection"),
             "rhs_energy_fraction": f(row, "rhs_energy_fraction"),
+            "step_amplitude": f(row, "step_amplitude"),
             "step_energy_fraction": f(row, "step_energy_fraction"),
+            "transport_jacobian_projection": f(row, "transport_jacobian_projection"),
+            "recombination_jacobian_projection": f(row, "recombination_jacobian_projection"),
+            "avalanche_diagonal_jacobian_projection": f(row, "avalanche_diagonal_jacobian_projection"),
+            "avalanche_cross_jacobian_projection": f(row, "avalanche_cross_jacobian_projection"),
+            "jacobian_projection_closure": f(row, "jacobian_projection_closure"),
+            "transport_rhs_projection": f(row, "transport_rhs_projection"),
+            "recombination_rhs_projection": f(row, "recombination_rhs_projection"),
+            "avalanche_rhs_projection": f(row, "avalanche_rhs_projection"),
+            "rhs_projection_closure": f(row, "rhs_projection_closure"),
+            "no_cross_carrier_step_amplitude": f(row, "no_cross_carrier_step_amplitude"),
+            "no_recombination_step_amplitude": f(row, "no_recombination_step_amplitude"),
+            "no_avalanche_step_amplitude": f(row, "no_avalanche_step_amplitude"),
+            "transport_only_step_amplitude": f(row, "transport_only_step_amplitude"),
             "right_electron_fraction": f(row, "right_electron_fraction"),
             "left_electron_fraction": f(row, "left_electron_fraction"),
             "top_right_carrier": row["top_right_carrier"],
@@ -332,12 +348,45 @@ def main() -> int:
             abs(float(row["singular_step_energy_sum"]) - 1.0))
         for row in cases
     )
+    modal_jacobian_closures: list[float] = []
+    modal_rhs_closures: list[float] = []
+    for prefix in first_prefixes.values():
+        for row in read_rows(Path(str(prefix) + "_singular_modes.csv")):
+            jacobian_scale = max(
+                abs(f(row, "singular_value")),
+                sum(abs(f(row, field)) for field in (
+                    "transport_jacobian_projection",
+                    "recombination_jacobian_projection",
+                    "avalanche_diagonal_jacobian_projection",
+                    "avalanche_cross_jacobian_projection",
+                )),
+                1.0e-300,
+            )
+            rhs_scale = max(
+                abs(f(row, "rhs_projection")),
+                sum(abs(f(row, field)) for field in (
+                    "transport_rhs_projection",
+                    "recombination_rhs_projection",
+                    "avalanche_rhs_projection",
+                )),
+                1.0e-300,
+            )
+            modal_jacobian_closures.append(
+                abs(f(row, "jacobian_projection_closure")) / jacobian_scale
+            )
+            modal_rhs_closures.append(
+                abs(f(row, "rhs_projection_closure")) / rhs_scale
+            )
+    maximum_modal_jacobian_closure = max(modal_jacobian_closures)
+    maximum_modal_rhs_closure = max(modal_rhs_closures)
     passed = (
         deterministic
         and maximum_row_scaled_difference <= ROW_SCALED_STEP_TOLERANCE
         and maximum_linear_closure <= LINEAR_CLOSURE_TOLERANCE
         and maximum_transport_cross_relative <= TRANSPORT_CROSS_RELATIVE_TOLERANCE
         and maximum_svd_energy_closure <= SVD_ENERGY_CLOSURE_TOLERANCE
+        and maximum_modal_jacobian_closure <= MODAL_COMPONENT_CLOSURE_TOLERANCE
+        and maximum_modal_rhs_closure <= MODAL_COMPONENT_CLOSURE_TOLERANCE
     )
     determinism_rows = [{
         "artifact": key,
@@ -362,6 +411,7 @@ def main() -> int:
             "linear_closure_tolerance": LINEAR_CLOSURE_TOLERANCE,
             "transport_cross_relative_tolerance": TRANSPORT_CROSS_RELATIVE_TOLERANCE,
             "svd_energy_closure_tolerance": SVD_ENERGY_CLOSURE_TOLERANCE,
+            "modal_component_closure_tolerance": MODAL_COMPONENT_CLOSURE_TOLERANCE,
         },
         "verdict": {
             "passed": passed,
@@ -370,6 +420,8 @@ def main() -> int:
             "maximum_full_linear_closure": maximum_linear_closure,
             "maximum_transport_cross_relative_to_full": maximum_transport_cross_relative,
             "maximum_svd_energy_closure": maximum_svd_energy_closure,
+            "maximum_modal_jacobian_projection_closure": maximum_modal_jacobian_closure,
+            "maximum_modal_rhs_projection_closure": maximum_modal_rhs_closure,
         },
         "outputs": {
             "case_summary": "case_summary.csv",

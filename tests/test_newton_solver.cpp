@@ -2010,6 +2010,10 @@ TEST_CASE("NewtonSolver: carrier block decomposition separates scale and couplin
     for (const auto& mode : decomposition.singularModes) {
         stepEnergySum += mode.stepEnergyFraction;
         rhsEnergySum += mode.rhsEnergyFraction;
+        REQUIRE(std::abs(mode.jacobianProjectionClosure) <=
+                std::max(1.0e-12, std::abs(mode.singularValue) * 1.0e-10));
+        REQUIRE(std::abs(mode.rhsProjectionClosure) <=
+                std::max(1.0e-12, std::abs(mode.rhsProjection) * 1.0e-10));
     }
     REQUIRE(stepEnergySum == Catch::Approx(1.0).margin(1.0e-10));
     REQUIRE(rhsEnergySum == Catch::Approx(1.0).margin(1.0e-10));

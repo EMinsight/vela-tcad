@@ -1689,6 +1689,14 @@ void writeNewtonCarrierBlockSingularModesCsv(
     out << std::setprecision(17);
     out << "mode_index,singular_value,relative_singular_value,rhs_projection,"
         << "rhs_energy_fraction,step_amplitude,step_energy_fraction,"
+        << "transport_jacobian_projection,recombination_jacobian_projection,"
+        << "avalanche_diagonal_jacobian_projection,"
+        << "avalanche_cross_jacobian_projection,jacobian_projection_closure,"
+        << "transport_rhs_projection,recombination_rhs_projection,"
+        << "avalanche_rhs_projection,rhs_projection_closure,"
+        << "no_cross_carrier_step_amplitude,"
+        << "no_recombination_step_amplitude,no_avalanche_step_amplitude,"
+        << "transport_only_step_amplitude,"
         << "right_electron_fraction,left_electron_fraction,"
         << "top_right_carrier,top_right_node,top_right_value,"
         << "top_left_carrier,top_left_node,top_left_value\n";
@@ -1696,7 +1704,21 @@ void writeNewtonCarrierBlockSingularModesCsv(
         out << mode.modeIndex << ',' << mode.singularValue << ','
             << mode.relativeSingularValue << ',' << mode.rhsProjection << ','
             << mode.rhsEnergyFraction << ',' << mode.stepAmplitude << ','
-            << mode.stepEnergyFraction << ',' << mode.rightElectronFraction << ','
+            << mode.stepEnergyFraction << ','
+            << mode.transportJacobianProjection << ','
+            << mode.recombinationJacobianProjection << ','
+            << mode.avalancheDiagonalJacobianProjection << ','
+            << mode.avalancheCrossJacobianProjection << ','
+            << mode.jacobianProjectionClosure << ','
+            << mode.transportRhsProjection << ','
+            << mode.recombinationRhsProjection << ','
+            << mode.avalancheRhsProjection << ','
+            << mode.rhsProjectionClosure << ','
+            << mode.noCrossCarrierStepAmplitude << ','
+            << mode.noRecombinationStepAmplitude << ','
+            << mode.noAvalancheStepAmplitude << ','
+            << mode.transportOnlyStepAmplitude << ','
+            << mode.rightElectronFraction << ','
             << mode.leftElectronFraction << ',' << mode.topRightCarrier << ','
             << mode.topRightNode << ',' << mode.topRightValue << ','
             << mode.topLeftCarrier << ',' << mode.topLeftNode << ','

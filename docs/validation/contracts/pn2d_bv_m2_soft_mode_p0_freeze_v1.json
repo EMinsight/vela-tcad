@@ -1,0 +1,66 @@
+{
+  "schema": "vela.pn2d_bv_m2_soft_mode_p0_freeze.v1",
+  "date": "2026-08-01",
+  "baseline_commit": "7623ee87af1c5316a76e46501046c58d8ba52911",
+  "scope": "observation_only_m2_soft_mode_and_doping_semantics",
+  "production_defaults_modified": false,
+  "biases_V": [
+    -18.0,
+    -19.5,
+    -19.7,
+    -20.0
+  ],
+  "variants": [
+    "vela_baseline",
+    "sent_qfp_only"
+  ],
+  "required_configuration": {
+    "avalanche_current_approximation": "element_edge_sg_gss_laux",
+    "avalanche_coupling_mode": "self_consistent",
+    "mobility_doping_concentration_basis": "net_doping",
+    "node_volume_policy": "barycentric",
+    "triangle_cell_reconstructed_total_impurity_active": false
+  },
+  "frozen_inputs": [
+    {
+      "path": "configs/templates/pn2d_bv.template.json",
+      "sha256": "c525e0b78d3142bdf37086dbb70086ead54a48f3a276000c25286294bc9b372b"
+    },
+    {
+      "path": "build-release/pn2d-bv-m2-qfp-carrier-jacobian-verification-20260731/self_consistent_sg_laux_probe.json",
+      "sha256": "4d837e7088bdcdabd598694cc0eafbe0ad682ac7445b3436d1766c20df569646"
+    },
+    {
+      "path": "build-release/pn2d-task10-balanced-junction-vm-v2-20260731/M2/converted/mesh.json",
+      "sha256": "feae2486632ff6f6f45191d41a62fb606cb67e91bcb919a7005995005d8796f9"
+    },
+    {
+      "path": "build-release/pn2d-task10-balanced-junction-vm-v2-20260731/M2/converted/doping.csv",
+      "sha256": "c4fe644a164b90ea954b6f844326349224ac957f0b06da99d53851799e8b1165"
+    },
+    {
+      "path": "build-release/pn2d-minimal6-task8-vela-unitfix-20260723-a/inputs/mirror/materials.json",
+      "sha256": "212b896ed86ace76d0d02e86b90f6ced6a2851417b2ec321d0dd702cfbfa6524"
+    },
+    {
+      "path": "docs/validation/contracts/pn2d_bv_m0_m2_template_default_acceptance_v2.json",
+      "sha256": "79ccf6f6427b1fda4890581fe10299fcd9d6f8f3f8d986527936129702c275d2"
+    },
+    {
+      "path": "build-release/pn2d-task10-balanced-m2-sentaurus-process-v2-20260731/avalanche_on/raw/pn2d_msh.tdr",
+      "sha256": "5b52f9d16454db2fc9e34c44185a1c8bd8da468631ad7aa214c769ad4a87c889"
+    },
+    {
+      "path": "build-release/pn2d-bv-m2-carrier-block-decomposition-20260801/result.json",
+      "sha256": "2738bc7a6ede1d53fd07fb216197355ee2f09fda9a35cab83f43a23a7555f316"
+    }
+  ],
+  "acceptance": {
+    "two_independent_runs_required": true,
+    "modal_component_relative_closure_max": 1e-10,
+    "node_coordinate_error_um_max": 1e-12,
+    "doping_relative_error_max": 1e-12,
+    "topology_must_match": true,
+    "no_threshold_or_physics_change": true
+  }
+}

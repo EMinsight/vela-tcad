@@ -3153,6 +3153,10 @@ NewtonSolver::evaluateCarrierBlockDecomposition(const DDSolution& state) const
         state.phin / potentialScale,
         state.phip / potentialScale});
     const VectorXd raw = fullAssembler.residual(x, bcs);
+    const VectorXd noRecombinationRaw =
+        noRecombinationAssembler.residual(x, bcs);
+    const VectorXd noImpactRaw = noImpactAssembler.residual(x, bcs);
+    const VectorXd transportRaw = transportAssembler.residual(x, bcs);
 
     const auto carrierBlock = [&](CoupledDDAssembler& assembler) {
         return sparseBlock(
@@ -3206,6 +3210,23 @@ NewtonSolver::evaluateCarrierBlockDecomposition(const DDSolution& state) const
         reduceMatrix(noRecombinationBlock);
     const Eigen::MatrixXd noImpactReduced = reduceMatrix(noImpactBlock);
     const Eigen::MatrixXd transportReduced = reduceMatrix(transportBlock);
+    const Eigen::MatrixXd recombinationReduced =
+        noImpactReduced - transportReduced;
+    const Eigen::MatrixXd avalancheReduced = fullReduced - noImpactReduced;
+    Eigen::MatrixXd avalancheDiagonalReduced = avalancheReduced;
+    avalancheDiagonalReduced.block(
+        0, freeElectronUnknowns,
+        freeElectronUnknowns, freeHoleUnknowns).setZero();
+    avalancheDiagonalReduced.block(
+        freeElectronUnknowns, 0,
+        freeHoleUnknowns, freeElectronUnknowns).setZero();
+    const Eigen::MatrixXd avalancheCrossReduced =
+        avalancheReduced - avalancheDiagonalReduced;
+    const VectorXd transportReducedRhs = -reduceVector(transportRaw.segment(N, 2 * N));
+    const VectorXd recombinationReducedRhs = -reduceVector(
+        noImpactRaw.segment(N, 2 * N) - transportRaw.segment(N, 2 * N));
+    const VectorXd avalancheReducedRhs = -reduceVector(
+        raw.segment(N, 2 * N) - noImpactRaw.segment(N, 2 * N));
     const VectorXd reducedRowWeights = reduceVector(carrierRowWeights);
     Eigen::MatrixXd rowScaledReduced = fullReduced;
     for (int row = 0; row < rowScaledReduced.rows(); ++row)
@@ -3381,6 +3402,11 @@ NewtonSolver::evaluateCarrierBlockDecomposition(const DDSolution& state) const
         const VectorXd singular = svd.singularValues();
         const VectorXd reducedRhs = -reduceVector(carrierResidual);
         const VectorXd reducedDelta = reduceVector(fullDelta);
+        const VectorXd reducedNoCrossDelta = reduceVector(noCrossDelta);
+        const VectorXd reducedNoRecombinationDelta =
+            reduceVector(noRecombinationDelta);
+        const VectorXd reducedNoAvalancheDelta = reduceVector(noAvalancheDelta);
+        const VectorXd reducedTransportDelta = reduceVector(transportDelta);
         const Real rhsEnergy = reducedRhs.squaredNorm();
         const Real stepEnergy = reducedDelta.squaredNorm();
         const Real largest = singular.size() > 0 ? singular(0) : 0.0;
@@ -3418,6 +3444,35 @@ NewtonSolver::evaluateCarrierBlockDecomposition(const DDSolution& state) const
             record.stepEnergyFraction = stepEnergy > 0.0
                 ? stepAmplitude * stepAmplitude / stepEnergy
                 : 0.0;
+            record.transportJacobianProjection =
+                left.dot(transportReduced * right);
+            record.recombinationJacobianProjection =
+                left.dot(recombinationReduced * right);
+            record.avalancheDiagonalJacobianProjection =
+                left.dot(avalancheDiagonalReduced * right);
+            record.avalancheCrossJacobianProjection =
+                left.dot(avalancheCrossReduced * right);
+            record.jacobianProjectionClosure =
+                record.transportJacobianProjection +
+                record.recombinationJacobianProjection +
+                record.avalancheDiagonalJacobianProjection +
+                record.avalancheCrossJacobianProjection - singular(mode);
+            record.transportRhsProjection = left.dot(transportReducedRhs);
+            record.recombinationRhsProjection =
+                left.dot(recombinationReducedRhs);
+            record.avalancheRhsProjection = left.dot(avalancheReducedRhs);
+            record.rhsProjectionClosure =
+                record.transportRhsProjection +
+                record.recombinationRhsProjection +
+                record.avalancheRhsProjection - rhsProjection;
+            record.noCrossCarrierStepAmplitude =
+                right.dot(reducedNoCrossDelta);
+            record.noRecombinationStepAmplitude =
+                right.dot(reducedNoRecombinationDelta);
+            record.noAvalancheStepAmplitude =
+                right.dot(reducedNoAvalancheDelta);
+            record.transportOnlyStepAmplitude =
+                right.dot(reducedTransportDelta);
             record.rightElectronFraction = freeElectronUnknowns > 0
                 ? right.head(freeElectronUnknowns).squaredNorm()
                 : 0.0;
