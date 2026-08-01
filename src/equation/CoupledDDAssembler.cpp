@@ -1089,6 +1089,204 @@ CoupledDDAssembler::sgEdgeFluxDiagnostics(
     return edges;
 }
 
+std::vector<CoupledDDTransportEdgeJacobianDiagnostic>
+CoupledDDAssembler::transportEdgeJacobianDiagnostics(
+    const VectorXd& x,
+    const CoupledDDBoundaryConditions& bcs,
+    Real physicalFiniteDifferenceStep_V) const
+{
+    const int N = static_cast<int>(mesh_.numNodes());
+    if (x.size() != 3 * N)
+        throw std::invalid_argument(
+            "CoupledDDAssembler::transportEdgeJacobianDiagnostics: vector size mismatch.");
+    if (!(physicalFiniteDifferenceStep_V > 0.0))
+        throw std::invalid_argument(
+            "CoupledDDAssembler::transportEdgeJacobianDiagnostics: finite-difference step must be positive.");
+
+    const Real potentialScale = scaling_.enabled ? scaling_.V0 : 1.0;
+    const Real fieldFactor = scaling_.enabled
+        ? scaling_.fieldFromCoordinateDeltaFactor : 1.0;
+    const Real continuityScale = scaling_.enabled
+        ? scaling_.C0 * scaling_.D0 : 1.0;
+    const Real derivativeScale = scaling_.enabled
+        ? scaling_.V0 / continuityScale : 1.0;
+    const VectorXd psi = x.segment(psiOffset(), N) * potentialScale;
+    const bool qfMobility =
+        mobilityConfig_.highFieldDrivingForce == "quasi_fermi_gradient";
+
+    auto isConstrained = [&](CarrierType carrier, Index node) {
+        return carrier == CarrierType::Electron
+            ? bcs.phin.find(node) != bcs.phin.end()
+            : bcs.phip.find(node) != bcs.phip.end();
+    };
+
+    std::vector<CoupledDDTransportEdgeJacobianDiagnostic> records;
+    records.reserve(static_cast<std::size_t>(mesh_.numEdges()) * 8);
+    for (Index edgeId = 0; edgeId < mesh_.numEdges(); ++edgeId) {
+        const Edge& edge = mesh_.getEdge(edgeId);
+        const Real h = edge.length;
+        if (h <= 1.0e-30 || couple_[edgeId] <= 0.0)
+            continue;
+        const Index nodes[2] = {edge.n0, edge.n1};
+        const int i = static_cast<int>(edge.n0);
+        const int j = static_cast<int>(edge.n1);
+        const Real psi0 = psi(i);
+        const Real psi1 = psi(j);
+        const Real electricField = std::abs((psi1 - psi0) / h) * fieldFactor;
+
+        for (const CarrierType carrier : {CarrierType::Electron, CarrierType::Hole}) {
+            const bool electron = carrier == CarrierType::Electron;
+            const int qfpOffset = electron ? phinOffset() : phipOffset();
+            const Real qfpReference = electron
+                ? electronQfReference_V_ : holeQfReference_V_;
+            const Real qfp0 = x(qfpOffset + i) * potentialScale;
+            const Real qfp1 = x(qfpOffset + j) * potentialScale;
+            const Real qfpField = std::abs((qfp1 - qfp0) / h) * fieldFactor;
+            const Real drive = qfMobility ? qfpField : electricField;
+            const Real mobility = detail::edgeMobility(
+                edgeCells_, mesh_, doping_, *mobility_, cellMaterials_, edgeId,
+                carrier, drive, &mobilityConfig_, &psi);
+            if (mobility <= 0.0)
+                continue;
+
+            auto mobilityAt = [&](Real endpoint0, Real endpoint1) {
+                const Real localQfpField =
+                    std::abs((endpoint1 - endpoint0) / h) * fieldFactor;
+                const Real localDrive = qfMobility ? localQfpField : electricField;
+                return detail::edgeMobility(
+                    edgeCells_, mesh_, doping_, *mobility_, cellMaterials_, edgeId,
+                    carrier, localDrive, &mobilityConfig_, &psi);
+            };
+            auto fluxAt = [&](Real endpoint0, Real endpoint1, Real localMobility) {
+                const Real coef =
+                    localMobility * Vt_ * fieldFactor * couple_[edgeId] / h;
+                if (electron) {
+                    return sgElectronContinuityFluxFromQuasiFermiVariableNi(
+                        ni_[edge.n0], ni_[edge.n1],
+                        psi0 - qfpReference, psi1 - qfpReference,
+                        endpoint0, endpoint1, Vt_, coef, bgnEnabled_);
+                }
+                return sgHoleContinuityFluxFromQuasiFermiVariableNi(
+                    ni_[edge.n0], ni_[edge.n1],
+                    psi0 - qfpReference, psi1 - qfpReference,
+                    endpoint0, endpoint1, Vt_, coef, bgnEnabled_);
+            };
+
+            const Real coefficient =
+                mobility * Vt_ * fieldFactor * couple_[edgeId] / h;
+            const Real eta = electron
+                ? (psi1 - psi0) / Vt_ + std::log(ni_[edge.n1] / ni_[edge.n0])
+                : (psi1 - psi0) / Vt_ + std::log(ni_[edge.n0] / ni_[edge.n1]);
+            const Real bPlus = bernoulli(eta);
+            const Real bMinus = bernoulli(-eta);
+            const Real density0 = electron
+                ? ni_[edge.n0] * limitedExp((psi0 - qfpReference - qfp0) / Vt_)
+                : ni_[edge.n0] * limitedExp((qfp0 - (psi0 - qfpReference)) / Vt_);
+            const Real density1 = electron
+                ? ni_[edge.n1] * limitedExp((psi1 - qfpReference - qfp1) / Vt_)
+                : ni_[edge.n1] * limitedExp((qfp1 - (psi1 - qfpReference)) / Vt_);
+            const Real flux = fluxAt(qfp0, qfp1, mobility);
+
+            for (int columnEndpoint = 0; columnEndpoint < 2; ++columnEndpoint) {
+                Real plus0 = qfp0;
+                Real plus1 = qfp1;
+                Real minus0 = qfp0;
+                Real minus1 = qfp1;
+                if (columnEndpoint == 0) {
+                    plus0 += physicalFiniteDifferenceStep_V;
+                    minus0 -= physicalFiniteDifferenceStep_V;
+                } else {
+                    plus1 += physicalFiniteDifferenceStep_V;
+                    minus1 -= physicalFiniteDifferenceStep_V;
+                }
+                const Real mobilityPlus = mobilityAt(plus0, plus1);
+                const Real mobilityMinus = mobilityAt(minus0, minus1);
+                const Real liveDerivative =
+                    (fluxAt(plus0, plus1, mobilityPlus)
+                     - fluxAt(minus0, minus1, mobilityMinus))
+                    / (2.0 * physicalFiniteDifferenceStep_V);
+                const Real frozenDerivative =
+                    (fluxAt(plus0, plus1, mobility)
+                     - fluxAt(minus0, minus1, mobility))
+                    / (2.0 * physicalFiniteDifferenceStep_V);
+                const Real mobilityDerivative =
+                    (mobilityPlus - mobilityMinus)
+                    / (2.0 * physicalFiniteDifferenceStep_V);
+                const Real drivePlus = qfMobility
+                    ? std::abs((plus1 - plus0) / h) * fieldFactor : electricField;
+                const Real driveMinus = qfMobility
+                    ? std::abs((minus1 - minus0) / h) * fieldFactor : electricField;
+                const Real driveDerivative =
+                    (drivePlus - driveMinus)
+                    / (2.0 * physicalFiniteDifferenceStep_V);
+                const Real productionDerivative = electron
+                    ? (columnEndpoint == 0
+                        ? coefficient * bMinus * (-density0 / Vt_)
+                        : coefficient * bPlus * (density1 / Vt_))
+                    : (columnEndpoint == 0
+                        ? coefficient * bPlus * (density0 / Vt_)
+                        : coefficient * bMinus * (-density1 / Vt_));
+
+                for (int rowEndpoint = 0; rowEndpoint < 2; ++rowEndpoint) {
+                    const Real rowSign = rowEndpoint == 0 ? 1.0 : -1.0;
+                    const bool rowConstrained = isConstrained(carrier, nodes[rowEndpoint]);
+                    const bool columnConstrained =
+                        isConstrained(carrier, nodes[columnEndpoint]);
+                    CoupledDDTransportEdgeJacobianDiagnostic record;
+                    record.edgeId = edgeId;
+                    record.carrier = electron ? "electron" : "hole";
+                    record.node0 = edge.n0;
+                    record.node1 = edge.n1;
+                    record.rowNode = nodes[rowEndpoint];
+                    record.columnNode = nodes[columnEndpoint];
+                    record.rowEndpoint = rowEndpoint;
+                    record.columnEndpoint = columnEndpoint;
+                    record.lengthInternal = h;
+                    record.coupleInternal = couple_[edgeId];
+                    record.qfpDriveInternal = drive;
+                    record.dQfpDriveDColumnInternal = driveDerivative;
+                    record.mobilityInternal = mobility;
+                    record.dMobilityDColumnInternal = mobilityDerivative;
+                    record.bernoulliNode0 = electron ? bMinus : bPlus;
+                    record.bernoulliNode1 = electron ? bPlus : bMinus;
+                    record.carrierDensityNode0Internal = density0;
+                    record.carrierDensityNode1Internal = density1;
+                    record.fluxPhysical = flux;
+                    record.fluxScaled = flux / continuityScale;
+                    record.rowSign = rowSign;
+                    record.productionFrozenMobilityDerivativePhysical =
+                        productionDerivative;
+                    record.frozenMobilityFiniteDifferenceDerivativePhysical =
+                        frozenDerivative;
+                    record.liveMobilityFiniteDifferenceDerivativePhysical =
+                        liveDerivative;
+                    record.mobilityResponseDerivativePhysical =
+                        flux / mobility * mobilityDerivative;
+                    record.liveMinusFrozenFiniteDifferenceDerivativePhysical =
+                        liveDerivative - frozenDerivative;
+                    // The Bernoulli argument contains psi and effective-ni but
+                    // no same-carrier QFP.  Its QFP-column derivative is exactly zero.
+                    record.bernoulliQfpDerivativePhysical = 0.0;
+                    record.carrierPopulationDerivativePhysical =
+                        productionDerivative;
+                    record.productionRowDerivativeScaled =
+                        rowSign * productionDerivative * derivativeScale;
+                    record.liveMobilityRowDerivativeScaled =
+                        rowSign * liveDerivative * derivativeScale;
+                    record.rowConstrained = rowConstrained;
+                    record.columnConstrained = columnConstrained;
+                    record.contactEliminatedProductionEdgeDerivative =
+                        rowConstrained ? 0.0 : record.productionRowDerivativeScaled;
+                    record.contactIdentityEntry =
+                        rowConstrained && record.rowNode == record.columnNode ? 1.0 : 0.0;
+                    records.push_back(std::move(record));
+                }
+            }
+        }
+    }
+    return records;
+}
+
 VectorXd CoupledDDAssembler::impactIonizationSourceResidual(
     const VectorXd& x,
     const CoupledDDBoundaryConditions& bcs) const

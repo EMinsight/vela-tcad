@@ -525,6 +525,10 @@ public:
         const std::string& finiteDifferenceMode = "double_symmetric") const;
     std::vector<CoupledDDEdgeFluxDiagnostic> evaluateSgEdgeFluxDiagnostics(
         const DDSolution& state) const;
+    std::vector<CoupledDDTransportEdgeJacobianDiagnostic>
+    evaluateTransportEdgeJacobianDiagnostics(
+        const DDSolution& state,
+        Real physicalFiniteDifferenceStep_V = 1.0e-7) const;
 
     /// Build a pseudo-arclength continuation system over the coupled drift-diffusion
     /// residual, using the bias on `activeContact` (in volts) as the continuation

@@ -1885,6 +1885,93 @@ nlohmann::json runSgEdgeFluxProbe(const std::string& configFile, const nlohmann:
     };
 }
 
+void writeTransportEdgeJacobianProbeCsv(
+    const std::filesystem::path& path,
+    const std::vector<vela::CoupledDDTransportEdgeJacobianDiagnostic>& records,
+    const vela::UnitScalingConfig& scaling)
+{
+    const vela::PhysicalUnitSystem& units = scaling.unitSystem();
+    std::ofstream out(path);
+    if (!out.is_open())
+        throw std::runtime_error(
+            "Cannot write transport edge Jacobian probe CSV: " + path.string());
+    out << "edge_id,carrier,node0,node1,row_node,column_node,row_endpoint,column_endpoint,"
+        << "length_m,couple_m,qfp_drive_V_m,d_qfp_drive_d_column_per_m,"
+        << "mobility_m2_V_s,d_mobility_d_column_m2_V2_s,"
+        << "bernoulli_node0,bernoulli_node1,carrier_density_node0_m3,"
+        << "carrier_density_node1_m3,flux_physical,flux_scaled,row_sign,"
+        << "production_frozen_mobility_derivative_physical,"
+        << "frozen_mobility_fd_derivative_physical,"
+        << "live_mobility_fd_derivative_physical,"
+        << "mobility_response_derivative_physical,"
+        << "live_minus_frozen_fd_derivative_physical,"
+        << "bernoulli_qfp_derivative_physical,"
+        << "carrier_population_derivative_physical,"
+        << "production_row_derivative_scaled,live_mobility_row_derivative_scaled,"
+        << "row_constrained,column_constrained,"
+        << "contact_eliminated_production_edge_derivative,contact_identity_entry,"
+        << "continuity_row_weight,solver_production_edge_derivative,"
+        << "solver_contact_identity_entry\n";
+    out << std::setprecision(17);
+    for (const auto& record : records) {
+        out << record.edgeId << ',' << record.carrier << ','
+            << record.node0 << ',' << record.node1 << ','
+            << record.rowNode << ',' << record.columnNode << ','
+            << record.rowEndpoint << ',' << record.columnEndpoint << ','
+            << units.internalLengthToMeters(record.lengthInternal) << ','
+            << units.internalLengthToMeters(record.coupleInternal) << ','
+            << units.internalElectricFieldToVPerM(record.qfpDriveInternal) << ','
+            << units.internalElectricFieldToVPerM(record.dQfpDriveDColumnInternal) << ','
+            << units.internalMobilityToM2PerVS(record.mobilityInternal) << ','
+            << units.internalMobilityToM2PerVS(record.dMobilityDColumnInternal) << ','
+            << record.bernoulliNode0 << ',' << record.bernoulliNode1 << ','
+            << units.internalConcentrationToM3(record.carrierDensityNode0Internal) << ','
+            << units.internalConcentrationToM3(record.carrierDensityNode1Internal) << ','
+            << record.fluxPhysical << ',' << record.fluxScaled << ','
+            << record.rowSign << ','
+            << record.productionFrozenMobilityDerivativePhysical << ','
+            << record.frozenMobilityFiniteDifferenceDerivativePhysical << ','
+            << record.liveMobilityFiniteDifferenceDerivativePhysical << ','
+            << record.mobilityResponseDerivativePhysical << ','
+            << record.liveMinusFrozenFiniteDifferenceDerivativePhysical << ','
+            << record.bernoulliQfpDerivativePhysical << ','
+            << record.carrierPopulationDerivativePhysical << ','
+            << record.productionRowDerivativeScaled << ','
+            << record.liveMobilityRowDerivativeScaled << ','
+            << static_cast<int>(record.rowConstrained) << ','
+            << static_cast<int>(record.columnConstrained) << ','
+            << record.contactEliminatedProductionEdgeDerivative << ','
+            << record.contactIdentityEntry << ','
+            << record.continuityRowWeight << ','
+            << record.solverProductionEdgeDerivative << ','
+            << record.solverContactIdentityEntry << '\n';
+    }
+}
+
+nlohmann::json runTransportEdgeJacobianProbe(
+    const std::string& configFile,
+    const nlohmann::json& cfg)
+{
+    const std::filesystem::path cfgDir = configDirectory(configFile);
+    NewtonProblem problem = loadNewtonProblem(configFile, cfg);
+    const vela::DDSolution state =
+        readExternalState(cfgDir, cfg, problem.mesh.numNodes());
+    const vela::NewtonSolver solver(
+        problem.mesh, problem.matdb, problem.doping, problem.biases, problem.newton);
+    const vela::Real step = cfg.value("physical_finite_difference_step_V", 1.0e-7);
+    const auto records =
+        solver.evaluateTransportEdgeJacobianDiagnostics(state, step);
+    writeTransportEdgeJacobianProbeCsv(
+        resolvePath(cfgDir, cfg.at("output_csv").get<std::string>()),
+        records,
+        problem.newton.inputScaling);
+    return {
+        {"nodes", problem.mesh.numNodes()},
+        {"record_count", records.size()},
+        {"physical_finite_difference_step_V", step},
+    };
+}
+
 void writeEdgeMobilityProbeCsv(const std::filesystem::path& path,
                                const vela::DeviceMesh& mesh,
                                const vela::DopingModel& doping,
@@ -2196,6 +2283,8 @@ int main(int argc, char** argv)
             status.update(runNewtonCarrierTermProbe(configFile, cfg));
         } else if (type == "sg_edge_flux_probe") {
             status.update(runSgEdgeFluxProbe(configFile, cfg));
+        } else if (type == "transport_edge_jacobian_probe") {
+            status.update(runTransportEdgeJacobianProbe(configFile, cfg));
         } else if (type == "edge_mobility_probe") {
             status.update(runEdgeMobilityProbe(configFile, cfg));
         } else if (type == "newton_jacobian_block_probe") {

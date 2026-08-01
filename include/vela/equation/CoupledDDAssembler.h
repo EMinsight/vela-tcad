@@ -92,6 +92,50 @@ struct CoupledDDEdgeFluxDiagnostic {
     Real holeFlux = 0.0;
 };
 
+// Diagnostic-only decomposition of one transport edge derivative with respect
+// to one same-carrier quasi-Fermi endpoint.  The record is emitted once for
+// each endpoint row so contact-row replacement can be audited independently
+// from the physical edge operator.
+struct CoupledDDTransportEdgeJacobianDiagnostic {
+    Index edgeId = 0;
+    std::string carrier;
+    Index node0 = 0;
+    Index node1 = 0;
+    Index rowNode = 0;
+    Index columnNode = 0;
+    int rowEndpoint = 0;
+    int columnEndpoint = 0;
+    Real lengthInternal = 0.0;
+    Real coupleInternal = 0.0;
+    Real qfpDriveInternal = 0.0;
+    Real dQfpDriveDColumnInternal = 0.0;
+    Real mobilityInternal = 0.0;
+    Real dMobilityDColumnInternal = 0.0;
+    Real bernoulliNode0 = 0.0;
+    Real bernoulliNode1 = 0.0;
+    Real carrierDensityNode0Internal = 0.0;
+    Real carrierDensityNode1Internal = 0.0;
+    Real fluxPhysical = 0.0;
+    Real fluxScaled = 0.0;
+    Real rowSign = 0.0;
+    Real productionFrozenMobilityDerivativePhysical = 0.0;
+    Real frozenMobilityFiniteDifferenceDerivativePhysical = 0.0;
+    Real liveMobilityFiniteDifferenceDerivativePhysical = 0.0;
+    Real mobilityResponseDerivativePhysical = 0.0;
+    Real liveMinusFrozenFiniteDifferenceDerivativePhysical = 0.0;
+    Real bernoulliQfpDerivativePhysical = 0.0;
+    Real carrierPopulationDerivativePhysical = 0.0;
+    Real productionRowDerivativeScaled = 0.0;
+    Real liveMobilityRowDerivativeScaled = 0.0;
+    bool rowConstrained = false;
+    bool columnConstrained = false;
+    Real contactEliminatedProductionEdgeDerivative = 0.0;
+    Real contactIdentityEntry = 0.0;
+    Real continuityRowWeight = 1.0;
+    Real solverProductionEdgeDerivative = 0.0;
+    Real solverContactIdentityEntry = 0.0;
+};
+
 struct CarrierDiagonalFloorRegularizationConfig {
     bool enabled = false;
     Real scale = 1.0;
@@ -199,6 +243,11 @@ public:
     std::vector<CoupledDDEdgeFluxDiagnostic> sgEdgeFluxDiagnostics(
         const VectorXd& x,
         const CoupledDDBoundaryConditions& bcs) const;
+    std::vector<CoupledDDTransportEdgeJacobianDiagnostic>
+    transportEdgeJacobianDiagnostics(
+        const VectorXd& x,
+        const CoupledDDBoundaryConditions& bcs,
+        Real physicalFiniteDifferenceStep_V = 1.0e-7) const;
 
     bool hasPositiveFiniteCarriers(const VectorXd& x) const;
     Index numNodes() const { return mesh_.numNodes(); }

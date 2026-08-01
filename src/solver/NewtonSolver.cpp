@@ -3426,6 +3426,47 @@ std::vector<CoupledDDEdgeFluxDiagnostic> NewtonSolver::evaluateSgEdgeFluxDiagnos
     return assembler.sgEdgeFluxDiagnostics(x, bcs);
 }
 
+std::vector<CoupledDDTransportEdgeJacobianDiagnostic>
+NewtonSolver::evaluateTransportEdgeJacobianDiagnostics(
+    const DDSolution& state,
+    Real physicalFiniteDifferenceStep_V) const
+{
+    const double Vt = thermalVoltage(cfg_.temperature_K);
+    RecombinationModelConfig recombinationConfig =
+        recombinationModelConfig(cfg_.recombination, cfg_.taun, cfg_.taup);
+    recombinationConfig.augerCn = cfg_.augerCn;
+    recombinationConfig.augerCp = cfg_.augerCp;
+    CoupledDDAssembler assembler(
+        mesh_, matdb_, doping_, Vt, cfg_.mobility, recombinationConfig,
+        cfg_.bandgapNarrowing, cfg_.impactIonization, fixedCharges_,
+        sheetCharges_, buildScalingSpec(), cfg_.carrierDiagonalFloor);
+    configureQuasiFermiReferences(assembler);
+    const CoupledDDBoundaryConditions bcs = buildBoundaryConditions(assembler);
+    const Real potentialScale =
+        assembler.usesScaledState() ? assembler.potentialScale() : 1.0;
+    const VectorXd x = assembler.pack({
+        state.psi / potentialScale,
+        state.phin / potentialScale,
+        state.phip / potentialScale});
+    std::vector<CoupledDDTransportEdgeJacobianDiagnostic> records =
+        assembler.transportEdgeJacobianDiagnostics(
+            x, bcs, physicalFiniteDifferenceStep_V);
+    const VectorXd rowWeights = continuityRowWeights(
+        assembler, x, bcs, cfg_.continuityRowScaling);
+    const int N = static_cast<int>(mesh_.numNodes());
+    for (auto& record : records) {
+        const int offset = record.carrier == "electron" ? N : 2 * N;
+        record.continuityRowWeight =
+            rowWeights(offset + static_cast<int>(record.rowNode));
+        record.solverProductionEdgeDerivative =
+            record.continuityRowWeight *
+            record.contactEliminatedProductionEdgeDerivative;
+        record.solverContactIdentityEntry =
+            record.continuityRowWeight * record.contactIdentityEntry;
+    }
+    return records;
+}
+
 NewtonResult NewtonSolver::solve() const
 {
     const double Vt = thermalVoltage(cfg_.temperature_K);

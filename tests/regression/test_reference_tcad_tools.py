@@ -277,6 +277,61 @@ class ReferenceTcadToolsTest(unittest.TestCase):
             "formal_relative_gate_fails_only_at_srh_absolute_fd_floor",
         )
 
+    def test_m2_transport_edge_jacobian_contract_selects_stable_hotspot(self) -> None:
+        module_path = (
+            REPO / "scripts" / "run_pn2d_bv_m2_transport_edge_jacobian_verification.py"
+        )
+        spec = importlib.util.spec_from_file_location(
+            "run_pn2d_bv_m2_transport_edge_jacobian_verification", module_path
+        )
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        def row(edge: int, carrier: str, flux: float) -> dict[str, str]:
+            return {
+                "edge_id": str(edge),
+                "carrier": carrier,
+                "row_endpoint": "0",
+                "column_endpoint": "0",
+                "flux_physical": str(flux),
+                "node0": "10",
+                "node1": "11",
+            }
+
+        baseline = [
+            row(3, "electron", 1.0), row(2, "electron", 1.0),
+            row(3, "hole", 1.0), row(2, "hole", 1.0),
+        ]
+        replacement = [
+            row(3, "electron", 4.0), row(2, "electron", 4.0),
+            row(3, "hole", 3.0), row(2, "hole", 5.0),
+        ]
+        selected = module.select_hotspots(
+            -20.0, baseline, replacement, {"electron": 10, "hole": 10}
+        )
+        by_carrier = {item["carrier"]: item for item in selected}
+        self.assertEqual(by_carrier["electron"]["edge_id"], 2)
+        self.assertEqual(by_carrier["hole"]["edge_id"], 2)
+
+        decomposition = [{
+            "analytic_to_frozen_fd_relative_error": 1.0e-8,
+            "analytic_to_frozen_fd_edge_scaled_error": 1.0e-8,
+            "mobility_product_relative_error": 1.0e-8,
+            "live_total_edge_scaled_error": 1.0e-8,
+            "row_scaling_closure_relative_error": 0.0,
+            "bernoulli_qfp_derivative_physical": 0.0,
+            "mobility_response_fraction_of_live_derivative": 0.25,
+        }]
+        contacts = [{
+            "maximum_contact_eliminated_edge_derivative_abs": 0.0,
+            "maximum_contact_identity_error_abs": 0.0,
+        }]
+        verdict = module.classify(decomposition, contacts, True)
+        self.assertTrue(verdict["passed"])
+        self.assertEqual(verdict["typed_outcome"], "transport_edge_decomposition_verified")
+
     def test_previous_full20_config_uses_poisson_block_initialization(self) -> None:
         module_path = REPO / "scripts" / "run_pn2d_coarse7x3_previous_full20_compare.py"
         spec = importlib.util.spec_from_file_location("run_pn2d_coarse7x3_previous_full20_compare", module_path)

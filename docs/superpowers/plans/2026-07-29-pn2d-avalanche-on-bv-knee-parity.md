@@ -1436,3 +1436,48 @@ Evidence:
 > Bernoulli/GSS coefficient, QFP driving force, row scaling, and contact-row
 > elimination derivatives for electron and hole equations, and verify each
 > contribution by finite differences before proposing any opt-in correction.
+
+## M2 hotspot-edge transport Jacobian decomposition - 2026-08-01
+
+The edge-level carrier transport audit is complete with typed outcome:
+
+`transport_edge_decomposition_verified`
+
+On the prior interior transport-residual hotspot support, the production
+analytic derivative agrees with frozen-mobility finite differences to
+`5.12344e-10` after normalization by the dominant derivative on the same edge.
+The independently evaluated mobility product closes to `2.11374e-16`, and the
+live-mobility total derivative closes to `1.01736e-7`.  Bernoulli/GSS QFP
+derivatives, row-scaling closure, contact-row replacement, and contact identity
+entries are exact under their declared contracts.  All 16 raw probe outputs
+are byte-identical between two independent runs.
+
+At `-19.5` through `-20 V`, replacing Vela QFP with Sentaurus QFP leaves the
+Bernoulli/GSS coefficients exactly unchanged, reduces QFP drive by about
+`14.7-27.3%`, and increases high-field mobility by about `10.1-19.0%`.
+Mobility response contributes only `3.75-7.00%` of the dominant hotspot
+transport derivative.  The dominant production derivative nevertheless falls
+to `0.0682-0.1720` of baseline, so the first material change is the
+QFP-controlled exponential carrier-population term.  Hotspot row weights
+change by less than `0.09%`; contact-row elimination is not the cause.
+
+This result verifies the local transport derivative rather than identifying a
+local formula defect.  The remaining investigation moves one level upward to
+the complete carrier-block linear solve and its strongly anisotropic variable
+scaling.
+
+Evidence:
+
+- `docs/validation/pn2d_bv_m2_transport_edge_jacobian_verification_2026-08-01.md`;
+- `build-release/pn2d-bv-m2-transport-edge-jacobian-verification-20260801/report.html`.
+
+### Next execution prompt
+
+> Keep SG/Laux, mobility settings, continuity-row scaling, contact handling,
+> and acceptance thresholds unchanged.  On the same M2 baseline and joint-QFP
+> states, decompose the full electron/hole carrier-block linear solve at the
+> hotspot support.  Compare dominant QFP columns, diagonal dominance,
+> left/right singular directions, variable scaling, recombination coupling,
+> common avalanche rows, and the carrier-only Newton update projected onto the
+> population-derivative directions.  Do not modify production defaults before
+> a wrong sign, missing derivative, or inconsistent scale is demonstrated.
