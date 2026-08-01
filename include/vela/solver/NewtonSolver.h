@@ -463,6 +463,22 @@ struct NewtonJacobianBlockAuditRow {
     Real fdPhipColumnNorm = 0.0;
     Real diffPhipColumnNorm = 0.0;
     Real relPhipColumnDiff = 0.0;
+    Real analyticElectronPhinNorm = 0.0;
+    Real fdElectronPhinNorm = 0.0;
+    Real diffElectronPhinNorm = 0.0;
+    Real relElectronPhinDiff = 0.0;
+    Real analyticElectronPhipNorm = 0.0;
+    Real fdElectronPhipNorm = 0.0;
+    Real diffElectronPhipNorm = 0.0;
+    Real relElectronPhipDiff = 0.0;
+    Real analyticHolePhinNorm = 0.0;
+    Real fdHolePhinNorm = 0.0;
+    Real diffHolePhinNorm = 0.0;
+    Real relHolePhinDiff = 0.0;
+    Real analyticHolePhipNorm = 0.0;
+    Real fdHolePhipNorm = 0.0;
+    Real diffHolePhipNorm = 0.0;
+    Real relHolePhipDiff = 0.0;
 };
 
 class NewtonSolver {

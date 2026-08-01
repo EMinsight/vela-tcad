@@ -1395,3 +1395,44 @@ Evidence:
 > finite-difference the carrier-QFP and Poisson-QFP Jacobian blocks on both the
 > Vela baseline and mixed Sentaurus-QFP state.  Identify the first derivative
 > or residual term whose sign/scale differs before proposing any correction.
+
+## M2 carrier-QFP residual and Jacobian verification - 2026-08-01
+
+The carrier-resolved residual and cross-block verification is complete with
+typed outcome:
+
+`phip_dominant__electron_flux_dominant__hole_flux_dominant__analytic_fd_inconsistent__both_qfp_updates_roll_back_from_sentaurus`
+
+Hole QFP has the larger frozen-source effect at all four biases and recovers
+`0.991518` of the joint-QFP improvement at `-20 V`.  The joint-QFP carrier
+residual change is transport/SG-flux dominated: `0.883898` for electrons and
+`0.892987` for holes, with avalanche contributing `0.116102` and `0.107013`.
+Both first carrier updates at `-20 V` point away from Sentaurus, with target
+projections `-0.923986` and `-0.889187`.
+
+Poisson, transport, SG-avalanche, and boundary/gauge cross blocks pass the
+unchanged `5e-5` finite-difference threshold; their worst relative errors are
+`6.12734e-8`, `5.15168e-8`, `9.05564e-10`, and `3.55650e-10`.  The formal
+all-block result remains `analytic_fd_inconsistent` because SRH/Auger fails in
+relative terms.  A seven-step sensitivity audit classifies that failure as:
+
+`formal_relative_gate_fails_only_at_srh_absolute_fd_floor`
+
+The SRH/Auger absolute differences remain below `2.70635e-15`; the best
+comparison is `1.00713e-21`.  All 148 repeated artifacts are byte-identical,
+and carrier-term closure is `1.32349e-23`.  No physical model, production
+default, continuation schedule, or acceptance threshold was changed.
+
+Evidence:
+
+- `docs/validation/pn2d_bv_m2_qfp_carrier_jacobian_verification_2026-08-01.md`;
+- `build-release/pn2d-bv-m2-qfp-carrier-jacobian-verification-20260731/report.html`.
+
+### Next execution prompt
+
+> Keep SG/Laux and all production defaults unchanged.  On the same M2
+> baseline and joint-QFP states, perform an edge-level carrier transport
+> Jacobian audit at the residual hotspots.  Separate mobility,
+> Bernoulli/GSS coefficient, QFP driving force, row scaling, and contact-row
+> elimination derivatives for electron and hole equations, and verify each
+> contribution by finite differences before proposing any opt-in correction.

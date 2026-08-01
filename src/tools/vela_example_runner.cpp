@@ -2037,7 +2037,11 @@ nlohmann::json runNewtonJacobianBlockProbe(const std::string& configFile,
     out << "block,analytic_norm,fd_norm,diff_norm,rel_diff,"
         << "analytic_psi_column_norm,fd_psi_column_norm,diff_psi_column_norm,rel_psi_column_diff,"
         << "analytic_phin_column_norm,fd_phin_column_norm,diff_phin_column_norm,rel_phin_column_diff,"
-        << "analytic_phip_column_norm,fd_phip_column_norm,diff_phip_column_norm,rel_phip_column_diff\n";
+        << "analytic_phip_column_norm,fd_phip_column_norm,diff_phip_column_norm,rel_phip_column_diff,"
+        << "analytic_electron_phin_norm,fd_electron_phin_norm,diff_electron_phin_norm,rel_electron_phin_diff,"
+        << "analytic_electron_phip_norm,fd_electron_phip_norm,diff_electron_phip_norm,rel_electron_phip_diff,"
+        << "analytic_hole_phin_norm,fd_hole_phin_norm,diff_hole_phin_norm,rel_hole_phin_diff,"
+        << "analytic_hole_phip_norm,fd_hole_phip_norm,diff_hole_phip_norm,rel_hole_phip_diff\n";
     out << std::setprecision(17);
     for (const auto& row : rows) {
         out << row.block << ','
@@ -2056,7 +2060,23 @@ nlohmann::json runNewtonJacobianBlockProbe(const std::string& configFile,
             << row.analyticPhipColumnNorm << ','
             << row.fdPhipColumnNorm << ','
             << row.diffPhipColumnNorm << ','
-            << row.relPhipColumnDiff << '\n';
+            << row.relPhipColumnDiff << ','
+            << row.analyticElectronPhinNorm << ','
+            << row.fdElectronPhinNorm << ','
+            << row.diffElectronPhinNorm << ','
+            << row.relElectronPhinDiff << ','
+            << row.analyticElectronPhipNorm << ','
+            << row.fdElectronPhipNorm << ','
+            << row.diffElectronPhipNorm << ','
+            << row.relElectronPhipDiff << ','
+            << row.analyticHolePhinNorm << ','
+            << row.fdHolePhinNorm << ','
+            << row.diffHolePhinNorm << ','
+            << row.relHolePhinDiff << ','
+            << row.analyticHolePhipNorm << ','
+            << row.fdHolePhipNorm << ','
+            << row.diffHolePhipNorm << ','
+            << row.relHolePhipDiff << '\n';
     }
 
     nlohmann::json result = {

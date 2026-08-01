@@ -375,6 +375,54 @@ NewtonJacobianBlockAuditRow jacobianAuditRow(
                    row.diffPhinColumnNorm, row.relPhinColumnDiff);
     setColumnBlock(2, row.analyticPhipColumnNorm, row.fdPhipColumnNorm,
                    row.diffPhipColumnNorm, row.relPhipColumnDiff);
+
+    const auto carrierRows = [&](int blockIndex) {
+        const int start = blockIndex * nodeCount;
+        const int end = start + nodeCount;
+        std::vector<int> selected;
+        selected.reserve(rows.size());
+        for (const int candidate : rows) {
+            if (candidate >= start && candidate < end)
+                selected.push_back(candidate);
+        }
+        return selected;
+    };
+    const auto setSubBlock = [&](const std::vector<int>& selectedRows,
+                                 int columnBlock,
+                                 Real& analyticNorm,
+                                 Real& fdNorm,
+                                 Real& diffNorm,
+                                 Real& relativeDiff) {
+        const int columnStart = columnBlock * nodeCount;
+        analyticNorm = restrictedSparseNorm(
+            analytic, selectedRows, columnStart, nodeCount);
+        fdNorm = restrictedSparseNorm(fd, selectedRows, columnStart, nodeCount);
+        diffNorm = restrictedSparseNorm(diff, selectedRows, columnStart, nodeCount);
+        const Real blockReference = std::max(analyticNorm, fdNorm);
+        relativeDiff = blockReference > 0.0 ? diffNorm / blockReference : 0.0;
+    };
+    const std::vector<int> electronRows = carrierRows(1);
+    const std::vector<int> holeRows = carrierRows(2);
+    setSubBlock(electronRows, 1,
+                row.analyticElectronPhinNorm,
+                row.fdElectronPhinNorm,
+                row.diffElectronPhinNorm,
+                row.relElectronPhinDiff);
+    setSubBlock(electronRows, 2,
+                row.analyticElectronPhipNorm,
+                row.fdElectronPhipNorm,
+                row.diffElectronPhipNorm,
+                row.relElectronPhipDiff);
+    setSubBlock(holeRows, 1,
+                row.analyticHolePhinNorm,
+                row.fdHolePhinNorm,
+                row.diffHolePhinNorm,
+                row.relHolePhinDiff);
+    setSubBlock(holeRows, 2,
+                row.analyticHolePhipNorm,
+                row.fdHolePhipNorm,
+                row.diffHolePhipNorm,
+                row.relHolePhipDiff);
     return row;
 }
 

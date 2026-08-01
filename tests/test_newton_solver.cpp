@@ -1597,6 +1597,14 @@ TEST_CASE("NewtonSolver: element-edge avalanche block audit is independently sou
     REQUIRE(sourceRows.front().analyticNorm > 0.0);
     REQUIRE(sourceRows.front().fdNorm > 0.0);
     REQUIRE(sourceRows.front().relDiff <= 1.0e-8);
+    REQUIRE(sourceRows.front().analyticElectronPhinNorm > 0.0);
+    REQUIRE(sourceRows.front().analyticElectronPhipNorm > 0.0);
+    REQUIRE(sourceRows.front().analyticHolePhinNorm > 0.0);
+    REQUIRE(sourceRows.front().analyticHolePhipNorm > 0.0);
+    REQUIRE(sourceRows.front().relElectronPhinDiff <= 5.0e-5);
+    REQUIRE(sourceRows.front().relElectronPhipDiff <= 5.0e-5);
+    REQUIRE(sourceRows.front().relHolePhinDiff <= 5.0e-5);
+    REQUIRE(sourceRows.front().relHolePhipDiff <= 5.0e-5);
     REQUIRE(branchResolvedRows.front().relDiff <= 1.0e-8);
     REQUIRE_FALSE(sourceRows.front().configurationFingerprint.empty());
     REQUIRE_FALSE(sourceRows.front().activeBranchFingerprint.empty());

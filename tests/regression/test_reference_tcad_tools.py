@@ -183,6 +183,100 @@ class ReferenceTcadToolsTest(unittest.TestCase):
         )
         self.assertEqual(verdict["source_family_win_count"]["sent_qfp_only"], 3)
 
+    def test_m2_carrier_qfp_audit_splits_families_and_labels_srh_fd_floor(self) -> None:
+        module_path = (
+            REPO / "scripts" / "run_pn2d_bv_m2_qfp_carrier_jacobian_verification.py"
+        )
+        spec = importlib.util.spec_from_file_location(
+            "run_pn2d_bv_m2_qfp_carrier_jacobian_verification", module_path
+        )
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        vela = [{
+            "node_id": 0, "psi_V": 1.0, "phin_V": 2.0, "phip_V": 3.0,
+            "n_m3": 4.0, "p_m3": 5.0,
+        }]
+        sentaurus = [{
+            "node_id": 0, "psi_V": 10.0, "phin_V": 20.0, "phip_V": 30.0,
+            "n_m3": 40.0, "p_m3": 50.0,
+        }]
+        phin = module.mixed_qfp_state(vela, sentaurus, "sent_phin_only")[0]
+        phip = module.mixed_qfp_state(vela, sentaurus, "sent_phip_only")[0]
+        self.assertEqual((phin["phin_V"], phin["phip_V"]), (20.0, 3.0))
+        self.assertEqual((phip["phin_V"], phip["phip_V"]), (2.0, 30.0))
+        self.assertEqual((phin["psi_V"], phin["n_m3"], phin["p_m3"]), (1.0, 4.0, 5.0))
+
+        source_rows = []
+        term_rows = []
+        for bias in module.DEFAULT_BIASES:
+            source_rows.extend([
+                {"bias_V": bias, "variant": "sent_phin_only", "fraction_of_qfp_error_removal": 0.30},
+                {"bias_V": bias, "variant": "sent_phip_only", "fraction_of_qfp_error_removal": 0.90},
+            ])
+            for carrier in module.CARRIERS:
+                for term in module.TERMS:
+                    term_rows.append({
+                        "bias_V": bias,
+                        "variant": "sent_qfp_only",
+                        "scope": "interior",
+                        "carrier": carrier,
+                        "term": term,
+                        "term_delta_share": 0.90 if term == "flux" else 0.025,
+                    })
+        update_rows = [
+            {
+                "bias_V": -20.0,
+                "variant": "sent_qfp_only",
+                "carrier": carrier,
+                "update_projection_on_vela_to_sentaurus_target": -0.5,
+            }
+            for carrier in module.CARRIERS
+        ]
+        jacobian_rows = []
+        for block in ("poisson", "transport", "srh_auger", "sg_avalanche", "dirichlet_or_gauge"):
+            row = {
+                "bias_V": -20.0,
+                "state_variant": "sent_qfp_only",
+                "block": block,
+                "rel_phin_column_diff": 1.0e-8,
+                "rel_phip_column_diff": 1.0e-8,
+                "rel_electron_phin_diff": 1.0e-8,
+                "rel_electron_phip_diff": 1.0e-8,
+                "rel_hole_phin_diff": 1.0e-8,
+                "rel_hole_phip_diff": 1.0e-8,
+            }
+            if block == "srh_auger":
+                row["rel_electron_phin_diff"] = 0.9
+            jacobian_rows.append(row)
+        sensitivity_rows = []
+        for step in module.FD_SENSITIVITY_STEPS:
+            row = {
+                "bias_V": -20.0,
+                "state_variant": "sent_qfp_only",
+                "finite_difference_step": step,
+                "block": "srh_auger",
+            }
+            for field in ("electron_phin", "electron_phip", "hole_phin", "hole_phip"):
+                row[f"analytic_{field}_norm"] = 1.0e-15
+                row[f"fd_{field}_norm"] = 2.0e-15
+                row[f"diff_{field}_norm"] = 1.0e-15
+                row[f"rel_{field}_diff"] = 0.5
+            sensitivity_rows.append(row)
+
+        verdict = module.classify(
+            source_rows, term_rows, update_rows, jacobian_rows, sensitivity_rows
+        )
+        self.assertEqual(verdict["source_outcome"], "phip_dominant")
+        self.assertEqual(verdict["carrier_term_outcomes"]["electron"], "flux_dominant")
+        self.assertEqual(verdict["jacobian_fd_outcome"], "analytic_fd_inconsistent")
+        self.assertEqual(
+            verdict["jacobian_fd_interpretation"],
+            "formal_relative_gate_fails_only_at_srh_absolute_fd_floor",
+        )
+
     def test_previous_full20_config_uses_poisson_block_initialization(self) -> None:
         module_path = REPO / "scripts" / "run_pn2d_coarse7x3_previous_full20_compare.py"
         spec = importlib.util.spec_from_file_location("run_pn2d_coarse7x3_previous_full20_compare", module_path)
