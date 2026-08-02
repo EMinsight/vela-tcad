@@ -132,10 +132,12 @@ TEST_CASE("BV process probe closes production source and residual scatter",
     DDSolution state = makeState(mesh.numNodes());
     const ImpactIonizationModelConfig impact =
         triangleImpact("self_consistent");
+    const MaterialDatabase materials;
+    const DopingModel doping = makeDoping(mesh.numNodes());
     CoupledDDAssembler assembler(
         mesh,
-        MaterialDatabase{},
-        makeDoping(mesh.numNodes()),
+        materials,
+        doping,
         constants::kb * 300.0 / constants::q,
         mobilityModelConfig("constant"),
         recombinationModelConfig({"none"}),
