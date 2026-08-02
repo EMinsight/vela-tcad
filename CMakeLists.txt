@@ -18,6 +18,9 @@ find_package(Eigen3 REQUIRED NO_MODULE)
 # nlohmann/json (header-only JSON)
 find_package(nlohmann_json REQUIRED)
 
+# Boost.Multiprecision (header-only arbitrary-precision arithmetic)
+find_package(Boost CONFIG REQUIRED)
+
 # Catch2 v3 (unit test framework)
 find_package(Catch2 3 REQUIRED)
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
@@ -93,9 +96,12 @@ target_include_directories(vela_core PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
 )
 
-target_link_libraries(vela_core PUBLIC
-    Eigen3::Eigen
-    nlohmann_json::nlohmann_json
+target_link_libraries(vela_core
+    PUBLIC
+        Eigen3::Eigen
+        nlohmann_json::nlohmann_json
+    PRIVATE
+        Boost::headers
 )
 
 if(VELA_HDF5_TARGET)

@@ -29,6 +29,7 @@ jobs:
             build-essential
             cmake
             ninja-build
+            libboost-dev
             libeigen3-dev
             nlohmann-json3-dev
             catch2
