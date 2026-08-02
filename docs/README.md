@@ -1,8 +1,8 @@
 # Vela Documentation
 
-This directory is organized around how people use the project: build it, choose
-a configuration schema, run examples, validate reference fixtures, and inspect
-archived planning notes.
+This directory is organized around current project behavior: build it, choose
+a configuration schema, run examples, import reference fixtures, and inspect
+validation evidence.
 
 ## Current References
 
@@ -21,10 +21,10 @@ archived planning notes.
 - [Poisson unit-scaling notes](development_poisson_unit_scaling.md): developer
   notes for the scaled Poisson assembly path used by
   `scaling.mode = "unit_scaling"`.
-- [PN2D script dedup plan](pn2d_script_dedup_plan.md): staged maintenance
-  plan for consolidating duplicated BV contact-tuning PowerShell workflows.
-- [Validation notes](validation/): trend-validation summaries for checked-in
-  reference TCAD fixtures.
+- [PN2D BV validation](validation/pn2d_bv_validation.md): current qualified
+  template policy, validation gates, limitations, and evidence map.
+- [Validation evidence](validation/): dated reports and machine-readable
+  contracts for checked-in reference TCAD work.
 
 Optional feature switches used by this repository:
 
@@ -42,14 +42,14 @@ See `CMakePresets.json` for the shipped Windows UCRT64 preset combinations.
 - [Reference TCAD README](../reference_tcad/README.md): neutral CSV export
   format and comparison workflow.
 
-## Archive Notes
+## Evidence And History Policy
 
-These documents are historical project planning and handoff artifacts:
+Dated files under `validation/` are immutable point-in-time evidence and can
+contain decisions that were later superseded. Read the current validation
+summary first, then follow its links to the relevant evidence. Design specs and
+the small number of execution plans still referenced by retained evidence are
+provenance records, not active work queues.
 
-- [Agent handoff baseline, 2026-05-13](agent_handoff_baseline_2026-05-13.md)
-- [Merged implementation backlog, 2026-05-13](multi_agent_merged_backlog_2026-05-13.md)
-- [Weekly development summary, 2026-05-14](weekly_development_summary_2026-05-14.md)
-
-They are kept for traceability. Treat `README.md`, `docs/config_schema.md`,
-`docs/examples.md`, CMake targets, tests, and current source code as the source
-of truth for current behavior.
+Treat the root `README.md`, this index, `config_schema.md`, `examples.md`,
+configuration templates, CMake targets, tests, and current source code as the
+source of truth for current behavior.

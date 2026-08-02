@@ -107,7 +107,6 @@ Before publication:
 - rerun the existing knee-shape and factor-branch diagnostic tools;
 - run focused regression for affected analysis scripts if code changes are
   needed;
-- update `docs/validation/pn2d_bv_validation.md` and
-  `docs/validation/pn2d_bv_current_progress_summary.md` with exact evidence and
+- update `docs/validation/pn2d_bv_validation.md` with exact evidence and
   limitations;
 - keep generated solver outputs out of Git.

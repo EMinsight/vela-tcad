@@ -2,7 +2,7 @@
 
 ## Project overview
 
-This repository contains a C++20 CMake project for Vela TCAD, a lightweight 2-D semiconductor device drift-diffusion and Poisson solver. The core remains C++, with an optional pybind11 Python API behind `VELA_ENABLE_PYTHON`.
+This repository contains a C++20 CMake project for Vela TCAD, a lightweight 2-D semiconductor device drift-diffusion and Poisson solver. The core remains C++, uses header-only Boost.Multiprecision for selected diagnostics, and has an optional pybind11 Python API behind `VELA_ENABLE_PYTHON`.
 
 ## Preferred local environment
 
@@ -30,6 +30,7 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
   build-essential \
   cmake \
   ninja-build \
+  libboost-dev \
   libeigen3-dev \
   nlohmann-json3-dev \
   catch2
@@ -53,6 +54,7 @@ pacman -S --needed \
   mingw-w64-ucrt-x86_64-toolchain \
   mingw-w64-ucrt-x86_64-cmake \
   mingw-w64-ucrt-x86_64-ninja \
+  mingw-w64-ucrt-x86_64-boost \
   mingw-w64-ucrt-x86_64-eigen3 \
   mingw-w64-ucrt-x86_64-nlohmann-json \
   mingw-w64-ucrt-x86_64-catch \
@@ -131,3 +133,9 @@ For VS Code or another MI-compatible debugger, point `miDebuggerPath` at `D:\msy
 - Prefer adding or updating Catch2 tests when changing solver, mesh, physics, or discretization behavior.
 - Keep generated build artifacts inside `build/` or another ignored out-of-tree build directory.
 - Do not commit generated simulation outputs unless a task explicitly asks for them.
+- Treat the PN2D BV template's `element_edge_sg_gss_laux` profile as one
+  atomic bundle: SG/GSS-Laux current support, element-vertex box source
+  mapping, Bernoulli midpoint density, mixed-Voronoi node volumes, and
+  non-obtuse qualification must move together. Use
+  `legacy_cell_reconstructed` for the complete rollback. Do not infer a global
+  C++ default or PN2D IV change from this template-specific policy.

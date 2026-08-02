@@ -58,6 +58,17 @@ Prototype boundaries:
 - Schottky support is a prototype barrier-style path; Newton sweeps reject
   Schottky contacts until a future implementation handles that model.
 
+Current PN2D BV template policy:
+
+- Template version 3 defaults to the qualified atomic
+  `element_edge_sg_gss_laux` profile: element-edge SG/GSS-Laux current,
+  element-vertex box source mapping, Bernoulli midpoint density,
+  mixed-Voronoi node volumes, and non-obtuse mesh enforcement.
+- `legacy_cell_reconstructed` is the complete rollback profile and restores
+  the former cell-reconstructed/barycentric configuration.
+- This qualification is limited to the validated non-obtuse PN2D BV M0/M2
+  Tri3 mesh family. Global C++ defaults and the PN2D IV template are unchanged.
+
 ## Documentation Map
 
 Start here:
@@ -66,16 +77,16 @@ Start here:
 - [docs/architecture.md](docs/architecture.md): implementation and module map.
 - [docs/config_schema.md](docs/config_schema.md): JSON configuration reference.
 - [docs/examples.md](docs/examples.md): supported example and regression matrix.
-- [docs/README.md](docs/README.md): documentation index and import-workflow
-  entry points.
+- [docs/validation/pn2d_bv_validation.md](docs/validation/pn2d_bv_validation.md):
+  current PN2D BV validation decision, scope, and evidence map.
 - [tests/regression/README.md](tests/regression/README.md): regression runner
   behavior and assertion fields.
 - [reference_tcad/README.md](reference_tcad/README.md): neutral reference CSV
   fixture workflow.
 
-Historical planning and handoff notes live under `docs/` and are retained as
-archives. Current behavior should be verified against code, CMake targets, and
-the schema/example documents above.
+Dated validation reports preserve point-in-time evidence. They are not the
+source of truth for current defaults when a later decision document supersedes
+them.
 
 ## Build
 
@@ -85,6 +96,7 @@ Prerequisites:
 
 - CMake 3.20 or newer
 - C++20 compiler
+- Boost headers (Boost.Multiprecision)
 - Eigen3
 - nlohmann/json
 - Catch2 v3
@@ -99,6 +111,7 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
   build-essential \
   cmake \
   ninja-build \
+  libboost-dev \
   libeigen3-dev \
   nlohmann-json3-dev \
   catch2 \
@@ -147,6 +160,7 @@ pacman -S --needed \
   mingw-w64-ucrt-x86_64-toolchain \
   mingw-w64-ucrt-x86_64-cmake \
   mingw-w64-ucrt-x86_64-ninja \
+  mingw-w64-ucrt-x86_64-boost \
   mingw-w64-ucrt-x86_64-eigen3 \
   mingw-w64-ucrt-x86_64-nlohmann-json \
   mingw-w64-ucrt-x86_64-hdf5 \

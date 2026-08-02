@@ -12,10 +12,9 @@ Successor plan:
 
 ## Relationship to completed work
 
-This plan begins after completion of:
+This plan begins after completion of the Minimal6 box-edge current-factor,
+element-edge fixed-state, and self-consistent audits, together with:
 
-- `2026-07-24-pn2d-minimal6-box-edge-current-factor-followup.md`;
-- the Minimal6 element-edge fixed-state and self-consistent audits;
 - the Sentaurus avalanche-default correction; and
 - the final independent scientific and code reviews.
 

@@ -853,6 +853,16 @@ and reverse operation:
   `masetti_field`, `net_doping`, SRH plus Old Slotboom, and
   Van Overstraeten impact ionization.
 
+The PN2D BV version 3 default is the qualified atomic
+`element_edge_sg_gss_laux` profile. Rendering it binds element-edge
+SG/GSS-Laux current support, element-vertex box source mapping, Bernoulli
+midpoint density, mixed-Voronoi node volumes, and
+`mesh_geometry.require_non_obtuse=true`. Use the
+`legacy_cell_reconstructed` profile for the complete cell-reconstructed and
+barycentric rollback. The generator rejects partially mixed profiles. This
+template policy does not change the global barycentric parser default or the
+PN2D IV template.
+
 Render a runnable configuration and its separate reproducibility manifest with:
 
 ```text
