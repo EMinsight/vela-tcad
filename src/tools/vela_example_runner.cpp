@@ -1065,11 +1065,13 @@ nlohmann::json runNewtonPoissonQfpCrossBlockProbe(
     const std::filesystem::path outputPath =
         resolvePath(cfgDir, cfg.at("output_csv").get<std::string>());
     const std::filesystem::path blockPath = cfg.contains("jacobian_blocks_csv")
-        ? resolvePath(cfgDir, cfg.at("jacobian_blocks_csv").get<std::string>())
+        ? std::filesystem::path(
+            resolvePath(cfgDir, cfg.at("jacobian_blocks_csv").get<std::string>()))
         : outputPath.parent_path() /
             (outputPath.stem().string() + "_jacobian_blocks.csv");
     const std::filesystem::path schurLoopPath = cfg.contains("schur_loop_csv")
-        ? resolvePath(cfgDir, cfg.at("schur_loop_csv").get<std::string>())
+        ? std::filesystem::path(
+            resolvePath(cfgDir, cfg.at("schur_loop_csv").get<std::string>()))
         : outputPath.parent_path() /
             (outputPath.stem().string() + "_schur_loop.csv");
     writeNewtonPoissonQfpCrossBlockCsv(
