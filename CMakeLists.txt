@@ -21,6 +21,23 @@ find_package(nlohmann_json REQUIRED)
 # Boost.Multiprecision (header-only arbitrary-precision arithmetic)
 find_package(Boost CONFIG REQUIRED)
 
+# spdlog (logging): prefer system package, fallback to FetchContent
+find_package(spdlog CONFIG QUIET)
+if(NOT spdlog_FOUND)
+    include(FetchContent)
+    set(SPDLOG_BUILD_EXAMPLE OFF CACHE BOOL "" FORCE)
+    set(SPDLOG_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(SPDLOG_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(SPDLOG_BUILD_BENCH OFF CACHE BOOL "" FORCE)
+    set(SPDLOG_BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
+    set(SPDLOG_FMT_EXTERNAL OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(
+        spdlog
+        URL https://github.com/gabime/spdlog/archive/refs/tags/v1.14.1.tar.gz
+    )
+    FetchContent_MakeAvailable(spdlog)
+endif()
+
 # Catch2 v3 (unit test framework)
 find_package(Catch2 3 REQUIRED)
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
@@ -51,6 +68,7 @@ endif()
 add_library(vela_core STATIC
     src/boundary/BoundaryCondition.cpp
     src/core/ScalingSystem.cpp
+    src/core/RuntimeLog.cpp
     src/core/UnitScaling.cpp
     src/core/UnitScalingSystem.cpp
     src/material/Material.cpp
@@ -100,9 +118,11 @@ target_link_libraries(vela_core
     PUBLIC
         Eigen3::Eigen
         nlohmann_json::nlohmann_json
+        spdlog::spdlog
     PRIVATE
         Boost::headers
 )
+target_compile_definitions(vela_core PUBLIC VELA_VERSION="${PROJECT_VERSION}")
 
 if(VELA_HDF5_TARGET)
     add_library(vela_sentaurus STATIC
