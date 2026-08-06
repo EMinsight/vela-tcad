@@ -59,14 +59,17 @@ void parseMasetti(const nlohmann::json& json,
 
 bool isMasettiModel(const std::string& model)
 {
-    return model == "masetti" || model == "masetti_field";
+    return model == "masetti" || model == "masetti_field" ||
+           model == "masetti_surface" ||
+           model == "masetti_field_surface";
 }
 
 bool isFieldMobilityModel(const std::string& model)
 {
     return model == "caughey_thomas_field" ||
            model == "caughey_thomas_field_surface" ||
-           model == "masetti_field";
+           model == "masetti_field" ||
+           model == "masetti_field_surface";
 }
 
 void parseField(const nlohmann::json& json,
@@ -91,6 +94,15 @@ void validateHighFieldDrivingForce(const std::string& value)
             "'quasi_fermi_gradient'.");
 }
 
+void validateHighFieldGradientDiscretization(const std::string& value)
+{
+    if (value != "edge_projection" && value != "transport_cell_vector") {
+        throw std::invalid_argument(
+            "mobility.high_field_gradient_discretization must be "
+            "'edge_projection' or 'transport_cell_vector'.");
+    }
+}
+
 void validateDopingConcentrationBasis(const std::string& value)
 {
     if (value != "net_doping" && value != "total_impurity" &&
@@ -103,6 +115,8 @@ void validateDopingConcentrationBasis(const std::string& value)
 void convertMobilityDefaultsToInternal(MobilityModelConfig& config,
                                        UnitScalingConfig scaling)
 {
+    config.surface.coordinateFieldFactor =
+        scaling.unitSystem().fieldFromCoordinateDeltaFactor();
     if (!scaling.isUnitScaling())
         return;
 
@@ -289,6 +303,8 @@ MobilityModelConfig mobilityModelConfig(std::string modelName)
     MobilityModelConfig config;
     config.model = std::move(modelName);
     validateHighFieldDrivingForce(config.highFieldDrivingForce);
+    validateHighFieldGradientDiscretization(
+        config.highFieldGradientDiscretization);
     validateDopingConcentrationBasis(config.dopingConcentrationBasis);
     return config;
 }
@@ -304,6 +320,8 @@ MobilityModelConfig mobilityModelConfigFromJson(
         convertMobilityDefaultsToInternal(config, scaling);
         config.model = value.get<std::string>();
         validateHighFieldDrivingForce(config.highFieldDrivingForce);
+        validateHighFieldGradientDiscretization(
+            config.highFieldGradientDiscretization);
         validateDopingConcentrationBasis(config.dopingConcentrationBasis);
         return config;
     }
@@ -315,11 +333,16 @@ MobilityModelConfig mobilityModelConfigFromJson(
     config.model = value.value("model", config.model);
     config.highFieldDrivingForce = value.value(
         "high_field_driving_force", config.highFieldDrivingForce);
+    config.highFieldGradientDiscretization = value.value(
+        "high_field_gradient_discretization",
+        config.highFieldGradientDiscretization);
     config.dopingConcentrationBasis = value.value(
         "doping_concentration_basis", config.dopingConcentrationBasis);
     config.jacobianFieldDerivatives = value.value(
         "jacobian_field_derivatives", config.jacobianFieldDerivatives);
     validateHighFieldDrivingForce(config.highFieldDrivingForce);
+    validateHighFieldGradientDiscretization(
+        config.highFieldGradientDiscretization);
     validateDopingConcentrationBasis(config.dopingConcentrationBasis);
 
     parseCaugheyThomas(value, config.electronCT, "electron", scaling);
@@ -367,7 +390,9 @@ MobilityModelConfig mobilityModelConfigFromJson(
 bool isSurfaceMobilityModel(const MobilityModelConfig& config)
 {
     return config.model == "caughey_thomas_surface" ||
-           config.model == "caughey_thomas_field_surface";
+           config.model == "caughey_thomas_field_surface" ||
+           config.model == "masetti_surface" ||
+           config.model == "masetti_field_surface";
 }
 
 bool surfaceMobilityAppliesToRegionPair(const MobilityModelConfig& config,

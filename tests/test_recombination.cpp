@@ -5,12 +5,140 @@
 #include "vela/physics/BandgapNarrowing.h"
 #include "vela/physics/CarrierStatistics.h"
 #include "vela/physics/RecombinationModel.h"
+#include "vela/physics/BandToBandTunnelingModel.h"
+#include "vela/equation/AssemblerUtils.h"
+#include <nlohmann/json.hpp>
 
 #include <cmath>
 #include <stdexcept>
 #include <limits>
+#include <tuple>
+#include <vector>
 
 using namespace vela;
+
+TEST_CASE("Sentaurus E2 band-to-band defaults use the documented SI conversion",
+          "[recombination][btbt][sentaurus]")
+{
+    BandToBandTunnelingConfig config;
+    config.model = "e2";
+    const BandToBandTunnelingModel model(config);
+    const Real field = 1.0e9;
+    const Real expected = 3.4e23 * field * field * std::exp(-2.26e9 / field);
+
+    REQUIRE(model.enabled());
+    REQUIRE(model.generationRate(field) == Catch::Approx(expected).epsilon(1.0e-13));
+    REQUIRE(model.generationRate(-field) == Catch::Approx(expected).epsilon(1.0e-13));
+    REQUIRE(model.generationRate(0.0) == 0.0);
+}
+
+TEST_CASE("Sentaurus E2 field derivative matches central finite difference",
+          "[recombination][btbt][jacobian]")
+{
+    BandToBandTunnelingConfig config;
+    config.model = "e2";
+    const BandToBandTunnelingModel model(config);
+    const Real field = 8.0e8;
+    const Real step = 1.0e3;
+    const Real finiteDifference =
+        (model.generationRate(field + step) - model.generationRate(field - step)) /
+        (2.0 * step);
+
+    REQUIRE(model.generationRateDerivativeField(field) ==
+            Catch::Approx(finiteDifference).epsilon(1.0e-9));
+}
+
+TEST_CASE("Band-to-band JSON accepts SI and Sentaurus-native parameter units",
+          "[recombination][btbt][json]")
+{
+    const nlohmann::json json = {
+        {"model", "e2"},
+        {"A_cm_inv_s_inv_V_inv2", 3.4e21},
+        {"B_V_per_cm", 22.6e6},
+        {"source_integration", "transport_node_lumped"},
+        {"jacobian", "frozen_field"},
+    };
+    const BandToBandTunnelingConfig config =
+        bandToBandTunnelingConfigFromJson(json, "test");
+
+    REQUIRE(config.prefactorA_SI == Catch::Approx(3.4e23));
+    REQUIRE(config.exponentialB_V_per_m == Catch::Approx(2.26e9));
+    REQUIRE(config.sourceIntegration == "transport_node_lumped");
+    REQUIRE(config.jacobian == "frozen_field");
+    REQUIRE_NOTHROW(BandToBandTunnelingModel(config));
+}
+
+TEST_CASE("E2 source integration excludes insulator cells at shared nodes",
+          "[recombination][btbt][mixed-material]")
+{
+    DeviceMesh mesh;
+    for (const auto [id, x, y] : std::vector<std::tuple<Index, Real, Real>>{
+             {0, 0.0, 0.0}, {1, 1.0, 0.0},
+             {2, 0.0, 1.0}, {3, 1.0, 1.0}}) {
+        Node node;
+        node.id = id;
+        node.x = x;
+        node.y = y;
+        mesh.addNode(node);
+    }
+    Cell silicon;
+    silicon.id = 0;
+    silicon.type = CellType::Tri3;
+    silicon.region_id = 0;
+    silicon.node_ids = {0, 1, 2};
+    mesh.addCell(silicon);
+    Cell oxide;
+    oxide.id = 1;
+    oxide.type = CellType::Tri3;
+    oxide.region_id = 1;
+    oxide.node_ids = {1, 3, 2};
+    mesh.addCell(oxide);
+
+    Material si;
+    si.name = "Si";
+    si.ni = 1.0;
+    si.mun = 1.0;
+    Material sio2;
+    sio2.name = "SiO2";
+    const std::vector<Material> cellMaterials{si, sio2};
+
+    VectorXd psi(4);
+    psi << 0.0, 1.0, 0.0, 100.0;
+    BandToBandTunnelingConfig config;
+    config.model = "e2";
+    config.prefactorA_SI = 1.0;
+    config.exponentialB_V_per_m = 1.0;
+    const BandToBandTunnelingModel model(config);
+    const std::vector<Real> sources =
+        detail::bandToBandGenerationNodeSourceIntegrals(
+            model, PhysicalUnitSystem::legacySI(), mesh, cellMaterials, psi, 1.0);
+    const Real expectedLumped = std::exp(-1.0) * 0.5 / 3.0;
+
+    REQUIRE(sources[0] == Catch::Approx(expectedLumped));
+    REQUIRE(sources[1] == Catch::Approx(expectedLumped));
+    REQUIRE(sources[2] == Catch::Approx(expectedLumped));
+    REQUIRE(sources[3] == 0.0);
+
+    config.sourceIntegration = "transport_node_lumped";
+    const BandToBandTunnelingModel nodalModel(config);
+    const std::vector<Real> nodalSources =
+        detail::bandToBandGenerationNodeSourceIntegrals(
+            nodalModel, PhysicalUnitSystem::legacySI(), mesh,
+            cellMaterials, psi, 1.0);
+    REQUIRE(nodalSources[0] == Catch::Approx(expectedLumped));
+    REQUIRE(nodalSources[1] == Catch::Approx(expectedLumped));
+    REQUIRE(nodalSources[2] == Catch::Approx(expectedLumped));
+    REQUIRE(nodalSources[3] == 0.0);
+}
+
+TEST_CASE("Band-to-band source integration rejects unknown spatial recovery",
+          "[recombination][btbt][json]")
+{
+    BandToBandTunnelingConfig config;
+    config.model = "e2";
+    config.sourceIntegration = "unknown";
+    REQUIRE_THROWS_AS(BandToBandTunnelingModel(config), std::invalid_argument);
+}
 
 TEST_CASE("SRH recombination is near zero when n*p equals ni squared", "[recombination]")
 {
@@ -165,6 +293,16 @@ TEST_CASE("OldSlotboom reference doping follows unit scaling concentration units
     REQUIRE(niEff == Catch::Approx(1.6556319846864e10).epsilon(1.0e-10));
     REQUIRE(niEff * niEff / 1.0e17 ==
             Catch::Approx(2741.1172687166).epsilon(1.0e-10));
+}
+
+TEST_CASE("Fermi statistics adds the Sentaurus apparent BGN correction", "[bgn][fermi][sentaurus]")
+{
+    const Real correction = fermiStatisticsBandgapCorrection(
+        5.1e26, 1.0e24, 2.8e25, 1.04e25, 0.025851999786435);
+
+    REQUIRE(correction == Catch::Approx(0.13920003585558116).epsilon(2.0e-12));
+    REQUIRE(fermiStatisticsBandgapCorrection(
+        0.0, 0.0, 2.8e25, 1.04e25, 0.025851999786435) == Catch::Approx(0.0));
 }
 
 TEST_CASE("CarrierStatistics intrinsic density uses temperature_K material path", "[temperature]")

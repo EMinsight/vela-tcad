@@ -10,6 +10,8 @@
 #include "vela/mesh/DeviceMesh.h"
 #include "vela/material/MaterialDatabase.h"
 #include "vela/physics/BandgapNarrowing.h"
+#include "vela/physics/BandToBandTunnelingModel.h"
+#include "vela/physics/CarrierStatistics.h"
 #include "vela/physics/DopingModel.h"
 #include "vela/physics/ImpactIonizationModel.h"
 #include "vela/physics/MobilityModel.h"
@@ -25,7 +27,7 @@ namespace vela {
 ///
 /// Bias for each contact is still passed through ``contactBiases`` so the
 /// existing DC sweep code can update it cheaply.  This auxiliary map carries
-/// the parsed ``ContactBoundarySpec`` (Schottky barrier, work function, etc.)
+/// the parsed ``ContactBoundarySpec`` (metal-gate role, Schottky barrier, etc.)
 /// for any contact whose type is not the default Ohmic.  Contacts missing
 /// from the map fall back to the legacy Ohmic Dirichlet construction.
 using ContactSpecsMap = std::unordered_map<std::string, ContactBoundarySpec>;
@@ -64,8 +66,10 @@ struct GummelConfig {
     double carrierFloor = 1.0; ///< Minimum solved carrier concentration [m^-3] for quasi-Fermi consistency.
     MobilityModelConfig mobility{}; ///< Mobility model configuration
     std::vector<std::string> recombination = {"srh"}; ///< e.g. {"srh", "auger"}
+    BandToBandTunnelingConfig bandToBand{}; ///< Local pair generation, including Sentaurus E2.
     ImpactIonizationModelConfig impactIonization; ///< Avalanche generation model.
     BandgapNarrowingConfig bandgapNarrowing; ///< Effective ni model for high doping.
+    CarrierStatisticsConfig carrierStatistics; ///< Gummel currently supports Boltzmann only.
     UnitScalingConfig inputScaling{}; ///< Input-unit mode from top-level config.
     UnitScalingReferenceConfig unitScalingRefs{}; ///< Optional reference overrides.
 };
@@ -113,7 +117,7 @@ DDSolution runGummel(const DeviceMesh&                          mesh,
                      const GummelConfig&                          cfg,
                      const DDSolution&                           initialGuess);
 
-/// Schottky-aware overloads.  ``contactSpecs`` selects the per-contact
+/// Contact-model-aware overloads.  ``contactSpecs`` selects the per-contact
 /// boundary model; any contact missing from the map falls back to the
 /// legacy Ohmic Dirichlet construction so existing decks keep working.
 DDSolution runGummel(const DeviceMesh&                          mesh,
@@ -174,6 +178,7 @@ void writeDDSolutionVTK(const std::string& filename,
                         const ImpactIonizationModelConfig& impactIonizationConfig,
                         const BandgapNarrowingConfig& bandgapNarrowingConfig,
                         Real temperature_K = constants::T0,
-                        UnitScalingConfig scaling = {});
+                        UnitScalingConfig scaling = {},
+                        const CarrierStatisticsConfig& carrierStatistics = {});
 
 } // namespace vela

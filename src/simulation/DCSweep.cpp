@@ -20,6 +20,7 @@
 #include "vela/physics/RecombinationModel.h"
 #include "vela/post/ContactCurrent.h"
 #include "vela/post/ElectricFieldDiagnostics.h"
+#include "vela/post/PathIonizationIntegral.h"
 #include "vela/post/TerminalCharge.h"
 #include "vela/post/StoredCharge.h"
 #include "vela/solver/NewtonSolver.h"
@@ -34,6 +35,7 @@
 #include <fstream>
 #include <iomanip>
 #include <limits>
+#include <map>
 #include <memory>
 #include <sstream>
 #include <stdexcept>
@@ -255,7 +257,8 @@ std::string releaseBVLambdaDescription(const ImpactIonizationModelConfig& config
     std::ostringstream out;
     out << "source_geometry_scale=" << formatReal(config.sourceGeometryScale)
         << ";source_volume_policy=" << config.sourceVolumePolicy
-        << ";source_volume_factor=" << formatReal(config.sourceVolumeFactor);
+        << ";source_volume_factor=" << formatReal(config.sourceVolumeFactor)
+        << ";eparallel_field_recovery=" << config.eparallelFieldRecovery;
     return out.str();
 }
 
@@ -333,14 +336,21 @@ bool sameOrderOfMagnitude(Real value, Real reference)
 
 ReleaseBVConfigAuditPointTerms computeReleaseBVConfigAuditPointTerms(
     const DeviceMesh& mesh,
-    const std::vector<detail::SgEdgeCurrentAvalancheSourceRecord>& records)
+    const std::vector<detail::SgEdgeCurrentAvalancheSourceRecord>& records,
+    const PhysicalUnitSystem& units)
 {
     constexpr Real PerMeterToPerMicron = 1.0e-6;
     constexpr Real PerM3ToPerCm3 = 1.0e-6;
+    const Real sourceIntegralPerInternalToPerMPerS =
+        units.internalInverseLengthToMInv(1.0) *
+        units.internalContinuityParticleFluxToPerM2PerS(1.0) *
+        units.areaM2PerInternal();
     ReleaseBVConfigAuditPointTerms terms;
     for (const detail::SgEdgeCurrentAvalancheSourceRecord& record : records) {
+        const Real sourceIntegralPerMPerS =
+            record.edgeSourceIntegral * sourceIntegralPerInternalToPerMPerS;
         const Real qG_A_per_um =
-            constants::q * record.edgeSourceIntegral * PerMeterToPerMicron;
+            constants::q * sourceIntegralPerMPerS * PerMeterToPerMicron;
         terms.qGFull_A_per_um += qG_A_per_um;
         const Node& node0 = mesh.getNode(record.node0);
         const Node& node1 = mesh.getNode(record.node1);
@@ -348,8 +358,9 @@ ReleaseBVConfigAuditPointTerms computeReleaseBVConfigAuditPointTerms(
         if (xMid_um >= 0.7 && xMid_um <= 1.3)
             terms.qGJunction_A_per_um += qG_A_per_um;
         if (record.edgeAreaProxy > 0.0) {
+            const Real areaM2 = record.edgeAreaProxy * units.areaM2PerInternal();
             const Real gava_cm3_s =
-                (record.edgeSourceIntegral / record.edgeAreaProxy) * PerM3ToPerCm3;
+                (sourceIntegralPerMPerS / areaM2) * PerM3ToPerCm3;
             terms.maxGava_cm3_s = std::max(terms.maxGava_cm3_s, gava_cm3_s);
         }
     }
@@ -510,39 +521,6 @@ Real terminalCurrentConsistencyRatio(const ContactCurrentResult& current)
     if (componentMagnitude <= floor)
         return 1.0;
     return std::abs(current.totalCurrent) / componentMagnitude;
-}
-
-std::vector<Real> buildEffectiveIntrinsicDensityVector(const DeviceMesh& mesh,
-                                                       const MaterialDatabase& matdb,
-                                                       const DopingModel& doping,
-                                                       Real temperature_K,
-                                                       const BandgapNarrowingConfig& bgnCfg)
-{
-    const Index nodeCount = mesh.numNodes();
-    std::vector<Real> ni(nodeCount, 0.0);
-    std::vector<bool> seen(nodeCount, false);
-
-    for (Index c = 0; c < mesh.numCells(); ++c) {
-        const Cell& cell = mesh.getCell(c);
-        const Region& region = mesh.getRegion(cell.region_id);
-        Real niMaterial = 0.0;
-        if (matdb.hasMaterial(region.material))
-            niMaterial = matdb.getMaterial(region.material, temperature_K).ni;
-        for (Index nodeId : cell.node_ids) {
-            if (!seen[nodeId]) {
-                ni[nodeId] = niMaterial;
-                seen[nodeId] = true;
-            }
-        }
-    }
-
-    const Real Vt = constants::kb * temperature_K / constants::q;
-    const std::unique_ptr<BandgapNarrowing> bgn = makeBandgapNarrowingModel(bgnCfg);
-    for (Index i = 0; i < nodeCount; ++i) {
-        const Real deltaEg = bgn->deltaEg(doping.totalImpurity(i), 0.0, 0.0);
-        ni[i] = effectiveIntrinsicDensity(ni[i], Vt, deltaEg);
-    }
-    return ni;
 }
 
 SweepRecombinationDiagnostics computeSweepRecombinationDiagnostics(
@@ -739,6 +717,7 @@ std::vector<ContinuityBalanceDiagnosticRow> computeContinuityBalanceDiagnostics(
     Real temperature_K,
     const DDSolution& sol,
     const std::vector<Real>& effectiveNi,
+    const CarrierStatisticsConfig& carrierStatistics,
     const RecombinationModelConfig& recombinationCfg,
     const std::vector<std::string>& contacts,
     const UnitScalingConfig& scaling)
@@ -750,6 +729,10 @@ std::vector<ContinuityBalanceDiagnosticRow> computeContinuityBalanceDiagnostics(
     const Real fieldFactor = scaling.unitSystem().fieldFromCoordinateDeltaFactor();
     const RecombinationModel recombination(recombinationCfg);
     const Real Vt = constants::kb * temperature_K / constants::q;
+    const std::vector<Real> Nc =
+        detail::buildNodeDensityOfStates(mesh, matdb, temperature_K, true);
+    const std::vector<Real> Nv =
+        detail::buildNodeDensityOfStates(mesh, matdb, temperature_K, false);
 
     std::unordered_set<std::string> requested(contacts.begin(), contacts.end());
     std::vector<std::vector<Index>> nodeEdges(mesh.numNodes());
@@ -779,6 +762,19 @@ std::vector<ContinuityBalanceDiagnosticRow> computeContinuityBalanceDiagnostics(
             return Real{0.0};
         const Real coef = mu * Vt * edge.couple / h;
         if (carrier == CarrierType::Electron) {
+            if (usesFermiDirac(carrierStatistics)) {
+                const Real etaI = (sol.psi(i) - sol.phin(i)) / Vt
+                    + std::log(effectiveNi[edge.n0] / Nc[edge.n0]);
+                const Real etaJ = (sol.psi(j) - sol.phin(j)) / Vt
+                    + std::log(effectiveNi[edge.n1] / Nc[edge.n1]);
+                const Real driftPotential = sol.psi(j) - sol.psi(i)
+                    + Vt * std::log(
+                        (effectiveNi[edge.n1] / Nc[edge.n1]) /
+                        (effectiveNi[edge.n0] / Nc[edge.n0]));
+                return sgElectronFermiDiracContinuityFlux(
+                    sol.n(i), sol.n(j), etaI, etaJ, driftPotential,
+                    sol.phin(i), sol.phin(j), Vt, coef);
+            }
             return sgElectronContinuityFluxFromQuasiFermiVariableNi(
                 effectiveNi[edge.n0],
                 effectiveNi[edge.n1],
@@ -788,6 +784,19 @@ std::vector<ContinuityBalanceDiagnosticRow> computeContinuityBalanceDiagnostics(
                 sol.phin(j),
                 Vt,
                 coef);
+        }
+        if (usesFermiDirac(carrierStatistics)) {
+            const Real etaI = (sol.phip(i) - sol.psi(i)) / Vt
+                + std::log(effectiveNi[edge.n0] / Nv[edge.n0]);
+            const Real etaJ = (sol.phip(j) - sol.psi(j)) / Vt
+                + std::log(effectiveNi[edge.n1] / Nv[edge.n1]);
+            const Real driftPotential = sol.psi(j) - sol.psi(i)
+                + Vt * std::log(
+                    (effectiveNi[edge.n0] / Nv[edge.n0]) /
+                    (effectiveNi[edge.n1] / Nv[edge.n1]));
+            return sgHoleFermiDiracContinuityFlux(
+                sol.p(i), sol.p(j), etaI, etaJ, driftPotential,
+                sol.phip(i), sol.phip(j), Vt, coef);
         }
         return sgHoleContinuityFluxFromQuasiFermiVariableNi(
             effectiveNi[edge.n0],
@@ -815,8 +824,18 @@ std::vector<ContinuityBalanceDiagnosticRow> computeContinuityBalanceDiagnostics(
         const Real ni = effectiveNi[node];
         if (ni <= 0.0)
             return Real{0.0};
-        return recombination.totalRate(sol.n(row), sol.p(row), ni) *
-            mesh.getNode(node).volume;
+        if (usesFermiDirac(carrierStatistics)) {
+            const Real equilibriumProduct = equilibriumCarrierProduct(
+                sol.n(row), sol.p(row), ni, Nc[node], Nv[node], Vt,
+                carrierStatistics);
+            return recombination.totalRateFromExcessProduct(
+                sol.n(row) * sol.p(row) - equilibriumProduct,
+                sol.n(row), sol.p(row),
+                std::sqrt(std::max<Real>(equilibriumProduct, 0.0)))
+                * mesh.getNode(node).volume;
+        }
+        return recombination.totalRate(sol.n(row), sol.p(row), ni)
+            * mesh.getNode(node).volume;
     };
 
     std::vector<ContinuityBalanceDiagnosticRow> rows;
@@ -1446,6 +1465,153 @@ DCSweepConfig dcSweepConfigFromJson(const nlohmann::json& cfg,
         sweep.diagnostics.sgAvalancheEdges.csvFile =
             sgAvalancheCfg.value("csv_file", std::string{});
     }
+    if (diagnosticsCfg.contains("path_ionization_integrals")) {
+        const auto& pathCfg = diagnosticsCfg.at("path_ionization_integrals");
+        if (!pathCfg.is_object())
+            throw std::invalid_argument(
+                "DCSweep: sweep.diagnostics.path_ionization_integrals must be an object.");
+        auto& parsed = sweep.diagnostics.pathIonizationIntegrals;
+        parsed.enabled = pathCfg.value("enabled", parsed.enabled);
+        parsed.csvFile = pathCfg.value("csv_file", std::string{});
+        parsed.segmentsCsvFile =
+            pathCfg.value("segments_csv_file", std::string{});
+        parsed.maxPaths = pathCfg.value("max_paths", parsed.maxPaths);
+        parsed.breakRank = pathCfg.value("break_rank", parsed.breakRank);
+        parsed.breakValue = pathCfg.value("break_value", parsed.breakValue);
+        parsed.drivingForce = pathCfg.value("driving_force", parsed.drivingForce);
+        parsed.stopField_V_per_m =
+            pathCfg.value("stop_field_V_per_m", parsed.stopField_V_per_m);
+        parsed.electronStopField_V_per_m = pathCfg.value(
+            "electron_stop_field_V_per_m", parsed.electronStopField_V_per_m);
+        parsed.holeStopField_V_per_m = pathCfg.value(
+            "hole_stop_field_V_per_m", parsed.holeStopField_V_per_m);
+        parsed.meanDefinition = pathCfg.value(
+            "mean_definition", parsed.meanDefinition);
+        parsed.breakOrdering = pathCfg.value(
+            "break_ordering", parsed.breakOrdering);
+        parsed.tracingMode =
+            pathCfg.value("tracing_mode", parsed.tracingMode);
+        parsed.pathRetention =
+            pathCfg.value("path_retention", parsed.pathRetention);
+        parsed.seedMode = pathCfg.value("seed_mode", parsed.seedMode);
+        parsed.tracingVector =
+            pathCfg.value("tracing_vector", parsed.tracingVector);
+        parsed.tracingCurrentRelativeFloor = pathCfg.value(
+            "tracing_current_relative_floor",
+            parsed.tracingCurrentRelativeFloor);
+        parsed.tracingQfRelativeFloor = pathCfg.value(
+            "tracing_qf_relative_floor", parsed.tracingQfRelativeFloor);
+        parsed.tracingDirection =
+            pathCfg.value("tracing_direction", parsed.tracingDirection);
+        parsed.seedField_V_per_m =
+            pathCfg.value("seed_field_V_per_m", parsed.seedField_V_per_m);
+        if (!std::isfinite(parsed.breakValue) || parsed.breakValue <= 0.0) {
+            throw std::invalid_argument(
+                "DCSweep: path_ionization_integrals.break_value must be positive and finite.");
+        }
+        if (!std::isfinite(parsed.stopField_V_per_m) ||
+            parsed.stopField_V_per_m < 0.0) {
+            throw std::invalid_argument(
+                "DCSweep: path_ionization_integrals.stop_field_V_per_m "
+                "must be finite and non-negative.");
+        }
+        if (!std::isfinite(parsed.electronStopField_V_per_m) ||
+            parsed.electronStopField_V_per_m < 0.0 ||
+            !std::isfinite(parsed.holeStopField_V_per_m) ||
+            parsed.holeStopField_V_per_m < 0.0) {
+            throw std::invalid_argument(
+                "DCSweep: path_ionization_integrals carrier stop fields "
+                "must be finite and non-negative.");
+        }
+        if (parsed.meanDefinition != "carrier_integral_arithmetic" &&
+            parsed.meanDefinition != "carrier_alpha_length_arithmetic") {
+            throw std::invalid_argument(
+                "DCSweep: path_ionization_integrals.mean_definition must be "
+                "'carrier_integral_arithmetic' or "
+                "'carrier_alpha_length_arithmetic'.");
+        }
+        if (parsed.breakOrdering != "path_mean" &&
+            parsed.breakOrdering != "carrier_integrals") {
+            throw std::invalid_argument(
+                "DCSweep: path_ionization_integrals.break_ordering must be "
+                "'path_mean' or 'carrier_integrals'.");
+        }
+        if (parsed.tracingMode != "edge_graph" &&
+            parsed.tracingMode != "continuous_cell") {
+            throw std::invalid_argument(
+                "DCSweep: path_ionization_integrals.tracing_mode must be "
+                "'edge_graph' or 'continuous_cell'.");
+        }
+        if (parsed.pathRetention != "all_seed_trajectories" &&
+            parsed.pathRetention != "numbered_peak_groups" &&
+            parsed.pathRetention != "distinct_local_maxima" &&
+            parsed.pathRetention != "corridor_deduplicated") {
+            throw std::invalid_argument(
+                "DCSweep: path_ionization_integrals.path_retention must be "
+                "'all_seed_trajectories', 'numbered_peak_groups', "
+                "'distinct_local_maxima', or 'corridor_deduplicated'.");
+        }
+        if (parsed.seedMode != "cell_local_maxima" &&
+            parsed.seedMode != "nodal_local_maxima") {
+            throw std::invalid_argument(
+                "DCSweep: path_ionization_integrals.seed_mode must be "
+                "'cell_local_maxima' or 'nodal_local_maxima'.");
+        }
+        if (parsed.tracingVector != "electric_field" &&
+            parsed.tracingVector != "electron_current" &&
+            parsed.tracingVector != "hole_current" &&
+            parsed.tracingVector != "electron_qf_gradient" &&
+            parsed.tracingVector != "hole_qf_gradient" &&
+            parsed.tracingVector != "cell_electric_field" &&
+            parsed.tracingVector != "electric_field_rk4" &&
+            parsed.tracingVector != "sentaurus_eparallel_adaptive") {
+            throw std::invalid_argument(
+                "DCSweep: path_ionization_integrals.tracing_vector must be "
+                "'electric_field', 'electron_current', 'hole_current', "
+                "'electron_qf_gradient', 'hole_qf_gradient', "
+                "'cell_electric_field', 'electric_field_rk4', or "
+                "'sentaurus_eparallel_adaptive'.");
+        }
+        if (!std::isfinite(parsed.tracingCurrentRelativeFloor) ||
+            parsed.tracingCurrentRelativeFloor < 0.0 ||
+            parsed.tracingCurrentRelativeFloor > 1.0) {
+            throw std::invalid_argument(
+                "DCSweep: path_ionization_integrals."
+                "tracing_current_relative_floor must be finite and in [0,1].");
+        }
+        if (!std::isfinite(parsed.tracingQfRelativeFloor) ||
+            parsed.tracingQfRelativeFloor < 0.0 ||
+            parsed.tracingQfRelativeFloor > 1.0) {
+            throw std::invalid_argument(
+                "DCSweep: path_ionization_integrals."
+                "tracing_qf_relative_floor must be finite and in [0,1].");
+        }
+        if (parsed.tracingDirection != "bidirectional" &&
+            parsed.tracingDirection != "along_vector" &&
+            parsed.tracingDirection != "opposite_vector") {
+            throw std::invalid_argument(
+                "DCSweep: path_ionization_integrals.tracing_direction must be "
+                "'bidirectional', 'along_vector', or 'opposite_vector'.");
+        }
+        if (!std::isfinite(parsed.seedField_V_per_m) ||
+            parsed.seedField_V_per_m < 0.0) {
+            throw std::invalid_argument(
+                "DCSweep: path_ionization_integrals.seed_field_V_per_m "
+                "must be finite and non-negative.");
+        }
+        if (parsed.drivingForce != "solver" &&
+            parsed.drivingForce != "electric_field" &&
+            parsed.drivingForce != "quasi_fermi_gradient" &&
+            parsed.drivingForce != "grad_potential_parallel_j" &&
+            parsed.drivingForce != "effective_field_parallel_j" &&
+            parsed.drivingForce != "eparallel") {
+            throw std::invalid_argument(
+                "DCSweep: path_ionization_integrals.driving_force must be "
+                "'solver', 'electric_field', 'quasi_fermi_gradient', "
+                "'grad_potential_parallel_j', 'effective_field_parallel_j', "
+                "or 'eparallel'.");
+        }
+    }
     if (diagnosticsCfg.contains("triangle_gss_sources")) {
         const auto& triangleCfg = diagnosticsCfg.at("triangle_gss_sources");
         if (!triangleCfg.is_object())
@@ -1552,6 +1718,10 @@ DCSweepConfig dcSweepConfigFromJson(const nlohmann::json& cfg,
                 toString(sweep.diagnostics.qfBounds.mode)));
         sweep.diagnostics.qfBounds.margin_V =
             qfBoundsCfg.value("margin_V", sweep.diagnostics.qfBounds.margin_V);
+        sweep.diagnostics.qfBounds.minCarrierDensity_m3 =
+            qfBoundsCfg.value(
+                "min_carrier_density_m3",
+                sweep.diagnostics.qfBounds.minCarrierDensity_m3);
         sweep.diagnostics.qfBounds.checkBandBending =
             qfBoundsCfg.value(
                 "check_band_bending",
@@ -1672,6 +1842,27 @@ DCSweepConfig dcSweepConfigFromJson(const nlohmann::json& cfg,
         } else {
             sweep.diagnostics.sgAvalancheEdges.csvFile =
                 resolve(sweep.diagnostics.sgAvalancheEdges.csvFile);
+        }
+    }
+    if (sweep.diagnostics.pathIonizationIntegrals.enabled) {
+        if (sweep.diagnostics.pathIonizationIntegrals.csvFile.empty()) {
+            const std::filesystem::path csvPath(sweep.csvFile);
+            sweep.diagnostics.pathIonizationIntegrals.csvFile =
+                (csvPath.parent_path() /
+                 (csvPath.stem().string() + "_path_ionization_integrals.csv")).string();
+        } else {
+            sweep.diagnostics.pathIonizationIntegrals.csvFile =
+                resolve(sweep.diagnostics.pathIonizationIntegrals.csvFile);
+        }
+        if (sweep.diagnostics.pathIonizationIntegrals.segmentsCsvFile.empty()) {
+            const std::filesystem::path summaryPath(
+                sweep.diagnostics.pathIonizationIntegrals.csvFile);
+            sweep.diagnostics.pathIonizationIntegrals.segmentsCsvFile =
+                (summaryPath.parent_path() /
+                 (summaryPath.stem().string() + "_segments.csv")).string();
+        } else {
+            sweep.diagnostics.pathIonizationIntegrals.segmentsCsvFile =
+                resolve(sweep.diagnostics.pathIonizationIntegrals.segmentsCsvFile);
         }
     }
     if (sweep.diagnostics.triangleGssSources.enabled) {
@@ -1806,6 +1997,12 @@ DCSweepConfig dcSweepConfigFromJson(const nlohmann::json& cfg,
         throw std::invalid_argument("DCSweep: sweep stored_charge depth_m must be positive.");
     if (!std::isfinite(sweep.diagnostics.qfBounds.margin_V) || sweep.diagnostics.qfBounds.margin_V < 0.0)
         throw std::invalid_argument("DCSweep: sweep.diagnostics.qf_bounds.margin_V must be finite and non-negative.");
+    if (!std::isfinite(sweep.diagnostics.qfBounds.minCarrierDensity_m3) ||
+        sweep.diagnostics.qfBounds.minCarrierDensity_m3 < 0.0) {
+        throw std::invalid_argument(
+            "DCSweep: sweep.diagnostics.qf_bounds.min_carrier_density_m3 "
+            "must be finite and non-negative.");
+    }
     if (!std::isfinite(sweep.diagnostics.qfBounds.builtInPotential_V) || sweep.diagnostics.qfBounds.builtInPotential_V < 0.0)
         throw std::invalid_argument("DCSweep: sweep.diagnostics.qf_bounds.built_in_potential_V must be finite and non-negative.");
     return sweep;
@@ -1914,8 +2111,11 @@ ContactConfig contactConfigFromJson(const nlohmann::json& cfg)
                 out.biases[spec.name] = spec.bias;
                 break;
             case ContactType::Dirichlet:
+                out.biases[spec.name] = effectivePoissonDirichletPotential(spec);
+                break;
             case ContactType::MetalGate:
                 out.biases[spec.name] = effectivePoissonDirichletPotential(spec);
+                out.specs[spec.name] = spec;
                 break;
             case ContactType::Schottky:
                 out.biases[spec.name] = spec.bias;
@@ -2136,6 +2336,28 @@ nlohmann::json topResidualNodesJson(const std::vector<NewtonTopResidualNode>& no
     return out;
 }
 
+nlohmann::json topCarrierResidualNodesJson(
+    const std::vector<NewtonTopCarrierResidualNode>& nodes,
+    const UnitScalingConfig& scaling)
+{
+    const PhysicalUnitSystem& units = scaling.unitSystem();
+    nlohmann::json out = nlohmann::json::array();
+    for (const NewtonTopCarrierResidualNode& node : nodes) {
+        const Real x_m = units.internalLengthToMeters(node.x);
+        const Real y_m = units.internalLengthToMeters(node.y);
+        out.push_back({
+            {"node_id", node.nodeId},
+            {"x_m", x_m},
+            {"y_m", y_m},
+            {"x_um", x_m * 1.0e6},
+            {"y_um", y_m * 1.0e6},
+            {"residual", node.residual},
+            {"abs_residual", node.absResidual},
+        });
+    }
+    return out;
+}
+
 nlohmann::json newtonFailureDiagnosticsJson(const NewtonFailureDiagnostics& diagnostics,
                                             const UnitScalingConfig& scaling)
 {
@@ -2153,6 +2375,10 @@ nlohmann::json newtonFailureDiagnosticsJson(const NewtonFailureDiagnostics& diag
         {"best_rejected_contact_majority_qf_drop_V", diagnostics.bestRejectedContactMajorityQfDrop},
         {"line_search_history", lineSearchHistoryJson(diagnostics.lineSearchHistory)},
         {"top_poisson_residual_nodes", topResidualNodesJson(diagnostics.topPoissonResidualNodes, scaling)},
+        {"top_electron_residual_nodes", topCarrierResidualNodesJson(
+            diagnostics.topElectronResidualNodes, scaling)},
+        {"top_hole_residual_nodes", topCarrierResidualNodesJson(
+            diagnostics.topHoleResidualNodes, scaling)},
     };
 }
 
@@ -2246,6 +2472,18 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
     canonicalizeSweepContactsInPlace(mesh, sweep);
     std::unordered_map<std::string, Real>& baseBiases = contactConfig.biases;
     ContactSpecsMap& contactSpecs = contactConfig.specs;
+    const auto transportContactBiases = [&](const auto& allBiases) {
+        std::unordered_map<std::string, Real> filtered;
+        for (const auto& [name, bias] : allBiases) {
+            const auto specIt = contactSpecs.find(name);
+            if (specIt != contactSpecs.end() &&
+                specIt->second.type == ContactType::MetalGate) {
+                continue;
+            }
+            filtered.emplace(name, bias);
+        }
+        return filtered;
+    };
 
     const nlohmann::json solverCfg = cfg.value("solver", nlohmann::json::object());
     const SolverMethod solverMethod = solverMethodFromJson(cfg);
@@ -2280,6 +2518,10 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                                 solverMethod == SolverMethod::GummelNewton)
         ? newton.temperature_K
         : gummel.temperature_K;
+    const CarrierStatisticsConfig sweepCarrierStatistics =
+        (solverMethod == SolverMethod::Newton || solverMethod == SolverMethod::GummelNewton)
+        ? newton.carrierStatistics
+        : gummel.carrierStatistics;
     if (sweep.initialization.mode == "poisson_block") {
         initializationNewton = newtonConfigFromJson(solverCfg, scaling);
         initializationNewton->unitScalingRefs = scalingRefs;
@@ -2327,17 +2569,27 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
         sweepRecombinationConfig = recombinationModelConfig(newton.recombination, newton.taun, newton.taup);
         sweepRecombinationConfig.augerCn = newton.augerCn;
         sweepRecombinationConfig.augerCp = newton.augerCp;
+        sweepRecombinationConfig.bandToBand = newton.bandToBand;
         sweepBgnConfig = newton.bandgapNarrowing;
         sweepImpactIonizationConfig = newton.impactIonization;
     } else {
         sweepRecombinationConfig = recombinationModelConfig(gummel.recombination, gummel.taun, gummel.taup);
         sweepRecombinationConfig.augerCn = gummel.augerCn;
         sweepRecombinationConfig.augerCp = gummel.augerCp;
+        sweepRecombinationConfig.bandToBand = gummel.bandToBand;
         sweepBgnConfig = gummel.bandgapNarrowing;
         sweepImpactIonizationConfig = gummel.impactIonization;
     }
-    const std::vector<Real> effectiveNi = buildEffectiveIntrinsicDensityVector(
-        mesh, matdb, doping, temperature_K, sweepBgnConfig);
+    // Use the same transport-material ownership and BGN implementation as the
+    // coupled DD assembler.  In particular, a Si/insulator shared node must
+    // not inherit ni=0 merely because the insulator cell appears first.
+    const std::vector<Real> effectiveNi = detail::buildValidatedEffectiveNodeNi(
+        "DCSweep", mesh, matdb, doping, sweepBgnConfig,
+        constants::kb * temperature_K / constants::q);
+    const std::vector<Real> sweepNc =
+        detail::buildNodeDensityOfStates(mesh, matdb, temperature_K, true);
+    const std::vector<Real> sweepNv =
+        detail::buildNodeDensityOfStates(mesh, matdb, temperature_K, false);
     const auto sweepEdgeCells = detail::buildEdgeCellMap(mesh);
     const auto sweepCellMaterials = detail::buildCellMaterials(mesh, matdb, temperature_K);
     const auto sweepMobility = makeMobilityModel(mobilityConfig);
@@ -2355,6 +2607,12 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
             "impact_ionization.current_approximation='density_gradient', 'grad_qf', "
             "'cell_reconstructed', 'psi_gradient_proxy', 'cell_current_reconstructed', "
             "'cell_vector_current_reconstructed', or 'conserved_total_current'.");
+    }
+    if (sweep.diagnostics.pathIonizationIntegrals.enabled &&
+        !detail::usesEdgeCurrentAvalancheSource(sweepImpactIonizationConfig)) {
+        throw std::invalid_argument(
+            "DCSweep: sweep.diagnostics.path_ionization_integrals requires "
+            "impact_ionization.generation='current_density' with an SG edge-current source.");
     }
     if (sweep.diagnostics.triangleGssSources.enabled &&
         !detail::usesTriangleGssAvalancheSource(sweepImpactIonizationConfig)) {
@@ -2408,7 +2666,8 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
             sweep.scaling.unitSystem().currentDensityAM2PerInternal() *
             sweep.scaling.unitSystem().lengthMPerInternal();
     }
-    ContactCurrent contactCurrent(mesh, matdb, doping, mobilityConfig, temperature_K, ddScaling, sweepBgnConfig);
+    ContactCurrent contactCurrent(mesh, matdb, doping, mobilityConfig, temperature_K,
+                                  ddScaling, sweepBgnConfig, sweepCarrierStatistics);
     CoupledDDAssembler terminalCurrentResidualAssembler(
         mesh,
         matdb,
@@ -2420,7 +2679,9 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
         sweepImpactIonizationConfig,
         fixedChargeSpecs,
         sheetChargeSpecs,
-        ddScaling);
+        ddScaling,
+        {},
+        sweepCarrierStatistics);
     TerminalCharge terminalCharge(mesh, doping, sweep.scaling.unitSystem());
     StoredCharge storedCharge(mesh, sweep.scaling.unitSystem());
     const bool hasMultiTerminalCharges = cfg.at("sweep").contains("terminal_charges");
@@ -2718,9 +2979,19 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
             "electron_source_integral",
             "hole_source_integral",
             "edge_source_integral",
+            "electron_node0_source_integral",
+            "electron_node1_source_integral",
+            "hole_node0_source_integral",
+            "hole_node1_source_integral",
             "node0_source_integral",
             "node1_source_integral",
             "edge_class",
+            "electron_sg_uses_fermi_dirac",
+            "electron_sg_generalized_einstein_factor",
+            "electron_sg_generalized_bernoulli_argument",
+            "hole_sg_uses_fermi_dirac",
+            "hole_sg_generalized_einstein_factor",
+            "hole_sg_generalized_bernoulli_argument",
             "electron_sg_ni0",
             "electron_sg_ni1",
             "electron_sg_n0",
@@ -2754,6 +3025,104 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
             "electron_sg_production_abs_continuity_particle_flux_m2_s",
             "electron_sg_production_signed_conventional_current_density_A_per_m2",
             "electron_sg_production_signed_conventional_current_density_A_per_cm2"});
+    }
+
+    std::unique_ptr<CSVWriter> pathIonizationIntegralsCsv;
+    std::unique_ptr<CSVWriter> pathIonizationSegmentsCsv;
+    if (sweep.diagnostics.pathIonizationIntegrals.enabled) {
+        const std::filesystem::path diagPath(
+            sweep.diagnostics.pathIonizationIntegrals.csvFile);
+        if (!diagPath.parent_path().empty())
+            std::filesystem::create_directories(diagPath.parent_path());
+        pathIonizationIntegralsCsv = std::make_unique<CSVWriter>(diagPath.string());
+        pathIonizationIntegralsCsv->writeHeader({
+            "point_index",
+            "bias_V",
+            "path_rank",
+            "physical_path_rank",
+            "seed_edge_id",
+            "seed_cell_id",
+            "seed_node_id",
+            "seed_field_V_per_m",
+            "saddle_field_V_per_m",
+            "peak_prominence_V_per_m",
+            "peak_prominence_ratio",
+            "parent_peak_node_id",
+            "physical_path_group_id",
+            "seed_electron_qf_relative_magnitude",
+            "seed_hole_qf_relative_magnitude",
+            "tracing_mode",
+            "path_retention",
+            "seed_mode",
+            "tracing_vector",
+            "tracing_qf_relative_floor",
+            "node_count",
+            "segment_count",
+            "path_length_m",
+            "electron_support_length_m",
+            "hole_support_length_m",
+            "electron_alpha_length_sum",
+            "hole_alpha_length_sum",
+            "max_electric_field_V_per_m",
+            "path_driving_force",
+            "path_stop_field_V_per_m",
+            "electron_stop_field_V_per_m",
+            "hole_stop_field_V_per_m",
+            "mean_definition",
+            "break_ordering",
+            "electron_ionization_integral",
+            "hole_ionization_integral",
+            "mean_ionization_integral",
+            "break_rank",
+            "break_value",
+            "break_threshold_exceeded"});
+
+        const std::filesystem::path segmentsPath(
+            sweep.diagnostics.pathIonizationIntegrals.segmentsCsvFile);
+        if (!segmentsPath.parent_path().empty())
+            std::filesystem::create_directories(segmentsPath.parent_path());
+        pathIonizationSegmentsCsv =
+            std::make_unique<CSVWriter>(segmentsPath.string());
+        pathIonizationSegmentsCsv->writeHeader({
+            "point_index",
+            "bias_V",
+            "path_rank",
+            "segment_index",
+            "seed_edge_id",
+            "seed_cell_id",
+            "seed_node_id",
+            "edge_id",
+            "cell_id",
+            "node0",
+            "node1",
+            "x0_um",
+            "y0_um",
+            "x1_um",
+            "y1_um",
+            "psi0_V",
+            "psi1_V",
+            "segment_length_m",
+            "cumulative_length_m",
+            "electric_field_V_per_m",
+            "electron_driving_field_V_per_m",
+            "hole_driving_field_V_per_m",
+            "electron_alpha_m_inv",
+            "hole_alpha_m_inv",
+            "electron_alpha_ds",
+            "hole_alpha_ds",
+            "cumulative_electron_alpha_ds",
+            "cumulative_hole_alpha_ds",
+            "prefix_electron_ionization_integral",
+            "prefix_hole_ionization_integral",
+            "prefix_mean_ionization_integral",
+            "path_electron_ionization_integral",
+            "path_hole_ionization_integral",
+            "path_mean_ionization_integral",
+            "path_driving_force",
+            "tracing_mode",
+            "path_retention",
+            "seed_mode",
+            "tracing_vector"});
     }
 
     std::unique_ptr<CSVWriter> triangleGssSourcesCsv;
@@ -3062,6 +3431,8 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
             "value_V",
             "lower_bound_V",
             "upper_bound_V",
+            "carrier_density_m3",
+            "min_carrier_density_m3",
             "margin_V"});
     }
     std::vector<DCSweepPoint> points;
@@ -3122,18 +3493,22 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
     if ((solverMethod == SolverMethod::Newton ||
          solverMethod == SolverMethod::GummelNewton) &&
         !contactSpecs.empty()) {
-        // The Newton coupled-DD path does not yet construct Schottky-aware
-        // boundary conditions.  Fail loudly so a user mis-configuring the
-        // deck does not silently get the legacy Ohmic interpretation.
+        // The Newton coupled-DD path supports electrostatic-only metal gates,
+        // but does not yet construct Schottky-aware carrier boundary states.
+        // Fail loudly rather than silently using the legacy Ohmic model.
         std::string firstSchottky;
-        for (const auto& [name, _] : contactSpecs) {
-            firstSchottky = name;
-            break;
+        for (const auto& [name, spec] : contactSpecs) {
+            if (spec.type == ContactType::Schottky) {
+                firstSchottky = name;
+                break;
+            }
         }
-        throw std::runtime_error(
-            "DCSweep: solver.method='newton' or 'gummel_newton' does not yet support "
-            "Schottky contacts (contact '" + firstSchottky + "'). Use solver.method='gummel' for the "
-            "Schottky prototype, or switch the contact to type='ohmic'.");
+        if (!firstSchottky.empty()) {
+            throw std::runtime_error(
+                "DCSweep: solver.method='newton' or 'gummel_newton' does not yet support "
+                "Schottky contacts (contact '" + firstSchottky + "'). Use solver.method='gummel' for the "
+                "Schottky prototype, or switch the contact to type='ohmic'.");
+        }
     }
 
     auto solvePoint = [&](Real voltage,
@@ -3163,8 +3538,10 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
             }
             if (solverMethod == SolverMethod::Newton) {
                 NewtonResult result = initial != nullptr
-                    ? runNewton(mesh, matdb, doping, biases, *initial, newton, fixedChargeSpecs, sheetChargeSpecs)
-                    : runNewton(mesh, matdb, doping, biases, newton, fixedChargeSpecs, sheetChargeSpecs);
+                    ? runNewton(mesh, matdb, doping, biases, *initial, newton,
+                                fixedChargeSpecs, sheetChargeSpecs, contactSpecs)
+                    : runNewton(mesh, matdb, doping, biases, newton,
+                                fixedChargeSpecs, sheetChargeSpecs, contactSpecs);
                 solverConverged = result.converged;
                 attempt.solverMethod = "newton";
                 attempt.gummelIterations = 0;
@@ -3213,9 +3590,11 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                     attempt.gummelIterations = 0;
                     result = initial != nullptr
                         ? runNewton(mesh, matdb, doping, biases, *initial,
-                                    handoffNewton, fixedChargeSpecs, sheetChargeSpecs)
+                                    handoffNewton, fixedChargeSpecs, sheetChargeSpecs,
+                                    contactSpecs)
                         : runNewton(mesh, matdb, doping, biases,
-                                    handoffNewton, fixedChargeSpecs, sheetChargeSpecs);
+                                    handoffNewton, fixedChargeSpecs, sheetChargeSpecs,
+                                    contactSpecs);
                     attempt.newtonFailureDiagnostics = result.failureDiagnostics;
                     attempt.newtonHistory = result.history;
                     attempt.newtonTrace = result.trace;
@@ -3253,7 +3632,9 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                         return attempt;
                     }
 
-                    gummelValidation = validateDDSolution(gummelInitial, mesh, biases, validationOptions);
+                    gummelValidation = validateDDSolution(
+                        gummelInitial, mesh, transportContactBiases(biases),
+                        validationOptions);
                     if (!gummelValidation.valid) {
                         attempt.ok = false;
                         attempt.solution = std::move(gummelInitial);
@@ -3264,7 +3645,8 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                     }
 
                     result = runNewton(mesh, matdb, doping, biases, gummelInitial,
-                                       handoffNewton, fixedChargeSpecs, sheetChargeSpecs);
+                                       handoffNewton, fixedChargeSpecs, sheetChargeSpecs,
+                                       contactSpecs);
                     attempt.newtonFailureDiagnostics = result.failureDiagnostics;
                     attempt.newtonHistory = result.history;
                     attempt.newtonTrace = result.trace;
@@ -3317,7 +3699,8 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
 
 
             const DDSolutionValidationResult validation =
-                validateDDSolution(sol, mesh, biases, validationOptions);
+                validateDDSolution(
+                    sol, mesh, transportContactBiases(biases), validationOptions);
             attempt.ok = solverConverged && validation.valid;
             attempt.solution = std::move(sol);
             attempt.validationDiagnostics = validation.diagnosticsString();
@@ -3451,7 +3834,7 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
     auto qfContactBiasesForVoltage = [&](Real voltage) {
         auto biases = baseBiases;
         biases[sweep.contact] = voltage;
-        return biases;
+        return transportContactBiases(biases);
     };
 
     auto appendQfBoundsDiagnostics = [](std::string diagnostics,
@@ -3470,21 +3853,26 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                                         const QfBoundsEvaluation& eval) {
         if (qfBoundsCsv == nullptr || eval.violations.empty())
             return;
+        const PhysicalUnitSystem& units = sweep.scaling.unitSystem();
         for (const QfBoundsViolation& violation : eval.violations) {
+            const Real x_m = units.internalLengthToMeters(violation.x);
+            const Real y_m = units.internalLengthToMeters(violation.y);
             qfBoundsCsv->writeRow({
                 std::to_string(pointIndex),
                 formatReal(voltage),
                 toString(sweep.diagnostics.qfBounds.mode),
                 action,
                 std::to_string(violation.nodeId),
-                formatReal(violation.x),
-                formatReal(violation.y),
-                formatReal(violation.x * 1.0e6),
-                formatReal(violation.y * 1.0e6),
+                formatReal(x_m),
+                formatReal(y_m),
+                formatReal(x_m * 1.0e6),
+                formatReal(y_m * 1.0e6),
                 violation.variable,
                 formatReal(violation.value),
                 formatReal(violation.lowerBound),
                 formatReal(violation.upperBound),
+                formatReal(violation.carrierDensity_m3),
+                formatReal(sweep.diagnostics.qfBounds.minCarrierDensity_m3),
                 formatReal(eval.margin_V)});
         }
     };
@@ -3906,6 +4294,653 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                 point.breakdownCriterion = "last_stable_before_nonconvergence";
             }
         }
+        if (converged && sweep.diagnostics.pathIonizationIntegrals.enabled) {
+            ImpactIonizationModelConfig pathImpactConfig = sweepImpactIonizationConfig;
+            if (sweep.diagnostics.pathIonizationIntegrals.drivingForce != "solver") {
+                pathImpactConfig.drivingForce =
+                    sweep.diagnostics.pathIonizationIntegrals.drivingForce;
+            }
+            const auto pathImpact = makeImpactIonizationModel(pathImpactConfig);
+            const auto records = detail::sgEdgeCurrentAvalancheSourceRecords(
+                pathImpactConfig,
+                *pathImpact,
+                mobilityConfig,
+                *sweepMobility,
+                sweepEdgeCells,
+                mesh,
+                doping,
+                sweepCellMaterials,
+                sol.psi,
+                sol.phin,
+                sol.phip,
+                sol.n,
+                sol.p,
+                effectiveNi,
+                constants::kb * temperature_K / constants::q,
+                fieldFactor,
+                false,
+                sweepCarrierStatistics,
+                sweepNc,
+                sweepNv);
+            std::vector<PathIonizationSegment> samples;
+            samples.reserve(records.size());
+            const PhysicalUnitSystem& pathUnits = sweep.scaling.unitSystem();
+            for (const auto& record : records) {
+                const Node& edgeNode0 = mesh.getNode(record.node0);
+                const Node& edgeNode1 = mesh.getNode(record.node1);
+                const Real directionX = record.edgeLength > 0.0
+                    ? (edgeNode1.x - edgeNode0.x) / record.edgeLength : 0.0;
+                const Real directionY = record.edgeLength > 0.0
+                    ? (edgeNode1.y - edgeNode0.y) / record.edgeLength : 0.0;
+                samples.push_back({
+                    record.edgeId,
+                    record.node0,
+                    record.node1,
+                    pathUnits.internalLengthToMeters(record.edgeLength),
+                    pathUnits.internalInverseLengthToMInv(record.electronAlpha),
+                    pathUnits.internalInverseLengthToMInv(record.holeAlpha),
+                    pathUnits.internalElectricFieldToVPerM(
+                        std::abs(record.electricField)),
+                    pathUnits.internalElectricFieldToVPerM(
+                        record.electronImpactField),
+                    pathUnits.internalElectricFieldToVPerM(
+                        record.holeImpactField),
+                    pathUnits.internalElectricFieldToVPerM(
+                        record.electricFieldVector.x()),
+                    pathUnits.internalElectricFieldToVPerM(
+                        record.electricFieldVector.y()),
+                    directionX,
+                    directionY});
+            }
+            const auto& pathCfg = sweep.diagnostics.pathIonizationIntegrals;
+            PathIonizationIntegrationOptions pathIntegrationOptions;
+            pathIntegrationOptions.electronMinimumDrivingField =
+                pathCfg.electronStopField_V_per_m;
+            pathIntegrationOptions.holeMinimumDrivingField =
+                pathCfg.holeStopField_V_per_m;
+            pathIntegrationOptions.meanDefinition =
+                pathCfg.meanDefinition == "carrier_alpha_length_arithmetic"
+                ? MeanIonizationDefinition::CarrierAlphaLengthArithmetic
+                : MeanIonizationDefinition::CarrierIntegralArithmetic;
+            const std::size_t analysisLimit = pathCfg.maxPaths == 0
+                ? 0
+                : std::max(pathCfg.maxPaths, pathCfg.breakRank);
+            PathIonizationAnalysis analysis;
+            if (pathCfg.tracingMode == "continuous_cell") {
+                if (!detail::usesSentaurusEparallelAvalancheDrivingForce(
+                        pathImpactConfig)) {
+                    throw std::invalid_argument(
+                        "DCSweep: continuous_cell path tracing currently "
+                        "requires driving_force='eparallel'.");
+                }
+                std::vector<Point2> nodeElectricVector(mesh.numNodes(), Point2::Zero());
+                std::vector<Point2> nodeElectronCurrent(mesh.numNodes(), Point2::Zero());
+                std::vector<Point2> nodeHoleCurrent(mesh.numNodes(), Point2::Zero());
+                std::vector<Real> nodeVectorWeight(mesh.numNodes(), 0.0);
+                const bool useColocatedNodalPathPhysics =
+                    pathImpactConfig.sourceMappingMode == "nodal_eparallel_p1";
+                for (const auto& record : records) {
+                    if (!(record.electronMobility > 0.0) &&
+                        !(record.holeMobility > 0.0)) {
+                        continue;
+                    }
+                    const Real weight = std::max(record.edgeLength, Real{1.0e-30});
+                    for (std::size_t endpoint = 0; endpoint < 2; ++endpoint) {
+                        const Index node = endpoint == 0 ? record.node0 : record.node1;
+                        const Point2 electric = useColocatedNodalPathPhysics
+                            ? (endpoint == 0
+                                ? record.node0ElectricFieldVector
+                                : record.node1ElectricFieldVector)
+                            : record.electricFieldVector;
+                        const Point2 electronCurrent = useColocatedNodalPathPhysics
+                            ? (endpoint == 0
+                                ? record.electronNode0CurrentVector
+                                : record.electronNode1CurrentVector)
+                            : record.electronCurrentVector;
+                        const Point2 holeCurrent = useColocatedNodalPathPhysics
+                            ? (endpoint == 0
+                                ? record.holeNode0CurrentVector
+                                : record.holeNode1CurrentVector)
+                            : record.holeCurrentVector;
+                        nodeElectricVector[node] += weight * electric;
+                        nodeElectronCurrent[node] += weight * electronCurrent;
+                        nodeHoleCurrent[node] += weight * holeCurrent;
+                        nodeVectorWeight[node] += weight;
+                    }
+                }
+                std::vector<Point2> recoveredNodeElectric(
+                    mesh.numNodes(), Point2::Zero());
+                std::vector<Point2> recoveredNodeElectronDirection(
+                    mesh.numNodes(), Point2::Zero());
+                std::vector<Point2> recoveredNodeHoleDirection(
+                    mesh.numNodes(), Point2::Zero());
+                std::vector<Point2> recoveredNodeElectronCurrent(
+                    mesh.numNodes(), Point2::Zero());
+                std::vector<Point2> recoveredNodeHoleCurrent(
+                    mesh.numNodes(), Point2::Zero());
+                std::vector<Real> recoveredNodeElectricWeight(
+                    mesh.numNodes(), 0.0);
+                for (Index cellId = 0; cellId < mesh.numCells(); ++cellId) {
+                    if (cellId >= sweepCellMaterials.size() ||
+                        !detail::isTransportMaterial(sweepCellMaterials[cellId])) {
+                        continue;
+                    }
+                    const Cell& cell = mesh.getCell(cellId);
+                    if (cell.type != CellType::Tri3 || cell.node_ids.size() != 3)
+                        continue;
+                    bool validGradient = false;
+                    Real doubleArea = 0.0;
+                    const Point2 potentialGradient = detail::cellScalarGradient(
+                        mesh, cell, [&](Index node) {
+                            return sol.psi(static_cast<int>(node));
+                        }, validGradient, doubleArea);
+                    if (!validGradient)
+                        continue;
+                    bool validElectronGradient = false;
+                    Real electronDoubleArea = 0.0;
+                    const Point2 electronQfGradient = detail::cellScalarGradient(
+                        mesh, cell, [&](Index node) {
+                            return sol.phin(static_cast<int>(node));
+                        }, validElectronGradient, electronDoubleArea);
+                    bool validHoleGradient = false;
+                    Real holeDoubleArea = 0.0;
+                    const Point2 holeQfGradient = detail::cellScalarGradient(
+                        mesh, cell, [&](Index node) {
+                            return sol.phip(static_cast<int>(node));
+                        }, validHoleGradient, holeDoubleArea);
+                    const Point2 cellElectric = -fieldFactor * potentialGradient;
+                    std::array<Point2, 3> points{};
+                    for (std::size_t local = 0; local < 3; ++local) {
+                        const Node& node = mesh.getNode(cell.node_ids[local]);
+                        points[local] = Point2{node.x, node.y};
+                    }
+                    for (std::size_t local = 0; local < 3; ++local) {
+                        const Point2 incoming =
+                            points[(local + 2) % 3] - points[local];
+                        const Point2 outgoing =
+                            points[(local + 1) % 3] - points[local];
+                        const Real weight = std::max(
+                            detail::angleBetween(incoming, outgoing),
+                            Real{1.0e-30});
+                        const Index node = cell.node_ids[local];
+                        recoveredNodeElectric[node] += weight * cellElectric;
+                        if (validElectronGradient) {
+                            recoveredNodeElectronDirection[node] +=
+                                weight * (-electronQfGradient);
+                        }
+                        if (validHoleGradient) {
+                            recoveredNodeHoleDirection[node] +=
+                                weight * (-holeQfGradient);
+                        }
+                        recoveredNodeElectricWeight[node] += weight;
+                    }
+                }
+                std::vector<Real> nodeElectronDrive(mesh.numNodes(), 0.0);
+                std::vector<Real> nodeHoleDrive(mesh.numNodes(), 0.0);
+                std::vector<Real> nodeElectronAlpha(mesh.numNodes(), 0.0);
+                std::vector<Real> nodeHoleAlpha(mesh.numNodes(), 0.0);
+                std::vector<Point2> nodeElectricField(
+                    mesh.numNodes(), Point2::Zero());
+                Real maximumElectronCurrent = 0.0;
+                Real maximumHoleCurrent = 0.0;
+                Real maximumElectronQfGradient = 0.0;
+                Real maximumHoleQfGradient = 0.0;
+                for (Index node = 0; node < mesh.numNodes(); ++node) {
+                    if (!(nodeVectorWeight[node] > 0.0))
+                        continue;
+                    const Real inverseWeight = 1.0 / nodeVectorWeight[node];
+                    Point2 electric = inverseWeight * nodeElectricVector[node];
+                    if (!useColocatedNodalPathPhysics &&
+                        recoveredNodeElectricWeight[node] > 0.0) {
+                        electric = recoveredNodeElectric[node] /
+                                   recoveredNodeElectricWeight[node];
+                    }
+                    Point2 electronCurrent = inverseWeight * nodeElectronCurrent[node];
+                    Point2 holeCurrent = inverseWeight * nodeHoleCurrent[node];
+                    recoveredNodeElectronCurrent[node] = electronCurrent;
+                    recoveredNodeHoleCurrent[node] = holeCurrent;
+                    maximumElectronCurrent = std::max(
+                        maximumElectronCurrent, electronCurrent.norm());
+                    maximumHoleCurrent = std::max(
+                        maximumHoleCurrent, holeCurrent.norm());
+                    if (recoveredNodeElectricWeight[node] > 0.0) {
+                        recoveredNodeElectronDirection[node] /=
+                            recoveredNodeElectricWeight[node];
+                        recoveredNodeHoleDirection[node] /=
+                            recoveredNodeElectricWeight[node];
+                        maximumElectronQfGradient = std::max(
+                            maximumElectronQfGradient,
+                            recoveredNodeElectronDirection[node].norm());
+                        maximumHoleQfGradient = std::max(
+                            maximumHoleQfGradient,
+                            recoveredNodeHoleDirection[node].norm());
+                    }
+                    if (!useColocatedNodalPathPhysics &&
+                        recoveredNodeElectricWeight[node] > 0.0) {
+                        electronCurrent = recoveredNodeElectronDirection[node];
+                        holeCurrent = recoveredNodeHoleDirection[node];
+                    }
+                    nodeElectricField[node] = electric;
+                    nodeElectronDrive[node] =
+                        detail::sentaurusEparallelAvalancheDrivingField(
+                            electric, electronCurrent);
+                    nodeHoleDrive[node] =
+                        detail::sentaurusEparallelAvalancheDrivingField(
+                            electric, holeCurrent);
+                    nodeElectronAlpha[node] =
+                        pathImpact->electronCoefficient(nodeElectronDrive[node]);
+                    nodeHoleAlpha[node] =
+                        pathImpact->holeCoefficient(nodeHoleDrive[node]);
+                }
+
+                std::map<std::pair<Index, Index>, std::size_t>
+                    transportEdgeUseCount;
+                for (Index cellId = 0; cellId < mesh.numCells(); ++cellId) {
+                    if (cellId >= sweepCellMaterials.size() ||
+                        !detail::isTransportMaterial(sweepCellMaterials[cellId])) {
+                        continue;
+                    }
+                    const Cell& cell = mesh.getCell(cellId);
+                    if (cell.type != CellType::Tri3 || cell.node_ids.size() != 3)
+                        continue;
+                    for (std::size_t local = 0; local < 3; ++local) {
+                        const Index a = cell.node_ids[local];
+                        const Index b = cell.node_ids[(local + 1) % 3];
+                        ++transportEdgeUseCount[std::minmax(a, b)];
+                    }
+                }
+                std::vector<bool> transportBoundaryNode(mesh.numNodes(), false);
+                for (const auto& [edge, count] : transportEdgeUseCount) {
+                    if (count == 1) {
+                        transportBoundaryNode[edge.first] = true;
+                        transportBoundaryNode[edge.second] = true;
+                    }
+                }
+                // P1 reconstruction can place one surface maximum one or two
+                // mesh edges inside the literal boundary. Use the same
+                // two-ring neighborhood as numbered peak grouping so every
+                // alias of that surface peak selects the same tracing family.
+                std::vector<bool> transportBoundaryBand = transportBoundaryNode;
+                for (int ring = 0; ring < 2; ++ring) {
+                    std::vector<bool> expanded = transportBoundaryBand;
+                    for (const auto& [edge, count] : transportEdgeUseCount) {
+                        (void)count;
+                        if (transportBoundaryBand[edge.first] ||
+                            transportBoundaryBand[edge.second]) {
+                            expanded[edge.first] = true;
+                            expanded[edge.second] = true;
+                        }
+                    }
+                    transportBoundaryBand = std::move(expanded);
+                }
+
+                std::vector<CellIonizationSample> cellSamples;
+                cellSamples.reserve(mesh.numCells());
+                for (Index cellId = 0; cellId < mesh.numCells(); ++cellId) {
+                    if (cellId >= sweepCellMaterials.size() ||
+                        !detail::isTransportMaterial(sweepCellMaterials[cellId])) {
+                        continue;
+                    }
+                    const Cell& cell = mesh.getCell(cellId);
+                    if (cell.type != CellType::Tri3 || cell.node_ids.size() != 3)
+                        continue;
+                    bool validGradient = false;
+                    Real doubleArea = 0.0;
+                    const Point2 potentialGradient = detail::cellScalarGradient(
+                        mesh, cell, [&](Index node) {
+                            return sol.psi(static_cast<int>(node));
+                        }, validGradient, doubleArea);
+                    if (!validGradient)
+                        continue;
+
+                    std::array<Point2, 3> internalPoints{};
+                    std::size_t bestVertex = 0;
+                    Real bestAngle = -1.0;
+                    for (std::size_t local = 0; local < 3; ++local) {
+                        const Node& node = mesh.getNode(cell.node_ids[local]);
+                        internalPoints[local] = Point2{node.x, node.y};
+                    }
+                    for (std::size_t local = 0; local < 3; ++local) {
+                        const Point2 incoming =
+                            internalPoints[(local + 2) % 3] - internalPoints[local];
+                        const Point2 outgoing =
+                            internalPoints[(local + 1) % 3] - internalPoints[local];
+                        const Real angle = detail::angleBetween(incoming, outgoing);
+                        if (angle > bestAngle) {
+                            bestAngle = angle;
+                            bestVertex = local;
+                        }
+                    }
+                    const Index bestNode = cell.node_ids[bestVertex];
+                    CellIonizationSample sample;
+                    sample.cellId = cellId;
+                    sample.electricFieldVPerM = Point2{
+                        pathUnits.internalElectricFieldToVPerM(
+                            -potentialGradient.x() * fieldFactor),
+                        pathUnits.internalElectricFieldToVPerM(
+                            -potentialGradient.y() * fieldFactor)};
+                    sample.electronDrivingField =
+                        pathUnits.internalElectricFieldToVPerM(
+                            nodeElectronDrive[bestNode]);
+                    sample.holeDrivingField =
+                        pathUnits.internalElectricFieldToVPerM(
+                            nodeHoleDrive[bestNode]);
+                    sample.electronAlpha =
+                        pathUnits.internalInverseLengthToMInv(
+                            nodeElectronAlpha[bestNode]);
+                    sample.holeAlpha =
+                        pathUnits.internalInverseLengthToMInv(
+                            nodeHoleAlpha[bestNode]);
+                    for (std::size_t local = 0; local < 3; ++local) {
+                        const Index nodeId = cell.node_ids[local];
+                        sample.nodeIds[local] = nodeId;
+                        sample.verticesM[local] = Point2{
+                            pathUnits.internalLengthToMeters(internalPoints[local].x()),
+                            pathUnits.internalLengthToMeters(internalPoints[local].y())};
+                        sample.potentials[local] = sol.psi(static_cast<int>(nodeId));
+                        sample.vertexElectricFieldsVPerM[local] = Point2{
+                            pathUnits.internalElectricFieldToVPerM(
+                                nodeElectricField[nodeId].x()),
+                            pathUnits.internalElectricFieldToVPerM(
+                                nodeElectricField[nodeId].y())};
+                        const Point2 electronQfDirection =
+                            recoveredNodeElectronDirection[nodeId];
+                        const Point2 holeQfDirection =
+                            recoveredNodeHoleDirection[nodeId];
+                        sample.vertexElectronCurrentDirections[local] =
+                            recoveredNodeElectronCurrent[nodeId].norm() >=
+                                    pathCfg.tracingCurrentRelativeFloor *
+                                        maximumElectronCurrent
+                                ? recoveredNodeElectronCurrent[nodeId]
+                                : nodeElectricField[nodeId];
+                        sample.vertexHoleCurrentDirections[local] =
+                            recoveredNodeHoleCurrent[nodeId].norm() >=
+                                    pathCfg.tracingCurrentRelativeFloor *
+                                        maximumHoleCurrent
+                                ? recoveredNodeHoleCurrent[nodeId]
+                                : nodeElectricField[nodeId];
+                        sample.vertexElectronQfDirections[local] =
+                            electronQfDirection;
+                        sample.vertexHoleQfDirections[local] = holeQfDirection;
+                        sample.vertexElectronQfRelativeMagnitude[local] =
+                            maximumElectronQfGradient > 0.0
+                                ? electronQfDirection.norm() /
+                                      maximumElectronQfGradient
+                                : 0.0;
+                        sample.vertexHoleQfRelativeMagnitude[local] =
+                            maximumHoleQfGradient > 0.0
+                                ? holeQfDirection.norm() / maximumHoleQfGradient
+                                : 0.0;
+                        sample.vertexNetDoping[local] = doping.netDoping(nodeId);
+                        sample.vertexTransportBoundary[local] =
+                            transportBoundaryBand[nodeId];
+                        sample.vertexTracingDirections[local] =
+                            pathCfg.tracingVector == "electron_current"
+                                ? (recoveredNodeElectronCurrent[nodeId].norm() >=
+                                           pathCfg.tracingCurrentRelativeFloor *
+                                               maximumElectronCurrent
+                                       ? recoveredNodeElectronCurrent[nodeId]
+                                       : nodeElectricField[nodeId])
+                                : pathCfg.tracingVector == "hole_current"
+                                    ? (recoveredNodeHoleCurrent[nodeId].norm() >=
+                                               pathCfg.tracingCurrentRelativeFloor *
+                                                   maximumHoleCurrent
+                                           ? recoveredNodeHoleCurrent[nodeId]
+                                           : nodeElectricField[nodeId])
+                                    : pathCfg.tracingVector == "electron_qf_gradient"
+                                        ? recoveredNodeElectronDirection[nodeId]
+                                        : pathCfg.tracingVector == "hole_qf_gradient"
+                                            ? recoveredNodeHoleDirection[nodeId]
+                                            : nodeElectricField[nodeId];
+                    }
+                    cellSamples.push_back(std::move(sample));
+                }
+                analysis = analyzeContinuousCellIonizationPaths(
+                    static_cast<std::size_t>(mesh.numNodes()),
+                    cellSamples,
+                    analysisLimit,
+                    pathCfg.stopField_V_per_m,
+                    pathCfg.seedField_V_per_m,
+                    pathCfg.tracingDirection == "along_vector"
+                        ? ContinuousPathDirection::AlongVector
+                        : pathCfg.tracingDirection == "opposite_vector"
+                            ? ContinuousPathDirection::OppositeVector
+                            : ContinuousPathDirection::Bidirectional,
+                    pathIntegrationOptions,
+                    pathCfg.pathRetention == "all_seed_trajectories"
+                        ? ContinuousPathRetention::AllSeedTrajectories
+                        : pathCfg.pathRetention == "numbered_peak_groups"
+                        ? ContinuousPathRetention::NumberedPeakGroups
+                        : pathCfg.pathRetention == "corridor_deduplicated"
+                        ? ContinuousPathRetention::CorridorDeduplicated
+                        : ContinuousPathRetention::DistinctLocalMaxima,
+                    pathCfg.seedMode == "nodal_local_maxima"
+                        ? ContinuousPathSeedMode::NodalLocalMaxima
+                        : ContinuousPathSeedMode::CellLocalMaxima,
+                    pathCfg.tracingVector == "cell_electric_field"
+                        ? ContinuousPathTracingPolicy::CellElectricField
+                    : pathCfg.tracingVector == "electric_field_rk4"
+                        ? ContinuousPathTracingPolicy::P1ElectricFieldRungeKutta
+                    : pathCfg.tracingVector == "sentaurus_eparallel_adaptive"
+                        ? ContinuousPathTracingPolicy::SentaurusEparallelAdaptive
+                        : ContinuousPathTracingPolicy::Configured,
+                    pathCfg.tracingQfRelativeFloor);
+            } else {
+                analysis = analyzeIonizationPaths(
+                    static_cast<std::size_t>(mesh.numNodes()),
+                    sol.psi,
+                    samples,
+                    analysisLimit,
+                    pathCfg.stopField_V_per_m,
+                    pathIntegrationOptions);
+            }
+            if (!analysis.paths.empty()) {
+                point.extraFields.emplace_back(
+                    "path_ionization_max_electron",
+                    analysis.paths.front().integral.electron);
+                point.extraFields.emplace_back(
+                    "path_ionization_max_hole",
+                    analysis.paths.front().integral.hole);
+                point.extraFields.emplace_back(
+                    "path_ionization_max_mean",
+                    analysis.paths.front().integral.mean);
+            }
+            const Real rankedValue = pathCfg.breakOrdering == "carrier_integrals"
+                ? nthLargestCarrierIonizationIntegral(analysis, pathCfg.breakRank)
+                : nthLargestMeanIonizationIntegral(analysis, pathCfg.breakRank);
+            if (pathCfg.breakRank > 0) {
+                point.extraFields.emplace_back(
+                    "path_ionization_break_rank_value", rankedValue);
+                if (!point.breakdownDetected && rankedValue >= pathCfg.breakValue) {
+                    point.breakdownDetected = true;
+                    point.breakdownVoltage = point.bias;
+                    point.breakdownCriterion =
+                        "path_ionization_integral_rank_" +
+                        std::to_string(pathCfg.breakRank) + "_" +
+                        pathCfg.breakOrdering;
+                }
+            }
+            if (pathIonizationIntegralsCsv != nullptr) {
+                const Index invalidPathGroup = std::numeric_limits<Index>::max();
+                std::unordered_map<Index, std::size_t> physicalGroupRanks;
+                std::vector<std::size_t> physicalPathRanks(
+                    analysis.paths.size(), 0);
+                std::size_t nextPhysicalRank = 0;
+                for (std::size_t rank = 0; rank < analysis.paths.size(); ++rank) {
+                    const Index groupId = analysis.paths[rank].physicalPathGroupId;
+                    if (groupId == invalidPathGroup) {
+                        physicalPathRanks[rank] = ++nextPhysicalRank;
+                        continue;
+                    }
+                    auto [it, inserted] = physicalGroupRanks.emplace(
+                        groupId, nextPhysicalRank + 1);
+                    if (inserted)
+                        ++nextPhysicalRank;
+                    physicalPathRanks[rank] = it->second;
+                }
+                for (std::size_t rank = 0; rank < analysis.paths.size(); ++rank) {
+                    const IonizationPath& path = analysis.paths[rank];
+                    const bool isBreakRank =
+                        pathCfg.breakRank == physicalPathRanks[rank];
+                    Real pathLength = 0.0;
+                    Real electronAlphaLength = 0.0;
+                    Real holeAlphaLength = 0.0;
+                    Real maxPathField = 0.0;
+                    for (const PathIonizationSegment& segment : path.segments) {
+                        pathLength += segment.length;
+                        electronAlphaLength += segment.electronAlpha * segment.length;
+                        holeAlphaLength += segment.holeAlpha * segment.length;
+                        maxPathField = std::max(
+                            maxPathField, std::abs(segment.electricField));
+                    }
+                    pathIonizationIntegralsCsv->writeRow({
+                        std::to_string(points.size()),
+                        formatReal(point.bias),
+                        std::to_string(rank + 1),
+                        std::to_string(physicalPathRanks[rank]),
+                        std::to_string(path.seedEdgeId),
+                        path.seedCellId == std::numeric_limits<Index>::max()
+                            ? std::string{} : std::to_string(path.seedCellId),
+                        path.seedNodeId == std::numeric_limits<Index>::max()
+                            ? std::string{} : std::to_string(path.seedNodeId),
+                        formatReal(path.seedField),
+                        formatReal(path.saddleField),
+                        formatReal(path.peakProminence),
+                        formatReal(path.peakProminenceRatio),
+                        path.parentPeakNodeId == std::numeric_limits<Index>::max()
+                            ? std::string{} : std::to_string(path.parentPeakNodeId),
+                        path.physicalPathGroupId == std::numeric_limits<Index>::max()
+                            ? std::string{} : std::to_string(path.physicalPathGroupId),
+                        formatReal(path.seedElectronQfRelativeMagnitude),
+                        formatReal(path.seedHoleQfRelativeMagnitude),
+                        pathCfg.tracingMode,
+                        pathCfg.pathRetention,
+                        pathCfg.seedMode,
+                        pathCfg.tracingVector,
+                        formatReal(pathCfg.tracingQfRelativeFloor),
+                        std::to_string(path.nodes.size()),
+                        std::to_string(path.segments.size()),
+                        formatReal(pathLength),
+                        formatReal(path.integral.electronSupportLength),
+                        formatReal(path.integral.holeSupportLength),
+                        formatReal(electronAlphaLength),
+                        formatReal(holeAlphaLength),
+                        formatReal(maxPathField),
+                        pathCfg.drivingForce == "solver"
+                            ? pathImpactConfig.drivingForce
+                            : pathCfg.drivingForce,
+                        formatReal(pathCfg.stopField_V_per_m),
+                        formatReal(pathCfg.electronStopField_V_per_m),
+                        formatReal(pathCfg.holeStopField_V_per_m),
+                        pathCfg.meanDefinition,
+                        pathCfg.breakOrdering,
+                        formatReal(path.integral.electron),
+                        formatReal(path.integral.hole),
+                        formatReal(path.integral.mean),
+                        (pathCfg.breakOrdering == "path_mean" ? isBreakRank
+                                                             : rank == 0)
+                            ? "1" : "0",
+                        formatReal(pathCfg.breakValue),
+                        ((pathCfg.breakOrdering == "path_mean" && isBreakRank &&
+                             path.integral.mean >= pathCfg.breakValue) ||
+                            (pathCfg.breakOrdering == "carrier_integrals" &&
+                             rank == 0 && rankedValue >= pathCfg.breakValue))
+                            ? "1" : "0"});
+
+                    if (pathIonizationSegmentsCsv != nullptr) {
+                        Real cumulativeLength = 0.0;
+                        Real cumulativeElectronAlphaLength = 0.0;
+                        Real cumulativeHoleAlphaLength = 0.0;
+                        std::vector<PathIonizationSegment> prefix;
+                        prefix.reserve(path.segments.size());
+                        for (std::size_t segmentIndex = 0;
+                             segmentIndex < path.segments.size(); ++segmentIndex) {
+                            const PathIonizationSegment& segment =
+                                path.segments[segmentIndex];
+                            Real x0_um = 0.0;
+                            Real y0_um = 0.0;
+                            Real x1_um = 0.0;
+                            Real y1_um = 0.0;
+                            Real psi0 = 0.0;
+                            Real psi1 = 0.0;
+                            if (segment.explicitGeometry) {
+                                x0_um = segment.startPointM.x() * 1.0e6;
+                                y0_um = segment.startPointM.y() * 1.0e6;
+                                x1_um = segment.endPointM.x() * 1.0e6;
+                                y1_um = segment.endPointM.y() * 1.0e6;
+                                psi0 = segment.startPotential;
+                                psi1 = segment.endPotential;
+                            } else {
+                                const Node& node0 = mesh.getNode(segment.node0);
+                                const Node& node1 = mesh.getNode(segment.node1);
+                                x0_um = pathUnits.internalLengthToMeters(node0.x) * 1.0e6;
+                                y0_um = pathUnits.internalLengthToMeters(node0.y) * 1.0e6;
+                                x1_um = pathUnits.internalLengthToMeters(node1.x) * 1.0e6;
+                                y1_um = pathUnits.internalLengthToMeters(node1.y) * 1.0e6;
+                                psi0 = sol.psi[segment.node0];
+                                psi1 = sol.psi[segment.node1];
+                            }
+                            cumulativeLength += segment.length;
+                            const Real electronAlphaLength =
+                                segment.electronAlpha * segment.length;
+                            const Real holeAlphaLength =
+                                segment.holeAlpha * segment.length;
+                            cumulativeElectronAlphaLength += electronAlphaLength;
+                            cumulativeHoleAlphaLength += holeAlphaLength;
+                            prefix.push_back(segment);
+                            const PathIonizationIntegral prefixIntegral =
+                                integrateIonizationPath(
+                                    prefix, pathIntegrationOptions);
+                            pathIonizationSegmentsCsv->writeRow({
+                                std::to_string(points.size()),
+                                formatReal(point.bias),
+                                std::to_string(rank + 1),
+                                std::to_string(segmentIndex),
+                                std::to_string(path.seedEdgeId),
+                                path.seedCellId == std::numeric_limits<Index>::max()
+                                    ? std::string{} : std::to_string(path.seedCellId),
+                                path.seedNodeId == std::numeric_limits<Index>::max()
+                                    ? std::string{} : std::to_string(path.seedNodeId),
+                                std::to_string(segment.edgeId),
+                                segment.cellId == std::numeric_limits<Index>::max()
+                                    ? std::string{} : std::to_string(segment.cellId),
+                                std::to_string(segment.node0),
+                                std::to_string(segment.node1),
+                                formatReal(x0_um),
+                                formatReal(y0_um),
+                                formatReal(x1_um),
+                                formatReal(y1_um),
+                                formatReal(psi0),
+                                formatReal(psi1),
+                                formatReal(segment.length),
+                                formatReal(cumulativeLength),
+                                formatReal(segment.electricField),
+                                formatReal(segment.electronDrivingField),
+                                formatReal(segment.holeDrivingField),
+                                formatReal(segment.electronAlpha),
+                                formatReal(segment.holeAlpha),
+                                formatReal(electronAlphaLength),
+                                formatReal(holeAlphaLength),
+                                formatReal(cumulativeElectronAlphaLength),
+                                formatReal(cumulativeHoleAlphaLength),
+                                formatReal(prefixIntegral.electron),
+                                formatReal(prefixIntegral.hole),
+                                formatReal(prefixIntegral.mean),
+                                formatReal(path.integral.electron),
+                                formatReal(path.integral.hole),
+                                formatReal(path.integral.mean),
+                                pathCfg.drivingForce == "solver"
+                                    ? pathImpactConfig.drivingForce
+                                    : pathCfg.drivingForce,
+                                pathCfg.tracingMode,
+                                pathCfg.pathRetention,
+                                pathCfg.seedMode,
+                                pathCfg.tracingVector});
+                        }
+                    }
+                }
+            }
+        }
         if (converged && recombinationDiagnosticsEnabled) {
             const SweepRecombinationDiagnostics diagnostics =
                 computeSweepRecombinationDiagnostics(sol, effectiveNi, sweepRecombinationConfig);
@@ -4143,8 +5178,13 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                     sol.p,
                     effectiveNi,
                     constants::kb * temperature_K / constants::q,
-                    fieldFactor);
-                terms = computeReleaseBVConfigAuditPointTerms(mesh, records);
+                    fieldFactor,
+                    false,
+                    sweepCarrierStatistics,
+                    sweepNc,
+                    sweepNv);
+                terms = computeReleaseBVConfigAuditPointTerms(
+                    mesh, records, sweep.scaling.unitSystem());
             }
             const ReleaseBVConfigAuditMetadata& metadata =
                 releaseBVConfigAuditMetadataOpt.value();
@@ -4203,7 +5243,9 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
         if (!converged && !point.newtonFailureDiagnostics.failureReason.empty())
             writeNewtonFailureDiagnostics(points.size(), point);
 
-        if (converged && newtonHistoryCsv != nullptr) {
+        // Failure analysis needs the accepted iterations leading up to a
+        // rejected Newton step just as much as successful points do.
+        if (newtonHistoryCsv != nullptr) {
             const std::size_t pointIndex = points.size();
             for (const NewtonIterationInfo& info : attempt.newtonHistory) {
                 newtonHistoryCsv->writeRow({
@@ -4327,6 +5369,7 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                     temperature_K,
                     sol,
                     effectiveNi,
+                    sweepCarrierStatistics,
                     sweepRecombinationConfig,
                     continuityBalanceContacts,
                     sweep.scaling);
@@ -4378,7 +5421,11 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                     sol.p,
                     effectiveNi,
                     constants::kb * temperature_K / constants::q,
-                    fieldFactor);
+                    fieldFactor,
+                    false,
+                    sweepCarrierStatistics,
+                    sweepNc,
+                    sweepNv);
                 for (const auto& record : records)
                     sgAvalancheSourceTotal += record.edgeSourceIntegral;
             }
@@ -4428,7 +5475,10 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                     effectiveNi,
                     constants::kb * temperature_K / constants::q,
                     fieldFactor,
-                    true);
+                    true,
+                    sweepCarrierStatistics,
+                    sweepNc,
+                    sweepNv);
             for (const detail::SgEdgeCurrentAvalancheSourceRecord& record : records) {
                 const Node& node0 = mesh.getNode(record.node0);
                 const Node& node1 = mesh.getNode(record.node1);
@@ -4476,9 +5526,19 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                     formatReal(record.electronSourceIntegral),
                     formatReal(record.holeSourceIntegral),
                     formatReal(record.edgeSourceIntegral),
+                    formatReal(record.electronNode0SourceIntegral),
+                    formatReal(record.electronNode1SourceIntegral),
+                    formatReal(record.holeNode0SourceIntegral),
+                    formatReal(record.holeNode1SourceIntegral),
                     formatReal(record.node0SourceIntegral),
                     formatReal(record.node1SourceIntegral),
                     classifySgAvalancheEdge(mesh, sweepEdgeCells, record),
+                    record.electronSgUsesFermiDirac ? "1" : "0",
+                    formatReal(record.electronSgGeneralizedEinsteinFactor),
+                    formatReal(record.electronSgGeneralizedBernoulliArgument),
+                    record.holeSgUsesFermiDirac ? "1" : "0",
+                    formatReal(record.holeSgGeneralizedEinsteinFactor),
+                    formatReal(record.holeSgGeneralizedBernoulliArgument),
                     formatReal(record.electronSgFluxDecomposition.ni0),
                     formatReal(record.electronSgFluxDecomposition.ni1),
                     formatReal(record.electronSgFluxDecomposition.n0),
@@ -4607,7 +5667,10 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                     sol.p,
                     effectiveNi,
                     constants::kb * temperature_K / constants::q,
-                    fieldFactor);
+                    fieldFactor,
+                    sweepCarrierStatistics,
+                    sweepNc,
+                    sweepNv);
             Real assembledTotal = 0.0;
             for (Real value : assembledSource)
                 assembledTotal += value;
@@ -4717,7 +5780,11 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                     sol.p,
                     effectiveNi,
                     constants::kb * temperature_K / constants::q,
-                    fieldFactor);
+                    fieldFactor,
+                    false,
+                    sweepCarrierStatistics,
+                    sweepNc,
+                    sweepNv);
             const std::vector<Real> solverSourceIntegrals =
                 detail::currentDensityAvalancheSourceIntegrals(
                     sweepImpactIonizationConfig,
@@ -4735,7 +5802,10 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                     sol.p,
                     effectiveNi,
                     constants::kb * temperature_K / constants::q,
-                    fieldFactor);
+                    fieldFactor,
+                    sweepCarrierStatistics,
+                    sweepNc,
+                    sweepNv);
 
             Real solverSourceIntegralTotal = 0.0;
             for (Real value : solverSourceIntegrals)
@@ -4747,6 +5817,11 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
             constexpr Real M2ToCm2 = 1.0e4;
             constexpr Real PerM3ToPerCm3 = 1.0e-6;
             constexpr Real PerMeterToPerMicron = 1.0e-6;
+            const PhysicalUnitSystem& auditUnits = sweep.scaling.unitSystem();
+            const Real sourceIntegralPerInternalToPerMPerS =
+                auditUnits.internalInverseLengthToMInv(1.0) *
+                auditUnits.internalContinuityParticleFluxToPerM2PerS(1.0) *
+                auditUnits.areaM2PerInternal();
 
             for (const detail::SgEdgeCurrentAvalancheSourceRecord& record : records) {
                 const Node& node0 = mesh.getNode(record.node0);
@@ -4758,20 +5833,26 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                 const Real alphaN_cm_inv = sweep.scaling.unitSystem().internalInverseLengthToMInv(record.electronAlpha) * InvMToInvCm;
                 const Real alphaP_cm_inv = sweep.scaling.unitSystem().internalInverseLengthToMInv(record.holeAlpha) * InvMToInvCm;
                 const Real jn_A_per_cm2 =
-                    constants::q * record.electronFluxProxy * APerM2ToAPerCm2;
+                    constants::q * auditUnits.internalContinuityParticleFluxToPerM2PerS(
+                        record.electronFluxProxy) * APerM2ToAPerCm2;
                 const Real jp_A_per_cm2 =
-                    constants::q * record.holeFluxProxy * APerM2ToAPerCm2;
+                    constants::q * auditUnits.internalContinuityParticleFluxToPerM2PerS(
+                        record.holeFluxProxy) * APerM2ToAPerCm2;
                 const Real gN_cm3_s = alphaN_cm_inv * jn_A_per_cm2 / constants::q;
                 const Real gP_cm3_s = alphaP_cm_inv * jp_A_per_cm2 / constants::q;
-                const Real gTotalFromSource_cm3_s = record.edgeAreaProxy > 0.0
-                    ? (record.edgeSourceIntegral / record.edgeAreaProxy) * PerM3ToPerCm3
+                const Real sourceIntegralPerMPerS =
+                    record.edgeSourceIntegral * sourceIntegralPerInternalToPerMPerS;
+                const Real areaM2 =
+                    record.edgeAreaProxy * auditUnits.areaM2PerInternal();
+                const Real gTotalFromSource_cm3_s = areaM2 > 0.0
+                    ? (sourceIntegralPerMPerS / areaM2) * PerM3ToPerCm3
                     : 0.0;
                 const Real gReconstructed_cm3_s = gN_cm3_s + gP_cm3_s;
                 const Real closureError =
                     relativeDifference(gTotalFromSource_cm3_s, gReconstructed_cm3_s);
                 const Real area_cm2 = record.edgeAreaProxy * sweep.scaling.unitSystem().areaM2PerInternal() * M2ToCm2;
-                const Real qG_A_per_um =
-                    constants::q * record.edgeSourceIntegral * PerMeterToPerMicron;
+                const Real qG_A_per_um = constants::q * sourceIntegralPerMPerS *
+                    PerMeterToPerMicron;
 
                 avalancheInternalSourceAuditCsv->writeRow({
                     "edge",
@@ -4799,7 +5880,8 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                 avalancheInternalSourceAuditSummary.qGInternal_A_per_um += qG_A_per_um;
             }
             avalancheInternalSourceAuditSummary.qGSolver_A_per_um +=
-                constants::q * solverSourceIntegralTotal * PerMeterToPerMicron;
+                constants::q * solverSourceIntegralTotal *
+                sourceIntegralPerInternalToPerMPerS * PerMeterToPerMicron;
         }
 
         if (converged && sweep.writeVtk) {
@@ -4816,7 +5898,9 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                                sweepRecombinationConfig,
                                sweepImpactIonizationConfig,
                                sweepBgnConfig,
-                               temperature_K);
+                               temperature_K,
+                               sweep.scaling,
+                               sweepCarrierStatistics);
         }
         if (converged && !sweep.writeStateFile.empty())
             writeDDSolutionStateCsv(sweep.writeStateFile, sol, sweep.scaling);
@@ -4900,7 +5984,8 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
             initializationBiases,
             *initializationNewton,
             fixedChargeSpecs,
-            sheetChargeSpecs);
+            sheetChargeSpecs,
+            contactSpecs);
         const NewtonPoissonBlockInitialization initialization =
             initializer.buildPoissonBlockInitialization();
         initialState = std::make_unique<DDSolution>(initialization.poissonBlockInitial);
@@ -5062,6 +6147,11 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
 
             recordPoint(recordedVoltage, attempt, ok, attemptedStep, acceptedStep, retryCount,
                         failureReason, validationDiagnostics);
+            if (ok && !points.empty() && points.back().breakdownDetected &&
+                points.back().breakdownCriterion.rfind(
+                    "path_ionization_integral_rank_", 0) == 0) {
+                return finishResult();
+            }
             if (!ok) {
                 if (sweep.stopOnFailure) {
                     return finishResult();
@@ -5153,7 +6243,8 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
             baseBiases,
             newton,
             fixedChargeSpecs,
-            sheetChargeSpecs);
+            sheetChargeSpecs,
+            contactSpecs);
         ArclengthSystem arclengthSystem = arclengthSolver.makeArclengthSystem(
             sweep.contact,
             sweep.continuation.arclength.biasFiniteDifferenceStep_V);
@@ -5229,7 +6320,7 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
             const DDSolutionValidationResult validation = validateDDSolution(
                 attempt.solution,
                 mesh,
-                arclengthBiases,
+                transportContactBiases(arclengthBiases),
                 validationOptions);
             attempt.validationDiagnostics = validation.diagnosticsString();
             if (!validation.valid) {
@@ -5273,6 +6364,11 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                 stepResult.retries,
                 std::string(),
                 attempt.validationDiagnostics);
+            if (!points.empty() && points.back().breakdownDetected &&
+                points.back().breakdownCriterion.rfind(
+                    "path_ionization_integral_rank_", 0) == 0) {
+                return finishResult();
+            }
             acceptPredictorHistory(previousSolution, currentSolutionBias, stepResult.state.lambda);
             previousSolution = std::move(attempt.solution);
             currentSolutionBias = stepResult.state.lambda;
@@ -5305,6 +6401,11 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
     stepControl.shrinkFactor = sweep.shrinkFactor;
     stepControl.maxRetries = sweep.maxRetries;
     stepControl.stopOnFailure = sweep.stopOnFailure;
+    stepControl.stopRequested = [&]() {
+        return !points.empty() && points.back().breakdownDetected &&
+            points.back().breakdownCriterion.rfind(
+                "path_ionization_integral_rank_", 0) == 0;
+    };
 
     detail::runDCSweepStepControl(
         stepControl,
@@ -5513,6 +6614,8 @@ void runDCSweepStepControl(const DCSweepStepControlConfig& cfg,
                 blockedByFailedStep = true;
                 break;
             }
+            if (cfg.stopRequested && cfg.stopRequested())
+                return;
         }
         nominalTarget += cfg.step;
     }
@@ -5523,6 +6626,8 @@ void runDCSweepStepControl(const DCSweepStepControlConfig& cfg,
                 return;
             break;
         }
+        if (cfg.stopRequested && cfg.stopRequested())
+            return;
     }
 }
 

@@ -1,5 +1,6 @@
 #include "vela/discretization/ScharfetterGummel.h"
 #include "vela/discretization/Bernoulli.h"
+#include "vela/physics/CarrierStatistics.h"
 
 #include <algorithm>
 #include <cmath>
@@ -444,6 +445,95 @@ Real sgHoleContinuityFluxFromQuasiFermiVariableNi(Real ni0,
         - (clampedExponent1 - endpointExponent1);
     return stableBernoulliDensityDifferenceFlux(
         ni1, clampedExponent1, -eta, coef, logLeftOverRight);
+}
+
+Real sgGeneralizedEinsteinFactor(Real density0,
+                                 Real density1,
+                                 Real eta0,
+                                 Real eta1)
+{
+    if (!(density0 > 0.0) || !(density1 > 0.0))
+        return 1.0;
+    const Real logDensityDifference = std::log(density1 / density0);
+    const Real etaDifference = eta1 - eta0;
+    if (std::abs(logDensityDifference) > 1.0e-10) {
+        const Real factor = etaDifference / logDensityDifference;
+        if (factor > 0.0 && std::isfinite(factor))
+            return factor;
+    }
+
+    // Secant limit is the generalized Einstein factor F_{1/2}/F'_{1/2}.
+    const Real etaMidpoint = 0.5 * (eta0 + eta1);
+    const Real derivative = fermiDiracHalfDerivative(etaMidpoint);
+    return derivative > 0.0
+        ? std::max<Real>(1.0, fermiDiracHalf(etaMidpoint) / derivative)
+        : 1.0;
+}
+
+namespace {
+
+Real stableGeneralizedFermiDifference(Real rightDensity,
+                                      Real rightBernoulliArgument,
+                                      Real logarithmicLeftOverRight,
+                                      Real coefficient)
+{
+    if (!(rightDensity > 0.0) || coefficient == 0.0 ||
+        logarithmicLeftOverRight == 0.0)
+        return 0.0;
+    if (!std::isfinite(logarithmicLeftOverRight) || !std::isfinite(coefficient))
+        return std::numeric_limits<Real>::quiet_NaN();
+
+    const Real logAbsRelativeDifference = logarithmicLeftOverRight > 50.0
+        ? logarithmicLeftOverRight
+            + std::log1p(-std::exp(-logarithmicLeftOverRight))
+        : std::log(std::abs(std::expm1(logarithmicLeftOverRight)));
+    const Real logMagnitude = std::log(std::abs(coefficient))
+        + logBernoulli(rightBernoulliArgument)
+        + std::log(rightDensity)
+        + logAbsRelativeDifference;
+    const Real sign = (coefficient > 0.0 ? 1.0 : -1.0)
+        * (logarithmicLeftOverRight > 0.0 ? 1.0 : -1.0);
+    return signedSaturatedExp(logMagnitude, sign);
+}
+
+} // namespace
+
+Real sgElectronFermiDiracContinuityFlux(
+    Real n0, Real n1, Real eta0, Real eta1, Real driftPotential,
+    Real quasiFermi0, Real quasiFermi1, Real Vt, Real coef)
+{
+    if (quasiFermi0 == quasiFermi1)
+        return 0.0;
+    if (!(Vt > 0.0))
+        return 0.0;
+    const Real factor = sgGeneralizedEinsteinFactor(n0, n1, eta0, eta1);
+    const Real argument = driftPotential / (Vt * factor);
+    const Real logLeftOverRight = (quasiFermi1 - quasiFermi0) / (Vt * factor);
+    const Real stable = stableGeneralizedFermiDifference(
+        n1, argument, logLeftOverRight, coef * factor);
+    if (std::isfinite(stable))
+        return stable;
+    return coef * factor *
+        (bernoulli(-argument) * n0 - bernoulli(argument) * n1);
+}
+
+Real sgHoleFermiDiracContinuityFlux(
+    Real p0, Real p1, Real eta0, Real eta1, Real driftPotential,
+    Real quasiFermi0, Real quasiFermi1, Real Vt, Real coef)
+{
+    if (quasiFermi0 == quasiFermi1)
+        return 0.0;
+    if (!(Vt > 0.0))
+        return 0.0;
+    const Real factor = sgGeneralizedEinsteinFactor(p0, p1, eta0, eta1);
+    const Real argument = driftPotential / (Vt * factor);
+    const Real logLeftOverRight = -(quasiFermi1 - quasiFermi0) / (Vt * factor);
+    const Real stable = stableGeneralizedFermiDifference(
+        p1, -argument, logLeftOverRight, coef * factor);
+    if (std::isfinite(stable))
+        return stable;
+    return coef * factor *
+        (bernoulli(argument) * p0 - bernoulli(-argument) * p1);
 }
 
 double sgElectronFlux(double n0, double n1, double dpsi, double Vt,

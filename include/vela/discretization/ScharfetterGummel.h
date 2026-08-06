@@ -228,6 +228,27 @@ Real sgHoleContinuityFluxFromQuasiFermiVariableNi(Real ni0,
                                                   bool includeNiGradientDrift = true);
 
 /**
+ * @brief Generalized SG flux for Fermi-Dirac electrons.
+ *
+ * Uses the Bessemoulin-Chatard modified thermal voltage
+ *   Vt* = Vt * (eta1-eta0) / (log(n1)-log(n0)).
+ * The driftPotential includes electrostatic, band-edge, and effective-ni/DOS
+ * changes.  The construction reduces to classical SG in the Boltzmann limit
+ * and preserves a flat quasi-Fermi level exactly.
+ */
+Real sgGeneralizedEinsteinFactor(
+    Real density0, Real density1, Real eta0, Real eta1);
+
+Real sgElectronFermiDiracContinuityFlux(
+    Real n0, Real n1, Real eta0, Real eta1, Real driftPotential,
+    Real quasiFermi0, Real quasiFermi1, Real Vt, Real coef);
+
+/// Hole counterpart of sgElectronFermiDiracContinuityFlux.
+Real sgHoleFermiDiracContinuityFlux(
+    Real p0, Real p1, Real eta0, Real eta1, Real driftPotential,
+    Real quasiFermi0, Real quasiFermi1, Real Vt, Real coef);
+
+/**
  * @brief Scharfetter-Gummel edge fluxes for drift-diffusion.
  *
  * Computes the conventional current density on a mesh edge connecting

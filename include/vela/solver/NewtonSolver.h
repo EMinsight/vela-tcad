@@ -9,6 +9,7 @@
 #include "vela/mesh/DeviceMesh.h"
 #include "vela/numerics/LineSearch.h"
 #include "vela/physics/BandgapNarrowing.h"
+#include "vela/physics/BandToBandTunnelingModel.h"
 #include "vela/physics/DopingModel.h"
 #include "vela/physics/ImpactIonizationModel.h"
 #include "vela/physics/MobilityModel.h"
@@ -127,6 +128,7 @@ struct NewtonConfig {
     Real poissonLineSearchStallRelativeIncrease = 1.0e-5; ///< Allowed best rejected residual increase at the Poisson floor.
     Real poissonLineSearchStallCarrierResidualFloor = 1.0e-6; ///< Carrier-block ceiling for Poisson-floor stall acceptance.
     Real poissonLineSearchStallContactMajorityQfDropLimit_V = 5.0e-11; ///< Maximum contact-edge majority-carrier quasi-Fermi drop allowed for Poisson-floor stall acceptance; 0 disables.
+    bool carrierRowQualifiedStallAcceptance = false; ///< Accept a non-decreasing line-search stall within the configured block/contact floors only when enforced local carrier rows are all satisfied.
     Real carrierRegularizationScale = 0.0; ///< Optional carrier-row diagonal regularization scale.
     CarrierDiagonalFloorRegularizationConfig carrierDiagonalFloor{}; ///< Optional absolute floor for depleted minority carrier-row diagonals.
     NewtonCarrierRowConvergenceConfig carrierRowConvergence{}; ///< Optional per-carrier-row local residual convergence check.
@@ -157,8 +159,10 @@ struct NewtonConfig {
     Real augerCp = 1.028e-43; ///< Hole Auger coefficient [m^6/s]
     MobilityModelConfig mobility{}; ///< Mobility model configuration
     std::vector<std::string> recombination = {"srh"}; ///< e.g. {"srh", "auger"}
+    BandToBandTunnelingConfig bandToBand{}; ///< Local pair generation, including Sentaurus E2.
     ImpactIonizationModelConfig impactIonization; ///< Avalanche generation model.
     BandgapNarrowingConfig bandgapNarrowing; ///< Effective ni model for high doping.
+    CarrierStatisticsConfig carrierStatistics{}; ///< Boltzmann or Fermi-Dirac density/contact/transport statistics.
 };
 
 struct NewtonBlockResidualInfo {
@@ -216,6 +220,14 @@ struct NewtonTopResidualNode {
     Real effectiveIntrinsicDensity = 0.0;
 };
 
+struct NewtonTopCarrierResidualNode {
+    Index nodeId = 0;
+    Real x = 0.0;
+    Real y = 0.0;
+    Real residual = 0.0;
+    Real absResidual = 0.0;
+};
+
 struct NewtonFailureDiagnostics {
     std::string failureReason;
     int failedIteration = 0;
@@ -230,6 +242,8 @@ struct NewtonFailureDiagnostics {
     Real bestRejectedContactMajorityQfDrop = 0.0;
     std::vector<LineSearchIterationInfo> lineSearchHistory;
     std::vector<NewtonTopResidualNode> topPoissonResidualNodes;
+    std::vector<NewtonTopCarrierResidualNode> topElectronResidualNodes;
+    std::vector<NewtonTopCarrierResidualNode> topHoleResidualNodes;
 };
 
 struct NewtonResult {
@@ -569,7 +583,8 @@ public:
                  const std::unordered_map<std::string, Real>& contactBiases,
                  NewtonConfig cfg = {},
                  std::vector<RegionFixedChargeSpec> fixedCharges = {},
-                 std::vector<InterfaceSheetChargeSpec> sheetCharges = {});
+                 std::vector<InterfaceSheetChargeSpec> sheetCharges = {},
+                 ContactSpecsMap contactSpecs = {});
 
     NewtonResult solve() const;
     NewtonPoissonBlockInitialization buildPoissonBlockInitialization() const;
@@ -647,6 +662,7 @@ private:
     const MaterialDatabase& matdb_;
     const DopingModel& doping_;
     std::unordered_map<std::string, Real> contactBiases_;
+    ContactSpecsMap contactSpecs_;
     NewtonConfig cfg_;
     std::vector<RegionFixedChargeSpec> fixedCharges_;
     std::vector<InterfaceSheetChargeSpec> sheetCharges_;
@@ -674,7 +690,8 @@ NewtonCarrierRowRecoveryResult recoverCarrierRowsWithGummelDensity(
     const NewtonConfig& cfg,
     const DDSolution& state,
     const std::vector<NewtonCarrierRowConvergenceViolation>& violations,
-    const NewtonCarrierRowRecoveryConfig& recovery);
+    const NewtonCarrierRowRecoveryConfig& recovery,
+    const ContactSpecsMap& contactSpecs = {});
 
 NewtonResult runNewton(const DeviceMesh& mesh,
                        const MaterialDatabase& matdb,
@@ -696,7 +713,8 @@ NewtonResult runNewton(const DeviceMesh& mesh,
                        const std::unordered_map<std::string, Real>& contactBiases,
                        const NewtonConfig& cfg,
                        std::vector<RegionFixedChargeSpec> fixedCharges,
-                       std::vector<InterfaceSheetChargeSpec> sheetCharges);
+                       std::vector<InterfaceSheetChargeSpec> sheetCharges,
+                       ContactSpecsMap contactSpecs = {});
 
 NewtonResult runNewton(const DeviceMesh& mesh,
                        const MaterialDatabase& matdb,
@@ -705,6 +723,7 @@ NewtonResult runNewton(const DeviceMesh& mesh,
                        const DDSolution& initial,
                        const NewtonConfig& cfg,
                        std::vector<RegionFixedChargeSpec> fixedCharges,
-                       std::vector<InterfaceSheetChargeSpec> sheetCharges);
+                       std::vector<InterfaceSheetChargeSpec> sheetCharges,
+                       ContactSpecsMap contactSpecs = {});
 
 } // namespace vela

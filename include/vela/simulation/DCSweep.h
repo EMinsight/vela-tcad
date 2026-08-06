@@ -52,6 +52,48 @@ struct SgAvalancheEdgeDiagnosticsConfig {
     std::string csvFile;
 };
 
+struct PathIonizationDiagnosticsConfig {
+    bool enabled = false;
+    std::string csvFile;
+    /// Optional ordered, one-row-per-segment path trace.  This preserves the
+    /// geometry and local field/alpha support needed for external path audits.
+    std::string segmentsCsvFile;
+    std::size_t maxPaths = 1;
+    std::size_t breakRank = 0;
+    Real breakValue = 1.0;
+    std::string drivingForce = "solver";
+    /// Stop tracing once the electrostatic field falls below this SI value.
+    /// Zero retains the complete monotone path to the mesh boundary.
+    Real stopField_V_per_m = 0.0;
+    /// Optional carrier-specific support cutoffs on the already traced shared
+    /// geometric path. Zero inherits the full path selected by stopField.
+    Real electronStopField_V_per_m = 0.0;
+    Real holeStopField_V_per_m = 0.0;
+    /// carrier_integral_arithmetic or carrier_alpha_length_arithmetic.
+    std::string meanDefinition = "carrier_integral_arithmetic";
+    /// path_mean (validated default) or carrier_integrals (audit alternative).
+    std::string breakOrdering = "path_mean";
+    std::string tracingMode = "edge_graph"; ///< edge_graph or continuous_cell.
+    /// Retain one path per local maximum by default; narrower compatibility
+    /// modes can merge nearby maxima.
+    std::string pathRetention = "distinct_local_maxima";
+    /// Reconstructed nodal maxima are the validated P1 path seeds; element
+    /// maxima remain available as an audit alternative.
+    std::string seedMode = "nodal_local_maxima";
+    /// Path tangent: reconstructed field, true SG current, or an explicit
+    /// quasi-Fermi-gradient diagnostic direction.
+    std::string tracingVector = "electric_field";
+    /// Carrier-current directions below this fraction of the global nodal
+    /// current maximum are numerically unobservable and fall back to E.
+    Real tracingCurrentRelativeFloor = 1.0e-8;
+    /// QF gradients below this fraction of the corresponding global nodal
+    /// maximum are directionally unobservable and fall back to electric field
+    /// in sentaurus_eparallel_adaptive mode.
+    Real tracingQfRelativeFloor = 5.1e-3;
+    std::string tracingDirection = "bidirectional"; ///< bidirectional/along_vector/opposite_vector.
+    Real seedField_V_per_m = 0.0; ///< Optional local-maximum qualification.
+};
+
 struct TriangleGssSourceDiagnosticsConfig {
     bool enabled = false;
     std::string csvFile;
@@ -106,6 +148,7 @@ struct SweepDiagnosticsConfig {
     TransportDiagnosticsConfig transport;
     ContinuityBalanceDiagnosticsConfig continuityBalance;
     SgAvalancheEdgeDiagnosticsConfig sgAvalancheEdges;
+    PathIonizationDiagnosticsConfig pathIonizationIntegrals;
     TriangleGssSourceDiagnosticsConfig triangleGssSources;
     BVProcessProbeDiagnosticsConfig bvProcessProbe;
     AvalancheInternalSourceCurrentAuditConfig avalancheInternalSourceCurrentAudit;

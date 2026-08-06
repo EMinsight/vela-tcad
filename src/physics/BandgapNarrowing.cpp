@@ -1,4 +1,5 @@
 #include "vela/physics/BandgapNarrowing.h"
+#include "vela/physics/CarrierStatistics.h"
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
@@ -56,6 +57,31 @@ Real effectiveIntrinsicDensity(Real ni, Real thermalVoltage, Real deltaEg)
     if (exponent >= maxExponent)
         return std::numeric_limits<Real>::max();
     return ni * std::exp(exponent);
+}
+
+Real fermiStatisticsBandgapCorrection(Real donors, Real acceptors,
+                                      Real Nc, Real Nv,
+                                      Real thermalVoltage)
+{
+    if (!(thermalVoltage > 0.0) || !std::isfinite(thermalVoltage))
+        throw std::invalid_argument(
+            "fermiStatisticsBandgapCorrection: thermal voltage must be positive and finite.");
+    if (!(Nc > 0.0) || !(Nv > 0.0) || !std::isfinite(Nc) || !std::isfinite(Nv))
+        throw std::invalid_argument(
+            "fermiStatisticsBandgapCorrection: density of states must be positive and finite.");
+
+    auto speciesCorrection = [](Real concentration, Real densityOfStates) {
+        if (!(concentration > 0.0) || !std::isfinite(concentration))
+            return Real{0.0};
+        const Real ratio = concentration / densityOfStates;
+        if (!(ratio > 0.0) || !std::isfinite(ratio))
+            return Real{0.0};
+        return std::max<Real>(
+            0.0, inverseFermiDiracHalf(ratio) - std::log(ratio));
+    };
+
+    return thermalVoltage * (
+        speciesCorrection(donors, Nc) + speciesCorrection(acceptors, Nv));
 }
 
 BandgapNarrowingConfig bandgapNarrowingConfig(

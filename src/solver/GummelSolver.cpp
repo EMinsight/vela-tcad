@@ -8,6 +8,7 @@
 #include "vela/physics/CarrierStatistics.h"
 #include "vela/io/VTKWriter.h"
 #include "vela/post/ElectricFieldDiagnostics.h"
+#include "vela/post/PathIonizationIntegral.h"
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <cmath>
@@ -65,24 +66,6 @@ inline double thermalVoltage(double T)
     return constants::kb * T / constants::q;
 }
 
-/// Charge-neutral equilibrium electron concentration from net doping and ni.
-/// Solves: n - p = Ndop,  n*p = ni^2  ->  n = Ndop/2 + hypot(Ndop/2, ni)
-inline double nEq(double Ndop, double ni)
-{
-    const double half = 0.5 * Ndop;
-    const double root = std::hypot(half, ni);
-
-    if (Ndop >= 0.0)
-        return half + root;
-
-    // std::hypot avoids overflow in the radicand. For p-type contacts with
-    // |Ndop| >> ni, half + root still suffers severe cancellation, so use
-    // the algebraically equivalent minority-carrier form
-    // n = ni^2 / p, with p = root - half, to preserve high-doping accuracy.
-    const double p_eq = root - half;
-    return (p_eq > 0.0) ? (ni * ni / p_eq) : 0.0;
-}
-
 Real ohmicContactNetDoping(const DopingModel& doping,
                            const Contact& contact,
                            Index nodeId)
@@ -104,33 +87,6 @@ Real ohmicContactNetDoping(const DopingModel& doping,
     if ((local > 0.0 && mean > 0.0) || (local < 0.0 && mean < 0.0))
         return local;
     return mean;
-}
-
-/// Compute per-node ni from the material database.
-std::vector<double> buildNiVector(const DeviceMesh&       mesh,
-                                  const MaterialDatabase& matdb,
-                                  Real                    cfgTemperature_K)
-{
-    const Index N = mesh.numNodes();
-    std::vector<double> ni_v(N, 0.0);
-
-    // For each node, search cells that contain it and pick the material ni.
-    // For interface nodes, take the first match (sufficient for prototype).
-    std::vector<bool> found(N, false);
-    for (Index c = 0; c < mesh.numCells(); ++c) {
-        const auto& cell   = mesh.getCell(c);
-        const auto& region = mesh.getRegion(cell.region_id);
-        double      ni_mat = 0.0;
-        if (matdb.hasMaterial(region.material))
-            ni_mat = matdb.getMaterial(region.material, cfgTemperature_K).ni;
-        for (Index nid : cell.node_ids) {
-            if (!found[nid]) {
-                ni_v[nid]   = ni_mat;
-                found[nid]  = true;
-            }
-        }
-    }
-    return ni_v;
 }
 
 Real maxRelativePermittivityAcrossRegions(const DeviceMesh& mesh,
@@ -156,6 +112,18 @@ GummelConfig gummelConfigFromJson(const nlohmann::json& json, UnitScalingConfig 
     cfg.reltol = json.value("reltol", cfg.reltol);
     cfg.abstol = json.value("abstol", cfg.abstol);
     cfg.temperature_K = json.value("temperature_K", cfg.temperature_K);
+    if (json.contains("carrier_statistics")) {
+        const auto& statistics = json.at("carrier_statistics");
+        if (statistics.is_string())
+            cfg.carrierStatistics.model = statistics.get<std::string>();
+        else if (statistics.is_object())
+            cfg.carrierStatistics.model = statistics.value("model", cfg.carrierStatistics.model);
+        else
+            throw std::invalid_argument(
+                "gummelConfigFromJson: carrier_statistics must be a string or object.");
+    }
+    if (json.contains("statistics"))
+        cfg.carrierStatistics.model = json.at("statistics").get<std::string>();
     cfg.dampingPsi = json.value("damping_psi", cfg.dampingPsi);
     cfg.taun = json.value("taun", cfg.taun);
     cfg.taup = json.value("taup", cfg.taup);
@@ -182,6 +150,9 @@ GummelConfig gummelConfigFromJson(const nlohmann::json& json, UnitScalingConfig 
                 "smoothing", cfg.bandgapNarrowing.smoothing);
             cfg.bandgapNarrowing.offset = value.value(
                 "offset_eV", cfg.bandgapNarrowing.offset);
+            cfg.bandgapNarrowing.fermiStatisticsCorrection = value.value(
+                "fermi_statistics_correction",
+                cfg.bandgapNarrowing.fermiStatisticsCorrection);
         } else {
             throw std::invalid_argument(
                 "gummelConfigFromJson: bandgap_narrowing must be a string or object.");
@@ -197,6 +168,10 @@ GummelConfig gummelConfigFromJson(const nlohmann::json& json, UnitScalingConfig 
         else
             throw std::invalid_argument(
                 "gummelConfigFromJson: recombination must be a string or string array.");
+    }
+    if (json.contains("band_to_band")) {
+        cfg.bandToBand = bandToBandTunnelingConfigFromJson(
+            json.at("band_to_band"), "gummelConfigFromJson");
     }
 
 
@@ -220,6 +195,8 @@ GummelConfig gummelConfigFromJson(const nlohmann::json& json, UnitScalingConfig 
                 "current_approximation", cfg.impactIonization.currentApproximation);
             cfg.impactIonization.currentMagnitudeMode = value.value(
                 "current_magnitude_mode", cfg.impactIonization.currentMagnitudeMode);
+            cfg.impactIonization.eparallelFieldRecovery = value.value(
+                "eparallel_field_recovery", cfg.impactIonization.eparallelFieldRecovery);
             cfg.impactIonization.cellReconstructedMidpointDensity = value.value(
                 "cell_reconstructed_midpoint_density",
                 cfg.impactIonization.cellReconstructedMidpointDensity);
@@ -328,9 +305,11 @@ GummelConfig gummelConfigFromJson(const nlohmann::json& json, UnitScalingConfig 
         }
     }
     detail::validateImpactIonizationDrivingForce(cfg.impactIonization, "gummelConfigFromJson");
+    (void)BandToBandTunnelingModel(cfg.bandToBand);
 
     if (cfg.temperature_K <= 0.0)
         throw std::invalid_argument("gummelConfigFromJson: temperature_K must be positive.");
+    (void)usesFermiDirac(cfg.carrierStatistics);
     if (cfg.carrierFloor < 0.0 || !std::isfinite(cfg.carrierFloor))
         throw std::invalid_argument(
             "gummelConfigFromJson: carrier_floor_m3 must be non-negative and finite.");
@@ -358,11 +337,20 @@ DDSolution runGummelImpl(const DeviceMesh&                          mesh,
     const double Vt  = thermalVoltage(cfg.temperature_K);
 
     // Per-node effective ni, including optional bandgap narrowing.
-    std::vector<double> ni_v = buildNiVector(mesh, matdb, cfg.temperature_K);
-    const auto bgn = makeBandgapNarrowingModel(cfg.bandgapNarrowing);
-    for (Index i = 0; i < N; ++i) {
-        const double deltaEg = bgn->deltaEg(doping.totalImpurity(i), 0.0, 0.0);
-        ni_v[i] = effectiveIntrinsicDensity(ni_v[i], Vt, deltaEg);
+    std::vector<double> ni_v = detail::buildValidatedEffectiveNodeNi(
+        "runGummel", mesh, matdb, doping, cfg.bandgapNarrowing, Vt);
+    const std::vector<Real> Nc = detail::buildNodeDensityOfStates(
+        mesh, matdb, cfg.temperature_K, true);
+    const std::vector<Real> Nv = detail::buildNodeDensityOfStates(
+        mesh, matdb, cfg.temperature_K, false);
+    if (usesFermiDirac(cfg.carrierStatistics)) {
+        for (Index node = 0; node < N; ++node) {
+            if (ni_v[node] > 0.0 && (!(Nc[node] > 0.0) || !(Nv[node] > 0.0))) {
+                throw std::invalid_argument(
+                    "runGummel: Fermi-Dirac statistics require Nc_m3 and Nv_m3 "
+                    "for every transport node.");
+            }
+        }
     }
 
     const bool useScaledUnknowns = cfg.inputScaling.isUnitScaling();
@@ -423,6 +411,9 @@ DDSolution runGummelImpl(const DeviceMesh&                          mesh,
     //     n_contact    = n_eq
     //     p_contact    = ni^2 / n_eq
     //     phin = phip  = V_bias
+    //   Metal gate:
+    //     psi_contact = effective electrostatic gate potential
+    //     no carrier-density or quasi-Fermi Dirichlet rows
     //   Schottky (prototype Dirichlet barrier):
     //     ContactState from computeSchottkyContactState()
     // ------------------------------------------------------------------
@@ -443,6 +434,14 @@ DDSolution runGummelImpl(const DeviceMesh&                          mesh,
             (specIt != contactSpecs.end()) ? &specIt->second : nullptr;
         const bool isSchottky =
             spec != nullptr && spec->type == ContactType::Schottky;
+        const bool isMetalGate =
+            spec != nullptr && spec->type == ContactType::MetalGate;
+
+        if (isMetalGate) {
+            for (Index nid : contact.node_ids)
+                psiBC[nid] = Vbias;
+            continue;
+        }
 
         if (isSchottky) {
             ContactBoundarySpec effSpec = *spec;
@@ -478,18 +477,12 @@ DDSolution runGummelImpl(const DeviceMesh&                          mesh,
         for (Index nid : contact.node_ids) {
             const double ni_node  = ni_v[nid];
             const double Ndop     = ohmicContactNetDoping(doping, contact, nid);
-            const double n_eq_val = nEq(Ndop, ni_node);
-            const double p_eq_val = (ni_node > 0.0)
-                                        ? ni_node * ni_node / n_eq_val
-                                        : 0.0;
-            // built-in potential (0 if ni == 0 or n_eq == 0)
-            double psi_bi = 0.0;
-            if (ni_node > 0.0 && n_eq_val > 0.0)
-                psi_bi = Vt * std::log(n_eq_val / ni_node);
+            const EquilibriumCarrierState equilibrium = equilibriumCarrierState(
+                Ndop, ni_node, Nc[nid], Nv[nid], Vt, cfg.carrierStatistics);
 
-            psiBC [nid] = Vbias + psi_bi;
-            nBC   [nid] = n_eq_val;
-            pBC   [nid] = p_eq_val;
+            psiBC [nid] = Vbias + equilibrium.potential;
+            nBC   [nid] = equilibrium.n;
+            pBC   [nid] = equilibrium.p;
             phinBC[nid] = Vbias;
             phipBC[nid] = Vbias;
         }
@@ -527,6 +520,7 @@ DDSolution runGummelImpl(const DeviceMesh&                          mesh,
         recombinationModelConfig(cfg.recombination, cfg.taun, cfg.taup);
     recombinationConfig.augerCn = cfg.augerCn;
     recombinationConfig.augerCp = cfg.augerCp;
+    recombinationConfig.bandToBand = cfg.bandToBand;
     DDAssembler assembler(
         mesh,
         matdb,
@@ -538,7 +532,8 @@ DDSolution runGummelImpl(const DeviceMesh&                          mesh,
         cfg.impactIonization,
         fixedCharges,
         sheetCharges,
-        ddScaling);
+        ddScaling,
+        cfg.carrierStatistics);
 
     VectorXd psi_init  = VectorXd::Zero(static_cast<int>(N));
     VectorXd n_init    = VectorXd::Zero(static_cast<int>(N));
@@ -591,8 +586,10 @@ DDSolution runGummelImpl(const DeviceMesh&                          mesh,
             const double psiSi = useScaledUnknowns ? psi_init(ii) * ddScaling.V0 : psi_init(ii);
             const double phinSi = useScaledUnknowns ? phin(ii) * ddScaling.V0 : phin(ii);
             const double phipSi = useScaledUnknowns ? phip(ii) * ddScaling.V0 : phip(ii);
-            const double nSi = electronDensity(ni_i, psiSi, phinSi, Vt);
-            const double pSi = holeDensity    (ni_i, psiSi, phipSi, Vt);
+            const double nSi = electronDensity(
+                ni_i, Nc[i], psiSi, phinSi, Vt, cfg.carrierStatistics);
+            const double pSi = holeDensity(
+                ni_i, Nv[i], psiSi, phipSi, Vt, cfg.carrierStatistics);
             n_init(ii) = useScaledUnknowns ? (nSi / ddScaling.C0) : nSi;
             p_init(ii) = useScaledUnknowns ? (pSi / ddScaling.C0) : pSi;
         }
@@ -667,11 +664,13 @@ DDSolution runGummelImpl(const DeviceMesh&                          mesh,
             const double nSi = useScaledUnknowns ? n_new(ii) * ddScaling.C0 : n_new(ii);
             const double pSi = useScaledUnknowns ? p_new(ii) * ddScaling.C0 : p_new(ii);
             if (ni_i > 0.0 && nSi > 0.0) {
-                const double phinSi = psiSi - Vt * std::log(nSi / ni_i);
+                const double phinSi = electronQuasiFermiPotential(
+                    ni_i, Nc[i], psiSi, nSi, Vt, cfg.carrierStatistics);
                 phin(ii) = useScaledUnknowns ? (phinSi / ddScaling.V0) : phinSi;
             }
             if (ni_i > 0.0 && pSi > 0.0) {
-                const double phipSi = psiSi + Vt * std::log(pSi / ni_i);
+                const double phipSi = holeQuasiFermiPotential(
+                    ni_i, Nv[i], psiSi, pSi, Vt, cfg.carrierStatistics);
                 phip(ii) = useScaledUnknowns ? (phipSi / ddScaling.V0) : phipSi;
             }
         }
@@ -926,7 +925,8 @@ void writeDDSolutionVTK(const std::string& filename,
                         const ImpactIonizationModelConfig& impactIonizationConfig,
                         const BandgapNarrowingConfig& bandgapNarrowingConfig,
                         Real temperature_K,
-                        UnitScalingConfig scaling)
+                        UnitScalingConfig scaling,
+                        const CarrierStatisticsConfig& carrierStatistics)
 {
     const Index N = mesh.numNodes();
     VTKWriter writer(filename, mesh);
@@ -1021,6 +1021,10 @@ void writeDDSolutionVTK(const std::string& filename,
         doping,
         bandgapNarrowingConfig,
         Vt);
+    const std::vector<Real> densityOfStatesNc =
+        detail::buildNodeDensityOfStates(mesh, matdb, temperature_K, true);
+    const std::vector<Real> densityOfStatesNv =
+        detail::buildNodeDensityOfStates(mesh, matdb, temperature_K, false);
     writer.addNodeScalar("EffectiveIntrinsicDensity", effectiveNi);
     const bool qfImpact =
         detail::usesQuasiFermiAvalancheDrivingForce(impactIonizationConfig);
@@ -1058,6 +1062,7 @@ void writeDDSolutionVTK(const std::string& filename,
     }
 
     std::vector<Real> srh(N, 0.0);
+    std::vector<Real> bandToBandGeneration(N, 0.0);
     std::vector<Real> avalanche(N, 0.0);
     std::vector<Real> electronMobility(N, 0.0);
     std::vector<Real> holeMobility(N, 0.0);
@@ -1083,6 +1088,12 @@ void writeDDSolutionVTK(const std::string& filename,
     std::vector<Real> electronIonIntegral(N, 0.0);
     std::vector<Real> holeIonIntegral(N, 0.0);
     std::vector<Real> meanIonIntegral(N, 0.0);
+    const std::vector<Real> bandToBandSourceIntegrals =
+        detail::bandToBandGenerationNodeSourceIntegrals(
+            recombination.bandToBand(), scaling.unitSystem(), mesh,
+            cellMaterials, sol.psi, fieldFactor);
+    const std::vector<Real> transportNodeAreas =
+        detail::transportNodeLumpedAreas(mesh, cellMaterials);
     const bool triangleGssAvalanche =
         detail::usesTriangleGssAvalancheSource(impactIonizationConfig);
     const std::vector<detail::TriangleGssAvalancheSourceRecord>
@@ -1124,7 +1135,11 @@ void writeDDSolutionVTK(const std::string& filename,
             sol.p,
             effectiveNi,
             Vt,
-            fieldFactor)
+            fieldFactor,
+            false,
+            carrierStatistics,
+            densityOfStatesNc,
+            densityOfStatesNv)
         : std::vector<detail::SgEdgeCurrentAvalancheSourceRecord>{};
     const std::vector<Real> currentDensityAvalancheSourceIntegrals =
         detail::usesEdgeCurrentAvalancheSource(impactIonizationConfig)
@@ -1144,7 +1159,10 @@ void writeDDSolutionVTK(const std::string& filename,
             sol.p,
             effectiveNi,
             Vt,
-            fieldFactor)
+            fieldFactor,
+            carrierStatistics,
+            densityOfStatesNc,
+            densityOfStatesNv)
         : std::vector<Real>{};
     for (Index i = 0; i < N; ++i) {
         const int row = static_cast<int>(i);
@@ -1165,6 +1183,9 @@ void writeDDSolutionVTK(const std::string& filename,
             std::expm1((holeQf - electronQf) / Vt);
         srh[i] = recombination.srhRateFromExcessProduct(
             excessProduct, n, p, ni);
+        bandToBandGeneration[i] = transportNodeAreas[i] > 0.0
+            ? bandToBandSourceIntegrals[i] / transportNodeAreas[i]
+            : 0.0;
         if (detail::usesEdgeCurrentAvalancheSource(impactIonizationConfig)) {
             avalanche[i] = mesh.getNode(i).volume > 0.0
                 ? currentDensityAvalancheSourceIntegrals[i] / mesh.getNode(i).volume
@@ -1241,9 +1262,13 @@ void writeDDSolutionVTK(const std::string& filename,
         holeVelocity[i] = holeMobility[i] * std::abs(holeImpactField);
     }
 
+    const Real alphaLengthUnitFactor =
+        scaling.unitSystem().inverseLengthMInvPerInternal() *
+        scaling.unitSystem().lengthMPerInternal();
     if (!triangleGssAvalancheRecords.empty()) {
         for (const auto& record : triangleGssAvalancheRecords) {
-            const Real halfLength = 0.5 * record.edgeLength;
+            const Real halfLength =
+                0.5 * record.edgeLength * alphaLengthUnitFactor;
             electronIonIntegral[record.node0] += record.electronAlpha * halfLength;
             electronIonIntegral[record.node1] += record.electronAlpha * halfLength;
             holeIonIntegral[record.node0] += record.holeAlpha * halfLength;
@@ -1251,7 +1276,8 @@ void writeDDSolutionVTK(const std::string& filename,
         }
     } else if (!sgAvalancheRecords.empty()) {
         for (const auto& record : sgAvalancheRecords) {
-            const Real halfLength = 0.5 * record.edgeLength;
+            const Real halfLength =
+                0.5 * record.edgeLength * alphaLengthUnitFactor;
             electronIonIntegral[record.node0] += record.electronAlpha * halfLength;
             electronIonIntegral[record.node1] += record.electronAlpha * halfLength;
             holeIonIntegral[record.node0] += record.holeAlpha * halfLength;
@@ -1260,7 +1286,8 @@ void writeDDSolutionVTK(const std::string& filename,
     } else {
         for (Index edgeId = 0; edgeId < mesh.numEdges(); ++edgeId) {
             const Edge& edge = mesh.getEdge(edgeId);
-            const Real halfLength = 0.5 * edge.length;
+            const Real halfLength =
+                0.5 * edge.length * alphaLengthUnitFactor;
             const Real electronAlpha =
                 0.5 * (electronAlphaAvalanche[edge.n0] + electronAlphaAvalanche[edge.n1]);
             const Real holeAlpha =
@@ -1274,7 +1301,60 @@ void writeDDSolutionVTK(const std::string& filename,
     for (Index i = 0; i < N; ++i) {
         meanIonIntegral[i] = 0.5 * (electronIonIntegral[i] + holeIonIntegral[i]);
     }
+    std::vector<PathIonizationSegment> pathIonizationSamples;
+    if (!sgAvalancheRecords.empty()) {
+        pathIonizationSamples.reserve(sgAvalancheRecords.size());
+        for (const auto& record : sgAvalancheRecords) {
+            pathIonizationSamples.push_back({
+                record.edgeId,
+                record.node0,
+                record.node1,
+                scaling.unitSystem().internalLengthToMeters(record.edgeLength),
+                scaling.unitSystem().internalInverseLengthToMInv(record.electronAlpha),
+                scaling.unitSystem().internalInverseLengthToMInv(record.holeAlpha),
+                scaling.unitSystem().internalElectricFieldToVPerM(
+                    std::abs(record.electricField))});
+        }
+    } else if (!triangleGssAvalancheRecords.empty()) {
+        pathIonizationSamples.reserve(triangleGssAvalancheRecords.size());
+        for (const auto& record : triangleGssAvalancheRecords) {
+            pathIonizationSamples.push_back({
+                record.edgeId,
+                record.node0,
+                record.node1,
+                scaling.unitSystem().internalLengthToMeters(record.edgeLength),
+                scaling.unitSystem().internalInverseLengthToMInv(record.electronAlpha),
+                scaling.unitSystem().internalInverseLengthToMInv(record.holeAlpha),
+                scaling.unitSystem().internalElectricFieldToVPerM(std::max(
+                    std::abs(record.electronImpactField),
+                    std::abs(record.holeImpactField)))});
+        }
+    } else {
+        pathIonizationSamples.reserve(mesh.numEdges());
+        for (Index edgeId = 0; edgeId < mesh.numEdges(); ++edgeId) {
+            const Edge& edge = mesh.getEdge(edgeId);
+            if (!(edge.length > 0.0))
+                continue;
+            pathIonizationSamples.push_back({
+                edgeId,
+                edge.n0,
+                edge.n1,
+                scaling.unitSystem().internalLengthToMeters(edge.length),
+                scaling.unitSystem().internalInverseLengthToMInv(
+                    0.5 * (electronAlphaAvalanche[edge.n0] +
+                           electronAlphaAvalanche[edge.n1])),
+                scaling.unitSystem().internalInverseLengthToMInv(
+                    0.5 * (holeAlphaAvalanche[edge.n0] +
+                           holeAlphaAvalanche[edge.n1])),
+                scaling.unitSystem().internalElectricFieldToVPerM(
+                    std::abs(sol.psi(static_cast<int>(edge.n1)) -
+                             sol.psi(static_cast<int>(edge.n0))) / edge.length)});
+        }
+    }
+    const PathIonizationAnalysis pathIonization = analyzeIonizationPaths(
+        static_cast<std::size_t>(N), sol.psi, pathIonizationSamples);
     writer.addNodeScalar("SRHRecombination", srh);
+    writer.addNodeScalar("Band2BandGeneration", bandToBandGeneration);
     writer.addNodeScalar("AvalancheGeneration", avalanche);
     writer.addNodeVector("J_n_drift", electronDriftCurrentDensity_A_cm2);
     writer.addNodeVector("J_n_diffusion", electronDiffusionCurrentDensity_A_cm2);
@@ -1309,6 +1389,12 @@ void writeDDSolutionVTK(const std::string& filename,
     writer.addNodeScalar("ElectronIonIntegral", electronIonIntegral);
     writer.addNodeScalar("HoleIonIntegral", holeIonIntegral);
     writer.addNodeScalar("MeanIonIntegral", meanIonIntegral);
+    writer.addNodeScalar(
+        "ElectronPathIonIntegral", pathIonization.electronNodeValues);
+    writer.addNodeScalar(
+        "HolePathIonIntegral", pathIonization.holeNodeValues);
+    writer.addNodeScalar(
+        "MeanPathIonIntegral", pathIonization.meanNodeValues);
     writer.addNodeScalar(
         "LocalElectronAlphaLengthProxy", electronIonIntegral);
     writer.addNodeScalar(

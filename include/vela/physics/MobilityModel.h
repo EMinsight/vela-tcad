@@ -47,11 +47,17 @@ struct SurfaceMobilityParameters {
     Real maxFactor = 1.0;     ///< Optional upper clamp for mu_surface / mu_bulk [-]
     std::string surfaceRegion; ///< Optional semiconductor region where degradation is active.
     std::vector<std::string> surfaceInterface; ///< Optional two-region interface selector.
+    Real coordinateFieldFactor = 1.0; ///< Internal coordinate-gradient to internal electric-field units.
 };
 
 struct MobilityModelConfig {
     std::string model = "constant";
     std::string highFieldDrivingForce = "electric_field";
+    /// Spatial discretization for a quasi-Fermi-gradient high-field drive.
+    /// ``edge_projection`` preserves the historical edge-aligned difference;
+    /// ``transport_cell_vector`` recovers the full vector gradient from
+    /// adjacent transport cells before evaluating the edge mobility.
+    std::string highFieldGradientDiscretization = "edge_projection";
     std::string dopingConcentrationBasis = "net_doping";
     bool jacobianFieldDerivatives = true;
 

@@ -33,11 +33,16 @@ std::string sparseMatrixDiagnostics(const SparseMatrixd& A, const VectorXd& b)
     std::vector<int> rowNonzeroCount(static_cast<std::size_t>(A.rows()), 0);
     std::vector<int> rowOffdiagNonzeroCount(static_cast<std::size_t>(A.rows()), 0);
     int nonfiniteEntries = 0;
+    std::vector<std::string> nonfiniteEntryPositions;
     for (int outer = 0; outer < A.outerSize(); ++outer) {
         for (SparseMatrixd::InnerIterator it(A, outer); it; ++it) {
             const double value = it.value();
             if (!std::isfinite(value)) {
                 ++nonfiniteEntries;
+                if (nonfiniteEntryPositions.size() < 8) {
+                    nonfiniteEntryPositions.push_back(
+                        std::to_string(it.row()) + ":" + std::to_string(it.col()));
+                }
                 continue;
             }
             if (value != 0.0) {
@@ -53,13 +58,21 @@ std::string sparseMatrixDiagnostics(const SparseMatrixd& A, const VectorXd& b)
 
     int zeroRows = 0;
     int zeroCols = 0;
-    for (double value : rowAbs) {
-        if (value == 0.0)
+    std::vector<int> zeroRowIndices;
+    std::vector<int> zeroColIndices;
+    for (std::size_t i = 0; i < rowAbs.size(); ++i) {
+        if (rowAbs[i] == 0.0) {
             ++zeroRows;
+            if (zeroRowIndices.size() < 8)
+                zeroRowIndices.push_back(static_cast<int>(i));
+        }
     }
-    for (double value : colAbs) {
-        if (value == 0.0)
+    for (std::size_t i = 0; i < colAbs.size(); ++i) {
+        if (colAbs[i] == 0.0) {
             ++zeroCols;
+            if (zeroColIndices.size() < 8)
+                zeroColIndices.push_back(static_cast<int>(i));
+        }
     }
 
     double diagMinAbs = std::numeric_limits<double>::infinity();
@@ -89,10 +102,24 @@ std::string sparseMatrixDiagnostics(const SparseMatrixd& A, const VectorXd& b)
         diagMinAbs = 0.0;
 
     int rhsNonfinite = 0;
+    std::vector<int> rhsNonfiniteIndices;
     for (int i = 0; i < b.size(); ++i) {
-        if (!std::isfinite(b(i)))
+        if (!std::isfinite(b(i))) {
             ++rhsNonfinite;
+            if (rhsNonfiniteIndices.size() < 8)
+                rhsNonfiniteIndices.push_back(i);
+        }
     }
+
+    auto appendIndices = [](std::ostringstream& stream, const auto& values) {
+        stream << '[';
+        for (std::size_t i = 0; i < values.size(); ++i) {
+            if (i != 0)
+                stream << ',';
+            stream << values[i];
+        }
+        stream << ']';
+    };
 
     std::ostringstream out;
     out << " matrix_diagnostics={rows=" << A.rows()
@@ -102,7 +129,15 @@ std::string sparseMatrixDiagnostics(const SparseMatrixd& A, const VectorXd& b)
         << ", rhs_nonfinite=" << rhsNonfinite
         << ", zero_rows=" << zeroRows
         << ", zero_cols=" << zeroCols
-        << ", diag_min_abs=" << diagMinAbs
+        << ", nonfinite_entry_positions=";
+    appendIndices(out, nonfiniteEntryPositions);
+    out << ", rhs_nonfinite_indices=";
+    appendIndices(out, rhsNonfiniteIndices);
+    out << ", zero_row_indices=";
+    appendIndices(out, zeroRowIndices);
+    out << ", zero_col_indices=";
+    appendIndices(out, zeroColIndices);
+    out << ", diag_min_abs=" << diagMinAbs
         << ", diag_max_abs=" << diagMaxAbs
         << ", zero_diagonal=" << zeroDiagonal
         << ", nonfinite_diagonal=" << nonfiniteDiagonal

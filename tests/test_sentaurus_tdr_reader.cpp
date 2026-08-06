@@ -375,6 +375,59 @@ std::filesystem::path writeSyntheticPermutedVertexFieldTdr()
     return path;
 }
 
+std::filesystem::path writeSyntheticPermutedPartialRegionFieldTdr()
+{
+    const auto path = uniqueTempPath(
+        "vela_synthetic_sentaurus_permuted_partial_region_field", ".tdr");
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+
+    hid_t file = H5Fcreate(path.string().c_str(), H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT);
+    hid_t collection = createGroup(file, "collection");
+    hid_t geometry = createGroup(collection, "geometry_0");
+
+    const std::vector<Vertex2D> vertices = {
+        {-1.0, -1.0},
+        {0.0, 0.0},
+        {1.0, 0.0},
+        {0.0, 1.0},
+        {1.0, 1.0},
+    };
+    hsize_t vertexDims[] = {vertices.size()};
+    hid_t vertexSpace = H5Screate_simple(1, vertexDims, nullptr);
+    hid_t vertexType = H5Tcreate(H5T_COMPOUND, sizeof(Vertex2D));
+    H5Tinsert(vertexType, "x", HOFFSET(Vertex2D, x), H5T_NATIVE_DOUBLE);
+    H5Tinsert(vertexType, "y", HOFFSET(Vertex2D, y), H5T_NATIVE_DOUBLE);
+    hid_t vertexDataset = H5Dcreate2(geometry, "vertex", vertexType, vertexSpace,
+                                     H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+    H5Dwrite(vertexDataset, vertexType, H5S_ALL, H5S_ALL, H5P_DEFAULT, vertices.data());
+    H5Dclose(vertexDataset);
+    H5Tclose(vertexType);
+    H5Sclose(vertexSpace);
+
+    hid_t silicon = createGroup(geometry, "region_0");
+    writeStringAttribute(silicon, "name", "Silicon_1");
+    writeStringAttribute(silicon, "material", "Silicon");
+    writeIntAttribute(silicon, "type", 0);
+    writeSizeAttribute(silicon, "number of elements", 2);
+    // First-occurrence order is 3,1,2,4; Sentaurus nodal values below follow
+    // ascending global vertex ids 1,2,3,4.
+    writeIntDataset(silicon, "elements_0", {2, 3, 1, 2, 2, 3, 4, 1});
+    H5Gclose(silicon);
+
+    hid_t state = createGroup(geometry, "state_0");
+    hid_t dataset = createGroup(state, "dataset_0");
+    writeDoubleDatasetWithAttrs(dataset, "values", {10.0, 20.0, 30.0, 40.0},
+                                "ElectrostaticPotential", 0, 4, "V");
+    H5Gclose(dataset);
+    H5Gclose(state);
+
+    H5Gclose(geometry);
+    H5Gclose(collection);
+    H5Fclose(file);
+    return path;
+}
+
 std::string readFile(const std::filesystem::path& path)
 {
     std::ifstream input(path);
@@ -596,6 +649,33 @@ TEST_CASE("SentaurusTdrReader exports full vertex fields in global vertex order"
 
     const auto manifest = nlohmann::json::parse(readFile(outDir / "field_manifest.json"));
     REQUIRE(manifest["fields"][0]["global_node_mapping"] == "global_vertex_order");
+    REQUIRE(manifest["fields"][0]["mapping_status"] == "complete");
+}
+
+TEST_CASE("SentaurusTdrReader exports partial-region fields in ascending global vertex order",
+          "[sentaurus][tdr][region-node-order]")
+{
+    const auto path = writeSyntheticPermutedPartialRegionFieldTdr();
+    const auto outDir = uniqueTempDirectory(
+        "vela_synthetic_sentaurus_permuted_partial_region_export");
+    std::error_code ec;
+    std::filesystem::remove_all(outDir, ec);
+
+    SentaurusTdrReader reader;
+    reader.exportNeutral(path.string(), outDir.string());
+
+    const auto rows = readCsvRows(
+        outDir / "fields" / "ElectrostaticPotential_region0.csv");
+    REQUIRE(rows.size() == 4);
+    for (std::size_t row = 0; row < rows.size(); ++row) {
+        REQUIRE(rows[row][0] == std::to_string(row + 1));
+        REQUIRE(std::stod(rows[row][1]) == Catch::Approx(10.0 * (row + 1)));
+    }
+
+    const auto manifest = nlohmann::json::parse(readFile(outDir / "field_manifest.json"));
+    REQUIRE(manifest["fields"][0]["global_node_mapping"] == "region_node_order");
+    REQUIRE(manifest["fields"][0]["region_node_ordering"] ==
+            "ascending_global_vertex_id");
     REQUIRE(manifest["fields"][0]["mapping_status"] == "complete");
 }
 

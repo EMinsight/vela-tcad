@@ -397,6 +397,52 @@ TEST_CASE("ContactCurrent: raw residual method matches SG flux without avalanche
     REQUIRE(residual.holeCurrent == Catch::Approx(sgFlux.holeCurrent));
     REQUIRE(residual.totalCurrent == Catch::Approx(sgFlux.totalCurrent));
 }
+
+TEST_CASE("ContactCurrent: Fermi-Dirac generalized SG matches coupled residual",
+          "[contact_current][residual][fermi_dirac]")
+{
+    DeviceMesh mesh = makePNMesh();
+    MaterialDatabase matdb;
+    DopingModel doping = makePNDoping(mesh);
+
+    MobilityModelConfig mobility = mobilityModelConfig("constant");
+    const RecombinationModelConfig noRecombination = recombinationModelConfig({"none"});
+    const CarrierStatisticsConfig statistics{"fermi_dirac"};
+    CoupledDDAssembler assembler(
+        mesh, matdb, doping, constants::Vt_300, mobility, noRecombination,
+        {}, {}, {}, {}, {}, {}, statistics);
+
+    CoupledDDState state;
+    const int N = static_cast<int>(mesh.numNodes());
+    state.psi = VectorXd::LinSpaced(N, -0.01, 0.72);
+    state.phin = VectorXd::LinSpaced(N, -0.025, 0.015);
+    state.phip = VectorXd::LinSpaced(N, 0.01, -0.02);
+
+    const VectorXd x = assembler.pack(state);
+    DDSolution solution;
+    solution.psi = state.psi;
+    solution.phin = state.phin;
+    solution.phip = state.phip;
+    solution.n = assembler.electronDensity(x);
+    solution.p = assembler.holeDensity(x);
+
+    ContactCurrent current(
+        mesh, matdb, doping, mobility, constants::T0, {}, {}, statistics);
+    const ContactCurrentResult sgFlux = current.compute(solution, "anode");
+    const ContactCurrentResult residual =
+        current.computeFromResidual(assembler, x, "anode");
+
+    REQUIRE(residual.electronCurrent == Catch::Approx(sgFlux.electronCurrent));
+    REQUIRE(residual.holeCurrent == Catch::Approx(sgFlux.holeCurrent));
+    REQUIRE(residual.totalCurrent == Catch::Approx(sgFlux.totalCurrent));
+    REQUIRE(sgFlux.electronCurrent == Catch::Approx(
+        sgFlux.electronDriftCurrent + sgFlux.electronDiffusionCurrent)
+        .epsilon(1.0e-12).margin(1.0e-18));
+    REQUIRE(sgFlux.holeCurrent == Catch::Approx(
+        sgFlux.holeDriftCurrent + sgFlux.holeDiffusionCurrent)
+        .epsilon(1.0e-12).margin(1.0e-18));
+}
+
 TEST_CASE("ContactCurrent: unit-scaled residual method matches SG flux without avalanche",
           "[contact_current][residual][scaling]")
 {
@@ -2114,6 +2160,21 @@ TEST_CASE("NewtonSolver: unit_scaling config records scaled mode and preserves a
     REQUIRE(cfg.jacobian == "analytic");
 }
 
+TEST_CASE("NewtonSolver: parses Fermi-Dirac carrier statistics", "[newton][config][fermi_dirac]")
+{
+    const NewtonConfig stringConfig = newtonConfigFromJson(
+        nlohmann::json{{"carrier_statistics", "fermi_dirac"}});
+    REQUIRE(stringConfig.carrierStatistics.model == "fermi_dirac");
+
+    const NewtonConfig objectConfig = newtonConfigFromJson(nlohmann::json{
+        {"carrier_statistics", {{"model", "fermi_dirac"}}}
+    });
+    REQUIRE(objectConfig.carrierStatistics.model == "fermi_dirac");
+    REQUIRE_THROWS_AS(
+        newtonConfigFromJson(nlohmann::json{{"carrier_statistics", "unknown"}}),
+        std::invalid_argument);
+}
+
 TEST_CASE("NewtonSolver: warm start preserves supplied quasi-Fermi guess", "[newton][warm_start]")
 {
     DeviceMesh mesh = makePNMesh();
@@ -2282,6 +2343,13 @@ TEST_CASE("NewtonSolver: reports maximum contact majority quasi-Fermi drop", "[n
     state.phin(1) = 1.2e-10;
     state.phip(1) = 1.0e-5;
     REQUIRE(solver.maxContactMajorityQuasiFermiDrop(state) == Catch::Approx(1.2e-10));
+
+    // A contact may share mesh nodes/edges with an insulator.  A quasi-Fermi
+    // value on a zero-density edge is not a transport contact drop and must not
+    // block numerical-floor convergence.
+    state.n(1) = 0.0;
+    state.phin(1) = 2.0;
+    REQUIRE(solver.maxContactMajorityQuasiFermiDrop(state) == Catch::Approx(0.0));
 }
 TEST_CASE("NewtonSolver: parses block residual norm controls", "[newton][config]")
 {
@@ -2293,6 +2361,7 @@ TEST_CASE("NewtonSolver: parses block residual norm controls", "[newton][config]
         {"poisson_line_search_stall_relative_increase", 2.0e-5},
         {"poisson_line_search_stall_carrier_residual_floor", 4.0e-8},
         {"poisson_line_search_stall_contact_majority_qf_drop_limit_V", 7.0e-11},
+        {"carrier_row_qualified_stall_acceptance", true},
         {"auger_cn_m6_per_s", 4.0e-43},
         {"auger_cp_m6_per_s", 2.0e-43},
         {"residual_weights", {{"psi", 0.25}, {"phin", 2.0}, {"phip", 3.0}}},
@@ -2306,6 +2375,7 @@ TEST_CASE("NewtonSolver: parses block residual norm controls", "[newton][config]
     REQUIRE(cfg.poissonLineSearchStallRelativeIncrease == Catch::Approx(2.0e-5));
     REQUIRE(cfg.poissonLineSearchStallCarrierResidualFloor == Catch::Approx(4.0e-8));
     REQUIRE(cfg.poissonLineSearchStallContactMajorityQfDropLimit_V == Catch::Approx(7.0e-11));
+    REQUIRE(cfg.carrierRowQualifiedStallAcceptance);
     REQUIRE(cfg.residualWeightPsi == Catch::Approx(0.25));
     REQUIRE(cfg.residualWeightPhin == Catch::Approx(2.0));
     REQUIRE(cfg.residualWeightPhip == Catch::Approx(3.0));
@@ -2438,7 +2508,8 @@ TEST_CASE("NewtonSolver: verbose false suppresses failure diagnostics", "[newton
     REQUIRE(capturedStderr.str().empty());
 }
 
-TEST_CASE("NewtonSolver: line search rejection returns last accepted state", "[newton][line_search]")
+TEST_CASE("NewtonSolver: pure-insulator zero carriers are valid during line search",
+          "[newton][line_search][oxide]")
 {
     DeviceMesh mesh = makePartiallyContactedOxideMesh();
     MaterialDatabase matdb;
@@ -2463,25 +2534,57 @@ TEST_CASE("NewtonSolver: line search rejection returns last accepted state", "[n
     const NewtonResult result = runNewton(
         mesh, matdb, doping, {{"gate", 0.0}}, initial, cfg);
 
-    REQUIRE_FALSE(result.converged);
-    REQUIRE(result.iters == 0);
-    REQUIRE(result.history.empty());
-    REQUIRE(result.trace.size() == 2);
+    REQUIRE(result.converged);
+    REQUIRE(result.iters >= 1);
+    REQUIRE_FALSE(result.history.empty());
+    REQUIRE(result.trace.size() >= 2);
     REQUIRE(result.trace.front().event == "initial");
-    REQUIRE(result.trace.back().event == "carrier_invalid");
-    REQUIRE_FALSE(result.trace.back().lineSearchAccepted);
-    REQUIRE(result.trace.back().lineSearchAttempts >= 1);
+    REQUIRE(result.trace.back().event == "accepted_iteration");
+    REQUIRE(result.trace.back().lineSearchAccepted);
     REQUIRE_FALSE(
         result.trace.back().sourceJacobianActiveBranchFingerprint.empty());
-    REQUIRE(result.finalResidualNorm == Catch::Approx(result.initialResidualNorm));
-    REQUIRE(result.failureDiagnostics.failureReason == "carrier_invalid");
-    REQUIRE(result.failureDiagnostics.lineSearchFailureReason == "carrier_invalid");
-    REQUIRE(result.failureDiagnostics.blockResiduals.psi >= 0.0);
-    REQUIRE_FALSE(result.failureDiagnostics.carrierDiagnostics.positiveFinite);
-    REQUIRE_FALSE(result.failureDiagnostics.topPoissonResidualNodes.empty());
+    REQUIRE(result.finalResidualNorm < result.initialResidualNorm);
     REQUIRE((result.solution.psi - initial.psi).norm() == Catch::Approx(0.0));
-    REQUIRE((result.solution.phin - initial.phin).norm() == Catch::Approx(0.0));
-    REQUIRE((result.solution.phip - initial.phip).norm() == Catch::Approx(0.0));
+    REQUIRE(result.solution.phin.norm() == Catch::Approx(0.0).margin(1.0e-14));
+    REQUIRE(result.solution.phip.norm() == Catch::Approx(0.0).margin(1.0e-14));
+}
+
+TEST_CASE("NewtonSolver: metal gate constrains only electrostatic potential",
+          "[newton][contact_bc][metal_gate][oxide]")
+{
+    DeviceMesh mesh = makePartiallyContactedOxideMesh();
+    MaterialDatabase matdb;
+    DopingModel doping(mesh.numNodes());
+
+    const int N = static_cast<int>(mesh.numNodes());
+    DDSolution initial;
+    initial.psi = VectorXd::Constant(N, 0.55);
+    initial.phin = VectorXd::Constant(N, 0.12);
+    initial.phip = VectorXd::Constant(N, -0.08);
+
+    ContactBoundarySpec gateSpec;
+    gateSpec.name = "gate";
+    gateSpec.type = ContactType::MetalGate;
+    gateSpec.bias = 0.0;
+    gateSpec.flatbandVoltage = -0.55;
+    ContactSpecsMap specs{{"gate", gateSpec}};
+
+    NewtonConfig cfg = newtonConfig();
+    cfg.maxIter = 4;
+    cfg.reltol = 0.0;
+    cfg.abstol = 1.0e-14;
+    cfg.verbose = false;
+    cfg.warmStart = true;
+
+    const NewtonResult result = runNewton(
+        mesh, matdb, doping, {{"gate", 0.55}}, initial, cfg, {}, {}, specs);
+
+    REQUIRE(result.converged);
+    for (int i = 0; i < N; ++i) {
+        REQUIRE(result.solution.psi(i) == Catch::Approx(0.55).margin(1.0e-12));
+        REQUIRE(result.solution.phin(i) == Catch::Approx(0.0).margin(1.0e-12));
+        REQUIRE(result.solution.phip(i) == Catch::Approx(0.0).margin(1.0e-12));
+    }
 }
 
 TEST_CASE("NewtonSolver: carrier regularization damps coupled Newton carrier mode",
@@ -2783,6 +2886,25 @@ TEST_CASE("NewtonSolver: configured temperature is parsed and passed to initial 
                       std::invalid_argument);
 }
 
+TEST_CASE("Newton solver parses Sentaurus E2 band-to-band parameters",
+          "[newton][btbt][json]")
+{
+    const NewtonConfig cfg = newtonConfigFromJson(nlohmann::json{
+        {"band_to_band", {
+            {"model", "e2"},
+            {"A_cm_inv_s_inv_V_inv2", 3.4e21},
+            {"B_V_per_cm", 22.6e6},
+            {"source_integration", "transport_node_lumped"},
+            {"jacobian", "frozen_field"},
+        }},
+    });
+    REQUIRE(cfg.bandToBand.model == "e2");
+    REQUIRE(cfg.bandToBand.prefactorA_SI == Catch::Approx(3.4e23));
+    REQUIRE(cfg.bandToBand.exponentialB_V_per_m == Catch::Approx(2.26e9));
+    REQUIRE(cfg.bandToBand.sourceIntegration == "transport_node_lumped");
+    REQUIRE(cfg.bandToBand.jacobian == "frozen_field");
+}
+
 static void requireFiniteNewtonSolution(const NewtonResult& result, Index nodeCount)
 {
     REQUIRE(std::isfinite(result.initialResidualNorm));
@@ -3081,6 +3203,91 @@ TEST_CASE("NewtonSolver: Gummel density recovery jumps a dead carrier row",
     CHECK(recovered.solution.n(4) > 1.0e8);
     CHECK(recovered.solution.phin(4) < 1.0);
     CHECK(recovered.maxPsiDelta_V == Catch::Approx(0.0));
+}
+
+TEST_CASE("NewtonSolver: Fermi-Dirac Gummel density recovery is available",
+          "[newton][carrier_row_recovery][fermi_dirac]")
+{
+    DeviceMesh mesh = makePNMesh();
+    MaterialDatabase matdb;
+    DopingModel doping = makePNDoping(mesh);
+
+    NewtonConfig cfg = newtonConfig();
+    cfg.recombination = {"srh"};
+    cfg.mobility.model = "constant";
+    cfg.carrierStatistics.model = "fermi_dirac";
+
+    const int n = static_cast<int>(mesh.numNodes());
+    DDSolution dead;
+    dead.psi = VectorXd::Zero(n);
+    dead.phin = VectorXd::Zero(n);
+    dead.phip = VectorXd::Zero(n);
+    dead.n = VectorXd::Constant(n, 1.0e4);
+    dead.p = VectorXd::Constant(n, 1.0e4);
+    dead.phin(4) = 8.0;
+    dead.n(4) = 1.0e-120;
+
+    NewtonCarrierRowConvergenceViolation violation;
+    violation.nodeId = 4;
+    violation.carrier = "electron";
+    violation.residual = -1.0;
+    violation.scale = 1.0;
+    violation.ratio = 1.0;
+
+    NewtonCarrierRowRecoveryConfig recovery;
+    recovery.mode = "gummel_density";
+
+    const NewtonCarrierRowRecoveryResult recovered =
+        recoverCarrierRowsWithGummelDensity(
+            mesh, matdb, doping, zeroBias(), cfg, dead, {violation}, recovery);
+
+    REQUIRE(recovered.attempted);
+    CHECK(recovered.electronRowsUpdated >= 1);
+    CHECK(std::isfinite(recovered.solution.n(4)));
+    CHECK(std::isfinite(recovered.solution.phin(4)));
+    CHECK(recovered.solution.n(4) > 1.0e8);
+    CHECK(recovered.solution.phin(4) < 1.0);
+    CHECK(recovered.maxPsiDelta_V == Catch::Approx(0.0));
+}
+
+TEST_CASE("NewtonSolver: initial abstol cannot accept an unbalanced carrier row",
+          "[newton][carrier_row_convergence][carrier_row_recovery][initial_abstol]")
+{
+    DeviceMesh mesh = makePNMesh();
+    MaterialDatabase matdb;
+    DopingModel doping = makePNDoping(mesh);
+
+    NewtonConfig cfg = newtonConfig();
+    cfg.recombination = {"srh"};
+    cfg.mobility.model = "constant";
+    cfg.warmStart = true;
+    cfg.abstol = 1.0e100;
+    cfg.reltol = 0.0;
+    cfg.maxIter = 0;
+    cfg.verbose = false;
+    cfg.carrierRowConvergence.mode = "enforce";
+    cfg.carrierRowConvergence.epsRow = 1.0e-3;
+    cfg.carrierRowConvergence.minSourceScaleFraction = 0.0;
+    cfg.carrierRowConvergence.minSourceScale = 1.0e-30;
+    cfg.carrierRowRecovery.mode = "gummel_density";
+    cfg.carrierRowRecovery.maxAttempts = 1;
+    cfg.carrierRowRecovery.maxCycles = 1;
+
+    const int n = static_cast<int>(mesh.numNodes());
+    DDSolution dead;
+    dead.psi = VectorXd::Zero(n);
+    dead.phin = VectorXd::Zero(n);
+    dead.phip = VectorXd::Zero(n);
+    dead.phin(4) = 8.0;
+    dead.n = VectorXd::Zero(n);
+    dead.p = VectorXd::Zero(n);
+
+    const NewtonResult result = runNewton(
+        mesh, matdb, doping, zeroBias(), dead, cfg);
+
+    REQUIRE(result.carrierRowRecovery.attempted);
+    CHECK(result.carrierRowRecovery.cyclesAttempted >= 1);
+    CHECK(result.convergenceReason != "initial_abstol");
 }
 
 TEST_CASE("NewtonSolver: Gummel density recovery uses Ohmic contact densities",

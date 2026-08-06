@@ -10,6 +10,7 @@
 #include "vela/physics/MobilityModel.h"
 #include "vela/physics/RecombinationModel.h"
 #include "vela/physics/ImpactIonizationModel.h"
+#include "vela/physics/CarrierStatistics.h"
 #include <memory>
 #include <vector>
 #include <unordered_map>
@@ -89,7 +90,8 @@ public:
                 const ImpactIonizationModelConfig& impactIonizationConfig = {},
                 std::vector<RegionFixedChargeSpec> fixedCharges = {},
                 std::vector<InterfaceSheetChargeSpec> sheetCharges = {},
-                DDScalingSpec scaling = {});
+                DDScalingSpec scaling = {},
+                CarrierStatisticsConfig carrierStatistics = {});
 
     // ------------------------------------------------------------------
     // Assembly
@@ -139,7 +141,10 @@ private:
     bool impactIonizationEnabled_ = false;
     bool impactIonizationCoupled_ = false;
 
+    CarrierStatisticsConfig carrierStatistics_;
     std::vector<Real> ni_; ///< Per-node intrinsic concentration [m^-3]
+    std::vector<Real> Nc_; ///< Per-node electron density of states [m^-3]
+    std::vector<Real> Nv_; ///< Per-node hole density of states [m^-3]
 
     // Mesh-derived quantities cached at construction time.
     std::vector<std::vector<Index>> edgeCells_;

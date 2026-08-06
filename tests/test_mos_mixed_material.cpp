@@ -149,6 +149,30 @@ DeviceMesh makeHorizontalInterfaceMesh()
     return mesh;
 }
 
+DeviceMesh makeOxideFirstInterfaceMesh()
+{
+    DeviceMesh mesh;
+    const Real L = 1.0e-6;
+
+    Node n0; n0.id = 0; n0.x = 0.0;     n0.y = 0.0;  mesh.addNode(n0);
+    Node n1; n1.id = 1; n1.x = L;       n1.y = 0.0;  mesh.addNode(n1);
+    Node n2; n2.id = 2; n2.x = 0.5 * L; n2.y = L;    mesh.addNode(n2);
+    Node n3; n3.id = 3; n3.x = 0.5 * L; n3.y = -L;   mesh.addNode(n3);
+
+    Cell oxide; oxide.id = 0; oxide.type = CellType::Tri3; oxide.region_id = 0;
+    oxide.node_ids = {0, 1, 2}; mesh.addCell(oxide);
+    Cell silicon; silicon.id = 1; silicon.type = CellType::Tri3; silicon.region_id = 1;
+    silicon.node_ids = {0, 3, 1}; mesh.addCell(silicon);
+
+    Region gateOxide; gateOxide.id = 0; gateOxide.name = "gate_oxide";
+    gateOxide.material = "SiO2"; gateOxide.cell_ids = {0}; mesh.addRegion(gateOxide);
+    Region channel; channel.id = 1; channel.name = "channel";
+    channel.material = "Si"; channel.cell_ids = {1}; mesh.addRegion(channel);
+
+    mesh.buildEdges();
+    return mesh;
+}
+
 Index findEdgeByNodes(const DeviceMesh& mesh, Index a, Index b)
 {
     if (b < a)
@@ -167,6 +191,19 @@ Index findEdgeByNodes(const DeviceMesh& mesh, Index a, Index b)
 }
 
 } // namespace
+
+TEST_CASE("interface intrinsic density prefers silicon when oxide cells are ordered first",
+          "[mos_mixed][material]")
+{
+    const DeviceMesh mesh = makeOxideFirstInterfaceMesh();
+    const MaterialDatabase matdb;
+    const auto ni = detail::buildNodeNi(mesh, matdb, constants::T0);
+
+    REQUIRE(ni.at(0) == matdb.getMaterial("Si").ni);
+    REQUIRE(ni.at(1) == matdb.getMaterial("Si").ni);
+    REQUIRE(ni.at(2) == 0.0);
+    REQUIRE(ni.at(3) == matdb.getMaterial("Si").ni);
+}
 
 
 TEST_CASE("surface mobility uses the reconstructed normal interface field",
@@ -200,6 +237,43 @@ TEST_CASE("surface mobility uses the reconstructed normal interface field",
     REQUIRE(tangentialOnly > 0.0);
     REQUIRE(normalLimited > 0.0);
     REQUIRE(normalLimited < tangentialOnly);
+}
+
+TEST_CASE("surface normal field respects TCAD coordinate and field units",
+          "[mos_mixed][mobility][surface][unit_scaling]")
+{
+    DeviceMesh mesh = makeHorizontalInterfaceMesh();
+    MaterialDatabase matdb;
+    const DopingModel doping = DopingModel::fromMeshAndRegions(
+        mesh, {{"channel", 0.0, 0.0}, {"gate_oxide", 0.0, 0.0}});
+    const auto edgeCells = detail::buildEdgeCellMap(mesh);
+    const auto cellMaterials = detail::buildCellMaterials(
+        mesh, matdb, constants::T0);
+
+    MobilityModelConfig config = mobilityModelConfigFromJson(
+        nlohmann::json{
+            {"model", "masetti_field_surface"},
+            {"surface", {
+                {"theta_electron_m_per_V", 1.0e-6},
+                {"surface_region", "channel"},
+                {"surface_interface", {"channel", "gate_oxide"}},
+            }},
+        },
+        UnitScalingConfig{UnitScalingMode::UnitScaling});
+    const auto mobility = makeMobilityModel(config);
+
+    VectorXd psi(4);
+    psi << 0.0, 0.0, 0.0, 1.0;
+    const Index interfaceEdge = findEdgeByNodes(mesh, 0, 1);
+    const Real withoutNormalField = detail::edgeMobility(
+        edgeCells, mesh, doping, *mobility, cellMaterials, interfaceEdge,
+        CarrierType::Electron, 0.0, &config);
+    const Real withNormalField = detail::edgeMobility(
+        edgeCells, mesh, doping, *mobility, cellMaterials, interfaceEdge,
+        CarrierType::Electron, 0.0, &config, &psi);
+
+    REQUIRE(config.surface.coordinateFieldFactor == 1.0e4);
+    REQUIRE(withNormalField < withoutNormalField * 0.01);
 }
 
 TEST_CASE("mixed Si/SiO2 MOS edge mobility preserves semiconductor interface transport",
@@ -309,6 +383,10 @@ TEST_CASE("mixed Si/SiO2 MOS coupled DD residual and Jacobian are finite",
             state.phin = VectorXd::Constant(nNodes, 0.25);
             state.phip = VectorXd::Constant(nNodes, -0.25);
             const VectorXd x = assembler.pack(state);
+
+            // Pure oxide nodes legitimately have ni = n = p = 0.  They are
+            // pinned algebraic rows, not invalid semiconductor carrier states.
+            REQUIRE(assembler.hasPositiveFiniteCarriers(x));
 
             CoupledDDBoundaryConditions bcs;
             const VectorXd residual = assembler.residual(x, bcs);

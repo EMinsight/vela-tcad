@@ -13,6 +13,10 @@ struct BandgapNarrowingConfig {
     Real coefficient = 9.0e-3; ///< Slotboom narrowing coefficient [eV]
     Real smoothing = 0.5; ///< Dimensionless Slotboom smoothing term
     Real offset = 0.0; ///< Optional additive narrowing offset [eV]
+    /// Apply the Sentaurus correction used when EffectiveIntrinsicDensity is
+    /// combined with Fermi statistics.  This remains opt-in so existing Vela
+    /// calibration decks retain their previous semantics.
+    bool fermiStatisticsCorrection = false;
 };
 
 class BandgapNarrowing {
@@ -40,6 +44,15 @@ private:
 
 /// Return ni_eff = ni * exp(DeltaEg / (2 Vt)) for a narrowing in eV.
 Real effectiveIntrinsicDensity(Real ni, Real thermalVoltage, Real deltaEg);
+
+/// Sentaurus-compatible apparent-BGN correction for Fermi statistics [eV].
+///
+/// OldSlotboom parameters were extracted using Maxwell-Boltzmann statistics.
+/// Sentaurus adds the difference between Fermi-Dirac and Boltzmann majority
+/// carrier energies, evaluated at 300 K, unless NoFermi is requested.
+Real fermiStatisticsBandgapCorrection(Real donors, Real acceptors,
+                                      Real Nc, Real Nv,
+                                      Real thermalVoltage);
 
 BandgapNarrowingConfig bandgapNarrowingConfig(
     std::string modelName,

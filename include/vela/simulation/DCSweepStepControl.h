@@ -17,6 +17,7 @@ struct DCSweepStepControlConfig {
     Real shrinkFactor = 0.5;
     int maxRetries = 5;
     bool stopOnFailure = true;
+    std::function<bool()> stopRequested;
 };
 
 struct DCSweepStepControlState {

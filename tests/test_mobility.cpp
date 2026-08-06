@@ -4,6 +4,7 @@
 
 #include "vela/core/PhysicalConstants.h"
 #include "vela/core/UnitScaling.h"
+#include "vela/equation/AssemblerUtils.h"
 #include "vela/material/MaterialDatabase.h"
 #include "vela/mesh/DeviceMesh.h"
 #include "vela/physics/DopingModel.h"
@@ -161,7 +162,11 @@ TEST_CASE("JSON solver config selects mobility and recombination models", "[mobi
         {"taup", 3.0e-7},
         {"auger_cn_m6_per_s", 3.1e-43},
         {"auger_cp_m6_per_s", 1.2e-43},
-        {"bandgap_narrowing", {{"model", "slotboom"}, {"coefficient_eV", 0.010}}},
+        {"bandgap_narrowing", {
+            {"model", "slotboom"},
+            {"coefficient_eV", 0.010},
+            {"fermi_statistics_correction", true}
+        }},
     };
 
     const GummelConfig cfg = gummelConfigFromJson(json);
@@ -175,6 +180,7 @@ TEST_CASE("JSON solver config selects mobility and recombination models", "[mobi
     REQUIRE(cfg.augerCp == Catch::Approx(1.2e-43));
     REQUIRE(cfg.bandgapNarrowing.model == "slotboom");
     REQUIRE(cfg.bandgapNarrowing.coefficient == Catch::Approx(0.010));
+    REQUIRE(cfg.bandgapNarrowing.fermiStatisticsCorrection);
 }
 
 TEST_CASE("JSON solver config unit_scaling default mobility and impact parameters are TCAD internal",
@@ -253,7 +259,15 @@ TEST_CASE("JSON mobility object parses high-field quasi-Fermi driving force",
 
     REQUIRE(cfg.model == "masetti_field");
     REQUIRE(cfg.highFieldDrivingForce == "quasi_fermi_gradient");
+    REQUIRE(cfg.highFieldGradientDiscretization == "edge_projection");
     REQUIRE(cfg.jacobianFieldDerivatives);
+
+    const MobilityModelConfig vectorCfg = mobilityModelConfigFromJson(nlohmann::json{
+        {"model", "masetti_field"},
+        {"high_field_driving_force", "quasi_fermi_gradient"},
+        {"high_field_gradient_discretization", "transport_cell_vector"},
+    });
+    REQUIRE(vectorCfg.highFieldGradientDiscretization == "transport_cell_vector");
 
     const MobilityModelConfig frozenJacobianCfg = mobilityModelConfigFromJson(nlohmann::json{
         {"model", "masetti_field"},
@@ -267,6 +281,32 @@ TEST_CASE("JSON mobility object parses high-field quasi-Fermi driving force",
         {"model", "masetti_field"},
         {"high_field_driving_force", "electrostatic"},
     }), std::invalid_argument);
+    REQUIRE_THROWS_AS(mobilityModelConfigFromJson(nlohmann::json{
+        {"model", "masetti_field"},
+        {"high_field_gradient_discretization", "unsupported"},
+    }), std::invalid_argument);
+}
+
+TEST_CASE("transport cell-vector quasi-Fermi recovery is orientation independent",
+          "[mobility][field][gradient]")
+{
+    const DeviceMesh mesh = makePNMesh();
+    const MaterialDatabase matdb;
+    const auto edgeCells = detail::buildEdgeCellMap(mesh);
+    const auto cellMaterials = detail::buildCellMaterials(mesh, matdb, 300.0);
+    VectorXd quasiFermi(static_cast<int>(mesh.numNodes()));
+    for (Index node = 0; node < mesh.numNodes(); ++node) {
+        const Node& point = mesh.getNode(node);
+        quasiFermi(static_cast<int>(node)) = 3.0 * point.x - 4.0 * point.y;
+    }
+
+    const std::vector<Real> fields =
+        detail::transportCellVectorEdgeGradientMagnitudes(
+            mesh, edgeCells, cellMaterials, quasiFermi, 1.0);
+
+    REQUIRE(fields.size() == mesh.numEdges());
+    for (const Real field : fields)
+        REQUIRE(field == Catch::Approx(5.0).epsilon(1.0e-12));
 }
 
 
@@ -456,6 +496,36 @@ TEST_CASE("surface mobility theta zero preserves baseline", "[mobility][surface]
             Catch::Approx(baseline.electronMobility(si, 1.0e22, 0.0, 0.0, 0.0)));
     REQUIRE(surface.holeMobility(si, 1.0e22, 0.0, 0.0, 0.0, 1.0e9) ==
             Catch::Approx(baseline.holeMobility(si, 1.0e22, 0.0, 0.0, 0.0)));
+}
+
+TEST_CASE("Masetti field and surface mobility compose", "[mobility][surface][masetti]")
+{
+    const Material silicon = MaterialDatabase{}.getMaterial("Si");
+    MobilityModelConfig bulkConfig = mobilityModelConfig("masetti_field");
+    MobilityModelConfig surfaceConfig = bulkConfig;
+    surfaceConfig.model = "masetti_field_surface";
+    surfaceConfig.surface.thetaElectron = 8.0e-8;
+    surfaceConfig.surface.thetaHole = 2.0e-8;
+
+    const auto bulk = makeMobilityModel(bulkConfig);
+    const auto surface = makeMobilityModel(surfaceConfig);
+    const Real doping = 1.0e23;
+    const Real parallelField = 1.0e6;
+    const Real normalField = 3.0e7;
+
+    const Real bulkElectron = bulk->electronMobility(
+        silicon, doping, 0.0, 0.0, parallelField, normalField);
+    const Real surfaceElectron = surface->electronMobility(
+        silicon, doping, 0.0, 0.0, parallelField, normalField);
+    const Real bulkHole = bulk->holeMobility(
+        silicon, doping, 0.0, 0.0, parallelField, normalField);
+    const Real surfaceHole = surface->holeMobility(
+        silicon, doping, 0.0, 0.0, parallelField, normalField);
+
+    REQUIRE(surfaceElectron > 0.0);
+    REQUIRE(surfaceHole > 0.0);
+    REQUIRE(surfaceElectron < bulkElectron);
+    REQUIRE(surfaceHole < bulkHole);
 }
 
 TEST_CASE("surface mobility rejects invalid parameters", "[mobility][surface]")

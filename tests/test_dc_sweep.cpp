@@ -448,6 +448,39 @@ TEST_CASE("QfBoundsGuard recovery reset only changes violating quasi-Fermi field
     CHECK(reset.phip(1) == Catch::Approx(-17.0));
     CHECK(reset.psi(1) == Catch::Approx(solution.psi(1)));
 }
+
+TEST_CASE("QfBoundsGuard ignores finite QF excursions below the carrier density floor",
+          "[dc_sweep][qf_bounds][minority_carrier]")
+{
+    const DeviceMesh mesh = makeTwoRegionUnitSquareMesh();
+    DDSolution solution = uniformCarrierSolution(mesh.numNodes(), 1.0e20, 1.0e20);
+    solution.phin(1) = 4.0;
+    solution.phip(2) = -4.0;
+    solution.n(1) = 1.0;
+    solution.p(2) = 2.0;
+
+    QfBoundsDiagnosticsConfig config;
+    config.margin_V = 0.5;
+    config.minCarrierDensity_m3 = 1.0e6;
+    auto eval = evaluateQfBounds(
+        mesh, solution, {{"source", 0.0}, {"drain", 0.8}}, config, 0.8);
+    REQUIRE(eval.valid());
+
+    solution.n(1) = 1.0e12;
+    solution.p(2) = 1.0e12;
+    eval = evaluateQfBounds(
+        mesh, solution, {{"source", 0.0}, {"drain", 0.8}}, config, 0.8);
+    REQUIRE(eval.violations.size() == 2);
+    CHECK(eval.violations.at(0).carrierDensity_m3 == Catch::Approx(1.0e12));
+    CHECK(eval.violations.at(1).carrierDensity_m3 == Catch::Approx(1.0e12));
+
+    solution.phin(1) = std::numeric_limits<Real>::quiet_NaN();
+    solution.n(1) = 0.0;
+    eval = evaluateQfBounds(
+        mesh, solution, {{"source", 0.0}, {"drain", 0.8}}, config, 0.8);
+    REQUIRE_FALSE(eval.valid());
+    CHECK(eval.violations.at(0).variable == "phin");
+}
 Real runMosExampleDrainCurrentAtGate(const std::string& exampleName, Real gateBias, Real drainBias)
 {
     const auto dir = makeUniqueSweepDir();
@@ -1145,6 +1178,145 @@ TEST_CASE("Physical unit systems convert native continuity particle flux",
             == Catch::Approx(nativeFlux * 1.0e4));
 }
 
+TEST_CASE("TCAD mixed length units form dimensionless alpha-length products",
+          "[dc_sweep][diagnostics][path_ionization][scaling]")
+{
+    const PhysicalUnitSystem units = PhysicalUnitSystem::tcadInternal();
+    const Real alphaInternal = units.mInvToInternalInverseLength(2.0e6);
+    const Real lengthInternal = units.metersToInternalLength(5.0e-7);
+
+    REQUIRE(alphaInternal * lengthInternal == Catch::Approx(1.0e4));
+    REQUIRE(units.internalInverseLengthToMInv(alphaInternal) *
+                units.internalLengthToMeters(lengthInternal)
+            == Catch::Approx(1.0));
+}
+
+TEST_CASE("DCSweep path ionization diagnostics export ordered segment traces",
+          "[dc_sweep][diagnostics][path_ionization][segments]")
+{
+    const auto dir = makeUniqueSweepDir();
+    const ScopedDirectoryCleanup cleanup{dir};
+    std::filesystem::create_directories(dir);
+    const auto meshPath = writePNMeshMicrometers(dir);
+    const auto csvPath = dir / "path_sweep.csv";
+    const auto summaryPath = dir / "path_summary.csv";
+    const auto segmentsPath = dir / "path_segments.csv";
+    const auto cfgPath = writeUnitScalingSweepConfig(dir, meshPath, csvPath, {
+        {"mode", "bv_reverse"},
+        {"start", 0.0},
+        {"stop", 0.0},
+        {"step", -0.05},
+        {"write_vtk", false},
+        {"diagnostics", {
+            {"path_ionization_integrals", {
+                {"enabled", true},
+                {"csv_file", summaryPath.string()},
+                {"segments_csv_file", segmentsPath.string()},
+                {"max_paths", 2},
+                {"driving_force", "electric_field"}
+            }}
+        }}
+    }, {
+        {"method", "gummel_newton"},
+        {"handoff", {
+            {"gummel_max_iter", 0},
+            {"newton_max_iter", 80},
+            {"require_gummel_convergence", false}
+        }},
+        {"impact_ionization", {
+            {"model", "selberherr"},
+            {"driving_force", "electric_field"},
+            {"generation", "current_density"},
+            {"current_approximation", "density_gradient"},
+            {"electron_A_m_inv", 1.0},
+            {"electron_B_V_m", 1.0e-30},
+            {"hole_A_m_inv", 1.0},
+            {"hole_B_V_m", 1.0e-30}
+        }}
+    });
+
+    DCSweep sweep;
+    const DCSweepResult result = sweep.runWithResult(cfgPath.string());
+    REQUIRE(result.points.size() == 1);
+    REQUIRE(result.points.front().converged);
+
+    const auto summaryRows = readCsvRows(summaryPath);
+    const auto segmentRows = readCsvRows(segmentsPath);
+    REQUIRE(summaryRows.size() > 1);
+    REQUIRE(segmentRows.size() > 1);
+    const auto& header = segmentRows.front();
+    const auto& summaryHeader = summaryRows.front();
+    REQUIRE(csvColumnIndex(summaryHeader, "physical_path_rank") <
+            summaryHeader.size());
+    REQUIRE(csvColumnIndex(summaryHeader, "electron_support_length_m") <
+            summaryHeader.size());
+    REQUIRE(csvColumnIndex(summaryHeader, "hole_support_length_m") <
+            summaryHeader.size());
+    REQUIRE(csvColumnIndex(summaryHeader, "path_retention") <
+            summaryHeader.size());
+    REQUIRE(csvColumnIndex(summaryHeader, "seed_mode") < summaryHeader.size());
+    REQUIRE(csvColumnIndex(summaryHeader, "tracing_vector") <
+            summaryHeader.size());
+    REQUIRE(csvColumnIndex(summaryHeader, "tracing_qf_relative_floor") <
+            summaryHeader.size());
+    REQUIRE(csvColumnIndex(summaryHeader, "seed_field_V_per_m") <
+            summaryHeader.size());
+    REQUIRE(csvColumnIndex(summaryHeader, "saddle_field_V_per_m") <
+            summaryHeader.size());
+    REQUIRE(csvColumnIndex(summaryHeader, "peak_prominence_ratio") <
+            summaryHeader.size());
+    REQUIRE(csvColumnIndex(summaryHeader, "parent_peak_node_id") <
+            summaryHeader.size());
+    REQUIRE(csvColumnIndex(summaryHeader, "physical_path_group_id") <
+            summaryHeader.size());
+    REQUIRE(csvColumnIndex(
+                summaryHeader, "seed_electron_qf_relative_magnitude") <
+            summaryHeader.size());
+    REQUIRE(csvColumnIndex(
+                summaryHeader, "seed_hole_qf_relative_magnitude") <
+            summaryHeader.size());
+    REQUIRE(csvColumnIndex(header, "segment_index") < header.size());
+    REQUIRE(csvColumnIndex(header, "x0_um") < header.size());
+    REQUIRE(csvColumnIndex(header, "electric_field_V_per_m") < header.size());
+    REQUIRE(csvColumnIndex(header, "electron_driving_field_V_per_m") < header.size());
+    REQUIRE(csvColumnIndex(header, "hole_driving_field_V_per_m") < header.size());
+    REQUIRE(csvColumnIndex(header, "electron_alpha_ds") < header.size());
+    REQUIRE(csvColumnIndex(header, "prefix_mean_ionization_integral") < header.size());
+    REQUIRE(csvColumnIndex(header, "path_mean_ionization_integral") < header.size());
+    REQUIRE(csvColumnIndex(header, "seed_mode") < header.size());
+    REQUIRE(csvColumnIndex(header, "tracing_vector") < header.size());
+}
+
+TEST_CASE("DCSweep validates the current-path direction reliability floor",
+          "[dc_sweep][diagnostics][path_ionization][tracing-vector]")
+{
+    const auto dir = makeUniqueSweepDir();
+    const ScopedDirectoryCleanup cleanup{dir};
+    std::filesystem::create_directories(dir);
+    const auto meshPath = writePNMeshMicrometers(dir);
+    const auto csvPath = dir / "invalid_path_floor.csv";
+    const auto cfgPath = writeUnitScalingSweepConfig(dir, meshPath, csvPath, {
+        {"mode", "bv_reverse"},
+        {"start", 0.0},
+        {"stop", 0.0},
+        {"step", -0.05},
+        {"write_vtk", false},
+        {"diagnostics", {
+            {"path_ionization_integrals", {
+                {"enabled", true},
+                {"tracing_vector", "electron_current"},
+                {"tracing_current_relative_floor", 1.01}
+            }}
+        }}
+    });
+
+    DCSweep sweep;
+    REQUIRE_THROWS_WITH(
+        sweep.runWithResult(cfgPath.string()),
+        Catch::Matchers::ContainsSubstring(
+            "tracing_current_relative_floor must be finite and in [0,1]"));
+}
+
 
 TEST_CASE("DCSweep: SG avalanche edge diagnostics write assembled source rows",
           "[dc_sweep][diagnostics][sg_avalanche_edges]")
@@ -1198,6 +1370,14 @@ TEST_CASE("DCSweep: SG avalanche edge diagnostics write assembled source rows",
     const auto& header = rows.front();
     const std::size_t pointIndexCol = csvColumnIndex(header, "point_index");
     const std::size_t edgeSourceCol = csvColumnIndex(header, "edge_source_integral");
+    const std::size_t electronNode0SourceCol =
+        csvColumnIndex(header, "electron_node0_source_integral");
+    const std::size_t electronNode1SourceCol =
+        csvColumnIndex(header, "electron_node1_source_integral");
+    const std::size_t holeNode0SourceCol =
+        csvColumnIndex(header, "hole_node0_source_integral");
+    const std::size_t holeNode1SourceCol =
+        csvColumnIndex(header, "hole_node1_source_integral");
     const std::size_t node0SourceCol = csvColumnIndex(header, "node0_source_integral");
     const std::size_t node1SourceCol = csvColumnIndex(header, "node1_source_integral");
     (void)csvColumnIndex(header, "edge_area_proxy_m2");
@@ -1210,6 +1390,12 @@ TEST_CASE("DCSweep: SG avalanche edge diagnostics write assembled source rows",
     (void)csvColumnIndex(header, "hole_flux_proxy");
     const std::size_t edgeClassCol = csvColumnIndex(header, "edge_class");
     const std::vector<std::string> electronSgNumericColumns = {
+        "electron_sg_uses_fermi_dirac",
+        "electron_sg_generalized_einstein_factor",
+        "electron_sg_generalized_bernoulli_argument",
+        "hole_sg_uses_fermi_dirac",
+        "hole_sg_generalized_einstein_factor",
+        "hole_sg_generalized_bernoulli_argument",
         "electron_sg_ni0",
         "electron_sg_ni1",
         "electron_sg_n0",
@@ -1281,6 +1467,12 @@ TEST_CASE("DCSweep: SG avalanche edge diagnostics write assembled source rows",
         REQUIRE(csvReal(row, pointIndexCol) == Catch::Approx(0.0));
         const Real edgeSource = csvReal(row, edgeSourceCol);
         REQUIRE(edgeSource >= 0.0);
+        REQUIRE(csvReal(row, node0SourceCol) == Catch::Approx(
+            csvReal(row, electronNode0SourceCol) +
+            csvReal(row, holeNode0SourceCol)).margin(1.0e-30));
+        REQUIRE(csvReal(row, node1SourceCol) == Catch::Approx(
+            csvReal(row, electronNode1SourceCol) +
+            csvReal(row, holeNode1SourceCol)).margin(1.0e-30));
         maxEdgeElectricField_V_per_m = std::max(maxEdgeElectricField_V_per_m, csvReal(row, electricFieldCol));
         REQUIRE(csvReal(row, node0SourceCol) == Catch::Approx(0.5 * edgeSource));
         REQUIRE(csvReal(row, node1SourceCol) == Catch::Approx(0.5 * edgeSource));
@@ -3802,6 +3994,30 @@ TEST_CASE("DCSweep step control: independent initialStep grows within nominal ta
     REQUIRE(events[2].acceptedStep == Catch::Approx(0.0625));
     REQUIRE(events[3].voltage == Catch::Approx(0.5));
     REQUIRE(events[3].acceptedStep == Catch::Approx(0.25));
+}
+
+TEST_CASE("DCSweep step control honors a diagnostic stop request", "[dc_sweep]")
+{
+    detail::DCSweepStepControlConfig cfg;
+    cfg.start = 0.0;
+    cfg.stop = 1.0;
+    cfg.step = 0.1;
+    cfg.initialStep = 0.1;
+    cfg.minStep = 0.1;
+    cfg.maxStep = 0.1;
+    cfg.growthFactor = 1.0;
+
+    std::vector<detail::DCSweepStepControlEvent> events;
+    cfg.stopRequested = [&]() { return events.size() >= 3; };
+    detail::runDCSweepStepControl(
+        cfg,
+        [](Real, Real, int) { return true; },
+        [&](const detail::DCSweepStepControlEvent& event) {
+            events.push_back(event);
+        });
+
+    REQUIRE(events.size() == 3);
+    REQUIRE(events.back().voltage == Catch::Approx(0.3));
 }
 
 TEST_CASE("DCSweep: sweep.initial_step is parsed and bounded", "[dc_sweep]")

@@ -82,6 +82,7 @@ add_library(vela_core STATIC
     src/io/DDSolutionCsv.cpp
     src/physics/DopingModel.cpp
     src/physics/CarrierStatistics.cpp
+    src/physics/BandToBandTunnelingModel.cpp
     src/physics/SRHRecombination.cpp
     src/physics/MobilityModel.cpp
     src/physics/RecombinationModel.cpp
@@ -98,6 +99,7 @@ add_library(vela_core STATIC
     src/solver/SolutionValidation.cpp
     src/post/ContactCurrent.cpp
     src/post/ElectricFieldDiagnostics.cpp
+    src/post/PathIonizationIntegral.cpp
     src/post/TerminalCharge.cpp
     src/post/StoredCharge.cpp
     src/solver/NewtonSolver.cpp
@@ -284,6 +286,9 @@ target_link_libraries(test_bernoulli PRIVATE vela_core Catch2::Catch2WithMain)
 add_executable(test_sg_flux tests/test_sg_flux.cpp)
 target_link_libraries(test_sg_flux PRIVATE vela_core Catch2::Catch2WithMain)
 
+add_executable(test_carrier_statistics tests/test_carrier_statistics.cpp)
+target_link_libraries(test_carrier_statistics PRIVATE vela_core Catch2::Catch2WithMain)
+
 add_executable(test_dd_gummel tests/test_dd_gummel.cpp)
 target_link_libraries(test_dd_gummel PRIVATE vela_core Catch2::Catch2WithMain)
 
@@ -319,6 +324,9 @@ target_link_libraries(test_mobility PRIVATE vela_core Catch2::Catch2WithMain)
 
 add_executable(test_impact_ionization tests/test_impact_ionization.cpp)
 target_link_libraries(test_impact_ionization PRIVATE vela_core Catch2::Catch2WithMain)
+
+add_executable(test_path_ionization_integral tests/test_path_ionization_integral.cpp)
+target_link_libraries(test_path_ionization_integral PRIVATE vela_core Catch2::Catch2WithMain)
 
 add_executable(test_cell_reconstructed_avalanche tests/test_cell_reconstructed_avalanche.cpp)
 target_link_libraries(test_cell_reconstructed_avalanche PRIVATE vela_core Catch2::Catch2WithMain)
@@ -406,6 +414,7 @@ vela_catch_discover_tests(test_mos_mixed_material)
 add_test(NAME mos_mixed COMMAND test_mos_mixed_material [mos_mixed])
 vela_catch_discover_tests(test_mobility)
 vela_catch_discover_tests(test_impact_ionization)
+vela_catch_discover_tests(test_path_ionization_integral)
 vela_catch_discover_tests(test_cell_reconstructed_avalanche)
 vela_catch_discover_tests(test_element_edge_gss_laux_avalanche)
 vela_catch_discover_tests(test_fixed_state_operator_audit)

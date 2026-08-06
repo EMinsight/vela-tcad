@@ -496,6 +496,26 @@ values, resolved donor/acceptor values, whether a rewrite occurred, and
 `signed_aggregate_tie_first_region`, `neighbour_region_sign`, or
 `unresolved_tie`).
 
+### carrier_statistics
+
+The coupled Newton drift-diffusion solver accepts either form below:
+
+```json
+"carrier_statistics": "fermi_dirac"
+```
+
+```json
+"carrier_statistics": { "model": "fermi_dirac" }
+```
+
+Supported values are `boltzmann` (the compatibility default) and
+`fermi_dirac`. The Fermi-Dirac selection is one atomic physics path: carrier
+densities use the normalized complete integral `F_{1/2}`, ideal Ohmic contacts
+solve charge neutrality with the same statistics, continuity edges use the
+generalized Einstein/Scharfetter-Gummel operator, and terminal-current
+post-processing uses that identical edge operator. The density-form Gummel
+solver currently rejects `fermi_dirac` explicitly; use `method: "newton"`.
+
 ### bandgap_narrowing
 
 `solver.bandgap_narrowing` accepts either a string or an object.
@@ -514,7 +534,8 @@ Object form:
   "reference_doping_m3": 1.0e23,
   "coefficient_eV": 0.009,
   "smoothing": 0.5,
-  "offset_eV": 0.0
+  "offset_eV": 0.0,
+  "fermi_statistics_correction": false
 }
 ```
 
@@ -533,6 +554,13 @@ material intrinsic-density override, while the `old_slotboom` BGN term uses
 Gummel and Newton configurations. With
 `scaling.mode: "unit_scaling"`, `reference_doping_m3` numeric input is read as
 `cm^-3` and kept internally as `cm^-3`.
+
+Set `fermi_statistics_correction: true` to reproduce the additional bandgap-
+narrowing correction that Sentaurus applies by default when `Fermi` and
+`EffectiveIntrinsicDensity(OldSlotboom)` are active together.  The correction
+is evaluated from donor/acceptor concentrations and the 300 K density of states.
+Leave it `false` to reproduce Sentaurus `EffectiveIntrinsicDensity(NoFermi)` or
+the historical Vela behavior.
 
 ### Newton diagnostics and residual options
 
@@ -596,6 +624,38 @@ flux magnitude, integrated-source magnitude, and `source_floor`.
 from a previous solution. The default `false` keeps the conservative
 cold-start behavior.
 
+### band_to_band
+
+`solver.band_to_band` enables a local electron-hole pair-generation source in
+both Newton and Gummel continuity equations.  The `e2` model implements the
+Sentaurus Device O-2018.06 simple silicon expression
+`G = A |F|^2 exp(-B/|F|)`. Vela evaluates `F` in each semiconductor triangle,
+integrates the local rate over that cell, and mass-lumps the paired source to
+its vertices; insulator cells are excluded even at shared nodes. The default
+parameters are `A=3.4e23 m^-1 s^-1 V^-2` and `B=2.26e9 V/m`, equivalent
+to the Sentaurus parameter-file units `3.4e21 cm^-1 s^-1 V^-2` and
+`22.6e6 V/cm`.
+
+```json
+"band_to_band": {
+  "model": "e2",
+  "A_cm_inv_s_inv_V_inv2": 3.4e21,
+  "B_V_per_cm": 22.6e6,
+  "minimum_field_V_per_cm": 0.0,
+  "jacobian": "frozen_field"
+}
+```
+
+The canonical SI keys are `A_m_inv_s_inv_V_inv2`, `B_V_per_m`, and
+`minimum_field_V_per_m`.  The `cm` aliases above are provided for direct
+transcription of Sentaurus parameters.  `jacobian: "frozen_field"` (default)
+re-evaluates `G` from the current potential at every nonlinear residual but
+omits `dG/dpsi` from that linear solve, matching the solver's controlled
+high-field quasi-Newton strategy.  `potential_finite_difference` includes the
+full derivative of the semiconductor-cell field/source integral and is intended
+for focused small-mesh verification because its cost grows with the number of
+potential unknowns.  `model: "none"` disables the source.
+
 ### impact_ionization
 
 `solver.impact_ionization` accepts either a legacy model string or an object.
@@ -614,6 +674,7 @@ Object form:
   "coupling_mode": "self_consistent",
   "parameter_set": "default",
   "driving_force": "electric_field",
+  "eparallel_field_recovery": "edge_adjacent_cells",
   "quasi_fermi_gradient_discretization": "edge_difference",
   "generation": "carrier_density",
   "debug_raw_vanoverstraeten": false,
@@ -647,10 +708,21 @@ Field meanings (Selberherr prototype):
 - `carrier_velocity_m_s` (m/s): effective saturated carrier speed used by the
   generation-rate proxy.
 - `driving_force`: `electric_field` (default), `quasi_fermi_gradient`,
-  `grad_potential_parallel_j`, or `effective_field_parallel_j`. Sentaurus
+  `grad_potential_parallel_j`, `effective_field_parallel_j`, or `eparallel`.
+  `eparallel` implements the Sentaurus carrier-specific vector projection
+  `max(E dot Jn/|Jn|,0)` and `max(E dot Jp/|Jp|,0)` using a shared
+  electrostatic-field geometry and cell-reconstructed SG current vectors.
+  Sentaurus
   `Avalanche(VanOverstraeten)` decks use `quasi_fermi_gradient`; the
   current-aligned options are Charon-style SG edge-current diagnostics and
   require `generation: "current_density"`.
+- `eparallel_field_recovery`: electric-field vector recovery used only with
+  `driving_force: "eparallel"`. `edge_adjacent_cells` (default) preserves the
+  existing area-weighted average of the cells sharing each edge.
+  `nodal_vertex_star` first recovers a field at each endpoint from the complete
+  transport-material triangle star, then averages the two endpoint vectors;
+  this matches the Sentaurus vertex-field interpolation observed in the
+  BVmethods NMOS reference without changing the compatibility default.
 - `generation`: `carrier_density` (legacy `alpha*v*n/p` proxy) or
   `current_density` (`alpha_n*mu_n*n*|grad(phin)| + alpha_p*mu_p*p*|grad(phip)|`).
 - `current_approximation` (with `generation: "current_density"`):
@@ -726,7 +798,7 @@ Validation:
 - `electron_A_m_inv`, `hole_A_m_inv`, and `carrier_velocity_m_s` must be non-negative.
 - `electron_B_V_m` and `hole_B_V_m` must be positive.
 - `driving_force` must be `electric_field`, `quasi_fermi_gradient`,
-  `grad_potential_parallel_j`, or `effective_field_parallel_j`.
+  `grad_potential_parallel_j`, `effective_field_parallel_j`, or `eparallel`.
 - Current-aligned driving forces require `generation: "current_density"` and
   `current_approximation: "density_gradient"` or `"grad_qf"`.
 - `quasi_fermi_gradient_discretization` must be `edge_difference` or
@@ -780,6 +852,7 @@ Object form:
 "mobility": {
   "model": "caughey_thomas_field_surface",
   "high_field_driving_force": "electric_field",
+  "high_field_gradient_discretization": "edge_projection",
   "electron_mu_min_m2_V_s": 0.00522,
   "electron_nref_m3": 9.68e22,
   "electron_alpha": 0.68,
@@ -805,11 +878,37 @@ Object form:
 
 Supported `model` values are `constant`, `caughey_thomas`,
 `caughey_thomas_field`, `caughey_thomas_surface`,
-`caughey_thomas_field_surface`, `masetti`, and `masetti_field`.
+`caughey_thomas_field_surface`, `masetti`, `masetti_field`,
+`masetti_surface`, and `masetti_field_surface`.
 For field-saturation models, `high_field_driving_force` is `electric_field`
 by default and may be set to `quasi_fermi_gradient` to match Sentaurus
 `HighFieldSaturation`; electrons use `|grad(phin)|` and holes use
 `|grad(phip)|`.
+When quasi-Fermi driving is selected, `high_field_gradient_discretization`
+controls how that magnitude is recovered. `edge_projection` (default) uses the
+potential difference projected onto each edge and preserves legacy Vela
+behavior. `transport_cell_vector` reconstructs the two-dimensional P1 gradient
+inside adjacent semiconductor cells and area-averages its magnitude onto each
+edge; this matches the orientation-independent `GradQuasiFermi` semantics used
+by Sentaurus on unstructured 2-D meshes.
+
+For SG current-density avalanche integration,
+`impact_ionization.source_volume_policy=genius_conservative` normalizes the
+three truncated edge-box pieces of every semiconductor triangle to its exact
+area and excludes adjacent insulator cells. This is the conservative
+counterpart to legacy `genius_truncated` and is intended for comparisons with
+Sentaurus `IntegrSemiconductor AvalancheGeneration`.
+For frozen-state diagnostics,
+`impact_ionization.source_mapping_mode=nodal_eparallel_p1` reconstructs the
+electric field and conventional electron/hole current vectors at transport
+nodes, evaluates the two carrier ionization rates there, and integrates the
+nodal generation with the exact semiconductor P1 measure (one third of each
+incident triangle area). It is restricted to `postprocess_only`, `eparallel`,
+`current_density`, `nodal_vector_current_reconstructed`, and
+`eparallel_field_recovery=nodal_vertex_star`. Consequently the electric field,
+carrier current, ionization coefficient, and P1 generation integral are all
+evaluated at the same transport node. It is not a self-consistent
+continuity-equation source mapping.
 The `masetti` models implement a Masetti-style silicon doping-dependent
 mobility shape with configurable electron/hole fields:
 `*_mu_const_m2_V_s`, `*_mumin1_m2_V_s`, `*_mumin2_m2_V_s`,
@@ -948,6 +1047,90 @@ Diagnostics fields:
   `"conserved_total_current"`).
   Optional `csv_file` overrides the default
   `<sweep csv stem>_sg_avalanche_edges.csv`.
+- `diagnostics.path_ionization_integrals.enabled`: traces monotone-potential
+  field paths through local electric-field maxima and evaluates the
+  Sentaurus Device Eq. 469/470 electron- and hole-injection integrals. Paths
+  are ranked by `mean_ionization_integral`. `max_paths` controls the number of
+  reported paths (`0` writes all); `break_rank: 3` and `break_value: 1.0`
+  reproduce `BreakAtIonIntegral(3 1.)` stopping semantics. The path diagnostic
+  has an independent `driving_force`, defaulting to `solver` so the path uses
+  the avalanche driving force of the solved deck. Set it explicitly to
+  `electric_field` for the field-only approximate-breakdown analysis
+  recommended by the Sentaurus manual; this does not change the avalanche
+  source driving force used by the continuity equations. Optional
+  `stop_field_V_per_m` terminates both sides of a traced path when the
+  electrostatic field falls below the specified non-negative SI threshold;
+  the default `0` preserves the full monotone path. This is an explicit Vela
+  depletion-support diagnostic because Sentaurus does not expose a named
+  stop-field keyword in the 2018.06 command syntax. Optional
+  `electron_stop_field_V_per_m` and `hole_stop_field_V_per_m` independently
+  restrict the contiguous carrier support around each carrier's strongest
+  driving field on that same geometric path. The coupled electron/hole alpha
+  pair is retained inside each interval when evaluating Eq. 469 or Eq. 470;
+  both defaults are `0`, which preserves the shared path interval.
+  `mean_definition` is `carrier_integral_arithmetic` by default. The optional
+  `carrier_alpha_length_arithmetic` diagnostic instead ranks
+  `0.5*(integral(alpha_n ds)+integral(alpha_p ds))` on the independently
+  supported intervals. It is exposed for Sentaurus `MeanIonIntegral` audits,
+  not asserted to be Synopsys's undocumented strong-ionization formula.
+  `break_ordering` defaults to `path_mean`. The alternative
+  `carrier_integrals` flattens electron and hole values from every path before
+  applying `break_rank`; it is an explicit ordering experiment and is not the
+  validated default for the BVmethods deck.
+  Optional
+  `tracing_mode: "continuous_cell"` follows the barycentrically interpolated
+  nodal electric field through triangle interiors and samples electron/hole
+  coefficients at each triangle's largest-angle (Sentaurus best-vertex)
+  node. Nodal electric-field and quasi-Fermi current directions use
+  element-vertex-angle recovery. `seed_mode` defaults to
+  `nodal_local_maxima`, using maxima of the recovered P1 field; the diagnostic
+  alternative `cell_local_maxima` uses raw element maxima. `path_retention`
+  defaults to `distinct_local_maxima`: each local-maximum seed contributes one
+  strongest trajectory. `numbered_peak_groups` is the BVmethods WriteAll
+  policy: nodal maxima separated by at most two mesh edges remain separate
+  path numbers but share the strongest trajectory of that P1 peak group.
+  `all_seed_trajectories` is an audit mode that retains every distinct
+  incident-cell launch from a nodal seed. The compatibility value
+  `corridor_deduplicated` also merges adjacent/two-ring maxima sharing a path
+  corridor.
+  The legacy `edge_graph` mode remains the default. `seed_field_V_per_m` can
+  qualify local nodal-field maxima independently of the path stopping field.
+  For continuous-cell paths, `tracing_vector` may be `electric_field`
+  (default), `electron_current`, `hole_current`, `electron_qf_gradient`,
+  `hole_qf_gradient`, `cell_electric_field`, `electric_field_rk4`, or
+  `sentaurus_eparallel_adaptive`. The `cell_electric_field` policy traces the
+  element-constant P1 potential gradient while retaining nodal local maxima
+  for seed discovery. `electric_field_rk4` follows the continuous nodal P1
+  electric field with subcell RK4 integration instead of a single straight
+  chord per triangle. The adaptive policy
+  follows majority-carrier current for interior peaks and the minority-carrier
+  quasi-Fermi gradient for peaks on a transport boundary. This preserves bulk
+  current paths while preventing low-current surface paths from falling back
+  to a short electrostatic-field tangent. Its
+  `tracing_qf_relative_floor` (default `5.1e-3`) requires the selected
+  carrier's nodal quasi-Fermi gradient to be observable relative to its global
+  maximum; otherwise that surface seed follows the electric field. The fixed
+  current choices use
+  reconstructed SG current; quasi-Fermi-gradient choices are explicit
+  diagnostics. Seed and stop
+  thresholds continue to use electrostatic-field magnitude. For SG-current
+  tracing, `tracing_current_relative_floor` defaults to `1e-8`; nodal currents
+  below that fraction of the global current maximum use the electric-field
+  direction. The adaptive policy applies that current rule to interior peaks
+  and directly selects a minority-carrier quasi-Fermi family for boundary
+  peaks and their two-ring P1 aliases.
+  `tracing_direction` is `bidirectional` by default; carrier-current path
+  searches may select `along_vector` or `opposite_vector` for one-way carrier
+  injection trajectories.
+  Continuous-cell tracing currently requires `driving_force: "eparallel"`.
+  Optional
+  `csv_file` overrides
+  `<sweep csv stem>_path_ionization_integrals.csv`.
+- `diagnostics.path_ionization_integrals.segments_csv_file`: optional ordered
+  one-row-per-segment trace containing path coordinates, endpoint potential,
+  local electric field, electron/hole alpha, alpha-ds, cumulative alpha-ds,
+  and prefix/full-path ionization integrals.  If omitted it defaults beside
+  `csv_file` with a `_segments.csv` suffix.
 - `diagnostics.bv_process_probe.enabled`: writes a normalized solver-used
   avalanche process record for every active edge/cell support and carrier.
   Records include endpoint state, electric/QF-gradient vectors, low- and
@@ -1020,7 +1203,12 @@ unqualified names remain for compatibility. `ElectronIonIntegral`,
 `HoleIonIntegral`, and `MeanIonIntegral` are local alpha-length accumulations,
 not Sentaurus path ionization integrals. Prefer the equivalent
 `LocalElectronAlphaLengthProxy`, `LocalHoleAlphaLengthProxy`, and
-`LocalMeanAlphaLengthProxy` names in new comparisons.
+`LocalMeanAlphaLengthProxy` names in new comparisons. These local products are
+formed after converting length and inverse length to compatible SI units; in
+`unit_scaling` this is essential because coordinates use micrometers while
+ionization coefficients use inverse centimeters. The separate
+`ElectronPathIonIntegral`, `HolePathIonIntegral`, and `MeanPathIonIntegral`
+VTK fields contain the ranked field-path result rather than the local proxy.
 
 For Sentaurus BV parity work, compare both the `.plt` terminal current and the
 TDR-exported `ContactCurrentFlux` when judging the remaining terminal-current

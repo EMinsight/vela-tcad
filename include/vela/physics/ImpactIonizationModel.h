@@ -16,6 +16,7 @@ struct ImpactIonizationModelConfig {
     std::string generation = "carrier_density";
     std::string currentApproximation = "mobility_density_gradient";
     std::string currentMagnitudeMode = "edge_scalar_abs"; ///< SG avalanche current magnitude: edge_scalar_abs or dual_face_vector_mag.
+    std::string eparallelFieldRecovery = "edge_adjacent_cells"; ///< Eparallel electric-field recovery: edge_adjacent_cells or nodal_vertex_star.
     std::string cellReconstructedMidpointDensity = "bernoulli"; ///< cell_reconstructed carrier midpoint: bernoulli or arithmetic.
     std::string drivingForceInterpolation = "none";
     std::string quasiFermiGradientDiscretization = "edge_difference"; ///< edge_difference or Genius-style cell_gradient.
@@ -25,7 +26,7 @@ struct ImpactIonizationModelConfig {
     Real electronDrivingForceRefDensity = 0.0; ///< RefDens_eGradQuasiFermi_ElectricField_Aval equivalent [1/m^3]
     Real holeDrivingForceRefDensity = 0.0; ///< RefDens_hGradQuasiFermi_ElectricField_Aval equivalent [1/m^3]
     Real sourceGeometryScale = 1.0; ///< Diagnostic scale for SG edge-current source geometry.
-    std::string sourceVolumePolicy = "genius_truncated"; ///< SG edge-current source support: genius_truncated, edge_half_box, or edge_box.
+    std::string sourceVolumePolicy = "genius_truncated"; ///< SG edge-current source support: genius_truncated, genius_conservative, edge_half_box, or edge_box.
     Real sourceVolumeFactor = 0.0; ///< Diagnostic SG source-volume override; 0 uses sourceVolumePolicy presets.
     std::string sourceMappingMode = "node_F_node_alpha_node_G"; ///< Coupled current-density avalanche source mapping diagnostic mode.
     std::string edgeSourcePartition = "symmetric"; ///< SG edge-current source split: symmetric or qf_gradient.

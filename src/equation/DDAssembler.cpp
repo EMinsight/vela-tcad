@@ -16,14 +16,18 @@ namespace {
 VectorXd electronQuasiFermiFromDensity(const VectorXd& psi,
                                        const VectorXd& n,
                                        const std::vector<Real>& ni,
+                                       const std::vector<Real>& Nc,
                                        Real Vt,
-                                       const DDScalingSpec& scaling)
+                                       const DDScalingSpec& scaling,
+                                       const CarrierStatisticsConfig& statistics)
 {
     VectorXd phin = psi;
     for (int i = 0; i < psi.size(); ++i) {
         const Real n_si = scaling.enabled ? n(i) * scaling.C0 : n(i);
-        if (ni[static_cast<Index>(i)] > 0.0 && n_si > 0.0)
-            phin(i) = psi(i) - Vt * std::log(n_si / ni[static_cast<Index>(i)]);
+        const Index node = static_cast<Index>(i);
+        if (ni[node] > 0.0 && n_si > 0.0)
+            phin(i) = electronQuasiFermiPotential(
+                ni[node], Nc[node], psi(i), n_si, Vt, statistics);
     }
     return phin;
 }
@@ -31,16 +35,43 @@ VectorXd electronQuasiFermiFromDensity(const VectorXd& psi,
 VectorXd holeQuasiFermiFromDensity(const VectorXd& psi,
                                    const VectorXd& p,
                                    const std::vector<Real>& ni,
+                                   const std::vector<Real>& Nv,
                                    Real Vt,
-                                   const DDScalingSpec& scaling)
+                                   const DDScalingSpec& scaling,
+                                   const CarrierStatisticsConfig& statistics)
 {
     VectorXd phip = psi;
     for (int i = 0; i < psi.size(); ++i) {
         const Real p_si = scaling.enabled ? p(i) * scaling.C0 : p(i);
-        if (ni[static_cast<Index>(i)] > 0.0 && p_si > 0.0)
-            phip(i) = psi(i) + Vt * std::log(p_si / ni[static_cast<Index>(i)]);
+        const Index node = static_cast<Index>(i);
+        if (ni[node] > 0.0 && p_si > 0.0)
+            phip(i) = holeQuasiFermiPotential(
+                ni[node], Nv[node], psi(i), p_si, Vt, statistics);
     }
     return phip;
+}
+
+Real reducedFermiEnergyFromDensity(Real density, Real densityOfStates)
+{
+    if (!(density > 0.0) || !(densityOfStates > 0.0))
+        return -500.0;
+    const Real ratio = density / densityOfStates;
+    if (ratio > 0.0 && std::isfinite(ratio))
+        return inverseFermiDiracHalf(ratio);
+    // Preserve the nondegenerate eta ~= log(n/Nc) limit when the ratio
+    // underflows even though both operands are positive and finite.
+    return std::log(density) - std::log(densityOfStates);
+}
+
+Real fermiDensityDerivativeEtaFromDensity(Real density, Real densityOfStates)
+{
+    if (!(density > 0.0) || !(densityOfStates > 0.0))
+        return 0.0;
+    const Real eta = reducedFermiEnergyFromDensity(density, densityOfStates);
+    const Real derivative = densityOfStates * fermiDiracHalfDerivative(eta);
+    // Deep in the nondegenerate tail the analytic derivative can underflow;
+    // dn/deta -> n is the correct limiting value.
+    return derivative > 0.0 && std::isfinite(derivative) ? derivative : density;
 }
 
 }
@@ -88,7 +119,8 @@ DDAssembler::DDAssembler(const DeviceMesh&               mesh,
                          const ImpactIonizationModelConfig& impactIonizationConfig,
                          std::vector<RegionFixedChargeSpec> fixedCharges,
                          std::vector<InterfaceSheetChargeSpec> sheetCharges,
-                         DDScalingSpec scaling)
+                         DDScalingSpec scaling,
+                         CarrierStatisticsConfig carrierStatistics)
     : mesh_(mesh)
     , matdb_(matdb)
     , doping_(doping)
@@ -102,6 +134,7 @@ DDAssembler::DDAssembler(const DeviceMesh&               mesh,
     , impactIonizationCoupled_(
           impactIonizationConfig.model != "none" &&
           impactIonizationConfig.couplingMode == "self_consistent")
+    , carrierStatistics_(std::move(carrierStatistics))
     , ni_(detail::buildValidatedEffectiveNodeNi(
           "DDAssembler",
           mesh,
@@ -109,6 +142,10 @@ DDAssembler::DDAssembler(const DeviceMesh&               mesh,
           doping,
           bandgapNarrowingConfig,
           Vt))
+    , Nc_(detail::buildNodeDensityOfStates(
+          mesh, matdb, Vt * constants::q / constants::kb, true))
+    , Nv_(detail::buildNodeDensityOfStates(
+          mesh, matdb, Vt * constants::q / constants::kb, false))
     , edgeCells_(detail::buildEdgeCellMap(mesh))
     , nodeCells_(detail::buildNodeCellMap(mesh))
     , vol_(detail::computeNodeVolumes(mesh))
@@ -126,6 +163,16 @@ DDAssembler::DDAssembler(const DeviceMesh&               mesh,
          static_cast<int>(mesh.numNodes()))
     , b_(VectorXd::Zero(static_cast<int>(mesh.numNodes())))
 {
+    (void)usesFermiDirac(carrierStatistics_);
+    if (usesFermiDirac(carrierStatistics_)) {
+        for (Index node = 0; node < mesh_.numNodes(); ++node) {
+            if (ni_[node] > 0.0 && (!(Nc_[node] > 0.0) || !(Nv_[node] > 0.0))) {
+                throw std::invalid_argument(
+                    "DDAssembler: Fermi-Dirac statistics require Nc_m3 and Nv_m3 "
+                    "for every transport node.");
+            }
+        }
+    }
     if (scaling_.enabled) {
         const auto isPositiveFinite = [](Real value) {
             return value > 0.0 && std::isfinite(value);
@@ -203,8 +250,14 @@ void DDAssembler::assemblePoissonWithCarriers(const VectorXd& n,
         const Real vol_i  = vol_[i];
         const Real chargeAreaFactor = scaling_.enabled ? scaling_.chargeAreaFactor : 1.0;
 
-        const Real diagCarrier =
-            constants::q * (ni_v + pi_v) / Vt_ * vol_i * chargeAreaFactor;
+        Real electronDerivativeEta = ni_v;
+        Real holeDerivativeEta = pi_v;
+        if (usesFermiDirac(carrierStatistics_)) {
+            electronDerivativeEta = fermiDensityDerivativeEtaFromDensity(ni_v, Nc_[i]);
+            holeDerivativeEta = fermiDensityDerivativeEtaFromDensity(pi_v, Nv_[i]);
+        }
+        const Real diagCarrier = constants::q *
+            (electronDerivativeEta + holeDerivativeEta) / Vt_ * vol_i * chargeAreaFactor;
         const Real matrixScale = scaling_.enabled
             ? (1.0 / scaling_.permittivityReference_F_per_m)
             : 1.0;
@@ -245,9 +298,16 @@ void DDAssembler::assembleElectronContinuity(const VectorXd& psi,
         detail::buildCellMaterials(mesh_, matdb_, temperature_K);
     const VectorXd psiForMobility = scaling_.enabled ? (psi * scaling_.V0) : psi;
     const VectorXd phinForMobility =
-        electronQuasiFermiFromDensity(psiForMobility, n_old, ni_, Vt_, scaling_);
+        electronQuasiFermiFromDensity(
+            psiForMobility, n_old, ni_, Nc_, Vt_, scaling_, carrierStatistics_);
     const bool qfMobility = mobilityConfig_.highFieldDrivingForce == "quasi_fermi_gradient";
     const Real fieldFactor = scaling_.enabled ? scaling_.fieldFromCoordinateDeltaFactor : 1.0;
+    const bool vectorQfMobility = qfMobility &&
+        mobilityConfig_.highFieldGradientDiscretization == "transport_cell_vector";
+    const std::vector<Real> electronVectorMobilityFields = vectorQfMobility
+        ? detail::transportCellVectorEdgeGradientMagnitudes(
+              mesh_, edgeCells_, cellMaterials, phinForMobility, fieldFactor)
+        : std::vector<Real>{};
     const Real sourceIntegralFactor = scaling_.enabled
         ? scaling_.unitSystem.continuitySourceIntegralFactor()
         : 1.0;
@@ -265,7 +325,9 @@ void DDAssembler::assembleElectronContinuity(const VectorXd& psi,
             ? psi(static_cast<int>(edge.n1)) * scaling_.V0
             : psi(static_cast<int>(edge.n1));
         const Real electricField = std::abs((psi1 - psi0) / h) * fieldFactor;
-        const Real electronMobilityField = qfMobility
+        const Real electronMobilityField = vectorQfMobility
+            ? electronVectorMobilityFields[e]
+            : qfMobility
             ? std::abs((phinForMobility(static_cast<int>(edge.n1)) -
                         phinForMobility(static_cast<int>(edge.n0))) / h) * fieldFactor
             : electricField;
@@ -276,19 +338,31 @@ void DDAssembler::assembleElectronContinuity(const VectorXd& psi,
             &psiForMobility);
         if (mun <= 0.0) continue; // skip insulator edges
 
-        const Real coef = scaling_.enabled
+        Real coef = scaling_.enabled
             ? (mun / scaling_.mu0) * fieldFactor * couple_[e] / h
             : mun * Vt_ * fieldFactor * couple_[e] / h;
 
         auto i = static_cast<int>(edge.n0);
         auto j = static_cast<int>(edge.n1);
 
-        const Real dpsi = scaling_.enabled
-            ? (psi(j) - psi(i))
-            : (psi(j) - psi(i));
-        const SGEdgeWeights weights = scaling_.enabled
-            ? sgEdgeWeights(dpsi, 1.0)
-            : sgEdgeWeights(dpsi, Vt_);
+        SGEdgeWeights weights;
+        if (usesFermiDirac(carrierStatistics_)) {
+            const Real n0 = scaling_.enabled ? n_old(i) * scaling_.C0 : n_old(i);
+            const Real n1 = scaling_.enabled ? n_old(j) * scaling_.C0 : n_old(j);
+            const Real eta0 = reducedFermiEnergyFromDensity(n0, Nc_[edge.n0]);
+            const Real eta1 = reducedFermiEnergyFromDensity(n1, Nc_[edge.n1]);
+            const Real factor = sgGeneralizedEinsteinFactor(n0, n1, eta0, eta1);
+            const Real driftPotential = (psi1 - psi0) + Vt_ * std::log(
+                (ni_[edge.n1] / Nc_[edge.n1]) /
+                (ni_[edge.n0] / Nc_[edge.n0]));
+            weights = sgEdgeWeights(driftPotential, Vt_ * factor);
+            coef *= factor;
+        } else {
+            const Real dpsi = psi(j) - psi(i);
+            weights = scaling_.enabled
+                ? sgEdgeWeights(dpsi, 1.0)
+                : sgEdgeWeights(dpsi, Vt_);
+        }
 
         // Electron continuity flux from i to j:
         //   F_nij = coef * (B(-u) * n_i - B(+u) * n_j)
@@ -301,8 +375,15 @@ void DDAssembler::assembleElectronContinuity(const VectorXd& psi,
     A_.setFromTriplets(triplets.begin(), triplets.end());
 
     const VectorXd psi_si = psiForMobility;
-    const std::vector<Real> nodeElectricFields = impactIonizationCoupled_
+    const std::vector<Real> nodeElectricFields =
+        impactIonizationCoupled_
         ? detail::computeNodeElectricFields(psi_si, mesh_, fieldFactor)
+        : std::vector<Real>{};
+    const std::vector<Real> bandToBandSourceIntegrals =
+        recombination_.bandToBandEnabled()
+        ? detail::bandToBandGenerationNodeSourceIntegrals(
+              recombination_.bandToBand(), scaling_.unitSystem, mesh_,
+              cellMaterials, psi_si, fieldFactor)
         : std::vector<Real>{};
     VectorXd n_physical = n_old;
     VectorXd p_physical = p_old;
@@ -313,7 +394,8 @@ void DDAssembler::assembleElectronContinuity(const VectorXd& psi,
     const bool qfImpact =
         detail::usesQuasiFermiAvalancheDrivingForce(impactIonizationConfig_);
     const VectorXd phipForImpact =
-        holeQuasiFermiFromDensity(psi_si, p_old, ni_, Vt_, scaling_);
+        holeQuasiFermiFromDensity(
+            psi_si, p_old, ni_, Nv_, Vt_, scaling_, carrierStatistics_);
     const std::vector<Real> nodeElectronDrivingFields = (impactIonizationCoupled_ && qfImpact)
         ? detail::computeElectronAvalancheNodeQuasiFermiDrivingFields(
             impactIonizationConfig_, mesh_, nodeCells_, psi_si, phinForMobility,
@@ -343,7 +425,10 @@ void DDAssembler::assembleElectronContinuity(const VectorXd& psi,
             p_physical,
             ni_,
             Vt_,
-            fieldFactor)
+            fieldFactor,
+            carrierStatistics_,
+            Nc_,
+            Nv_)
         : std::vector<Real>{};
 
     // Recombination source term linearised w.r.t. n.
@@ -358,8 +443,14 @@ void DDAssembler::assembleElectronContinuity(const VectorXd& psi,
         if (ni_i <= 0.0)
             continue;
 
+        Real recombinationNi = ni_i;
+        if (usesFermiDirac(carrierStatistics_)) {
+            const Real product = equilibriumCarrierProduct(
+                n_v, p_v, ni_i, Nc_[i], Nv_[i], Vt_, carrierStatistics_);
+            recombinationNi = std::sqrt(std::max<Real>(product, 0.0));
+        }
         const RecombinationLinearization linearization =
-            recombination_.electronLinearization(n_v, p_v, ni_i);
+            recombination_.electronLinearization(n_v, p_v, recombinationNi);
         if (scaling_.enabled) {
             A_.coeffRef(ii, ii) +=
                 linearization.diagonal * vol_i * sourceIntegralFactor / scaling_.D0;
@@ -368,6 +459,13 @@ void DDAssembler::assembleElectronContinuity(const VectorXd& psi,
         } else {
             A_.coeffRef(ii, ii) += linearization.diagonal * vol_i;
             b_(ii) += linearization.rhs * vol_i;
+        }
+        if (recombination_.bandToBandEnabled()) {
+            const Real source =
+                bandToBandSourceIntegrals[i] * sourceIntegralFactor;
+            b_(ii) += scaling_.enabled
+                ? source / (scaling_.C0 * scaling_.D0)
+                : source;
         }
         if (impactIonizationCoupled_ && sgCurrentAvalanche) {
             const Real gen = sgAvalancheSourceIntegrals[i] * sourceIntegralFactor;
@@ -424,9 +522,16 @@ void DDAssembler::assembleHoleContinuity(const VectorXd& psi,
         detail::buildCellMaterials(mesh_, matdb_, temperature_K);
     const VectorXd psiForMobility = scaling_.enabled ? (psi * scaling_.V0) : psi;
     const VectorXd phipForMobility =
-        holeQuasiFermiFromDensity(psiForMobility, p_old, ni_, Vt_, scaling_);
+        holeQuasiFermiFromDensity(
+            psiForMobility, p_old, ni_, Nv_, Vt_, scaling_, carrierStatistics_);
     const bool qfMobility = mobilityConfig_.highFieldDrivingForce == "quasi_fermi_gradient";
     const Real fieldFactor = scaling_.enabled ? scaling_.fieldFromCoordinateDeltaFactor : 1.0;
+    const bool vectorQfMobility = qfMobility &&
+        mobilityConfig_.highFieldGradientDiscretization == "transport_cell_vector";
+    const std::vector<Real> holeVectorMobilityFields = vectorQfMobility
+        ? detail::transportCellVectorEdgeGradientMagnitudes(
+              mesh_, edgeCells_, cellMaterials, phipForMobility, fieldFactor)
+        : std::vector<Real>{};
     const Real sourceIntegralFactor = scaling_.enabled
         ? scaling_.unitSystem.continuitySourceIntegralFactor()
         : 1.0;
@@ -444,7 +549,9 @@ void DDAssembler::assembleHoleContinuity(const VectorXd& psi,
             ? psi(static_cast<int>(edge.n1)) * scaling_.V0
             : psi(static_cast<int>(edge.n1));
         const Real electricField = std::abs((psi1 - psi0) / h) * fieldFactor;
-        const Real holeMobilityField = qfMobility
+        const Real holeMobilityField = vectorQfMobility
+            ? holeVectorMobilityFields[e]
+            : qfMobility
             ? std::abs((phipForMobility(static_cast<int>(edge.n1)) -
                         phipForMobility(static_cast<int>(edge.n0))) / h) * fieldFactor
             : electricField;
@@ -455,19 +562,31 @@ void DDAssembler::assembleHoleContinuity(const VectorXd& psi,
             &psiForMobility);
         if (mup <= 0.0) continue; // skip insulator edges
 
-        const Real coef = scaling_.enabled
+        Real coef = scaling_.enabled
             ? (mup / scaling_.mu0) * fieldFactor * couple_[e] / h
             : mup * Vt_ * fieldFactor * couple_[e] / h;
 
         auto i = static_cast<int>(edge.n0);
         auto j = static_cast<int>(edge.n1);
 
-        const Real dpsi = scaling_.enabled
-            ? (psi(j) - psi(i))
-            : (psi(j) - psi(i));
-        const SGEdgeWeights weights = scaling_.enabled
-            ? sgEdgeWeights(dpsi, 1.0)
-            : sgEdgeWeights(dpsi, Vt_);
+        SGEdgeWeights weights;
+        if (usesFermiDirac(carrierStatistics_)) {
+            const Real p0 = scaling_.enabled ? p_old(i) * scaling_.C0 : p_old(i);
+            const Real p1 = scaling_.enabled ? p_old(j) * scaling_.C0 : p_old(j);
+            const Real eta0 = reducedFermiEnergyFromDensity(p0, Nv_[edge.n0]);
+            const Real eta1 = reducedFermiEnergyFromDensity(p1, Nv_[edge.n1]);
+            const Real factor = sgGeneralizedEinsteinFactor(p0, p1, eta0, eta1);
+            const Real driftPotential = (psi1 - psi0) + Vt_ * std::log(
+                (ni_[edge.n0] / Nv_[edge.n0]) /
+                (ni_[edge.n1] / Nv_[edge.n1]));
+            weights = sgEdgeWeights(driftPotential, Vt_ * factor);
+            coef *= factor;
+        } else {
+            const Real dpsi = psi(j) - psi(i);
+            weights = scaling_.enabled
+                ? sgEdgeWeights(dpsi, 1.0)
+                : sgEdgeWeights(dpsi, Vt_);
+        }
 
         // Hole continuity flux from i to j:
         //   F_pij = coef * (B(+u) * p_i - B(-u) * p_j)
@@ -480,8 +599,15 @@ void DDAssembler::assembleHoleContinuity(const VectorXd& psi,
     A_.setFromTriplets(triplets.begin(), triplets.end());
 
     const VectorXd psi_si = psiForMobility;
-    const std::vector<Real> nodeElectricFields = impactIonizationCoupled_
+    const std::vector<Real> nodeElectricFields =
+        impactIonizationCoupled_
         ? detail::computeNodeElectricFields(psi_si, mesh_, fieldFactor)
+        : std::vector<Real>{};
+    const std::vector<Real> bandToBandSourceIntegrals =
+        recombination_.bandToBandEnabled()
+        ? detail::bandToBandGenerationNodeSourceIntegrals(
+              recombination_.bandToBand(), scaling_.unitSystem, mesh_,
+              cellMaterials, psi_si, fieldFactor)
         : std::vector<Real>{};
     VectorXd n_physical = n_old;
     VectorXd p_physical = p_old;
@@ -492,7 +618,8 @@ void DDAssembler::assembleHoleContinuity(const VectorXd& psi,
     const bool qfImpact =
         detail::usesQuasiFermiAvalancheDrivingForce(impactIonizationConfig_);
     const VectorXd phinForImpact =
-        electronQuasiFermiFromDensity(psi_si, n_old, ni_, Vt_, scaling_);
+        electronQuasiFermiFromDensity(
+            psi_si, n_old, ni_, Nc_, Vt_, scaling_, carrierStatistics_);
     const std::vector<Real> nodeElectronDrivingFields = (impactIonizationCoupled_ && qfImpact)
         ? detail::computeElectronAvalancheNodeQuasiFermiDrivingFields(
             impactIonizationConfig_, mesh_, nodeCells_, psi_si, phinForImpact,
@@ -522,7 +649,10 @@ void DDAssembler::assembleHoleContinuity(const VectorXd& psi,
             p_physical,
             ni_,
             Vt_,
-            fieldFactor)
+            fieldFactor,
+            carrierStatistics_,
+            Nc_,
+            Nv_)
         : std::vector<Real>{};
 
     // Recombination source term linearised w.r.t. p.
@@ -537,8 +667,14 @@ void DDAssembler::assembleHoleContinuity(const VectorXd& psi,
         if (ni_i <= 0.0)
             continue;
 
+        Real recombinationNi = ni_i;
+        if (usesFermiDirac(carrierStatistics_)) {
+            const Real product = equilibriumCarrierProduct(
+                n_v, p_v, ni_i, Nc_[i], Nv_[i], Vt_, carrierStatistics_);
+            recombinationNi = std::sqrt(std::max<Real>(product, 0.0));
+        }
         const RecombinationLinearization linearization =
-            recombination_.holeLinearization(n_v, p_v, ni_i);
+            recombination_.holeLinearization(n_v, p_v, recombinationNi);
         if (scaling_.enabled) {
             A_.coeffRef(ii, ii) +=
                 linearization.diagonal * vol_i * sourceIntegralFactor / scaling_.D0;
@@ -547,6 +683,13 @@ void DDAssembler::assembleHoleContinuity(const VectorXd& psi,
         } else {
             A_.coeffRef(ii, ii) += linearization.diagonal * vol_i;
             b_(ii) += linearization.rhs * vol_i;
+        }
+        if (recombination_.bandToBandEnabled()) {
+            const Real source =
+                bandToBandSourceIntegrals[i] * sourceIntegralFactor;
+            b_(ii) += scaling_.enabled
+                ? source / (scaling_.C0 * scaling_.D0)
+                : source;
         }
         if (impactIonizationCoupled_ && sgCurrentAvalanche) {
             const Real gen = sgAvalancheSourceIntegrals[i] * sourceIntegralFactor;

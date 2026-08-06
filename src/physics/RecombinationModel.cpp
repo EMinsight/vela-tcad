@@ -32,6 +32,7 @@ Real limitedExcessValue(Real value)
 
 RecombinationModel::RecombinationModel(RecombinationModelConfig config)
     : config_(std::move(config))
+    , bandToBand_(config_.bandToBand)
 {
     for (const std::string& mechanism : config_.mechanisms) {
         if (mechanism == "srh") {

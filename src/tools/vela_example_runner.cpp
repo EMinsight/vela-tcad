@@ -11,6 +11,7 @@
 #include "vela/simulation/DCSweep.h"
 #include "vela/simulation/PoissonSimulation.h"
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <exception>
 #include <filesystem>
@@ -97,14 +98,82 @@ std::string resolvePath(const std::filesystem::path& baseDir, const std::string&
     return resolved.string();
 }
 
-std::unordered_map<std::string, vela::Real> contactBiasesFromJson(const nlohmann::json& cfg)
-{
+struct NewtonContactConfig {
     std::unordered_map<std::string, vela::Real> biases;
-    for (const auto& contact : cfg.at("contacts")) {
-        biases[contact.at("name").get<std::string>()] =
-            contact.at("bias").get<vela::Real>();
+    vela::ContactSpecsMap specs;
+};
+
+std::string lowercaseAscii(std::string value)
+{
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return value;
+}
+
+std::string canonicalContactName(const vela::DeviceMesh& mesh,
+                                 const std::string& requested)
+{
+    for (const vela::Contact& contact : mesh.contacts()) {
+        if (contact.name == requested)
+            return requested;
     }
-    return biases;
+
+    const std::string requestedLower = lowercaseAscii(requested);
+    std::string match;
+    for (const vela::Contact& contact : mesh.contacts()) {
+        if (lowercaseAscii(contact.name) != requestedLower)
+            continue;
+        if (!match.empty()) {
+            throw std::runtime_error(
+                "vela_example_runner: contact '" + requested +
+                "' matches multiple mesh contacts by case-insensitive name");
+        }
+        match = contact.name;
+    }
+    if (!match.empty())
+        return match;
+    throw std::runtime_error(
+        "vela_example_runner: contacts[] references unknown mesh contact '" +
+        requested + "'");
+}
+
+NewtonContactConfig contactConfigFromJson(const nlohmann::json& cfg,
+                                          const vela::DeviceMesh& mesh)
+{
+    NewtonContactConfig out;
+    for (auto spec : vela::parseContactBoundarySpecs(cfg)) {
+        const std::string canonicalName = canonicalContactName(mesh, spec.name);
+        if (out.biases.contains(canonicalName)) {
+            throw std::runtime_error(
+                "vela_example_runner: contacts[] contains duplicate aliases for mesh contact '" +
+                canonicalName + "'");
+        }
+        spec.name = canonicalName;
+        switch (spec.type) {
+            case vela::ContactType::Ohmic:
+                out.biases[canonicalName] = spec.bias;
+                break;
+            case vela::ContactType::Dirichlet:
+                out.biases[canonicalName] =
+                    vela::effectivePoissonDirichletPotential(spec);
+                break;
+            case vela::ContactType::MetalGate:
+                out.biases[canonicalName] =
+                    vela::effectivePoissonDirichletPotential(spec);
+                out.specs[canonicalName] = std::move(spec);
+                break;
+            case vela::ContactType::Schottky:
+                out.biases[canonicalName] = spec.bias;
+                out.specs[canonicalName] = std::move(spec);
+                break;
+            case vela::ContactType::Floating:
+                throw std::runtime_error(
+                    "vela_example_runner: contact '" + canonicalName +
+                    "' has unsupported type 'floating' for drift-diffusion diagnostics");
+        }
+    }
+    return out;
 }
 
 struct NewtonCliResult {
@@ -172,7 +241,23 @@ struct NewtonProblem {
     vela::DopingModel doping;
     std::unordered_map<std::string, vela::Real> biases;
     vela::NewtonConfig newton;
+    std::vector<vela::RegionFixedChargeSpec> fixedCharges;
+    std::vector<vela::InterfaceSheetChargeSpec> sheetCharges;
+    vela::ContactSpecsMap contactSpecs;
 };
+
+vela::NewtonSolver makeNewtonSolver(const NewtonProblem& problem)
+{
+    return vela::NewtonSolver(
+        problem.mesh,
+        problem.matdb,
+        problem.doping,
+        problem.biases,
+        problem.newton,
+        problem.fixedCharges,
+        problem.sheetCharges,
+        problem.contactSpecs);
+}
 
 vela::DopingModel readNodeDopingCsv(const std::filesystem::path& path,
                                     vela::Index nodeCount,
@@ -203,17 +288,24 @@ NewtonProblem loadNewtonProblem(const std::string& configFile, const nlohmann::j
             mesh.numNodes(),
             scaling)
         : vela::DopingModel::fromMeshAndRegions(mesh, vela::parseDopingSpecs(cfg, scaling));
-    const auto biases = contactBiasesFromJson(cfg);
+    NewtonContactConfig contacts = contactConfigFromJson(cfg, mesh);
     vela::NewtonConfig newton = cfg.contains("solver")
         ? vela::newtonConfigFromJson(cfg.at("solver"), scaling)
         : vela::NewtonConfig{};
+    std::vector<vela::RegionFixedChargeSpec> fixedCharges =
+        vela::parseRegionFixedChargeSpecs(cfg, scaling);
+    std::vector<vela::InterfaceSheetChargeSpec> sheetCharges =
+        vela::parseInterfaceSheetChargeSpecs(cfg, scaling);
 
     return NewtonProblem{
         std::move(mesh),
         std::move(matdb),
         std::move(doping),
-        std::move(biases),
-        std::move(newton)};
+        std::move(contacts.biases),
+        std::move(newton),
+        std::move(fixedCharges),
+        std::move(sheetCharges),
+        std::move(contacts.specs)};
 }
 
 NewtonCliResult runNewtonConfig(const std::string& configFile, const nlohmann::json& cfg)
@@ -222,7 +314,14 @@ NewtonCliResult runNewtonConfig(const std::string& configFile, const nlohmann::j
     NewtonProblem problem = loadNewtonProblem(configFile, cfg);
 
     vela::NewtonResult result = vela::runNewton(
-        problem.mesh, problem.matdb, problem.doping, problem.biases, problem.newton);
+        problem.mesh,
+        problem.matdb,
+        problem.doping,
+        problem.biases,
+        problem.newton,
+        problem.fixedCharges,
+        problem.sheetCharges,
+        problem.contactSpecs);
 
     if (cfg.contains("output_vtk")) {
         vela::writeDDSolutionVTK(
@@ -243,8 +342,7 @@ nlohmann::json runNewtonSolveFromState(const std::string& configFile,
     NewtonProblem problem = loadNewtonProblem(configFile, cfg);
     const vela::DDSolution initial =
         readExternalState(cfgDir, cfg, problem.mesh.numNodes());
-    const vela::NewtonSolver solver(
-        problem.mesh, problem.matdb, problem.doping, problem.biases, problem.newton);
+    const vela::NewtonSolver solver = makeNewtonSolver(problem);
     vela::NewtonResult result = solver.solve(initial);
 
     if (cfg.contains("output_state_file")) {
@@ -299,7 +397,8 @@ nlohmann::json runNewtonSolveFromState(const std::string& configFile,
         problem.newton.mobility,
         problem.newton.temperature_K,
         ddScaling,
-        problem.newton.bandgapNarrowing);
+        problem.newton.bandgapNarrowing,
+        problem.newton.carrierStatistics);
 
     constexpr vela::Real perMeterToPerMicron = 1.0e-6;
     nlohmann::json contactCurrentsJson = nlohmann::json::object();
@@ -543,8 +642,7 @@ nlohmann::json runNewtonResidualProbe(const std::string& configFile, const nlohm
     const std::filesystem::path cfgDir = configDirectory(configFile);
     NewtonProblem problem = loadNewtonProblem(configFile, cfg);
     const vela::DDSolution state = readExternalState(cfgDir, cfg, problem.mesh.numNodes());
-    const vela::NewtonSolver solver(
-        problem.mesh, problem.matdb, problem.doping, problem.biases, problem.newton);
+    const vela::NewtonSolver solver = makeNewtonSolver(problem);
     const vela::NewtonResidualEvaluation residual = solver.evaluateResidual(state);
     writeResidualProbeCsv(
         resolvePath(cfgDir, cfg.at("output_csv").get<std::string>()),
@@ -625,8 +723,7 @@ nlohmann::json runNewtonStepProbe(const std::string& configFile, const nlohmann:
     const std::filesystem::path cfgDir = configDirectory(configFile);
     NewtonProblem problem = loadNewtonProblem(configFile, cfg);
     const vela::DDSolution state = readExternalState(cfgDir, cfg, problem.mesh.numNodes());
-    const vela::NewtonSolver solver(
-        problem.mesh, problem.matdb, problem.doping, problem.biases, problem.newton);
+    const vela::NewtonSolver solver = makeNewtonSolver(problem);
     const vela::NewtonStepEvaluation step = solver.evaluateStep(state);
     writeNewtonStepProbeCsv(
         resolvePath(cfgDir, cfg.at("output_csv").get<std::string>()),
@@ -777,8 +874,7 @@ nlohmann::json runNewtonFeedbackSubstitutionProbe(
         cfg,
         problem.mesh.numNodes(),
         problem.newton.inputScaling);
-    const vela::NewtonSolver solver(
-        problem.mesh, problem.matdb, problem.doping, problem.biases, problem.newton);
+    const vela::NewtonSolver solver = makeNewtonSolver(problem);
     const auto evaluations =
         solver.evaluateFeedbackSubstitutions(state, replacement);
     writeNewtonFeedbackSubstitutionProbeCsv(
@@ -1072,8 +1168,7 @@ nlohmann::json runNewtonPoissonQfpCrossBlockProbe(
         cfg,
         problem.mesh.numNodes(),
         problem.newton.inputScaling);
-    const vela::NewtonSolver solver(
-        problem.mesh, problem.matdb, problem.doping, problem.biases, problem.newton);
+    const vela::NewtonSolver solver = makeNewtonSolver(problem);
     const auto evaluation =
         solver.evaluatePoissonQfpCrossBlockDecomposition(state, replacement);
     const std::filesystem::path outputPath =
@@ -1302,8 +1397,7 @@ nlohmann::json runNewtonJvpProbe(const std::string& configFile, const nlohmann::
     const std::filesystem::path cfgDir = configDirectory(configFile);
     NewtonProblem problem = loadNewtonProblem(configFile, cfg);
     const vela::DDSolution state = readExternalState(cfgDir, cfg, problem.mesh.numNodes());
-    const vela::NewtonSolver solver(
-        problem.mesh, problem.matdb, problem.doping, problem.biases, problem.newton);
+    const vela::NewtonSolver solver = makeNewtonSolver(problem);
 
     if (!cfg.contains("directions") || !cfg.at("directions").is_array())
         throw std::invalid_argument("newton_jvp_probe requires a directions array.");
@@ -1436,8 +1530,7 @@ nlohmann::json runNewtonBlockStepProbe(const std::string& configFile, const nloh
     const std::filesystem::path cfgDir = configDirectory(configFile);
     NewtonProblem problem = loadNewtonProblem(configFile, cfg);
     const vela::DDSolution state = readExternalState(cfgDir, cfg, problem.mesh.numNodes());
-    const vela::NewtonSolver solver(
-        problem.mesh, problem.matdb, problem.doping, problem.biases, problem.newton);
+    const vela::NewtonSolver solver = makeNewtonSolver(problem);
 
     std::vector<std::string> modes = {"poisson_only", "carrier_only"};
     if (cfg.contains("block_modes")) {
@@ -1560,8 +1653,7 @@ nlohmann::json runNewtonRegularizedCarrierStepProbe(
     const std::filesystem::path cfgDir = configDirectory(configFile);
     NewtonProblem problem = loadNewtonProblem(configFile, cfg);
     const vela::DDSolution state = readExternalState(cfgDir, cfg, problem.mesh.numNodes());
-    const vela::NewtonSolver solver(
-        problem.mesh, problem.matdb, problem.doping, problem.biases, problem.newton);
+    const vela::NewtonSolver solver = makeNewtonSolver(problem);
 
     if (!cfg.contains("regularization_scales"))
         throw std::invalid_argument(
@@ -1645,8 +1737,7 @@ nlohmann::json runNewtonCarrierRowProbe(const std::string& configFile, const nlo
     const std::filesystem::path cfgDir = configDirectory(configFile);
     NewtonProblem problem = loadNewtonProblem(configFile, cfg);
     const vela::DDSolution state = readExternalState(cfgDir, cfg, problem.mesh.numNodes());
-    const vela::NewtonSolver solver(
-        problem.mesh, problem.matdb, problem.doping, problem.biases, problem.newton);
+    const vela::NewtonSolver solver = makeNewtonSolver(problem);
     const vela::NewtonCarrierRowDiagnosticsEvaluation diagnostics =
         solver.evaluateCarrierRowDiagnostics(state);
     writeNewtonCarrierRowProbeCsv(
@@ -1790,8 +1881,7 @@ nlohmann::json runNewtonCarrierBlockDecompositionProbe(
     NewtonProblem problem = loadNewtonProblem(configFile, cfg);
     const vela::DDSolution state =
         readExternalState(cfgDir, cfg, problem.mesh.numNodes());
-    const vela::NewtonSolver solver(
-        problem.mesh, problem.matdb, problem.doping, problem.biases, problem.newton);
+    const vela::NewtonSolver solver = makeNewtonSolver(problem);
     const auto diagnostics =
         solver.evaluateCarrierBlockDecomposition(state);
     const std::filesystem::path prefix =
@@ -1974,8 +2064,7 @@ nlohmann::json runNewtonCarrierTermProbe(const std::string& configFile, const nl
     const std::filesystem::path cfgDir = configDirectory(configFile);
     NewtonProblem problem = loadNewtonProblem(configFile, cfg);
     const vela::DDSolution state = readExternalState(cfgDir, cfg, problem.mesh.numNodes());
-    const vela::NewtonSolver solver(
-        problem.mesh, problem.matdb, problem.doping, problem.biases, problem.newton);
+    const vela::NewtonSolver solver = makeNewtonSolver(problem);
     const vela::NewtonCarrierTermDiagnosticsEvaluation diagnostics =
         solver.evaluateCarrierTermDiagnostics(state);
     const CarrierTermProbeOptions options = carrierTermProbeOptionsFromJson(cfg);
@@ -2025,7 +2114,8 @@ void writeSgEdgeFluxProbeCsv(
     out << "edge_id,node0,node1,x0,y0,x1,y1,length_m,couple_m,"
         << "net_doping_avg_m3,ni0_m3,ni1_m3,psi0_V,psi1_V,phin0_V,phin1_V,"
         << "phip0_V,phip1_V,electric_field_V_m,electron_mobility_m2_V_s,"
-        << "hole_mobility_m2_V_s,electron_flux,hole_flux\n";
+        << "hole_mobility_m2_V_s,electron_flux,hole_flux,"
+        << "electron_particle_line_flux_per_m_s,hole_particle_line_flux_per_m_s\n";
     const vela::PhysicalUnitSystem& units = scaling.unitSystem();
     out << std::setprecision(17);
     for (const auto& edge : edges) {
@@ -2051,7 +2141,9 @@ void writeSgEdgeFluxProbeCsv(
             << units.internalMobilityToM2PerVS(edge.electronMobility_m2_V_s) << ','
             << units.internalMobilityToM2PerVS(edge.holeMobility_m2_V_s) << ','
             << edge.electronFlux << ','
-            << edge.holeFlux << '\n';
+            << edge.holeFlux << ','
+            << edge.electronParticleLineFlux_per_m_s << ','
+            << edge.holeParticleLineFlux_per_m_s << '\n';
     }
 }
 
@@ -2060,8 +2152,7 @@ nlohmann::json runSgEdgeFluxProbe(const std::string& configFile, const nlohmann:
     const std::filesystem::path cfgDir = configDirectory(configFile);
     NewtonProblem problem = loadNewtonProblem(configFile, cfg);
     const vela::DDSolution state = readExternalState(cfgDir, cfg, problem.mesh.numNodes());
-    const vela::NewtonSolver solver(
-        problem.mesh, problem.matdb, problem.doping, problem.biases, problem.newton);
+    const vela::NewtonSolver solver = makeNewtonSolver(problem);
     const std::vector<vela::CoupledDDEdgeFluxDiagnostic> edges =
         solver.evaluateSgEdgeFluxDiagnostics(state);
     writeSgEdgeFluxProbeCsv(
@@ -2145,8 +2236,7 @@ nlohmann::json runTransportEdgeJacobianProbe(
     NewtonProblem problem = loadNewtonProblem(configFile, cfg);
     const vela::DDSolution state =
         readExternalState(cfgDir, cfg, problem.mesh.numNodes());
-    const vela::NewtonSolver solver(
-        problem.mesh, problem.matdb, problem.doping, problem.biases, problem.newton);
+    const vela::NewtonSolver solver = makeNewtonSolver(problem);
     const vela::Real step = cfg.value("physical_finite_difference_step_V", 1.0e-7);
     const auto records =
         solver.evaluateTransportEdgeJacobianDiagnostics(state, step);
@@ -2174,6 +2264,18 @@ void writeEdgeMobilityProbeCsv(const std::filesystem::path& path,
     const std::unique_ptr<vela::MobilityModel> mobility =
         vela::makeMobilityModel(newton.mobility);
     const vela::PhysicalUnitSystem& units = newton.inputScaling.unitSystem();
+    const vela::Real fieldFactor = units.fieldFromCoordinateDeltaFactor();
+    const bool vectorQfMobility =
+        newton.mobility.highFieldDrivingForce == "quasi_fermi_gradient" &&
+        newton.mobility.highFieldGradientDiscretization == "transport_cell_vector";
+    const std::vector<vela::Real> electronVectorFields = vectorQfMobility
+        ? vela::detail::transportCellVectorEdgeGradientMagnitudes(
+              mesh, edgeCells, cellMaterials, state.phin, fieldFactor)
+        : std::vector<vela::Real>{};
+    const std::vector<vela::Real> holeVectorFields = vectorQfMobility
+        ? vela::detail::transportCellVectorEdgeGradientMagnitudes(
+              mesh, edgeCells, cellMaterials, state.phip, fieldFactor)
+        : std::vector<vela::Real>{};
 
     std::ofstream out(path);
     if (!out.is_open())
@@ -2195,16 +2297,19 @@ void writeEdgeMobilityProbeCsv(const std::filesystem::path& path,
             continue;
         const int i0 = static_cast<int>(edge.n0);
         const int i1 = static_cast<int>(edge.n1);
-        const vela::Real fieldFactor = units.fieldFromCoordinateDeltaFactor();
         const vela::Real electricField = std::abs(state.psi(i1) - state.psi(i0)) / length * fieldFactor;
         const vela::Real electronQfField = std::abs(state.phin(i1) - state.phin(i0)) / length * fieldFactor;
         const vela::Real holeQfField = std::abs(state.phip(i1) - state.phip(i0)) / length * fieldFactor;
         const vela::Real electronMobilityField =
-            newton.mobility.highFieldDrivingForce == "quasi_fermi_gradient"
+            vectorQfMobility
+            ? electronVectorFields[edgeId]
+            : newton.mobility.highFieldDrivingForce == "quasi_fermi_gradient"
             ? electronQfField
             : electricField;
         const vela::Real holeMobilityField =
-            newton.mobility.highFieldDrivingForce == "quasi_fermi_gradient"
+            vectorQfMobility
+            ? holeVectorFields[edgeId]
+            : newton.mobility.highFieldDrivingForce == "quasi_fermi_gradient"
             ? holeQfField
             : electricField;
         const vela::Real electronLowField = vela::detail::edgeMobility(
@@ -2298,8 +2403,7 @@ nlohmann::json runNewtonJacobianBlockProbe(const std::string& configFile,
             blocks.push_back(value.get<std::string>());
     }
 
-    const vela::NewtonSolver solver(
-        problem.mesh, problem.matdb, problem.doping, problem.biases, problem.newton);
+    const vela::NewtonSolver solver = makeNewtonSolver(problem);
     const auto rows =
         solver.evaluateJacobianBlockAudit(state, fdStep, blocks, fdMode);
 

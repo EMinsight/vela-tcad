@@ -337,23 +337,22 @@ std::vector<SentaurusTdrField> readFields(hid_t geometry)
 
 std::vector<std::size_t> regionNodeOrder(const SentaurusTdrRegion& region)
 {
-    std::vector<std::size_t> order;
-    std::set<std::size_t> seen;
-    auto add = [&](std::size_t node) {
-        if (seen.insert(node).second) {
-            order.push_back(node);
-        }
-    };
+    // Sentaurus stores region-supported nodal datasets in ascending global
+    // vertex-id order, not in the order in which vertices first occur in the
+    // region element stream.  The latter can be highly permuted on production
+    // meshes and silently binds otherwise coherent state fields to the wrong
+    // geometry nodes.
+    std::set<std::size_t> nodes;
     for (const auto& tri : region.triangles) {
-        add(tri[0]);
-        add(tri[1]);
-        add(tri[2]);
+        nodes.insert(tri[0]);
+        nodes.insert(tri[1]);
+        nodes.insert(tri[2]);
     }
     for (const auto& edge : region.edges) {
-        add(edge[0]);
-        add(edge[1]);
+        nodes.insert(edge[0]);
+        nodes.insert(edge[1]);
     }
-    return order;
+    return {nodes.begin(), nodes.end()};
 }
 
 std::vector<std::size_t> globalVertexOrder(std::size_t vertexCount)
@@ -599,6 +598,7 @@ nlohmann::json fieldManifestEntry(const SentaurusTdrInventory& inventory,
     }
 
     entry["global_node_mapping"] = "region_node_order";
+    entry["region_node_ordering"] = "ascending_global_vertex_id";
     if (field.value_count == nodes.size()) {
         entry["mapping_status"] = "complete";
         return entry;

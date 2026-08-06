@@ -1,0 +1,15 @@
+{
+  "materials": [
+    {
+      "name": "Si",
+      "ni": 14638914958.767616
+    },
+    {
+      "name": "Nitride",
+      "eps_r": 7.5,
+      "bandgap_eV": 5.0,
+      "electron_affinity_eV": 1.9,
+      "temperature_K": 300.0
+    }
+  ]
+}

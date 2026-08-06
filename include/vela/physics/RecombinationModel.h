@@ -1,6 +1,7 @@
 #pragma once
 
 #include "vela/core/Types.h"
+#include "vela/physics/BandToBandTunnelingModel.h"
 #include <string>
 #include <vector>
 
@@ -26,6 +27,7 @@ struct RecombinationModelConfig {
     // Cn = A + B + C in cm^6/s and Cp = A + B + C in cm^6/s.
     Real augerCn = 2.90e-43;
     Real augerCp = 1.028e-43;
+    BandToBandTunnelingConfig bandToBand{};
 };
 
 class RecombinationModel {
@@ -34,6 +36,8 @@ public:
 
     bool srhEnabled() const { return srhEnabled_; }
     bool augerEnabled() const { return augerEnabled_; }
+    bool bandToBandEnabled() const { return bandToBand_.enabled(); }
+    const BandToBandTunnelingModel& bandToBand() const { return bandToBand_; }
 
     Real srhRate(Real n, Real p, Real ni) const;
     Real srhRateFromExcessProduct(Real excessProduct,
@@ -62,6 +66,7 @@ private:
     Real srhDenominator(Real n, Real p, Real ni) const;
 
     RecombinationModelConfig config_;
+    BandToBandTunnelingModel bandToBand_;
     bool srhEnabled_ = false;
     bool augerEnabled_ = false;
 };

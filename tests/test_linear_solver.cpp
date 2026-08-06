@@ -154,6 +154,8 @@ TEST_CASE("LinearSolver factorisation failures report sparse matrix diagnostics"
         solver.solve(singular, rhs),
         Catch::Matchers::ContainsSubstring("zero_rows=1") &&
             Catch::Matchers::ContainsSubstring("zero_cols=1") &&
+            Catch::Matchers::ContainsSubstring("zero_row_indices=[1]") &&
+            Catch::Matchers::ContainsSubstring("zero_col_indices=[1]") &&
             Catch::Matchers::ContainsSubstring("nonfinite_entries=0") &&
             Catch::Matchers::ContainsSubstring("diag_min_abs=0"));
 }

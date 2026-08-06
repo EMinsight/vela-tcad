@@ -101,6 +101,50 @@ TEST_CASE("GummelSolver: equilibrium (0 V bias) does not crash", "[gummel]")
     REQUIRE(sol.iters >= 1);
 }
 
+TEST_CASE("GummelSolver: Fermi-Dirac density block preserves finite equilibrium state",
+          "[gummel][fermi_dirac]")
+{
+    DeviceMesh mesh = makePNMesh();
+    MaterialDatabase matdb;
+    DopingModel doping = makePNDoping(mesh);
+
+    const std::unordered_map<std::string, Real> biases = {
+        {"anode", 0.0},
+        {"cathode", 0.0}
+    };
+
+    GummelConfig cfg;
+    cfg.maxIter = 80;
+    cfg.reltol = 1.0e-7;
+    cfg.dampingPsi = 0.5;
+    cfg.mobility.model = "constant";
+    cfg.recombination = {"none"};
+    cfg.carrierStatistics.model = "fermi_dirac";
+
+    DDSolution sol;
+    REQUIRE_NOTHROW(sol = runGummel(mesh, matdb, doping, biases, cfg));
+    REQUIRE(sol.converged);
+
+    const Material silicon = matdb.getMaterial("Si", cfg.temperature_K);
+    REQUIRE(silicon.Nc_m3.has_value());
+    REQUIRE(silicon.Nv_m3.has_value());
+    for (int i = 0; i < static_cast<int>(mesh.numNodes()); ++i) {
+        REQUIRE(std::isfinite(sol.psi(i)));
+        REQUIRE(std::isfinite(sol.phin(i)));
+        REQUIRE(std::isfinite(sol.phip(i)));
+        REQUIRE(sol.n(i) > 0.0);
+        REQUIRE(sol.p(i) > 0.0);
+        const Real reconstructedN = electronDensity(
+            silicon.ni, *silicon.Nc_m3, sol.psi(i), sol.phin(i),
+            constants::Vt_300, cfg.carrierStatistics);
+        const Real reconstructedP = holeDensity(
+            silicon.ni, *silicon.Nv_m3, sol.psi(i), sol.phip(i),
+            constants::Vt_300, cfg.carrierStatistics);
+        CHECK(reconstructedN == Catch::Approx(sol.n(i)).epsilon(2.0e-10));
+        CHECK(reconstructedP == Catch::Approx(sol.p(i)).epsilon(2.0e-10));
+    }
+}
+
 TEST_CASE("GummelSolver: n and p are strictly positive", "[gummel]")
 {
     DeviceMesh       mesh   = makePNMesh();
@@ -322,6 +366,22 @@ TEST_CASE("GummelSolver: configured temperature scales ohmic built-in potential"
     REQUIRE(parsed.temperature_K == Catch::Approx(325.0));
     REQUIRE_THROWS_AS(gummelConfigFromJson(nlohmann::json{{"temperature_K", 0.0}}),
                       std::invalid_argument);
+}
+
+TEST_CASE("Gummel solver parses Sentaurus E2 band-to-band parameters",
+          "[gummel][btbt][json]")
+{
+    const GummelConfig cfg = gummelConfigFromJson(nlohmann::json{
+        {"band_to_band", {
+            {"model", "e2"},
+            {"A_m_inv_s_inv_V_inv2", 3.4e23},
+            {"B_V_per_m", 2.26e9},
+        }},
+    });
+    REQUIRE(cfg.bandToBand.model == "e2");
+    REQUIRE(cfg.bandToBand.prefactorA_SI == Catch::Approx(3.4e23));
+    REQUIRE(cfg.bandToBand.exponentialB_V_per_m == Catch::Approx(2.26e9));
+    REQUIRE(cfg.bandToBand.jacobian == "frozen_field");
 }
 
 static DeviceMesh makeFourTerminalSiliconMesh()

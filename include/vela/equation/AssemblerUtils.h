@@ -11,6 +11,7 @@
 
 #include "vela/core/Types.h"
 #include "vela/core/PhysicalConstants.h"
+#include "vela/core/UnitScaling.h"
 #include "vela/equation/ChargeSpec.h"
 #include "vela/equation/Tri3LocalForwardAD.h"
 #include "vela/discretization/ScharfetterGummel.h"
@@ -21,6 +22,8 @@
 #include "vela/physics/ImpactIonizationModel.h"
 #include "vela/physics/MobilityModel.h"
 #include "vela/physics/BandgapNarrowing.h"
+#include "vela/physics/CarrierStatistics.h"
+#include "vela/physics/BandToBandTunnelingModel.h"
 #include <Eigen/Sparse>
 #include <algorithm>
 #include <cstddef>
@@ -289,21 +292,20 @@ inline Real cellSmoothedEdgeFluxMagnitude(
     return edgeSum / static_cast<Real>(adjacentCellCount);
 }
 
-inline Real cellVectorCurrentMagnitude(
+inline Point2 cellVectorCurrent(
     Index                                  cellId,
     const std::vector<Real>&               signedEdgeFlux,
     const std::vector<std::vector<Index>>& cellEdges,
     const DeviceMesh&                      mesh)
 {
     if (cellId >= cellEdges.size())
-        return 0.0;
+        return Point2::Zero();
 
     Real a00 = 0.0;
     Real a01 = 0.0;
     Real a11 = 0.0;
     Real b0 = 0.0;
     Real b1 = 0.0;
-    Real absSum = 0.0;
     int used = 0;
     for (Index edgeId : cellEdges[cellId]) {
         if (edgeId >= signedEdgeFlux.size())
@@ -321,18 +323,61 @@ inline Real cellVectorCurrentMagnitude(
         a11 += ty * ty;
         b0 += tx * flux;
         b1 += ty * flux;
-        absSum += std::abs(flux);
         ++used;
     }
 
     const Real det = a00 * a11 - a01 * a01;
     const Real scale = std::max({std::abs(a00 * a11), std::abs(a01 * a01), Real{1.0}});
     if (used < 2 || std::abs(det) <= 1.0e-24 * scale)
-        return used > 0 ? absSum / static_cast<Real>(used) : 0.0;
+        return Point2::Zero();
 
     const Real jx = (b0 * a11 - b1 * a01) / det;
     const Real jy = (a00 * b1 - a01 * b0) / det;
-    return std::sqrt(jx * jx + jy * jy);
+    return Point2{jx, jy};
+}
+
+inline Real cellVectorCurrentMagnitude(
+    Index                                  cellId,
+    const std::vector<Real>&               signedEdgeFlux,
+    const std::vector<std::vector<Index>>& cellEdges,
+    const DeviceMesh&                      mesh)
+{
+    return cellVectorCurrent(cellId, signedEdgeFlux, cellEdges, mesh).norm();
+}
+
+/// Average the constant current vectors reconstructed in cells adjacent to an
+/// edge. SG fluxes use the particle-flux convention; callers negate the
+/// electron vector when a conventional electron-current direction is needed.
+inline Point2 edgeAveragedCellVectorCurrent(
+    Index                                  edgeId,
+    const std::vector<Real>&               signedEdgeFlux,
+    const std::vector<std::vector<Index>>& edgeCells,
+    const std::vector<std::vector<Index>>& cellEdges,
+    const DeviceMesh&                      mesh)
+{
+    if (edgeId >= edgeCells.size())
+        return Point2::Zero();
+    Point2 sum = Point2::Zero();
+    int count = 0;
+    for (Index cellId : edgeCells[edgeId]) {
+        const Point2 current = cellVectorCurrent(
+            cellId, signedEdgeFlux, cellEdges, mesh);
+        if (current.squaredNorm() <= 0.0)
+            continue;
+        sum += current;
+        ++count;
+    }
+    if (count > 0)
+        return sum / static_cast<Real>(count);
+    if (edgeId >= signedEdgeFlux.size() || edgeId >= mesh.numEdges())
+        return Point2::Zero();
+    const Edge& edge = mesh.getEdge(edgeId);
+    if (edge.length <= 1.0e-30)
+        return Point2::Zero();
+    const Node& n0 = mesh.getNode(edge.n0);
+    const Node& n1 = mesh.getNode(edge.n1);
+    return signedEdgeFlux[edgeId] *
+        Point2{(n1.x - n0.x) / edge.length, (n1.y - n0.y) / edge.length};
 }
 
 inline Real cellVectorReconstructedEdgeFluxMagnitude(
@@ -357,6 +402,113 @@ inline Real cellVectorReconstructedEdgeFluxMagnitude(
     if (adjacentCellCount <= 0)
         return edgeId < signedEdgeFlux.size() ? std::abs(signedEdgeFlux[edgeId]) : 0.0;
     return edgeSum / static_cast<Real>(adjacentCellCount);
+}
+
+inline std::vector<std::vector<Index>> buildNodeEdgeMap(
+    const DeviceMesh& mesh)
+{
+    std::vector<std::vector<Index>> nodeEdges(
+        static_cast<std::size_t>(mesh.numNodes()));
+    for (Index edgeId = 0; edgeId < mesh.numEdges(); ++edgeId) {
+        const Edge& edge = mesh.getEdge(edgeId);
+        nodeEdges[edge.n0].push_back(edgeId);
+        nodeEdges[edge.n1].push_back(edgeId);
+    }
+    return nodeEdges;
+}
+
+/// Recover a nodal current vector from all active incident SG edge-flux
+/// projections.  The edge-length weight is the discrete analogue of the
+/// element support used when Sentaurus interpolates current density to mesh
+/// vertices.  A one-dimensional boundary stencil falls back to its resolved
+/// tangential projection instead of returning zero.
+template <typename FluxAccessor, typename ActiveAccessor>
+inline Point2 nodalLeastSquaresCurrentVector(
+    Index                                  node,
+    const std::vector<std::vector<Index>>& nodeEdges,
+    const DeviceMesh&                      mesh,
+    FluxAccessor&&                         signedFlux,
+    ActiveAccessor&&                       activeEdge)
+{
+    if (node >= nodeEdges.size())
+        return Point2::Zero();
+    Real a00 = 0.0;
+    Real a01 = 0.0;
+    Real a11 = 0.0;
+    Real b0 = 0.0;
+    Real b1 = 0.0;
+    Real fallbackWeight = 0.0;
+    Point2 fallback = Point2::Zero();
+    int used = 0;
+    for (Index edgeId : nodeEdges[node]) {
+        if (!activeEdge(edgeId))
+            continue;
+        const Edge& edge = mesh.getEdge(edgeId);
+        if (edge.length <= 1.0e-30)
+            continue;
+        const Node& node0 = mesh.getNode(edge.n0);
+        const Node& node1 = mesh.getNode(edge.n1);
+        const Point2 tangent{
+            (node1.x - node0.x) / edge.length,
+            (node1.y - node0.y) / edge.length};
+        const Real weight = edge.length;
+        const Real flux = signedFlux(edgeId);
+        a00 += weight * tangent.x() * tangent.x();
+        a01 += weight * tangent.x() * tangent.y();
+        a11 += weight * tangent.y() * tangent.y();
+        b0 += weight * tangent.x() * flux;
+        b1 += weight * tangent.y() * flux;
+        fallback += weight * flux * tangent;
+        fallbackWeight += weight;
+        ++used;
+    }
+    const Real determinant = a00 * a11 - a01 * a01;
+    const Real scale = std::max({
+        std::abs(a00 * a11), std::abs(a01 * a01), Real{1.0e-300}});
+    if (used >= 2 && std::abs(determinant) > 1.0e-24 * scale) {
+        return Point2{
+            (b0 * a11 - b1 * a01) / determinant,
+            (a00 * b1 - a01 * b0) / determinant};
+    }
+    if (fallbackWeight > 0.0)
+        return fallback / fallbackWeight;
+    return Point2::Zero();
+}
+
+template <typename FluxAccessor, typename ActiveAccessor>
+inline Point2 edgeAveragedNodalCurrentVector(
+    Index                                  edgeId,
+    const std::vector<std::vector<Index>>& nodeEdges,
+    const DeviceMesh&                      mesh,
+    FluxAccessor&&                         signedFlux,
+    ActiveAccessor&&                       activeEdge)
+{
+    if (edgeId >= mesh.numEdges())
+        return Point2::Zero();
+    const Edge& edge = mesh.getEdge(edgeId);
+    return 0.5 * (
+        nodalLeastSquaresCurrentVector(
+            edge.n0, nodeEdges, mesh, signedFlux, activeEdge) +
+        nodalLeastSquaresCurrentVector(
+            edge.n1, nodeEdges, mesh, signedFlux, activeEdge));
+}
+
+template <typename FluxAccessor, typename ActiveAccessor>
+inline Real edgeAveragedNodalCurrentMagnitude(
+    Index                                  edgeId,
+    const std::vector<std::vector<Index>>& nodeEdges,
+    const DeviceMesh&                      mesh,
+    FluxAccessor&&                         signedFlux,
+    ActiveAccessor&&                       activeEdge)
+{
+    if (edgeId >= mesh.numEdges())
+        return 0.0;
+    const Edge& edge = mesh.getEdge(edgeId);
+    const Point2 current0 = nodalLeastSquaresCurrentVector(
+        edge.n0, nodeEdges, mesh, signedFlux, activeEdge);
+    const Point2 current1 = nodalLeastSquaresCurrentVector(
+        edge.n1, nodeEdges, mesh, signedFlux, activeEdge);
+    return 0.5 * (current0.norm() + current1.norm());
 }
 
 
@@ -716,7 +868,8 @@ inline Real edgeMobility(const std::vector<std::vector<Index>>& edgeCells,
         const bool surfaceApplies = surfaceEnabled &&
             surfaceMobilityAppliesToRegionPair(*mobilityConfig, region.name, adjacentRegionNames);
         const Real surfaceNormalField = (surfaceApplies && psi != nullptr)
-            ? estimateSurfaceNormalField(cells, mesh, *psi, edgeId, c)
+            ? estimateSurfaceNormalField(cells, mesh, *psi, edgeId, c) *
+                  mobilityConfig->surface.coordinateFieldFactor
             : std::numeric_limits<Real>::quiet_NaN();
         const Real mobilityDoping = edgeMobilityDopingConcentration(
             mesh, doping, edge, c, mobilityConfig);
@@ -821,7 +974,14 @@ inline bool usesCurrentAlignedAvalancheDrivingForce(
     const ImpactIonizationModelConfig& config)
 {
     return config.drivingForce == "grad_potential_parallel_j" ||
-           config.drivingForce == "effective_field_parallel_j";
+           config.drivingForce == "effective_field_parallel_j" ||
+           config.drivingForce == "eparallel";
+}
+
+inline bool usesSentaurusEparallelAvalancheDrivingForce(
+    const ImpactIonizationModelConfig& config)
+{
+    return config.drivingForce == "eparallel";
 }
 
 inline bool usesQuasiFermiAvalancheDrivingForce(
@@ -840,6 +1000,21 @@ inline Real parallelCurrentAvalancheDrivingField(Real signedDrivingField,
     }
     const Real currentSign = signedCurrentProxy > 0.0 ? 1.0 : -1.0;
     return std::max(signedDrivingField * currentSign, 0.0);
+}
+
+/// Sentaurus Eparallel drive: the non-negative electric-field component in
+/// the direction of the conventional carrier current, E dot J / |J|.
+inline Real sentaurusEparallelAvalancheDrivingField(
+    const Point2& electricField,
+    const Point2& conventionalCurrent)
+{
+    if (!electricField.allFinite() || !conventionalCurrent.allFinite())
+        return 0.0;
+    const Real currentMagnitude = conventionalCurrent.norm();
+    if (currentMagnitude <= 1.0e-300)
+        return 0.0;
+    return std::max(
+        electricField.dot(conventionalCurrent) / currentMagnitude, 0.0);
 }
 
 /// Resolves the legacy SG edge-current avalanche source-volume factor used in
@@ -1151,11 +1326,43 @@ inline Real geniusTruncatedEdgeSourceVolume(
     return volume;
 }
 
+/// Conservative counterpart of the legacy Genius truncated edge support.
+/// Each transport triangle first normalizes its three truncated edge pieces
+/// to the exact triangle area, then contributes the piece belonging to the
+/// queried edge. Non-transport cells are excluded so a Si/oxide interface
+/// cannot add oxide area to IntegrSemiconductor AvalancheGeneration.
+inline Real geniusConservativeEdgeSourceVolume(
+    const std::vector<std::vector<Index>>& edgeCells,
+    const DeviceMesh&                      mesh,
+    const std::vector<Material>&           cellMaterials,
+    Index                                  edgeId)
+{
+    if (edgeId >= mesh.numEdges() || edgeId >= edgeCells.size())
+        return 0.0;
+    const Edge& edge = mesh.getEdge(edgeId);
+    Real volume = 0.0;
+    for (Index cellId : edgeCells[edgeId]) {
+        if (cellId >= mesh.numCells() || cellId >= cellMaterials.size())
+            continue;
+        const Material& material = cellMaterials[cellId];
+        if (!(material.ni > 0.0 || material.mun > 0.0 || material.mup > 0.0))
+            continue;
+        const Cell& cell = mesh.getCell(cellId);
+        const int localEdge = tri3LocalEdgeIndex(cell, edge.n0, edge.n1);
+        if (localEdge < 0)
+            continue;
+        const auto partialVolumes = tri3ElementEdgeBoxPartialVolumes(mesh, cell);
+        volume += partialVolumes[static_cast<std::size_t>(localEdge)];
+    }
+    return volume;
+}
+
 inline Real avalancheSourceEdgeArea(
     const ImpactIonizationModelConfig&     config,
     const std::vector<std::vector<Index>>& edgeCells,
     const DeviceMesh&                      mesh,
-    Index                                  edgeId)
+    Index                                  edgeId,
+    const std::vector<Material>*           cellMaterials = nullptr)
 {
     if (edgeId >= mesh.numEdges())
         return 0.0;
@@ -1165,6 +1372,13 @@ inline Real avalancheSourceEdgeArea(
         area = config.sourceVolumeFactor * edge.length * edge.couple;
     } else if (config.sourceVolumePolicy == "genius_truncated") {
         area = geniusTruncatedEdgeSourceVolume(edgeCells, mesh, edgeId);
+    } else if (config.sourceVolumePolicy == "genius_conservative") {
+        if (cellMaterials == nullptr) {
+            throw std::invalid_argument(
+                "genius_conservative avalanche source volume requires cell materials");
+        }
+        area = geniusConservativeEdgeSourceVolume(
+            edgeCells, mesh, *cellMaterials, edgeId);
     } else {
         area = avalancheSourceVolumeFactor(config) * edge.length * edge.couple;
     }
@@ -1233,8 +1447,8 @@ inline void validateImpactIonizationDrivingForce(const ImpactIonizationModelConf
         throw std::invalid_argument(
             std::string(context) +
             ": impact_ionization.driving_force must be 'electric_field', "
-            "'quasi_fermi_gradient', 'grad_potential_parallel_j', or "
-            "'effective_field_parallel_j'.");
+            "'quasi_fermi_gradient', 'grad_potential_parallel_j', "
+            "'effective_field_parallel_j', or 'eparallel'.");
     }
     if (config.generation != "carrier_density" &&
         config.generation != "current_density") {
@@ -1250,6 +1464,7 @@ inline void validateImpactIonizationDrivingForce(const ImpactIonizationModelConf
         config.currentApproximation != "psi_gradient_proxy" &&
         config.currentApproximation != "cell_current_reconstructed" &&
         config.currentApproximation != "cell_vector_current_reconstructed" &&
+        config.currentApproximation != "nodal_vector_current_reconstructed" &&
         config.currentApproximation != "element_edge_sg_gss_laux" &&
         config.currentApproximation != "conserved_total_current") {
         throw std::invalid_argument(
@@ -1257,7 +1472,8 @@ inline void validateImpactIonizationDrivingForce(const ImpactIonizationModelConf
             ": impact_ionization.current_approximation must be "
             "'mobility_density_gradient', 'density_gradient', 'grad_qf', "
             "'cell_reconstructed', 'psi_gradient_proxy', 'cell_current_reconstructed', "
-            "'cell_vector_current_reconstructed', 'element_edge_sg_gss_laux', "
+            "'cell_vector_current_reconstructed', 'nodal_vector_current_reconstructed', "
+            "'element_edge_sg_gss_laux', "
             "or 'conserved_total_current'.");
     }
     if (config.currentMagnitudeMode != "edge_scalar_abs" &&
@@ -1266,6 +1482,20 @@ inline void validateImpactIonizationDrivingForce(const ImpactIonizationModelConf
             std::string(context) +
             ": impact_ionization.current_magnitude_mode must be "
             "'edge_scalar_abs' or 'dual_face_vector_mag'.");
+    }
+    if (config.eparallelFieldRecovery != "edge_adjacent_cells" &&
+        config.eparallelFieldRecovery != "nodal_vertex_star") {
+        throw std::invalid_argument(
+            std::string(context) +
+            ": impact_ionization.eparallel_field_recovery must be "
+            "'edge_adjacent_cells' or 'nodal_vertex_star'.");
+    }
+    if (config.eparallelFieldRecovery == "nodal_vertex_star" &&
+        !usesSentaurusEparallelAvalancheDrivingForce(config)) {
+        throw std::invalid_argument(
+            std::string(context) +
+            ": impact_ionization.eparallel_field_recovery='nodal_vertex_star' "
+            "requires driving_force='eparallel'.");
     }
     if (config.cellReconstructedMidpointDensity != "bernoulli" &&
         config.cellReconstructedMidpointDensity != "arithmetic" &&
@@ -1282,15 +1512,22 @@ inline void validateImpactIonizationDrivingForce(const ImpactIonizationModelConf
             ": impact_ionization.driving_force_interpolation.mode must be "
             "'none' or 'quasi_fermi_to_electric_field'.");
     }
+    const bool eparallelVectorCurrent =
+        usesSentaurusEparallelAvalancheDrivingForce(config) &&
+        (config.currentApproximation == "cell_vector_current_reconstructed" ||
+         config.currentApproximation == "nodal_vector_current_reconstructed");
     if (currentAlignedDrivingForce &&
         (config.generation != "current_density" ||
          (config.currentApproximation != "density_gradient" &&
-          config.currentApproximation != "grad_qf"))) {
+          config.currentApproximation != "grad_qf" &&
+          !eparallelVectorCurrent))) {
         throw std::invalid_argument(
             std::string(context) +
             ": impact_ionization current-aligned driving forces require "
-            "generation='current_density' with current_approximation='density_gradient' "
-            "or 'grad_qf'.");
+            "generation='current_density' with current_approximation='density_gradient', "
+            "'grad_qf', or Sentaurus Eparallel with "
+            "'cell_vector_current_reconstructed' or "
+            "'nodal_vector_current_reconstructed'.");
     }
     if (config.drivingForceInterpolation != "none" &&
         config.drivingForce != "quasi_fermi_gradient" &&
@@ -1331,11 +1568,13 @@ inline void validateImpactIonizationDrivingForce(const ImpactIonizationModelConf
             ": impact_ionization.source_geometry_scale must be positive and finite.");
     }
     if (config.sourceVolumePolicy != "genius_truncated" &&
+        config.sourceVolumePolicy != "genius_conservative" &&
         config.sourceVolumePolicy != "edge_half_box" &&
         config.sourceVolumePolicy != "edge_box") {
         throw std::invalid_argument(
             std::string(context) +
-            ": impact_ionization.source_volume_policy must be 'genius_truncated', 'edge_half_box', or 'edge_box'.");
+            ": impact_ionization.source_volume_policy must be 'genius_truncated', "
+            "'genius_conservative', 'edge_half_box', or 'edge_box'.");
     }
     if (config.sourceVolumeFactor != 0.0 &&
         (!std::isfinite(config.sourceVolumeFactor) ||
@@ -1348,13 +1587,27 @@ inline void validateImpactIonizationDrivingForce(const ImpactIonizationModelConf
     if (config.sourceMappingMode != "node_F_node_alpha_node_G" &&
         config.sourceMappingMode != "edge_F_edge_alpha_edge_G_to_node" &&
         config.sourceMappingMode != "cell_F_cell_alpha_cell_G_to_node" &&
+        config.sourceMappingMode != "nodal_eparallel_p1" &&
         config.sourceMappingMode != "triangle_gss_gradqf_truncated" &&
         config.sourceMappingMode != "element_vertex_box_measure") {
         throw std::invalid_argument(
             std::string(context) +
             ": impact_ionization.source_mapping_mode must be 'node_F_node_alpha_node_G', "
             "'edge_F_edge_alpha_edge_G_to_node', 'cell_F_cell_alpha_cell_G_to_node', "
-            "'triangle_gss_gradqf_truncated', or 'element_vertex_box_measure'.");
+            "'nodal_eparallel_p1', 'triangle_gss_gradqf_truncated', or "
+            "'element_vertex_box_measure'.");
+    }
+    if (config.sourceMappingMode == "nodal_eparallel_p1" &&
+        (config.couplingMode != "postprocess_only" ||
+         config.drivingForce != "eparallel" ||
+         config.generation != "current_density" ||
+         config.currentApproximation != "nodal_vector_current_reconstructed" ||
+         config.eparallelFieldRecovery != "nodal_vertex_star")) {
+        throw std::invalid_argument(
+            std::string(context) +
+            ": nodal_eparallel_p1 requires postprocess_only current-density "
+            "eparallel with nodal_vector_current_reconstructed and "
+            "eparallel_field_recovery='nodal_vertex_star'.");
     }
     const bool elementEdgeGssLauxRequested =
         config.currentApproximation == "element_edge_sg_gss_laux" ||
@@ -1491,6 +1744,13 @@ inline bool usesCellVectorCurrentReconstructedAvalancheCurrent(
            config.currentApproximation == "cell_vector_current_reconstructed";
 }
 
+inline bool usesNodalVectorCurrentReconstructedAvalancheCurrent(
+    const ImpactIonizationModelConfig& config)
+{
+    return config.generation == "current_density" &&
+           config.currentApproximation == "nodal_vector_current_reconstructed";
+}
+
 /// Avalanche source driven by the conserved total-current magnitude |F_p-F_n|
 /// on each edge instead of the per-carrier local-density SG flux. The total
 /// charge current is divergence-free in the converged state, so it does not
@@ -1531,7 +1791,8 @@ inline Real selectAvalancheCurrentFluxProxy(
     const bool reconstructedCurrent =
         config.currentMagnitudeMode == "dual_face_vector_mag" ||
         usesCellCurrentReconstructedAvalancheCurrent(config) ||
-        usesCellVectorCurrentReconstructedAvalancheCurrent(config);
+        usesCellVectorCurrentReconstructedAvalancheCurrent(config) ||
+        usesNodalVectorCurrentReconstructedAvalancheCurrent(config);
     if (reconstructedCurrent)
         return reconstructedFluxMagnitude;
     if (usesPsiGradientProxyAvalancheCurrent(config)) {
@@ -1626,6 +1887,7 @@ inline bool usesEdgeCurrentAvalancheSource(
             config.currentApproximation == "psi_gradient_proxy" ||
             config.currentApproximation == "cell_current_reconstructed" ||
             config.currentApproximation == "cell_vector_current_reconstructed" ||
+            config.currentApproximation == "nodal_vector_current_reconstructed" ||
             config.currentApproximation == "element_edge_sg_gss_laux" ||
             config.currentApproximation == "conserved_total_current");
 }
@@ -2004,6 +2266,92 @@ inline Point2 edgeAveragedCellScalarGradient(
     return weightedGradient / totalArea;
 }
 
+struct NodalScalarGradientCache {
+    std::vector<Point2> gradients;
+    std::vector<bool> valid;
+};
+
+inline bool isTransportMaterial(const Material& material);
+
+/// Recover a P1 nodal gradient over the complete transport-material vertex
+/// star.  Sentaurus exposes vertex fields after this wider recovery rather
+/// than retaining the two-cell stencil local to an individual edge.
+inline NodalScalarGradientCache computeTransportNodalScalarGradientCache(
+    const DeviceMesh&                      mesh,
+    const std::vector<std::vector<Index>>& nodeCells,
+    const std::vector<Material>&           cellMaterials,
+    const CellScalarGradientCache&         cellCache)
+{
+    NodalScalarGradientCache output;
+    output.gradients.assign(mesh.numNodes(), Point2::Zero());
+    output.valid.assign(mesh.numNodes(), false);
+    for (Index node = 0; node < mesh.numNodes(); ++node) {
+        if (node >= nodeCells.size())
+            continue;
+        Point2 weightedGradient = Point2::Zero();
+        Real totalArea = 0.0;
+        for (const Index cellId : nodeCells[node]) {
+            if (cellId >= cellMaterials.size() ||
+                cellId >= cellCache.valid.size() ||
+                !cellCache.valid[cellId] ||
+                !isTransportMaterial(cellMaterials[cellId])) {
+                continue;
+            }
+            const Real area = cellCache.areas[cellId];
+            if (area <= 0.0)
+                continue;
+            weightedGradient += area * cellCache.gradients[cellId];
+            totalArea += area;
+        }
+        if (totalArea > 0.0) {
+            output.gradients[node] = weightedGradient / totalArea;
+            output.valid[node] = true;
+        }
+    }
+    return output;
+}
+
+inline Point2 edgeAveragedNodalScalarGradient(
+    const DeviceMesh&                mesh,
+    Index                            edgeId,
+    const NodalScalarGradientCache&  cache,
+    bool&                            valid)
+{
+    valid = false;
+    if (edgeId >= mesh.numEdges())
+        return Point2::Zero();
+    const Edge& edge = mesh.getEdge(edgeId);
+    Point2 gradient = Point2::Zero();
+    Real count = 0.0;
+    for (const Index node : {edge.n0, edge.n1}) {
+        if (node >= cache.valid.size() || !cache.valid[node])
+            continue;
+        gradient += cache.gradients[node];
+        count += 1.0;
+    }
+    if (count <= 0.0)
+        return Point2::Zero();
+    valid = true;
+    return gradient / count;
+}
+
+inline Point2 eparallelElectricGradientForEdge(
+    const ImpactIonizationModelConfig&       config,
+    const std::vector<std::vector<Index>>&   edgeCells,
+    const DeviceMesh&                        mesh,
+    Index                                    edgeId,
+    const CellScalarGradientCache&           cellCache,
+    const NodalScalarGradientCache&          nodalCache,
+    bool&                                    valid)
+{
+    if (config.eparallelFieldRecovery == "nodal_vertex_star") {
+        return edgeAveragedNodalScalarGradient(
+            mesh, edgeId, nodalCache, valid);
+    }
+    return edgeAveragedCellScalarGradient(
+        edgeCells, edgeId, cellCache, valid);
+}
+
 inline std::vector<Real> computeNodeCellGradientMagnitudes(
     const std::vector<std::vector<Index>>& nodeCells,
     const CellScalarGradientCache&         cache)
@@ -2129,6 +2477,193 @@ inline std::vector<Real> computeNodeElectricFields(const VectorXd& psi, const De
     for (Real& field : fields)
         field *= fieldFactor;
     return fields;
+}
+
+inline Real bandToBandGenerationRateInternal(
+    const BandToBandTunnelingModel& model,
+    const PhysicalUnitSystem& unitSystem,
+    Real electricFieldInternal)
+{
+    const Real field_V_per_m =
+        unitSystem.internalElectricFieldToVPerM(electricFieldInternal);
+    const Real generation_m3_per_s = model.generationRate(field_V_per_m);
+    return unitSystem.m3ToInternalConcentration(generation_m3_per_s);
+}
+
+inline bool isTransportMaterial(const Material& material)
+{
+    return material.ni > 0.0 || material.mun > 0.0 || material.mup > 0.0;
+}
+
+inline std::vector<Real> transportCellVectorEdgeGradientMagnitudes(
+    const DeviceMesh& mesh,
+    const std::vector<std::vector<Index>>& edgeCells,
+    const std::vector<Material>& cellMaterials,
+    const VectorXd& values,
+    Real fieldFactor)
+{
+    const CellScalarGradientCache gradients = computeCellScalarGradientCache(
+        mesh, [&](Index node) { return values(static_cast<int>(node)); });
+    std::vector<Real> fields(mesh.numEdges(), 0.0);
+    for (Index edgeId = 0; edgeId < mesh.numEdges(); ++edgeId) {
+        if (edgeId >= edgeCells.size())
+            continue;
+        Point2 weightedGradient = Point2::Zero();
+        Real totalArea = 0.0;
+        for (const Index cellId : edgeCells[edgeId]) {
+            if (cellId >= cellMaterials.size() ||
+                !isTransportMaterial(cellMaterials[cellId]) ||
+                cellId >= gradients.valid.size() || !gradients.valid[cellId] ||
+                gradients.areas[cellId] <= 0.0) {
+                continue;
+            }
+            const Real area = gradients.areas[cellId];
+            weightedGradient += area * gradients.gradients[cellId];
+            totalArea += area;
+        }
+        if (totalArea > 0.0)
+            fields[edgeId] = (weightedGradient / totalArea).norm() * fieldFactor;
+    }
+    return fields;
+}
+
+/**
+ * Integrate local BTBT generation over semiconductor triangles and lump one
+ * third of each cell source to its vertices.  Computing the field per
+ * semiconductor cell is important at shared Si/oxide nodes: an unrestricted
+ * nodal least-squares gradient mixes the oxide field into a silicon-only
+ * material model and can exponentially over-predict E2 generation.
+ */
+inline std::vector<Real> bandToBandGenerationNodeSourceIntegrals(
+    const BandToBandTunnelingModel& model,
+    const PhysicalUnitSystem&       unitSystem,
+    const DeviceMesh&               mesh,
+    const std::vector<Material>&    cellMaterials,
+    const VectorXd&                 psi,
+    Real                            fieldFactor)
+{
+    std::vector<Real> sources(static_cast<std::size_t>(mesh.numNodes()), 0.0);
+    if (!model.enabled())
+        return sources;
+
+    const CellScalarGradientCache gradients = computeCellScalarGradientCache(
+        mesh, [&](Index node) { return psi(static_cast<int>(node)); });
+    if (model.config().sourceIntegration == "transport_node_lumped") {
+        std::vector<std::unordered_set<Index>> transportNeighbors(mesh.numNodes());
+        std::vector<std::vector<Index>> transportNodeCells(mesh.numNodes());
+        std::vector<Real> transportNodeAreas(mesh.numNodes(), 0.0);
+
+        for (Index cellId = 0; cellId < mesh.numCells(); ++cellId) {
+            if (cellId >= cellMaterials.size() ||
+                !isTransportMaterial(cellMaterials[cellId]) ||
+                cellId >= gradients.valid.size() || !gradients.valid[cellId] ||
+                gradients.areas[cellId] <= 0.0) {
+                continue;
+            }
+            const Cell& cell = mesh.getCell(cellId);
+            if (cell.node_ids.empty())
+                continue;
+            const Real lumpedArea = gradients.areas[cellId] /
+                static_cast<Real>(cell.node_ids.size());
+            for (const Index node : cell.node_ids) {
+                transportNodeCells[node].push_back(cellId);
+                transportNodeAreas[node] += lumpedArea;
+                for (const Index neighbor : cell.node_ids) {
+                    if (neighbor != node)
+                        transportNeighbors[node].insert(neighbor);
+                }
+            }
+        }
+
+        for (Index nodeId = 0; nodeId < mesh.numNodes(); ++nodeId) {
+            if (transportNodeAreas[nodeId] <= 0.0)
+                continue;
+            const Node& center = mesh.getNode(nodeId);
+            const Real centerValue = psi(static_cast<int>(nodeId));
+            Real sxx = 0.0;
+            Real sxy = 0.0;
+            Real syy = 0.0;
+            Real sxv = 0.0;
+            Real syv = 0.0;
+            for (const Index neighborId : transportNeighbors[nodeId]) {
+                const Node& neighbor = mesh.getNode(neighborId);
+                const Real dx = neighbor.x - center.x;
+                const Real dy = neighbor.y - center.y;
+                const Real distance = std::hypot(dx, dy);
+                if (distance <= 1.0e-30)
+                    continue;
+                const Real weight = 1.0 / distance;
+                const Real dv = psi(static_cast<int>(neighborId)) - centerValue;
+                sxx += weight * dx * dx;
+                sxy += weight * dx * dy;
+                syy += weight * dy * dy;
+                sxv += weight * dx * dv;
+                syv += weight * dy * dv;
+            }
+
+            Point2 gradient = Point2::Zero();
+            const Real det = sxx * syy - sxy * sxy;
+            if (std::abs(det) > 1.0e-60) {
+                gradient.x() = (sxv * syy - syv * sxy) / det;
+                gradient.y() = (sxx * syv - sxy * sxv) / det;
+            } else {
+                Real totalArea = 0.0;
+                for (const Index cellId : transportNodeCells[nodeId]) {
+                    const Real area = gradients.areas[cellId];
+                    gradient += area * gradients.gradients[cellId];
+                    totalArea += area;
+                }
+                if (totalArea > 0.0)
+                    gradient /= totalArea;
+            }
+            const Real generation = bandToBandGenerationRateInternal(
+                model, unitSystem, gradient.norm() * fieldFactor);
+            sources[nodeId] = generation * transportNodeAreas[nodeId];
+        }
+        return sources;
+    }
+
+    for (Index cellId = 0; cellId < mesh.numCells(); ++cellId) {
+        if (cellId >= cellMaterials.size() ||
+            !isTransportMaterial(cellMaterials[cellId]) ||
+            cellId >= gradients.valid.size() || !gradients.valid[cellId]) {
+            continue;
+        }
+        const Cell& cell = mesh.getCell(cellId);
+        if (cell.node_ids.empty() || gradients.areas[cellId] <= 0.0)
+            continue;
+        const Real generation = bandToBandGenerationRateInternal(
+            model, unitSystem, gradients.gradients[cellId].norm() * fieldFactor);
+        const Real lumped = generation * gradients.areas[cellId] /
+            static_cast<Real>(cell.node_ids.size());
+        for (Index node : cell.node_ids)
+            sources[node] += lumped;
+    }
+    return sources;
+}
+
+inline std::vector<Real> transportNodeLumpedAreas(
+    const DeviceMesh& mesh,
+    const std::vector<Material>& cellMaterials)
+{
+    std::vector<Real> areas(static_cast<std::size_t>(mesh.numNodes()), 0.0);
+    const CellScalarGradientCache geometry = computeCellScalarGradientCache(
+        mesh, [](Index) { return 0.0; });
+    for (Index cellId = 0; cellId < mesh.numCells(); ++cellId) {
+        if (cellId >= cellMaterials.size() ||
+            !isTransportMaterial(cellMaterials[cellId]) ||
+            cellId >= geometry.valid.size() || !geometry.valid[cellId]) {
+            continue;
+        }
+        const Cell& cell = mesh.getCell(cellId);
+        if (cell.node_ids.empty())
+            continue;
+        const Real lumped = geometry.areas[cellId] /
+            static_cast<Real>(cell.node_ids.size());
+        for (Index node : cell.node_ids)
+            areas[node] += lumped;
+    }
+    return areas;
 }
 
 inline Real edgeQuasiFermiCoefficientField(
@@ -2696,9 +3231,17 @@ elementEdgeGssLauxAvalancheSourceRecordForCell(
                 phip(static_cast<int>(node0))) /
             edgeLength * fieldFactor;
         const Real electronMobilityDrive =
-            qfMobility ? electronEdgeField : electricEdgeField;
+            qfMobility
+            ? (mobilityConfig.highFieldGradientDiscretization == "transport_cell_vector"
+                ? electronGradient.norm() * fieldFactor
+                : electronEdgeField)
+            : electricEdgeField;
         const Real holeMobilityDrive =
-            qfMobility ? holeEdgeField : electricEdgeField;
+            qfMobility
+            ? (mobilityConfig.highFieldGradientDiscretization == "transport_cell_vector"
+                ? holeGradient.norm() * fieldFactor
+                : holeEdgeField)
+            : electricEdgeField;
         const Real electronLowFieldMobility =
             triangleGssEndpointAveragedMobility(
                 mobilityConfig, mobility, mesh, doping, cellMaterials, n, p, cellId,
@@ -2822,6 +3365,9 @@ struct SgEdgeCurrentAvalancheSourceRecord {
     Real edgeCouple = 0.0;
     Real edgeAreaProxy = 0.0;
     Real electricField = 0.0;
+    Point2 electricFieldVector = Point2::Zero();
+    Point2 electronCurrentVector = Point2::Zero();
+    Point2 holeCurrentVector = Point2::Zero();
     Real electronImpactField = 0.0;
     Real holeImpactField = 0.0;
     Real electronAlpha = 0.0;
@@ -2849,8 +3395,28 @@ struct SgEdgeCurrentAvalancheSourceRecord {
     Real electronNode1SourceIntegral = 0.0;
     Real holeNode0SourceIntegral = 0.0;
     Real holeNode1SourceIntegral = 0.0;
+    Point2 node0ElectricFieldVector = Point2::Zero();
+    Point2 node1ElectricFieldVector = Point2::Zero();
+    Point2 electronNode0CurrentVector = Point2::Zero();
+    Point2 electronNode1CurrentVector = Point2::Zero();
+    Point2 holeNode0CurrentVector = Point2::Zero();
+    Point2 holeNode1CurrentVector = Point2::Zero();
+    Real electronNode0ImpactField = 0.0;
+    Real electronNode1ImpactField = 0.0;
+    Real holeNode0ImpactField = 0.0;
+    Real holeNode1ImpactField = 0.0;
+    Real electronNode0Alpha = 0.0;
+    Real electronNode1Alpha = 0.0;
+    Real holeNode0Alpha = 0.0;
+    Real holeNode1Alpha = 0.0;
     Real node0SourceIntegral = 0.0;
     Real node1SourceIntegral = 0.0;
+    bool electronSgUsesFermiDirac = false;
+    Real electronSgGeneralizedEinsteinFactor = 1.0;
+    Real electronSgGeneralizedBernoulliArgument = 0.0;
+    bool holeSgUsesFermiDirac = false;
+    Real holeSgGeneralizedEinsteinFactor = 1.0;
+    Real holeSgGeneralizedBernoulliArgument = 0.0;
     SgElectronVariableNiFluxDecomposition electronSgFluxDecomposition;
     Real electronSgProductionSignedFluxNative = 0.0;
     Real electronSgReconstructionRelativeError = 0.0;
@@ -2882,19 +3448,49 @@ inline std::vector<SgEdgeCurrentAvalancheSourceRecord> sgEdgeCurrentAvalancheSou
     const std::vector<Real>&           ni,
     Real                               Vt,
     Real                               fieldFactor = 1.0,
-    bool                               collectElectronSgDiagnostics = false)
+    bool                               collectElectronSgDiagnostics = false,
+    const CarrierStatisticsConfig&     carrierStatistics = {},
+    const std::vector<Real>&           Nc = {},
+    const std::vector<Real>&           Nv = {})
 {
     std::vector<SgEdgeCurrentAvalancheSourceRecord> records;
     records.reserve(mesh.numEdges());
     const bool qfImpact = usesQuasiFermiAvalancheDrivingForce(config);
     const bool currentAlignedImpact =
         !config.debugRawVanOverstraeten && usesCurrentAlignedAvalancheDrivingForce(config);
+    const bool sentaurusEparallelImpact =
+        !config.debugRawVanOverstraeten &&
+        usesSentaurusEparallelAvalancheDrivingForce(config);
     const bool cellCurrentReconstructedCurrent = usesCellCurrentReconstructedAvalancheCurrent(config);
     const bool cellVectorCurrentReconstructedCurrent = usesCellVectorCurrentReconstructedAvalancheCurrent(config);
+    const bool nodalVectorCurrentReconstructedCurrent =
+        usesNodalVectorCurrentReconstructedAvalancheCurrent(config);
     const bool dualFaceVectorCurrentMagnitude = config.currentMagnitudeMode == "dual_face_vector_mag";
-    const bool usesReconstructedSgCurrent = cellCurrentReconstructedCurrent || cellVectorCurrentReconstructedCurrent || dualFaceVectorCurrentMagnitude;
+    const bool usesReconstructedSgCurrent =
+        cellCurrentReconstructedCurrent ||
+        cellVectorCurrentReconstructedCurrent ||
+        nodalVectorCurrentReconstructedCurrent ||
+        dualFaceVectorCurrentMagnitude;
+    const bool needsFullEdgeFlux =
+        usesReconstructedSgCurrent || sentaurusEparallelImpact;
     const bool directionalEdgePartition = usesDirectionalEdgeAvalancheSourcePartition(config);
     const bool qfMobility = mobilityConfig.highFieldDrivingForce == "quasi_fermi_gradient";
+    const bool vectorQfMobility = qfMobility &&
+        mobilityConfig.highFieldGradientDiscretization == "transport_cell_vector";
+    const std::vector<Real> electronVectorMobilityFields = vectorQfMobility
+        ? transportCellVectorEdgeGradientMagnitudes(
+              mesh, edgeCells, cellMaterials, phin, fieldFactor)
+        : std::vector<Real>{};
+    const std::vector<Real> holeVectorMobilityFields = vectorQfMobility
+        ? transportCellVectorEdgeGradientMagnitudes(
+              mesh, edgeCells, cellMaterials, phip, fieldFactor)
+        : std::vector<Real>{};
+    const bool fermiDirac = usesFermiDirac(carrierStatistics);
+    if (fermiDirac && (Nc.size() != mesh.numNodes() || Nv.size() != mesh.numNodes())) {
+        throw std::invalid_argument(
+            "sgEdgeCurrentAvalancheSourceRecords: Fermi-Dirac statistics require "
+            "per-node Nc and Nv vectors.");
+    }
     const std::vector<bool> contactNodes = contactNodeMask(mesh);
     const CellScalarGradientCache electronQfGradientCache = computeCellScalarGradientCache(
         mesh, [&](Index node) {
@@ -2908,6 +3504,92 @@ inline std::vector<SgEdgeCurrentAvalancheSourceRecord> sgEdgeCurrentAvalancheSou
             return holeQfForAvalancheGradient(
                 psi(idx), phip(idx), p(idx), ni[node], Vt, config);
         });
+    const CellScalarGradientCache electricGradientCache =
+        computeCellScalarGradientCache(mesh, [&](Index node) {
+            return psi(static_cast<int>(node));
+        });
+    const bool nodalVertexStarEparallel = sentaurusEparallelImpact &&
+        config.eparallelFieldRecovery == "nodal_vertex_star";
+    const NodalScalarGradientCache nodalElectricGradientCache =
+        nodalVertexStarEparallel
+        ? computeTransportNodalScalarGradientCache(
+              mesh, buildNodeCellMap(mesh), cellMaterials, electricGradientCache)
+        : NodalScalarGradientCache{};
+    const std::vector<std::vector<Index>> cellEdges =
+        buildCellEdgeMap(edgeCells, mesh);
+    const std::vector<std::vector<Index>> nodeEdges = buildNodeEdgeMap(mesh);
+
+    struct EdgeSgFluxEvaluation {
+        Real continuityFlux = 0.0;
+        Real generalizedEinsteinFactor = 1.0;
+        Real bernoulliArgument = 0.0;
+    };
+    const auto electronEdgeSgFlux = [&](const Edge& edge, Real mobilityValue) {
+        EdgeSgFluxEvaluation evaluation;
+        if (!(mobilityValue > 0.0) || !(edge.length > 1.0e-30))
+            return evaluation;
+        const int i = static_cast<int>(edge.n0);
+        const int j = static_cast<int>(edge.n1);
+        const Real coefficient = mobilityValue * Vt * fieldFactor / edge.length;
+        if (!fermiDirac) {
+            evaluation.bernoulliArgument = (psi(j) - psi(i)) / Vt
+                + std::log(ni[edge.n0] / ni[edge.n1]);
+            evaluation.continuityFlux = sgElectronContinuityFluxFromQuasiFermiVariableNi(
+                ni[edge.n0], ni[edge.n1], psi(i), psi(j), phin(i), phin(j),
+                Vt, coefficient);
+            return evaluation;
+        }
+        if (!(ni[edge.n0] > 0.0) || !(ni[edge.n1] > 0.0) ||
+            !(Nc[edge.n0] > 0.0) || !(Nc[edge.n1] > 0.0))
+            return evaluation;
+        const Real eta0 = (psi(i) - phin(i)) / Vt
+            + std::log(ni[edge.n0] / Nc[edge.n0]);
+        const Real eta1 = (psi(j) - phin(j)) / Vt
+            + std::log(ni[edge.n1] / Nc[edge.n1]);
+        const Real driftPotential = psi(j) - psi(i) + Vt * std::log(
+            (ni[edge.n1] / Nc[edge.n1]) / (ni[edge.n0] / Nc[edge.n0]));
+        evaluation.generalizedEinsteinFactor =
+            sgGeneralizedEinsteinFactor(n(i), n(j), eta0, eta1);
+        evaluation.bernoulliArgument = driftPotential /
+            (Vt * evaluation.generalizedEinsteinFactor);
+        evaluation.continuityFlux = sgElectronFermiDiracContinuityFlux(
+            n(i), n(j), eta0, eta1, driftPotential, phin(i), phin(j),
+            Vt, coefficient);
+        return evaluation;
+    };
+    const auto holeEdgeSgFlux = [&](const Edge& edge, Real mobilityValue) {
+        EdgeSgFluxEvaluation evaluation;
+        if (!(mobilityValue > 0.0) || !(edge.length > 1.0e-30))
+            return evaluation;
+        const int i = static_cast<int>(edge.n0);
+        const int j = static_cast<int>(edge.n1);
+        const Real coefficient = mobilityValue * Vt * fieldFactor / edge.length;
+        if (!fermiDirac) {
+            evaluation.bernoulliArgument = (psi(j) - psi(i)) / Vt
+                + std::log(ni[edge.n0] / ni[edge.n1]);
+            evaluation.continuityFlux = sgHoleContinuityFluxFromQuasiFermiVariableNi(
+                ni[edge.n0], ni[edge.n1], psi(i), psi(j), phip(i), phip(j),
+                Vt, coefficient);
+            return evaluation;
+        }
+        if (!(ni[edge.n0] > 0.0) || !(ni[edge.n1] > 0.0) ||
+            !(Nv[edge.n0] > 0.0) || !(Nv[edge.n1] > 0.0))
+            return evaluation;
+        const Real eta0 = (phip(i) - psi(i)) / Vt
+            + std::log(ni[edge.n0] / Nv[edge.n0]);
+        const Real eta1 = (phip(j) - psi(j)) / Vt
+            + std::log(ni[edge.n1] / Nv[edge.n1]);
+        const Real driftPotential = psi(j) - psi(i) + Vt * std::log(
+            (ni[edge.n0] / Nv[edge.n0]) / (ni[edge.n1] / Nv[edge.n1]));
+        evaluation.generalizedEinsteinFactor =
+            sgGeneralizedEinsteinFactor(p(i), p(j), eta0, eta1);
+        evaluation.bernoulliArgument = driftPotential /
+            (Vt * evaluation.generalizedEinsteinFactor);
+        evaluation.continuityFlux = sgHoleFermiDiracContinuityFlux(
+            p(i), p(j), eta0, eta1, driftPotential, phip(i), phip(j),
+            Vt, coefficient);
+        return evaluation;
+    };
 
     std::vector<Real> rawElectronFlux(static_cast<std::size_t>(mesh.numEdges()), 0.0);
     std::vector<Real> rawHoleFlux(static_cast<std::size_t>(mesh.numEdges()), 0.0);
@@ -2915,7 +3597,11 @@ inline std::vector<SgEdgeCurrentAvalancheSourceRecord> sgEdgeCurrentAvalancheSou
     std::vector<Real> rawSignedHoleFlux(static_cast<std::size_t>(mesh.numEdges()), 0.0);
     std::vector<Real> reconstructedElectronFlux(static_cast<std::size_t>(mesh.numEdges()), 0.0);
     std::vector<Real> reconstructedHoleFlux(static_cast<std::size_t>(mesh.numEdges()), 0.0);
-    if (usesReconstructedSgCurrent) {
+    std::vector<bool> activeElectronEdge(static_cast<std::size_t>(mesh.numEdges()), false);
+    std::vector<bool> activeHoleEdge(static_cast<std::size_t>(mesh.numEdges()), false);
+    std::vector<Point2> nodalElectronCurrent;
+    std::vector<Point2> nodalHoleCurrent;
+    if (needsFullEdgeFlux) {
         for (Index e = 0; e < mesh.numEdges(); ++e) {
             const Edge& edge = mesh.getEdge(e);
             const Real h = edge.length;
@@ -2940,46 +3626,86 @@ inline std::vector<SgEdgeCurrentAvalancheSourceRecord> sgEdgeCurrentAvalancheSou
             const Real electricField = std::abs((psi_j - psi_i) / h) * fieldFactor;
             const Real electronQfField = std::abs((electronQf_j - electronQf_i) / h) * fieldFactor;
             const Real holeQfField = std::abs((holeQf_j - holeQf_i) / h) * fieldFactor;
-            const Real electronMobilityField = qfMobility ? electronQfField : electricField;
-            const Real holeMobilityField = qfMobility ? holeQfField : electricField;
+            const Real electronMobilityField = vectorQfMobility
+                ? electronVectorMobilityFields[e]
+                : (qfMobility ? electronQfField : electricField);
+            const Real holeMobilityField = vectorQfMobility
+                ? holeVectorMobilityFields[e]
+                : (qfMobility ? holeQfField : electricField);
             const Real mun = edgeMobility(
                 edgeCells, mesh, doping, mobility, cellMaterials, e, CarrierType::Electron,
                 electronMobilityField, &mobilityConfig, &psi);
             if (mun > 0.0) {
-                const Real signedFlux = sgElectronContinuityFluxFromQuasiFermiVariableNi(
-                    ni[edge.n0], ni[edge.n1], psi_i, psi_j, phin_i, phin_j,
-                    Vt, mun * Vt * fieldFactor / h);
+                const Real signedFlux = electronEdgeSgFlux(edge, mun).continuityFlux;
                 rawSignedElectronFlux[static_cast<std::size_t>(e)] = signedFlux;
                 rawElectronFlux[static_cast<std::size_t>(e)] = std::abs(signedFlux);
+                activeElectronEdge[static_cast<std::size_t>(e)] = true;
             }
             const Real mup = edgeMobility(
                 edgeCells, mesh, doping, mobility, cellMaterials, e, CarrierType::Hole,
                 holeMobilityField, &mobilityConfig, &psi);
             if (mup > 0.0) {
-                const Real signedFlux = sgHoleContinuityFluxFromQuasiFermiVariableNi(
-                    ni[edge.n0], ni[edge.n1], psi_i, psi_j, phip_i, phip_j,
-                    Vt, mup * Vt * fieldFactor / h);
+                const Real signedFlux = holeEdgeSgFlux(edge, mup).continuityFlux;
                 rawSignedHoleFlux[static_cast<std::size_t>(e)] = signedFlux;
                 rawHoleFlux[static_cast<std::size_t>(e)] = std::abs(signedFlux);
+                activeHoleEdge[static_cast<std::size_t>(e)] = true;
             }
         }
 
-        const std::vector<std::vector<Index>> cellEdges = buildCellEdgeMap(edgeCells, mesh);
-        for (Index e = 0; e < mesh.numEdges(); ++e) {
-            reconstructedElectronFlux[static_cast<std::size_t>(e)] = dualFaceVectorCurrentMagnitude
-                ? medianDualFaceVectorReconstructedEdgeFluxMagnitude(
-                    e, rawSignedElectronFlux, edgeCells, cellEdges, mesh)
-                : (cellVectorCurrentReconstructedCurrent
-                    ? cellVectorReconstructedEdgeFluxMagnitude(
+        if (nodalVectorCurrentReconstructedCurrent) {
+            nodalElectronCurrent.resize(
+                static_cast<std::size_t>(mesh.numNodes()), Point2::Zero());
+            nodalHoleCurrent.resize(
+                static_cast<std::size_t>(mesh.numNodes()), Point2::Zero());
+            const auto electronFlux = [&](Index edgeId) {
+                return rawSignedElectronFlux[static_cast<std::size_t>(edgeId)];
+            };
+            const auto holeFlux = [&](Index edgeId) {
+                return rawSignedHoleFlux[static_cast<std::size_t>(edgeId)];
+            };
+            const auto electronActive = [&](Index edgeId) {
+                return activeElectronEdge[static_cast<std::size_t>(edgeId)];
+            };
+            const auto holeActive = [&](Index edgeId) {
+                return activeHoleEdge[static_cast<std::size_t>(edgeId)];
+            };
+            for (Index node = 0; node < mesh.numNodes(); ++node) {
+                nodalElectronCurrent[static_cast<std::size_t>(node)] =
+                    nodalLeastSquaresCurrentVector(
+                        node, nodeEdges, mesh, electronFlux, electronActive);
+                nodalHoleCurrent[static_cast<std::size_t>(node)] =
+                    nodalLeastSquaresCurrentVector(
+                        node, nodeEdges, mesh, holeFlux, holeActive);
+            }
+        }
+
+        if (usesReconstructedSgCurrent) {
+            for (Index e = 0; e < mesh.numEdges(); ++e) {
+                reconstructedElectronFlux[static_cast<std::size_t>(e)] = dualFaceVectorCurrentMagnitude
+                    ? medianDualFaceVectorReconstructedEdgeFluxMagnitude(
                         e, rawSignedElectronFlux, edgeCells, cellEdges, mesh)
-                    : cellSmoothedEdgeFluxMagnitude(e, rawElectronFlux, edgeCells, cellEdges));
-            reconstructedHoleFlux[static_cast<std::size_t>(e)] = dualFaceVectorCurrentMagnitude
-                ? medianDualFaceVectorReconstructedEdgeFluxMagnitude(
-                    e, rawSignedHoleFlux, edgeCells, cellEdges, mesh)
-                : (cellVectorCurrentReconstructedCurrent
-                    ? cellVectorReconstructedEdgeFluxMagnitude(
+                    : (nodalVectorCurrentReconstructedCurrent
+                        ? 0.5 * (
+                            nodalElectronCurrent[mesh.getEdge(e).n0].norm() +
+                            nodalElectronCurrent[mesh.getEdge(e).n1].norm())
+                        : (cellVectorCurrentReconstructedCurrent
+                            ? cellVectorReconstructedEdgeFluxMagnitude(
+                                e, rawSignedElectronFlux, edgeCells, cellEdges, mesh)
+                            : cellSmoothedEdgeFluxMagnitude(
+                                e, rawElectronFlux, edgeCells, cellEdges)));
+                reconstructedHoleFlux[static_cast<std::size_t>(e)] = dualFaceVectorCurrentMagnitude
+                    ? medianDualFaceVectorReconstructedEdgeFluxMagnitude(
                         e, rawSignedHoleFlux, edgeCells, cellEdges, mesh)
-                    : cellSmoothedEdgeFluxMagnitude(e, rawHoleFlux, edgeCells, cellEdges));
+                    : (nodalVectorCurrentReconstructedCurrent
+                        ? 0.5 * (
+                            nodalHoleCurrent[mesh.getEdge(e).n0].norm() +
+                            nodalHoleCurrent[mesh.getEdge(e).n1].norm())
+                        : (cellVectorCurrentReconstructedCurrent
+                            ? cellVectorReconstructedEdgeFluxMagnitude(
+                                e, rawSignedHoleFlux, edgeCells, cellEdges, mesh)
+                            : cellSmoothedEdgeFluxMagnitude(
+                                e, rawHoleFlux, edgeCells, cellEdges)));
+            }
         }
     }
 
@@ -3019,8 +3745,12 @@ inline std::vector<SgEdgeCurrentAvalancheSourceRecord> sgEdgeCurrentAvalancheSou
                 config, holeQfField, electricField, edgeCells, mesh, e,
                 contactNodes, holeQfGradientCache, fieldFactor)
             : electricField;
-        const Real electronMobilityField = qfMobility ? electronQfField : electricField;
-        const Real holeMobilityField = qfMobility ? holeQfField : electricField;
+        const Real electronMobilityField = vectorQfMobility
+            ? electronVectorMobilityFields[e]
+            : (qfMobility ? electronQfField : electricField);
+        const Real holeMobilityField = vectorQfMobility
+            ? holeVectorMobilityFields[e]
+            : (qfMobility ? holeQfField : electricField);
 
         const Real nAvg = 0.5 * (n(i) + n(j));
         const Real pAvg = 0.5 * (p(i) + p(j));
@@ -3030,7 +3760,8 @@ inline std::vector<SgEdgeCurrentAvalancheSourceRecord> sgEdgeCurrentAvalancheSou
             config, p(i), p(j), psi_j, psi_i, Vt);
         const Real signedElectricField01 = -(psi_j - psi_i) / h * fieldFactor;
 
-        const Real edgeArea = avalancheSourceEdgeArea(config, edgeCells, mesh, e);
+        const Real edgeArea = avalancheSourceEdgeArea(
+            config, edgeCells, mesh, e, &cellMaterials);
         SgEdgeCurrentAvalancheSourceRecord record;
         record.edgeId = e;
         record.node0 = edge.n0;
@@ -3039,6 +3770,40 @@ inline std::vector<SgEdgeCurrentAvalancheSourceRecord> sgEdgeCurrentAvalancheSou
         record.edgeCouple = edge.couple;
         record.edgeAreaProxy = edgeArea;
         record.electricField = electricField;
+        if (sentaurusEparallelImpact) {
+            bool validElectricGradient = false;
+            const Point2 electricGradient = eparallelElectricGradientForEdge(
+                config,
+                edgeCells,
+                mesh,
+                e,
+                electricGradientCache,
+                nodalElectricGradientCache,
+                validElectricGradient);
+            if (validElectricGradient) {
+                record.electricFieldVector = -fieldFactor * electricGradient;
+            } else {
+                const Node& node0 = mesh.getNode(edge.n0);
+                const Node& node1 = mesh.getNode(edge.n1);
+                record.electricFieldVector = signedElectricField01 *
+                    Point2{(node1.x - node0.x) / h, (node1.y - node0.y) / h};
+            }
+            // SG electron flux is a particle flux; conventional Jn points in
+            // the opposite direction. Hole particle flux and Jp are aligned.
+            if (nodalVectorCurrentReconstructedCurrent) {
+                record.electronCurrentVector = -0.5 * (
+                    nodalElectronCurrent[edge.n0] +
+                    nodalElectronCurrent[edge.n1]);
+                record.holeCurrentVector = 0.5 * (
+                    nodalHoleCurrent[edge.n0] +
+                    nodalHoleCurrent[edge.n1]);
+            } else {
+                record.electronCurrentVector = -edgeAveragedCellVectorCurrent(
+                    e, rawSignedElectronFlux, edgeCells, cellEdges, mesh);
+                record.holeCurrentVector = edgeAveragedCellVectorCurrent(
+                    e, rawSignedHoleFlux, edgeCells, cellEdges, mesh);
+            }
+        }
         record.electronMobilityDrivingField = electronMobilityField;
         record.holeMobilityDrivingField = holeMobilityField;
 
@@ -3059,35 +3824,25 @@ inline std::vector<SgEdgeCurrentAvalancheSourceRecord> sgEdgeCurrentAvalancheSou
         constexpr bool IncludeElectronNiGradientDrift = true;
         const Real electronContinuityCoefficient =
             mun > 0.0 ? mun * Vt * fieldFactor / h : 0.0;
-        const Real electronContinuityFlux01 = mun > 0.0
-            ? sgElectronContinuityFluxFromQuasiFermiVariableNi(
-                ni[edge.n0],
-                ni[edge.n1],
-                psi_i,
-                psi_j,
-                phin_i,
-                phin_j,
-                Vt,
-                electronContinuityCoefficient,
-                IncludeElectronNiGradientDrift)
-            : 0.0;
-        const Real holeContinuityFlux01 = mup > 0.0
-            ? sgHoleContinuityFluxFromQuasiFermiVariableNi(
-                ni[edge.n0],
-                ni[edge.n1],
-                psi_i,
-                psi_j,
-                phip_i,
-                phip_j,
-                Vt,
-                mup * Vt * fieldFactor / h)
-            : 0.0;
+        const EdgeSgFluxEvaluation electronSg = electronEdgeSgFlux(edge, mun);
+        const EdgeSgFluxEvaluation holeSg = holeEdgeSgFlux(edge, mup);
+        const Real electronContinuityFlux01 = electronSg.continuityFlux;
+        const Real holeContinuityFlux01 = holeSg.continuityFlux;
+        record.electronSgUsesFermiDirac = fermiDirac;
+        record.electronSgGeneralizedEinsteinFactor =
+            electronSg.generalizedEinsteinFactor;
+        record.electronSgGeneralizedBernoulliArgument =
+            electronSg.bernoulliArgument;
+        record.holeSgUsesFermiDirac = fermiDirac;
+        record.holeSgGeneralizedEinsteinFactor =
+            holeSg.generalizedEinsteinFactor;
+        record.holeSgGeneralizedBernoulliArgument = holeSg.bernoulliArgument;
         // SG continuity fluxes use the particle-flux convention, so the
         // physical charge-current magnitude is |F_p - F_n|.
         const Real conservedTotalFluxMagnitude =
             conservedTotalCurrentFluxMagnitude(
                 electronContinuityFlux01, holeContinuityFlux01);
-        if (collectElectronSgDiagnostics) {
+        if (collectElectronSgDiagnostics && !fermiDirac) {
             record.electronSgDiagnosticsCollected = true;
             record.electronSgFluxDecomposition =
                 sgElectronContinuityFluxFromQuasiFermiVariableNiDecomposition(
@@ -3131,14 +3886,52 @@ inline std::vector<SgEdgeCurrentAvalancheSourceRecord> sgEdgeCurrentAvalancheSou
                     static_cast<long double>(
                         record.electronSgFluxDecomposition.stableFactorizedFlux)
                     - referenceFluxLong) / referenceScaleLong);
+        } else if (collectElectronSgDiagnostics) {
+            // The legacy left/right decomposition is specific to the
+            // Boltzmann variable-ni formula.  Fermi-Dirac diagnostics expose
+            // the generalized Einstein factor and Bernoulli argument.  Keep
+            // the endpoint and algebraic fields populated so edge-audit CSVs
+            // remain useful across both statistics modes.
+            record.electronSgDiagnosticsCollected = true;
+            record.electronSgProductionSignedFluxNative =
+                electronContinuityFlux01;
+            auto& decomposition = record.electronSgFluxDecomposition;
+            decomposition.ni0 = ni[edge.n0];
+            decomposition.ni1 = ni[edge.n1];
+            decomposition.n0 = n(i);
+            decomposition.n1 = n(j);
+            decomposition.psi0 = psi_i;
+            decomposition.psi1 = psi_j;
+            decomposition.phin0 = phin_i;
+            decomposition.phin1 = phin_j;
+            decomposition.eta = electronSg.bernoulliArgument;
+            const SGEdgeWeights generalizedWeights =
+                sgEdgeWeights(electronSg.bernoulliArgument, 1.0);
+            decomposition.bernoulliMinusEta = generalizedWeights.b_minus;
+            decomposition.bernoulliEta = generalizedWeights.b_plus;
+            decomposition.coef = electronContinuityCoefficient
+                * electronSg.generalizedEinsteinFactor;
+            decomposition.leftTerm = generalizedWeights.b_minus * n(i);
+            decomposition.rightTerm = generalizedWeights.b_plus * n(j);
+            decomposition.signedDifference =
+                decomposition.leftTerm - decomposition.rightTerm;
+            decomposition.reconstructedFlux =
+                decomposition.coef * decomposition.signedDifference;
+            decomposition.stableFactorizedFlux = electronContinuityFlux01;
+            decomposition.highPrecisionReferenceFlux = electronContinuityFlux01;
+            decomposition.includeNiGradientDrift = true;
+            decomposition.flatQuasiFermiShortCircuit = phin_i == phin_j;
         }
 
         if (mun > 0.0) {
-            record.electronImpactField = currentAlignedImpact
-                ? parallelCurrentAvalancheDrivingField(
-                    signedElectricField01, electronContinuityFlux01)
-                : electronAvalancheDrivingField(
-                    config, electronCoefficientField, electricField, nAvg);
+            record.electronImpactField = sentaurusEparallelImpact
+                ? sentaurusEparallelAvalancheDrivingField(
+                    record.electricFieldVector, record.electronCurrentVector)
+                : (currentAlignedImpact
+                    ? parallelCurrentAvalancheDrivingField(
+                        signedElectricField01, electronContinuityFlux01)
+                    : electronAvalancheDrivingField(
+                        config, electronCoefficientField, electricField, nAvg));
             record.electronRawSignedFluxProxy = electronContinuityFlux01;
             record.electronRawFluxProxy = std::abs(electronContinuityFlux01);
             record.electronReconstructedFluxProxy = usesReconstructedSgCurrent
@@ -3163,11 +3956,14 @@ inline std::vector<SgEdgeCurrentAvalancheSourceRecord> sgEdgeCurrentAvalancheSou
         }
 
         if (mup > 0.0) {
-            record.holeImpactField = currentAlignedImpact
-                ? parallelCurrentAvalancheDrivingField(
-                    signedElectricField01, holeContinuityFlux01)
-                : holeAvalancheDrivingField(
-                    config, holeCoefficientField, electricField, pAvg);
+            record.holeImpactField = sentaurusEparallelImpact
+                ? sentaurusEparallelAvalancheDrivingField(
+                    record.electricFieldVector, record.holeCurrentVector)
+                : (currentAlignedImpact
+                    ? parallelCurrentAvalancheDrivingField(
+                        signedElectricField01, holeContinuityFlux01)
+                    : holeAvalancheDrivingField(
+                        config, holeCoefficientField, electricField, pAvg));
             record.holeRawSignedFluxProxy = holeContinuityFlux01;
             record.holeRawFluxProxy = std::abs(holeContinuityFlux01);
             record.holeReconstructedFluxProxy = usesReconstructedSgCurrent
@@ -3213,6 +4009,97 @@ inline std::vector<SgEdgeCurrentAvalancheSourceRecord> sgEdgeCurrentAvalancheSou
         record.node1SourceIntegral =
             record.electronNode1SourceIntegral + record.holeNode1SourceIntegral;
         records.push_back(record);
+    }
+    if (config.sourceMappingMode == "nodal_eparallel_p1") {
+        std::vector<Point2> electricGradient(mesh.numNodes(), Point2::Zero());
+        for (Index node = 0; node < mesh.numNodes(); ++node) {
+            if (node < nodalElectricGradientCache.valid.size() &&
+                nodalElectricGradientCache.valid[node]) {
+                electricGradient[node] =
+                    fieldFactor * nodalElectricGradientCache.gradients[node];
+            }
+        }
+        std::vector<Real> nodeMeasure(mesh.numNodes(), 0.0);
+        for (Index cellId = 0; cellId < mesh.numCells(); ++cellId) {
+            if (cellId >= cellMaterials.size() ||
+                !isTransportMaterial(cellMaterials[cellId])) {
+                continue;
+            }
+            const Cell& cell = mesh.getCell(cellId);
+            if (cell.type != CellType::Tri3 || cell.node_ids.size() != 3)
+                continue;
+            const Real share = triangleArea(mesh, cell) / 3.0;
+            for (const Index node : cell.node_ids)
+                nodeMeasure[node] += share;
+        }
+
+        std::vector<Real> electronNodeSource(mesh.numNodes(), 0.0);
+        std::vector<Real> holeNodeSource(mesh.numNodes(), 0.0);
+        std::vector<Real> electronNodeDrive(mesh.numNodes(), 0.0);
+        std::vector<Real> holeNodeDrive(mesh.numNodes(), 0.0);
+        std::vector<Real> electronNodeAlpha(mesh.numNodes(), 0.0);
+        std::vector<Real> holeNodeAlpha(mesh.numNodes(), 0.0);
+        for (Index node = 0; node < mesh.numNodes(); ++node) {
+            const Point2 electricField = -electricGradient[node];
+            const Point2 electronCurrent = -nodalElectronCurrent[node];
+            const Point2 holeCurrent = nodalHoleCurrent[node];
+            electronNodeDrive[node] = sentaurusEparallelAvalancheDrivingField(
+                electricField, electronCurrent);
+            holeNodeDrive[node] = sentaurusEparallelAvalancheDrivingField(
+                electricField, holeCurrent);
+            electronNodeAlpha[node] =
+                impact.electronCoefficient(electronNodeDrive[node]);
+            holeNodeAlpha[node] =
+                impact.holeCoefficient(holeNodeDrive[node]);
+            electronNodeSource[node] = electronNodeAlpha[node] *
+                electronCurrent.norm() * nodeMeasure[node];
+            holeNodeSource[node] = holeNodeAlpha[node] *
+                holeCurrent.norm() * nodeMeasure[node];
+        }
+
+        std::vector<Real> nodeEdgeMeasure(mesh.numNodes(), 0.0);
+        for (const auto& record : records) {
+            const Real halfMeasure = 0.5 * record.edgeAreaProxy;
+            nodeEdgeMeasure[record.node0] += halfMeasure;
+            nodeEdgeMeasure[record.node1] += halfMeasure;
+        }
+        for (auto& record : records) {
+            const Real halfMeasure = 0.5 * record.edgeAreaProxy;
+            const Real weight0 = nodeEdgeMeasure[record.node0] > 0.0
+                ? halfMeasure / nodeEdgeMeasure[record.node0] : 0.0;
+            const Real weight1 = nodeEdgeMeasure[record.node1] > 0.0
+                ? halfMeasure / nodeEdgeMeasure[record.node1] : 0.0;
+            record.electronNode0SourceIntegral =
+                weight0 * electronNodeSource[record.node0];
+            record.electronNode1SourceIntegral =
+                weight1 * electronNodeSource[record.node1];
+            record.holeNode0SourceIntegral = weight0 * holeNodeSource[record.node0];
+            record.holeNode1SourceIntegral = weight1 * holeNodeSource[record.node1];
+            record.node0ElectricFieldVector = -electricGradient[record.node0];
+            record.node1ElectricFieldVector = -electricGradient[record.node1];
+            record.electronNode0CurrentVector = -nodalElectronCurrent[record.node0];
+            record.electronNode1CurrentVector = -nodalElectronCurrent[record.node1];
+            record.holeNode0CurrentVector = nodalHoleCurrent[record.node0];
+            record.holeNode1CurrentVector = nodalHoleCurrent[record.node1];
+            record.electronNode0ImpactField = electronNodeDrive[record.node0];
+            record.electronNode1ImpactField = electronNodeDrive[record.node1];
+            record.holeNode0ImpactField = holeNodeDrive[record.node0];
+            record.holeNode1ImpactField = holeNodeDrive[record.node1];
+            record.electronNode0Alpha = electronNodeAlpha[record.node0];
+            record.electronNode1Alpha = electronNodeAlpha[record.node1];
+            record.holeNode0Alpha = holeNodeAlpha[record.node0];
+            record.holeNode1Alpha = holeNodeAlpha[record.node1];
+            record.electronSourceIntegral =
+                record.electronNode0SourceIntegral + record.electronNode1SourceIntegral;
+            record.holeSourceIntegral =
+                record.holeNode0SourceIntegral + record.holeNode1SourceIntegral;
+            record.node0SourceIntegral =
+                record.electronNode0SourceIntegral + record.holeNode0SourceIntegral;
+            record.node1SourceIntegral =
+                record.electronNode1SourceIntegral + record.holeNode1SourceIntegral;
+            record.edgeSourceIntegral =
+                record.electronSourceIntegral + record.holeSourceIntegral;
+        }
     }
     return records;
 }
@@ -3290,7 +4177,10 @@ inline SgAvalancheSourceComponentIntegrals sgEdgeCurrentAvalancheSourceComponent
     const VectorXd&                    p,
     const std::vector<Real>&           ni,
     Real                               Vt,
-    Real                               fieldFactor = 1.0)
+    Real                               fieldFactor = 1.0,
+    const CarrierStatisticsConfig&     carrierStatistics = {},
+    const std::vector<Real>&           Nc = {},
+    const std::vector<Real>&           Nv = {})
 {
     SgAvalancheSourceComponentIntegrals source;
     source.electron.assign(static_cast<std::size_t>(mesh.numNodes()), 0.0);
@@ -3312,7 +4202,11 @@ inline SgAvalancheSourceComponentIntegrals sgEdgeCurrentAvalancheSourceComponent
         p,
         ni,
         Vt,
-        fieldFactor);
+        fieldFactor,
+        false,
+        carrierStatistics,
+        Nc,
+        Nv);
     for (const auto& record : records) {
         addMappedEdgeSourceToNodes(
             config, source.electron, edgeCells, mesh, record,
@@ -3350,7 +4244,10 @@ currentDensityAvalancheSourceComponentIntegrals(
     const VectorXd&                    p,
     const std::vector<Real>&           ni,
     Real                               Vt,
-    Real                               fieldFactor = 1.0)
+    Real                               fieldFactor = 1.0,
+    const CarrierStatisticsConfig&     carrierStatistics = {},
+    const std::vector<Real>&           Nc = {},
+    const std::vector<Real>&           Nv = {})
 {
     if (usesElementEdgeGssLauxAvalancheSource(config)) {
         SgAvalancheSourceComponentIntegrals source;
@@ -3381,7 +4278,8 @@ currentDensityAvalancheSourceComponentIntegrals(
     if (!usesTriangleGssAvalancheSource(config)) {
         return sgEdgeCurrentAvalancheSourceComponentIntegrals(
             config, impact, mobilityConfig, mobility, edgeCells, mesh, doping,
-            cellMaterials, psi, phin, phip, n, p, ni, Vt, fieldFactor);
+            cellMaterials, psi, phin, phip, n, p, ni, Vt, fieldFactor,
+            carrierStatistics, Nc, Nv);
     }
 
     SgAvalancheSourceComponentIntegrals source;
@@ -3420,11 +4318,15 @@ inline std::vector<Real> currentDensityAvalancheSourceIntegrals(
     const VectorXd&                    p,
     const std::vector<Real>&           ni,
     Real                               Vt,
-    Real                               fieldFactor = 1.0)
+    Real                               fieldFactor = 1.0,
+    const CarrierStatisticsConfig&     carrierStatistics = {},
+    const std::vector<Real>&           Nc = {},
+    const std::vector<Real>&           Nv = {})
 {
     return currentDensityAvalancheSourceComponentIntegrals(
         config, impact, mobilityConfig, mobility, edgeCells, mesh, doping,
-        cellMaterials, psi, phin, phip, n, p, ni, Vt, fieldFactor).combined;
+        cellMaterials, psi, phin, phip, n, p, ni, Vt, fieldFactor,
+        carrierStatistics, Nc, Nv).combined;
 }
 
 inline std::vector<Real> sgEdgeCurrentAvalancheSourceIntegrals(
@@ -3443,7 +4345,10 @@ inline std::vector<Real> sgEdgeCurrentAvalancheSourceIntegrals(
     const VectorXd&                    p,
     const std::vector<Real>&           ni,
     Real                               Vt,
-    Real                               fieldFactor = 1.0)
+    Real                               fieldFactor = 1.0,
+    const CarrierStatisticsConfig&     carrierStatistics = {},
+    const std::vector<Real>&           Nc = {},
+    const std::vector<Real>&           Nv = {})
 {
     std::vector<Real> source(mesh.numNodes(), 0.0);
     const auto records = sgEdgeCurrentAvalancheSourceRecords(
@@ -3462,7 +4367,11 @@ inline std::vector<Real> sgEdgeCurrentAvalancheSourceIntegrals(
         p,
         ni,
         Vt,
-        fieldFactor);
+        fieldFactor,
+        false,
+        carrierStatistics,
+        Nc,
+        Nv);
     for (const auto& record : records) {
         addMappedEdgeSourceToNodes(
             config, source, edgeCells, mesh, record,
@@ -3523,7 +4432,10 @@ inline Real edgeEpsilon(const std::vector<std::vector<Index>>& edgeCells,
 // ---------------------------------------------------------------------------
 
 /// Build per-node intrinsic concentration vector from the material database.
-/// For interface nodes shared by multiple regions, uses the first-found value.
+/// At semiconductor/insulator interfaces, prefer the transport-capable material
+/// so an ordering where oxide cells precede silicon cells cannot assign ni=0 to
+/// an Ohmic contact or semiconductor interface node.  Preserve first-found
+/// semantics between materials of the same transport class.
 inline std::vector<Real> buildNodeNi(const DeviceMesh&       mesh,
                                      const MaterialDatabase& matdb,
                                      Real                    temperature_K = constants::T0)
@@ -3531,18 +4443,54 @@ inline std::vector<Real> buildNodeNi(const DeviceMesh&       mesh,
     const Index N = mesh.numNodes();
     std::vector<Real> ni_v(N, 0.0);
     std::vector<bool> found(N, false);
+    std::vector<bool> transportFound(N, false);
     for (Index c = 0; c < mesh.numCells(); ++c) {
         const auto& cell   = mesh.getCell(c);
         const auto& region = mesh.getRegion(cell.region_id);
-        const Real ni_mat = matdb.getMaterial(region.material, temperature_K).ni;
+        const Material material = matdb.getMaterial(region.material, temperature_K);
+        const Real ni_mat = material.ni;
+        const bool isTransportMaterial =
+            material.ni > 0.0 || material.mun > 0.0 || material.mup > 0.0;
         for (Index nid : cell.node_ids) {
-            if (!found[nid]) {
+            if (!found[nid] || (!transportFound[nid] && isTransportMaterial)) {
                 ni_v[nid]  = ni_mat;
                 found[nid] = true;
+                transportFound[nid] = isTransportMaterial;
             }
         }
     }
     return ni_v;
+}
+
+/// Build per-node effective conduction/valence density of states.  Shared
+/// semiconductor/insulator nodes use the transport-capable material, matching
+/// buildNodeNi ownership semantics.
+inline std::vector<Real> buildNodeDensityOfStates(
+    const DeviceMesh& mesh,
+    const MaterialDatabase& matdb,
+    Real temperature_K,
+    bool electrons)
+{
+    const Index N = mesh.numNodes();
+    std::vector<Real> values(N, 0.0);
+    std::vector<bool> found(N, false);
+    std::vector<bool> transportFound(N, false);
+    for (Index c = 0; c < mesh.numCells(); ++c) {
+        const auto& cell = mesh.getCell(c);
+        const auto& region = mesh.getRegion(cell.region_id);
+        const Material material = matdb.getMaterial(region.material, temperature_K);
+        const bool transport = material.ni > 0.0 || material.mun > 0.0 || material.mup > 0.0;
+        const auto& property = electrons ? material.Nc_m3 : material.Nv_m3;
+        const Real value = property.value_or(0.0);
+        for (Index node : cell.node_ids) {
+            if (!found[node] || (!transportFound[node] && transport)) {
+                values[node] = value;
+                found[node] = true;
+                transportFound[node] = transport;
+            }
+        }
+    }
+    return values;
 }
 
 /// Validate that the doping model has one entry per mesh node.
@@ -3559,13 +4507,26 @@ inline void validateDopingMeshSize(const DeviceMesh& mesh,
 inline std::vector<Real> buildEffectiveNodeNi(const DeviceMesh&       mesh,
                                               const MaterialDatabase& matdb,
                                               const DopingModel&      doping,
-                                              const BandgapNarrowing& bgn,
+                                              const BandgapNarrowingConfig& config,
                                               Real                    thermalVoltage)
 {
     const Real temperature_K = thermalVoltage * constants::q / constants::kb;
     std::vector<Real> ni_v = buildNodeNi(mesh, matdb, temperature_K);
+    const auto bgn = makeBandgapNarrowingModel(config);
+    std::vector<Real> Nc300;
+    std::vector<Real> Nv300;
+    if (config.fermiStatisticsCorrection) {
+        Nc300 = buildNodeDensityOfStates(mesh, matdb, constants::T0, true);
+        Nv300 = buildNodeDensityOfStates(mesh, matdb, constants::T0, false);
+    }
+    const Real thermalVoltage300 = constants::kb * constants::T0 / constants::q;
     for (Index i = 0; i < mesh.numNodes(); ++i) {
-        const Real delta = bgn.deltaEg(doping.totalImpurity(i), 0.0, 0.0);
+        Real delta = bgn->deltaEg(doping.totalImpurity(i), 0.0, 0.0);
+        if (config.fermiStatisticsCorrection && ni_v[i] > 0.0) {
+            delta += fermiStatisticsBandgapCorrection(
+                doping.donors(i), doping.acceptors(i), Nc300[i], Nv300[i],
+                thermalVoltage300);
+        }
         ni_v[i] = effectiveIntrinsicDensity(ni_v[i], thermalVoltage, delta);
     }
     return ni_v;
@@ -3585,7 +4546,7 @@ inline std::vector<Real> buildValidatedEffectiveNodeNi(
         mesh,
         matdb,
         doping,
-        *makeBandgapNarrowingModel(bandgapNarrowingConfig),
+        bandgapNarrowingConfig,
         thermalVoltage);
 }
 

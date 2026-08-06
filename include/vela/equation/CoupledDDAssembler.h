@@ -7,6 +7,7 @@
 #include "vela/material/Material.h"
 #include "vela/material/MaterialDatabase.h"
 #include "vela/physics/BandgapNarrowing.h"
+#include "vela/physics/CarrierStatistics.h"
 #include "vela/physics/DopingModel.h"
 #include "vela/physics/ImpactIonizationModel.h"
 #include "vela/physics/MobilityModel.h"
@@ -90,6 +91,10 @@ struct CoupledDDEdgeFluxDiagnostic {
     // and subtracted from node1's), identical to the residual edge loop.
     Real electronFlux = 0.0;
     Real holeFlux = 0.0;
+    // The same integrated particle line flux before residual nondimensionalization
+    // (particles per metre of out-of-plane depth per second).
+    Real electronParticleLineFlux_per_m_s = 0.0;
+    Real holeParticleLineFlux_per_m_s = 0.0;
 };
 
 // Diagnostic-only decomposition of one transport edge derivative with respect
@@ -171,7 +176,8 @@ public:
                        std::vector<RegionFixedChargeSpec> fixedCharges = {},
                        std::vector<InterfaceSheetChargeSpec> sheetCharges = {},
                        DDScalingSpec scaling = {},
-                       CarrierDiagonalFloorRegularizationConfig carrierDiagonalFloor = {});
+                       CarrierDiagonalFloorRegularizationConfig carrierDiagonalFloor = {},
+                       CarrierStatisticsConfig carrierStatistics = {});
 
     VectorXd pack(const CoupledDDState& state) const;
     CoupledDDState unpack(const VectorXd& x) const;
@@ -252,6 +258,9 @@ public:
     bool hasPositiveFiniteCarriers(const VectorXd& x) const;
     Index numNodes() const { return mesh_.numNodes(); }
     const std::vector<Real>& intrinsicDensity() const { return ni_; }
+    const std::vector<Real>& electronDensityOfStates() const { return Nc_; }
+    const std::vector<Real>& holeDensityOfStates() const { return Nv_; }
+    const CarrierStatisticsConfig& carrierStatistics() const { return carrierStatistics_; }
     bool usesScaledState() const { return scaling_.enabled; }
     Real potentialScale() const { return scaling_.V0; }
     Real concentrationScale() const { return scaling_.C0; }
@@ -295,7 +304,10 @@ private:
     bool impactIonizationEnabled_ = false;
     bool impactIonizationCoupled_ = false;
     bool bgnEnabled_ = false;
+    CarrierStatisticsConfig carrierStatistics_;
     std::vector<Real> ni_;
+    std::vector<Real> Nc_;
+    std::vector<Real> Nv_;
     std::vector<Material> cellMaterials_;
 
     // Mesh-derived quantities cached at construction time.

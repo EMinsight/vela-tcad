@@ -147,6 +147,18 @@ TEST_CASE("effectivePoissonDirichletPotential matches legacy formula", "[boundar
         s.flatbandVoltage = 0.3;
         REQUIRE(effectivePoissonDirichletPotential(s) == Approx(0.7));
     }
+    SECTION("Sentaurus negative Barrier maps to the same signed gate potential")
+    {
+        ContactBoundarySpec s;
+        s.name = "gate";
+        s.type = ContactType::MetalGate;
+        s.bias = 0.0;
+        // Sentaurus uses psi_gate = Voltage - Barrier.  Representing its
+        // Barrier=-0.55 V as Vela flatband_voltage=-0.55 V must therefore
+        // impose +0.55 V on the electrostatic gate boundary.
+        s.flatbandVoltage = -0.55;
+        REQUIRE(effectivePoissonDirichletPotential(s) == Approx(0.55));
+    }
     SECTION("work-function shift in V")
     {
         ContactBoundarySpec s;

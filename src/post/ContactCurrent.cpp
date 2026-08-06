@@ -1,5 +1,6 @@
 #include "vela/post/ContactCurrent.h"
 #include "vela/core/PhysicalConstants.h"
+#include "vela/discretization/Bernoulli.h"
 #include "vela/discretization/ScharfetterGummel.h"
 #include "vela/equation/AssemblerUtils.h"
 #include <unordered_set>
@@ -26,7 +27,8 @@ ContactCurrent::ContactCurrent(const DeviceMesh& mesh,
                                MobilityModelConfig mobilityConfig,
                                Real temperature_K,
                                DDScalingSpec scaling,
-                               BandgapNarrowingConfig bandgapNarrowingConfig)
+                               BandgapNarrowingConfig bandgapNarrowingConfig,
+                               CarrierStatisticsConfig carrierStatistics)
     : mesh_(mesh)
     , matdb_(matdb)
     , doping_(doping)
@@ -43,6 +45,9 @@ ContactCurrent::ContactCurrent(const DeviceMesh& mesh,
           doping,
           bandgapNarrowingConfig,
           validatedThermalVoltage(temperature_K)))
+    , Nc_(detail::buildNodeDensityOfStates(mesh, matdb, temperature_K, true))
+    , Nv_(detail::buildNodeDensityOfStates(mesh, matdb, temperature_K, false))
+    , carrierStatistics_(std::move(carrierStatistics))
 {}
 
 
@@ -120,6 +125,27 @@ ContactCurrentDetailedResult ContactCurrent::computeDetailed(
     const Real temperature_K = thermalVoltage_ * constants::q / constants::kb;
     const std::vector<Material> cellMaterials =
         detail::buildCellMaterials(mesh_, matdb_, temperature_K);
+    const Real fieldFactor = scaling_.enabled
+        ? scaling_.fieldFromCoordinateDeltaFactor : 1.0;
+    const bool hasReferencedElectronQf =
+        solution.phinIncrement.size() == solution.phin.size();
+    const bool hasReferencedHoleQf =
+        solution.phipIncrement.size() == solution.phip.size();
+    const VectorXd& electronQf = hasReferencedElectronQf
+        ? solution.phinIncrement : solution.phin;
+    const VectorXd& holeQf = hasReferencedHoleQf
+        ? solution.phipIncrement : solution.phip;
+    const bool vectorQfMobility =
+        mobilityConfig_.highFieldDrivingForce == "quasi_fermi_gradient" &&
+        mobilityConfig_.highFieldGradientDiscretization == "transport_cell_vector";
+    const std::vector<Real> electronVectorMobilityFields = vectorQfMobility
+        ? detail::transportCellVectorEdgeGradientMagnitudes(
+              mesh_, edgeCells_, cellMaterials, electronQf, fieldFactor)
+        : std::vector<Real>{};
+    const std::vector<Real> holeVectorMobilityFields = vectorQfMobility
+        ? detail::transportCellVectorEdgeGradientMagnitudes(
+              mesh_, edgeCells_, cellMaterials, holeQf, fieldFactor)
+        : std::vector<Real>{};
 
     ContactCurrentDetailedResult detailed;
     for (Index e = 0; e < mesh_.numEdges(); ++e) {
@@ -144,15 +170,10 @@ ContactCurrentDetailedResult ContactCurrent::computeDetailed(
         const Real dpsi = psi_j - psi_i;
         const Real edgeLength = edge.length;
 
-        const Real fieldFactor = scaling_.enabled ? scaling_.fieldFromCoordinateDeltaFactor : 1.0;
         const Real currentLineFactor = scaling_.enabled
             ? scaling_.currentDensityLineIntegralFactor
             : 1.0;
         const Real electricField = std::abs(dpsi / edgeLength) * fieldFactor;
-        const bool hasReferencedElectronQf =
-            solution.phinIncrement.size() == solution.phin.size();
-        const bool hasReferencedHoleQf =
-            solution.phipIncrement.size() == solution.phip.size();
         const Real phin_i = hasReferencedElectronQf
             ? solution.phinIncrement(i) : solution.phin(i);
         const Real phin_j = hasReferencedElectronQf
@@ -179,11 +200,15 @@ ContactCurrentDetailedResult ContactCurrent::computeDetailed(
             holeQfDropOverrideApplied = true;
         }
         const Real electronMobilityField =
-            mobilityConfig_.highFieldDrivingForce == "quasi_fermi_gradient"
+            vectorQfMobility
+            ? electronVectorMobilityFields[e]
+            : mobilityConfig_.highFieldDrivingForce == "quasi_fermi_gradient"
             ? std::abs((phin_j - phin_i) / edgeLength) * fieldFactor
             : electricField;
         const Real holeMobilityField =
-            mobilityConfig_.highFieldDrivingForce == "quasi_fermi_gradient"
+            vectorQfMobility
+            ? holeVectorMobilityFields[e]
+            : mobilityConfig_.highFieldDrivingForce == "quasi_fermi_gradient"
             ? std::abs((phip_j - phip_i) / edgeLength) * fieldFactor
             : electricField;
 
@@ -207,13 +232,35 @@ ContactCurrentDetailedResult ContactCurrent::computeDetailed(
         const Index idxJ = edge.n1;
         const Real ni_i = ni_[idxI];
         const Real ni_j = ni_[idxJ];
+        const bool fermiDirac = usesFermiDirac(carrierStatistics_);
+        Real electronGeneralizedFactor = 1.0;
+        Real electronGeneralizedArgument = dpsi / thermalVoltage_;
+        Real holeGeneralizedFactor = 1.0;
+        Real holeGeneralizedArgument = dpsi / thermalVoltage_;
         Real electronContinuityFlux01 = 0.0;
         Real electronFlux01 = 0.0;
         if (mun > 0.0) {
             const Real coef = mun * thermalVoltage_ * fieldFactor / edgeLength;
-            electronContinuityFlux01 = sgElectronContinuityFluxFromQuasiFermiVariableNi(
-                ni_i, ni_j, electronPsi_i, electronPsi_j,
-                phin_i, phin_j, thermalVoltage_, coef);
+            if (fermiDirac) {
+                const Real etaI = (electronPsi_i - phin_i) / thermalVoltage_
+                    + std::log(ni_i / Nc_[idxI]);
+                const Real etaJ = (electronPsi_j - phin_j) / thermalVoltage_
+                    + std::log(ni_j / Nc_[idxJ]);
+                const Real driftPotential = electronPsi_j - electronPsi_i
+                    + thermalVoltage_ * std::log(
+                        (ni_j / Nc_[idxJ]) / (ni_i / Nc_[idxI]));
+                electronGeneralizedFactor = sgGeneralizedEinsteinFactor(
+                    n_i, n_j, etaI, etaJ);
+                electronGeneralizedArgument = driftPotential /
+                    (thermalVoltage_ * electronGeneralizedFactor);
+                electronContinuityFlux01 = sgElectronFermiDiracContinuityFlux(
+                    n_i, n_j, etaI, etaJ, driftPotential,
+                    phin_i, phin_j, thermalVoltage_, coef);
+            } else {
+                electronContinuityFlux01 = sgElectronContinuityFluxFromQuasiFermiVariableNi(
+                    ni_i, ni_j, electronPsi_i, electronPsi_j,
+                    phin_i, phin_j, thermalVoltage_, coef);
+            }
             // sgElectronFlux = -sgElectronContinuityFlux by definition.
             electronFlux01 = -electronContinuityFlux01;
         }
@@ -221,28 +268,73 @@ ContactCurrentDetailedResult ContactCurrent::computeDetailed(
         Real holeFlux01 = 0.0;
         if (mup > 0.0) {
             const Real coef = mup * thermalVoltage_ * fieldFactor / edgeLength;
-            holeContinuityFlux01 = sgHoleContinuityFluxFromQuasiFermiVariableNi(
-                ni_i, ni_j, holePsi_i, holePsi_j,
-                phip_i_forHole, phip_j_forHole,
-                thermalVoltage_, coef);
+            if (fermiDirac) {
+                const Real etaI = (phip_i_forHole - holePsi_i) / thermalVoltage_
+                    + std::log(ni_i / Nv_[idxI]);
+                const Real etaJ = (phip_j_forHole - holePsi_j) / thermalVoltage_
+                    + std::log(ni_j / Nv_[idxJ]);
+                const Real driftPotential = holePsi_j - holePsi_i
+                    + thermalVoltage_ * std::log(
+                        (ni_i / Nv_[idxI]) / (ni_j / Nv_[idxJ]));
+                holeGeneralizedFactor = sgGeneralizedEinsteinFactor(
+                    p_i, p_j, etaI, etaJ);
+                holeGeneralizedArgument = driftPotential /
+                    (thermalVoltage_ * holeGeneralizedFactor);
+                holeContinuityFlux01 = sgHoleFermiDiracContinuityFlux(
+                    p_i, p_j, etaI, etaJ, driftPotential,
+                    phip_i_forHole, phip_j_forHole,
+                    thermalVoltage_, coef);
+            } else {
+                holeContinuityFlux01 = sgHoleContinuityFluxFromQuasiFermiVariableNi(
+                    ni_i, ni_j, holePsi_i, holePsi_j,
+                    phip_i_forHole, phip_j_forHole,
+                    thermalVoltage_, coef);
+            }
             holeFlux01 = -holeContinuityFlux01;
         }
 
         // Algebraic SG split: J = J_drift + J_diffusion.
         const SGEdgeWeights weights = sgEdgeWeights(dpsi, thermalVoltage_);
         const Real bAvg = 0.5 * (weights.b_plus + weights.b_minus);
-        const Real electronDriftFlux01 = (mun > 0.0)
-            ? mun * (dpsi / edgeLength) * fieldFactor * (0.5 * (n_i + n_j))
-            : 0.0;
-        const Real electronDiffusionFlux01 = (mun > 0.0)
-            ? mun * (thermalVoltage_ / edgeLength) * fieldFactor * bAvg * (n_i - n_j)
-            : 0.0;
-        const Real holeDriftFlux01 = (mup > 0.0)
-            ? mup * (dpsi / edgeLength) * fieldFactor * (0.5 * (p_i + p_j))
-            : 0.0;
-        const Real holeDiffusionFlux01 = (mup > 0.0)
-            ? mup * (thermalVoltage_ / edgeLength) * fieldFactor * bAvg * (p_j - p_i)
-            : 0.0;
+        Real electronDriftFlux01 = 0.0;
+        Real electronDiffusionFlux01 = 0.0;
+        Real holeDriftFlux01 = 0.0;
+        Real holeDiffusionFlux01 = 0.0;
+        if (fermiDirac) {
+            if (mun > 0.0) {
+                const Real bMinus = bernoulli(-electronGeneralizedArgument);
+                const Real bPlus = bernoulli(electronGeneralizedArgument);
+                const Real coefficient = mun * thermalVoltage_ * fieldFactor /
+                    edgeLength * electronGeneralizedFactor;
+                electronDriftFlux01 = -coefficient * 0.5 * (bMinus - bPlus)
+                    * (n_i + n_j);
+                electronDiffusionFlux01 = -coefficient * 0.5 * (bMinus + bPlus)
+                    * (n_i - n_j);
+            }
+            if (mup > 0.0) {
+                const Real bPlus = bernoulli(holeGeneralizedArgument);
+                const Real bMinus = bernoulli(-holeGeneralizedArgument);
+                const Real coefficient = mup * thermalVoltage_ * fieldFactor /
+                    edgeLength * holeGeneralizedFactor;
+                holeDriftFlux01 = -coefficient * 0.5 * (bPlus - bMinus)
+                    * (p_i + p_j);
+                holeDiffusionFlux01 = -coefficient * 0.5 * (bPlus + bMinus)
+                    * (p_i - p_j);
+            }
+        } else {
+            electronDriftFlux01 = (mun > 0.0)
+                ? mun * (dpsi / edgeLength) * fieldFactor * (0.5 * (n_i + n_j))
+                : 0.0;
+            electronDiffusionFlux01 = (mun > 0.0)
+                ? mun * (thermalVoltage_ / edgeLength) * fieldFactor * bAvg * (n_i - n_j)
+                : 0.0;
+            holeDriftFlux01 = (mup > 0.0)
+                ? mup * (dpsi / edgeLength) * fieldFactor * (0.5 * (p_i + p_j))
+                : 0.0;
+            holeDiffusionFlux01 = (mup > 0.0)
+                ? mup * (thermalVoltage_ / edgeLength) * fieldFactor * bAvg * (p_j - p_i)
+                : 0.0;
+        }
 
         const Real outwardSign = n0OnContact ? 1.0 : -1.0;
         // Current density in the active internal unit system times edge length gives current per internal device depth.
@@ -326,9 +418,11 @@ ContactCurrentResult ContactCurrent::compute(
     const MobilityModelConfig& mobilityConfig,
     Real temperature_K,
     DDScalingSpec scaling,
-    const BandgapNarrowingConfig& bandgapNarrowingConfig)
+    const BandgapNarrowingConfig& bandgapNarrowingConfig,
+    const CarrierStatisticsConfig& carrierStatistics)
 {
-    return ContactCurrent(mesh, matdb, doping, mobilityConfig, temperature_K, scaling, bandgapNarrowingConfig)
+    return ContactCurrent(mesh, matdb, doping, mobilityConfig, temperature_K, scaling,
+                          bandgapNarrowingConfig, carrierStatistics)
         .compute(solution, contactName);
 }
 

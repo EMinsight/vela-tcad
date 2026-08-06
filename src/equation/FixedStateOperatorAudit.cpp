@@ -346,7 +346,8 @@ FixedStateOperatorAuditResult evaluateFixedStateOperators(
             electronImpactField, holeImpactField,
             electronAlpha, holeAlpha,
             detail::avalancheSourceEdgeArea(
-                config.impactIonization, edgeCells, mesh, edgeId),
+                config.impactIonization, edgeCells, mesh, edgeId,
+                &cellMaterials),
         });
     }
 

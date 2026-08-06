@@ -23,6 +23,10 @@ struct QfBoundsDiagnosticsConfig {
     bool enabled = true;
     QfBoundsViolationMode mode = QfBoundsViolationMode::Warn;
     Real margin_V = 0.5;
+    // The quasi-Fermi potential is numerically unobservable when its
+    // corresponding carrier density is effectively zero. Zero preserves the
+    // historical all-node check; validation decks may select a physical floor.
+    Real minCarrierDensity_m3 = 0.0;
     bool checkBandBending = false;
     Real builtInPotential_V = 0.0;
     std::string csvFile;
@@ -36,6 +40,7 @@ struct QfBoundsViolation {
     Real value = 0.0;
     Real lowerBound = 0.0;
     Real upperBound = 0.0;
+    Real carrierDensity_m3 = std::numeric_limits<Real>::quiet_NaN();
 };
 
 struct QfBoundsEvaluation {
@@ -106,7 +111,8 @@ inline QfBoundsEvaluation evaluateQfBounds(
                                   std::string variable,
                                   Real value,
                                   Real lower,
-                                  Real upper) {
+                                  Real upper,
+                                  Real carrierDensity_m3) {
         const Node& node = mesh.getNode(nodeId);
         eval.violations.push_back({
             nodeId,
@@ -116,6 +122,7 @@ inline QfBoundsEvaluation evaluateQfBounds(
             value,
             lower,
             upper,
+            carrierDensity_m3,
         });
     };
 
@@ -124,10 +131,30 @@ inline QfBoundsEvaluation evaluateQfBounds(
         const Index nodeId = static_cast<Index>(i);
         const Real phin = solution.phin(i);
         const Real phip = solution.phip(i);
-        if (!std::isfinite(phin) || phin < eval.contactLower_V || phin > eval.contactUpper_V)
-            addViolation(nodeId, "phin", phin, eval.contactLower_V, eval.contactUpper_V);
-        if (!std::isfinite(phip) || phip < eval.contactLower_V || phip > eval.contactUpper_V)
-            addViolation(nodeId, "phip", phip, eval.contactLower_V, eval.contactUpper_V);
+        const Real electronDensity = i < solution.n.size()
+            ? solution.n(i) : std::numeric_limits<Real>::quiet_NaN();
+        const Real holeDensity = i < solution.p.size()
+            ? solution.p(i) : std::numeric_limits<Real>::quiet_NaN();
+        const bool checkElectronBounds =
+            !std::isfinite(electronDensity) ||
+            electronDensity > config.minCarrierDensity_m3;
+        const bool checkHoleBounds =
+            !std::isfinite(holeDensity) ||
+            holeDensity > config.minCarrierDensity_m3;
+        if (!std::isfinite(phin) ||
+            (checkElectronBounds &&
+             (phin < eval.contactLower_V || phin > eval.contactUpper_V))) {
+            addViolation(
+                nodeId, "phin", phin, eval.contactLower_V,
+                eval.contactUpper_V, electronDensity);
+        }
+        if (!std::isfinite(phip) ||
+            (checkHoleBounds &&
+             (phip < eval.contactLower_V || phip > eval.contactUpper_V))) {
+            addViolation(
+                nodeId, "phip", phip, eval.contactLower_V,
+                eval.contactUpper_V, holeDensity);
+        }
 
         if (config.checkBandBending) {
             const Real psi = solution.psi(i);
@@ -138,12 +165,16 @@ inline QfBoundsEvaluation evaluateQfBounds(
             if (!std::isfinite(psiMinusPhin) ||
                 psiMinusPhin < lower ||
                 psiMinusPhin > upper) {
-                addViolation(nodeId, "psi_minus_phin", psiMinusPhin, lower, upper);
+                addViolation(
+                    nodeId, "psi_minus_phin", psiMinusPhin, lower, upper,
+                    electronDensity);
             }
             if (!std::isfinite(phipMinusPsi) ||
                 phipMinusPsi < lower ||
                 phipMinusPsi > upper) {
-                addViolation(nodeId, "phip_minus_psi", phipMinusPsi, lower, upper);
+                addViolation(
+                    nodeId, "phip_minus_psi", phipMinusPsi, lower, upper,
+                    holeDensity);
             }
         }
     }

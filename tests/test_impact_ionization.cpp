@@ -17,6 +17,7 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <numeric>
 #include <sstream>
 #include <string>
 #include <unordered_map>
@@ -74,6 +75,41 @@ static DeviceMesh makeObtuseAvalancheMesh()
     Region r; r.id = 0; r.name = "body"; r.material = "Si"; r.cell_ids = {0};
     mesh.addRegion(r);
 
+    mesh.buildEdges();
+    return mesh;
+}
+
+static DeviceMesh makeEparallelVertexStarMesh()
+{
+    DeviceMesh mesh;
+    const std::vector<Point2> points = {
+        {0.0, 0.0}, {1.0, 0.0}, {2.0, 0.0},
+        {0.0, 1.0}, {1.0, 1.0}, {2.0, 1.0},
+    };
+    for (Index id = 0; id < points.size(); ++id) {
+        Node node;
+        node.id = id;
+        node.x = points[id].x();
+        node.y = points[id].y();
+        mesh.addNode(node);
+    }
+    const std::vector<std::vector<Index>> triangles = {
+        {0, 1, 4}, {0, 4, 3}, {1, 2, 5}, {1, 5, 4},
+    };
+    for (Index id = 0; id < triangles.size(); ++id) {
+        Cell cell;
+        cell.id = id;
+        cell.type = CellType::Tri3;
+        cell.region_id = 0;
+        cell.node_ids = triangles[id];
+        mesh.addCell(cell);
+    }
+    Region region;
+    region.id = 0;
+    region.name = "si";
+    region.material = "Si";
+    region.cell_ids = {0, 1, 2, 3};
+    mesh.addRegion(region);
     mesh.buildEdges();
     return mesh;
 }
@@ -208,6 +244,92 @@ TEST_CASE("Density-gradient SG avalanche source defaults to symmetric edge parti
     }
     REQUIRE(sawPositiveSource);
 }
+
+TEST_CASE("Fermi-Dirac SG avalanche post-processing matches generalized transport flux",
+          "[impact][diagnostic][fermi_dirac]")
+{
+    DeviceMesh mesh = makePNMesh(false);
+    MaterialDatabase matdb;
+    const std::vector<RegionDopingSpec> specs = {
+        {"n_region", 5.0e24, 0.0},
+        {"p_region", 0.0, 5.0e24},
+    };
+    DopingModel doping = DopingModel::fromMeshAndRegions(mesh, specs);
+    const Real Vt = constants::Vt_300;
+    const CarrierStatisticsConfig statistics{"fermi_dirac"};
+    const std::vector<Real> ni(mesh.numNodes(), 1.0e16);
+    const std::vector<Real> Nc =
+        detail::buildNodeDensityOfStates(mesh, matdb, constants::T0, true);
+    const std::vector<Real> Nv =
+        detail::buildNodeDensityOfStates(mesh, matdb, constants::T0, false);
+
+    VectorXd psi(static_cast<int>(mesh.numNodes()));
+    VectorXd phin(static_cast<int>(mesh.numNodes()));
+    VectorXd phip(static_cast<int>(mesh.numNodes()));
+    VectorXd n(static_cast<int>(mesh.numNodes()));
+    VectorXd p(static_cast<int>(mesh.numNodes()));
+    for (int row = 0; row < static_cast<int>(mesh.numNodes()); ++row) {
+        psi(row) = 0.58 + 0.035 * static_cast<Real>(row);
+        phin(row) = 0.01 * static_cast<Real>(row);
+        phip(row) = psi(row) + 0.20 - 0.005 * static_cast<Real>(row);
+        n(row) = electronDensity(
+            ni[static_cast<std::size_t>(row)], Nc[static_cast<std::size_t>(row)],
+            psi(row), phin(row), Vt, statistics);
+        p(row) = holeDensity(
+            ni[static_cast<std::size_t>(row)], Nv[static_cast<std::size_t>(row)],
+            psi(row), phip(row), Vt, statistics);
+    }
+
+    ImpactIonizationModelConfig impactConfig;
+    impactConfig.model = "selberherr";
+    impactConfig.drivingForce = "quasi_fermi_gradient";
+    impactConfig.generation = "current_density";
+    impactConfig.currentApproximation = "density_gradient";
+    impactConfig.electronA = 1.0;
+    impactConfig.electronB = 1.0e-30;
+    impactConfig.holeA = 1.0;
+    impactConfig.holeB = 1.0e-30;
+    const auto impact = makeImpactIonizationModel(impactConfig);
+    const MobilityModelConfig mobilityConfig = mobilityModelConfig("constant");
+    const auto mobility = makeMobilityModel(mobilityConfig);
+    const auto edgeCells = detail::buildEdgeCellMap(mesh);
+    const auto cellMaterials =
+        detail::buildCellMaterials(mesh, matdb, constants::T0);
+
+    const auto records = detail::sgEdgeCurrentAvalancheSourceRecords(
+        impactConfig, *impact, mobilityConfig, *mobility, edgeCells, mesh,
+        doping, cellMaterials, psi, phin, phip, n, p, ni, Vt, 1.0, true,
+        statistics, Nc, Nv);
+
+    bool sawDegenerateFactor = false;
+    for (const auto& record : records) {
+        const Edge& edge = mesh.getEdge(record.edgeId);
+        const int i = static_cast<int>(edge.n0);
+        const int j = static_cast<int>(edge.n1);
+        const Real eta0 = (psi(i) - phin(i)) / Vt
+            + std::log(ni[edge.n0] / Nc[edge.n0]);
+        const Real eta1 = (psi(j) - phin(j)) / Vt
+            + std::log(ni[edge.n1] / Nc[edge.n1]);
+        const Real driftPotential = psi(j) - psi(i) + Vt * std::log(
+            (ni[edge.n1] / Nc[edge.n1]) / (ni[edge.n0] / Nc[edge.n0]));
+        const Real factor = sgGeneralizedEinsteinFactor(n(i), n(j), eta0, eta1);
+        const Real expected = sgElectronFermiDiracContinuityFlux(
+            n(i), n(j), eta0, eta1, driftPotential, phin(i), phin(j), Vt,
+            record.electronMobility * Vt / edge.length);
+
+        REQUIRE(record.electronSgUsesFermiDirac);
+        REQUIRE(record.holeSgUsesFermiDirac);
+        REQUIRE(record.electronSgGeneralizedEinsteinFactor ==
+                Catch::Approx(factor).epsilon(1.0e-13));
+        REQUIRE(record.electronSgGeneralizedBernoulliArgument == Catch::Approx(
+            driftPotential / (Vt * factor)).epsilon(1.0e-13));
+        REQUIRE(record.electronSgProductionSignedFluxNative ==
+                Catch::Approx(expected).epsilon(1.0e-12));
+        sawDegenerateFactor = sawDegenerateFactor || factor > 1.01;
+    }
+    REQUIRE(sawDegenerateFactor);
+}
+
 TEST_CASE("Edge-source partition is directional only for grad-QF or explicit switch",
           "[impact][diagnostic]")
 {
@@ -429,6 +551,59 @@ TEST_CASE("Coupled DD residual includes impact-ionization generation", "[impact]
         sawGeneration = sawGeneration || electronDelta < 0.0 || holeDelta < 0.0;
     }
     REQUIRE(sawGeneration);
+}
+
+TEST_CASE("Coupled DD assembles E2 band-to-band generation into both carrier rows",
+          "[btbt][newton]")
+{
+    DeviceMesh mesh = makePNMesh();
+    MaterialDatabase matdb;
+    const std::vector<RegionDopingSpec> specs = {
+        {"n_region", 5.0e22, 0.0},
+        {"p_region", 0.0, 5.0e22},
+    };
+    DopingModel doping = DopingModel::fromMeshAndRegions(mesh, specs);
+
+    CoupledDDState state;
+    state.psi = VectorXd::Zero(static_cast<int>(mesh.numNodes()));
+    state.phin = VectorXd::Zero(static_cast<int>(mesh.numNodes()));
+    state.phip = VectorXd::Zero(static_cast<int>(mesh.numNodes()));
+    state.psi(1) = 0.8;
+    state.psi(2) = 1.0;
+
+    const MobilityModelConfig mobilityConfig = mobilityModelConfig("constant");
+    RecombinationModelConfig disabled = recombinationModelConfig({"none"});
+    RecombinationModelConfig enabled = disabled;
+    enabled.bandToBand.model = "e2";
+    enabled.bandToBand.prefactorA_SI = 2.0e10;
+    enabled.bandToBand.exponentialB_V_per_m = 1.0e6;
+    enabled.bandToBand.jacobian = "potential_finite_difference";
+
+    CoupledDDAssembler baseline(mesh, matdb, doping, 0.025852,
+                                mobilityConfig, disabled);
+    CoupledDDAssembler withBtbt(mesh, matdb, doping, 0.025852,
+                                mobilityConfig, enabled);
+    const CoupledDDBoundaryConditions bcs;
+    const VectorXd x = baseline.pack(state);
+    const VectorXd delta = withBtbt.residual(x, bcs) - baseline.residual(x, bcs);
+    const int nodeCount = static_cast<int>(mesh.numNodes());
+
+    bool sawGeneration = false;
+    for (int node = 0; node < nodeCount; ++node) {
+        REQUIRE(delta(nodeCount + node) ==
+                Catch::Approx(delta(2 * nodeCount + node)).epsilon(1.0e-13));
+        REQUIRE(delta(nodeCount + node) <= 0.0);
+        sawGeneration = sawGeneration || delta(nodeCount + node) < 0.0;
+    }
+    REQUIRE(sawGeneration);
+
+    const Eigen::MatrixXd analyticDelta = Eigen::MatrixXd(
+        withBtbt.assembleJacobian(x, bcs) - baseline.assembleJacobian(x, bcs));
+    const Eigen::MatrixXd finiteDifferenceDelta = Eigen::MatrixXd(
+        withBtbt.finiteDifferenceJacobian(x, bcs, 1.0e-7) -
+        baseline.finiteDifferenceJacobian(x, bcs, 1.0e-7));
+    const Real denominator = std::max<Real>(1.0, finiteDifferenceDelta.norm());
+    REQUIRE((analyticDelta - finiteDifferenceDelta).norm() / denominator < 2.0e-5);
 }
 
 TEST_CASE("Quasi-Fermi avalanche driving force ignores built-in electrostatic field",
@@ -1911,6 +2086,153 @@ TEST_CASE("Genius-style avalanche source volume truncates obtuse Tri3 edge suppo
     REQUIRE(edgeAreaByNodes.at("0-2") == Catch::Approx(0.006250000000000002));
 }
 
+TEST_CASE("Conservative Genius avalanche support closes transport triangle area",
+          "[impact][diagnostic][source-volume]")
+{
+    const DeviceMesh mesh = makeObtuseAvalancheMesh();
+    const MaterialDatabase matdb;
+    const auto edgeCells = detail::buildEdgeCellMap(mesh);
+    const auto cellMaterials =
+        detail::buildCellMaterials(mesh, matdb, constants::T0);
+
+    ImpactIonizationModelConfig config;
+    config.sourceVolumePolicy = "genius_conservative";
+    Real sourceArea = 0.0;
+    for (Index edge = 0; edge < mesh.numEdges(); ++edge) {
+        sourceArea += detail::avalancheSourceEdgeArea(
+            config, edgeCells, mesh, edge, &cellMaterials);
+    }
+
+    REQUIRE(sourceArea == Catch::Approx(0.1).epsilon(1.0e-13));
+    REQUIRE_THROWS_AS(
+        detail::avalancheSourceEdgeArea(config, edgeCells, mesh, 0),
+        std::invalid_argument);
+
+    const NewtonConfig parsed = newtonConfigFromJson({
+        {"impact_ionization", {
+            {"model", "van_overstraeten"},
+            {"generation", "current_density"},
+            {"current_approximation", "density_gradient"},
+            {"source_volume_policy", "genius_conservative"},
+        }}
+    });
+    REQUIRE(parsed.impactIonization.sourceVolumePolicy == "genius_conservative");
+}
+
+TEST_CASE("Nodal Eparallel P1 avalanche mapping conserves assembled source",
+          "[impact][diagnostic][nodal-source]")
+{
+    const DeviceMesh mesh = makePNMesh(false);
+    const MaterialDatabase matdb;
+    const DopingModel doping = DopingModel::fromMeshAndRegions(
+        mesh, std::vector<RegionDopingSpec>{
+            {"n_region", 1.0e21, 0.0}, {"p_region", 1.0e21, 0.0}});
+    const auto edgeCells = detail::buildEdgeCellMap(mesh);
+    const auto cellMaterials =
+        detail::buildCellMaterials(mesh, matdb, constants::T0);
+    VectorXd psi(4), phin(4), phip(4);
+    for (Index node = 0; node < mesh.numNodes(); ++node) {
+        const Real x = mesh.getNode(node).x;
+        psi(static_cast<int>(node)) = -1.0e5 * x;
+        phin(static_cast<int>(node)) = -5.0e4 * x;
+        phip(static_cast<int>(node)) = 0.0;
+    }
+    const VectorXd n = VectorXd::Constant(4, 1.0e21);
+    const VectorXd p = VectorXd::Constant(4, 1.0e18);
+    const std::vector<Real> ni(4, 1.0e16);
+
+    ImpactIonizationModelConfig impactConfig;
+    impactConfig.model = "selberherr";
+    impactConfig.couplingMode = "postprocess_only";
+    impactConfig.drivingForce = "eparallel";
+    impactConfig.generation = "current_density";
+    impactConfig.currentApproximation = "nodal_vector_current_reconstructed";
+    impactConfig.eparallelFieldRecovery = "nodal_vertex_star";
+    impactConfig.sourceMappingMode = "nodal_eparallel_p1";
+    impactConfig.electronA = 1.0;
+    impactConfig.electronB = 1.0e-30;
+    impactConfig.holeA = 1.0;
+    impactConfig.holeB = 1.0e-30;
+    const auto impact = makeImpactIonizationModel(impactConfig);
+    const MobilityModelConfig mobilityConfig = mobilityModelConfig("constant");
+    const auto mobility = makeMobilityModel(mobilityConfig);
+
+    const auto records = detail::sgEdgeCurrentAvalancheSourceRecords(
+        impactConfig, *impact, mobilityConfig, *mobility, edgeCells, mesh,
+        doping, cellMaterials, psi, phin, phip, n, p, ni, 0.025852);
+    const auto assembled = detail::currentDensityAvalancheSourceIntegrals(
+        impactConfig, *impact, mobilityConfig, *mobility, edgeCells, mesh,
+        doping, cellMaterials, psi, phin, phip, n, p, ni, 0.025852);
+
+    Real recordTotal = 0.0;
+    std::vector<Real> recordNodeSource(mesh.numNodes(), 0.0);
+    for (const auto& record : records) {
+        recordTotal += record.edgeSourceIntegral;
+        recordNodeSource[record.node0] += record.node0SourceIntegral;
+        recordNodeSource[record.node1] += record.node1SourceIntegral;
+        REQUIRE(record.electronNode0ImpactField == Catch::Approx(
+            detail::sentaurusEparallelAvalancheDrivingField(
+                record.node0ElectricFieldVector,
+                record.electronNode0CurrentVector)));
+        REQUIRE(record.electronNode1ImpactField == Catch::Approx(
+            detail::sentaurusEparallelAvalancheDrivingField(
+                record.node1ElectricFieldVector,
+                record.electronNode1CurrentVector)));
+        REQUIRE(record.holeNode0ImpactField == Catch::Approx(
+            detail::sentaurusEparallelAvalancheDrivingField(
+                record.node0ElectricFieldVector,
+                record.holeNode0CurrentVector)));
+        REQUIRE(record.holeNode1ImpactField == Catch::Approx(
+            detail::sentaurusEparallelAvalancheDrivingField(
+                record.node1ElectricFieldVector,
+                record.holeNode1CurrentVector)));
+        REQUIRE(record.electronNode0Alpha == Catch::Approx(
+            impact->electronCoefficient(record.electronNode0ImpactField)));
+        REQUIRE(record.electronNode1Alpha == Catch::Approx(
+            impact->electronCoefficient(record.electronNode1ImpactField)));
+        REQUIRE(record.holeNode0Alpha == Catch::Approx(
+            impact->holeCoefficient(record.holeNode0ImpactField)));
+        REQUIRE(record.holeNode1Alpha == Catch::Approx(
+            impact->holeCoefficient(record.holeNode1ImpactField)));
+        REQUIRE(record.node0SourceIntegral == Catch::Approx(
+            record.electronNode0SourceIntegral + record.holeNode0SourceIntegral));
+        REQUIRE(record.node1SourceIntegral == Catch::Approx(
+            record.electronNode1SourceIntegral + record.holeNode1SourceIntegral));
+        REQUIRE(record.edgeSourceIntegral == Catch::Approx(
+            record.node0SourceIntegral + record.node1SourceIntegral));
+    }
+    const Real assembledTotal =
+        std::accumulate(assembled.begin(), assembled.end(), 0.0);
+    REQUIRE(recordTotal > 0.0);
+    REQUIRE(assembledTotal == Catch::Approx(recordTotal).epsilon(1.0e-12));
+    for (Index node = 0; node < mesh.numNodes(); ++node) {
+        REQUIRE(assembled[node] == Catch::Approx(recordNodeSource[node])
+            .epsilon(1.0e-12));
+    }
+
+    REQUIRE_THROWS_AS(newtonConfigFromJson({
+        {"impact_ionization", {
+            {"model", "van_overstraeten"},
+            {"coupling_mode", "postprocess_only"},
+            {"driving_force", "eparallel"},
+            {"generation", "current_density"},
+            {"current_approximation", "nodal_vector_current_reconstructed"},
+            {"source_mapping_mode", "nodal_eparallel_p1"},
+        }}
+    }), std::invalid_argument);
+
+    REQUIRE_THROWS_AS(newtonConfigFromJson({
+        {"impact_ionization", {
+            {"model", "van_overstraeten"},
+            {"coupling_mode", "self_consistent"},
+            {"driving_force", "eparallel"},
+            {"generation", "current_density"},
+            {"current_approximation", "nodal_vector_current_reconstructed"},
+            {"source_mapping_mode", "nodal_eparallel_p1"},
+        }}
+    }), std::invalid_argument);
+}
+
 TEST_CASE("JSON solver config selects impact ionization model", "[impact][json]")
 {
     REQUIRE(ImpactIonizationModelConfig{}.sourceVolumePolicy == "genius_truncated");
@@ -1922,6 +2244,8 @@ TEST_CASE("JSON solver config selects impact ionization model", "[impact][json]"
             "bernoulli");
     REQUIRE(ImpactIonizationModelConfig{}.sourceMappingMode ==
             "node_F_node_alpha_node_G");
+    REQUIRE(ImpactIonizationModelConfig{}.eparallelFieldRecovery ==
+            "edge_adjacent_cells");
 
     const GummelConfig cfg = gummelConfigFromJson(nlohmann::json{
         {"impact_ionization", {
@@ -2086,6 +2410,45 @@ TEST_CASE("JSON solver config selects impact ionization model", "[impact][json]"
         }}
     });
     REQUIRE(dualFaceCurrentMagnitudeCfg.impactIonization.currentMagnitudeMode == "dual_face_vector_mag");
+
+    const NewtonConfig eparallelCellVectorCfg = newtonConfigFromJson(nlohmann::json{
+        {"impact_ionization", {
+            {"model", "van_overstraeten"},
+            {"driving_force", "eparallel"},
+            {"generation", "current_density"},
+            {"current_approximation", "cell_vector_current_reconstructed"},
+        }}
+    });
+    REQUIRE(eparallelCellVectorCfg.impactIonization.drivingForce == "eparallel");
+    REQUIRE(eparallelCellVectorCfg.impactIonization.currentApproximation ==
+            "cell_vector_current_reconstructed");
+
+    const NewtonConfig eparallelNodalVectorCfg = newtonConfigFromJson(nlohmann::json{
+        {"impact_ionization", {
+            {"model", "van_overstraeten"},
+            {"driving_force", "eparallel"},
+            {"generation", "current_density"},
+            {"current_approximation", "nodal_vector_current_reconstructed"},
+            {"eparallel_field_recovery", "nodal_vertex_star"},
+        }}
+    });
+    REQUIRE(eparallelNodalVectorCfg.impactIonization.currentApproximation ==
+            "nodal_vector_current_reconstructed");
+    REQUIRE(eparallelNodalVectorCfg.impactIonization.eparallelFieldRecovery ==
+            "nodal_vertex_star");
+
+    const GummelConfig gummelEparallelNodalVectorCfg = gummelConfigFromJson(
+        nlohmann::json{
+            {"impact_ionization", {
+                {"model", "van_overstraeten"},
+                {"driving_force", "eparallel"},
+                {"generation", "current_density"},
+                {"current_approximation", "nodal_vector_current_reconstructed"},
+                {"eparallel_field_recovery", "nodal_vertex_star"},
+            }}
+        });
+    REQUIRE(gummelEparallelNodalVectorCfg.impactIonization.eparallelFieldRecovery ==
+            "nodal_vertex_star");
 
     const NewtonConfig arithmeticMidpointCfg = newtonConfigFromJson(nlohmann::json{
         {"impact_ionization", {
@@ -2262,6 +2625,22 @@ TEST_CASE("JSON solver config selects impact ionization model", "[impact][json]"
             {"generation", "current_density"},
             {"current_approximation", "density_gradient"},
             {"source_volume_policy", "unsupported"},
+        }}
+    }), std::invalid_argument);
+    REQUIRE_THROWS_AS(newtonConfigFromJson({
+        {"impact_ionization", {
+            {"model", "van_overstraeten"},
+            {"driving_force", "eparallel"},
+            {"generation", "current_density"},
+            {"current_approximation", "nodal_vector_current_reconstructed"},
+            {"eparallel_field_recovery", "unsupported"},
+        }}
+    }), std::invalid_argument);
+    REQUIRE_THROWS_AS(newtonConfigFromJson({
+        {"impact_ionization", {
+            {"model", "van_overstraeten"},
+            {"driving_force", "electric_field"},
+            {"eparallel_field_recovery", "nodal_vertex_star"},
         }}
     }), std::invalid_argument);
     REQUIRE_THROWS_AS(newtonConfigFromJson({
@@ -2471,6 +2850,93 @@ TEST_CASE("Current-aligned avalanche driving field keeps only field parallel to 
             Catch::Approx(2.0e6));
     REQUIRE(detail::parallelCurrentAvalancheDrivingField(-2.0e6, 3.0) == 0.0);
     REQUIRE(detail::parallelCurrentAvalancheDrivingField(2.0e6, 0.0) == 0.0);
+}
+
+TEST_CASE("Sentaurus Eparallel uses independent conventional carrier-current vectors",
+          "[impact][eparallel]")
+{
+    const Point2 electricField{3.0e6, 4.0e6};
+    const Point2 electronParticleFlux{-6.0, -8.0};
+    const Point2 holeParticleFlux{-8.0, 6.0};
+
+    // Jn = -q*Fn, whereas Jp = q*Fp.
+    REQUIRE(detail::sentaurusEparallelAvalancheDrivingField(
+                electricField, -electronParticleFlux)
+            == Catch::Approx(5.0e6));
+    REQUIRE(detail::sentaurusEparallelAvalancheDrivingField(
+                electricField, holeParticleFlux)
+            == 0.0);
+    REQUIRE(detail::sentaurusEparallelAvalancheDrivingField(
+                electricField, Point2::Zero())
+            == 0.0);
+}
+
+TEST_CASE("Nodal SG least-squares reconstruction preserves a constant vector field",
+          "[impact][eparallel]")
+{
+    DeviceMesh mesh = makePNMesh(false);
+    const Point2 expected{3.0, -4.0};
+    std::vector<Real> signedFlux(
+        static_cast<std::size_t>(mesh.numEdges()), 0.0);
+    for (Index edgeId = 0; edgeId < mesh.numEdges(); ++edgeId) {
+        const Edge& edge = mesh.getEdge(edgeId);
+        const Node& node0 = mesh.getNode(edge.n0);
+        const Node& node1 = mesh.getNode(edge.n1);
+        const Point2 tangent{
+            (node1.x - node0.x) / edge.length,
+            (node1.y - node0.y) / edge.length};
+        signedFlux[static_cast<std::size_t>(edgeId)] = expected.dot(tangent);
+    }
+    const auto nodeEdges = detail::buildNodeEdgeMap(mesh);
+    const auto flux = [&](Index edgeId) {
+        return signedFlux[static_cast<std::size_t>(edgeId)];
+    };
+    const auto active = [](Index) { return true; };
+    for (Index node = 0; node < mesh.numNodes(); ++node) {
+        const Point2 recovered = detail::nodalLeastSquaresCurrentVector(
+            node, nodeEdges, mesh, flux, active);
+        REQUIRE(recovered.x() == Catch::Approx(expected.x()).margin(1.0e-12));
+        REQUIRE(recovered.y() == Catch::Approx(expected.y()).margin(1.0e-12));
+    }
+}
+
+TEST_CASE("Eparallel nodal vertex-star recovery widens the electric-field stencil",
+          "[impact][eparallel]")
+{
+    DeviceMesh mesh = makeEparallelVertexStarMesh();
+    MaterialDatabase matdb;
+    const auto edgeCells = detail::buildEdgeCellMap(mesh);
+    const auto nodeCells = detail::buildNodeCellMap(mesh);
+    const auto cellMaterials = detail::buildCellMaterials(
+        mesh, matdb, constants::T0);
+    VectorXd psi = VectorXd::Zero(static_cast<int>(mesh.numNodes()));
+    psi(5) = 1.0;
+    const auto cellCache = detail::computeCellScalarGradientCache(
+        mesh, [&](Index node) { return psi(static_cast<int>(node)); });
+    const auto nodalCache = detail::computeTransportNodalScalarGradientCache(
+        mesh, nodeCells, cellMaterials, cellCache);
+
+    const auto target = std::find_if(
+        mesh.edges().begin(), mesh.edges().end(), [](const Edge& edge) {
+            return (edge.n0 == 1 && edge.n1 == 4) ||
+                   (edge.n0 == 4 && edge.n1 == 1);
+        });
+    REQUIRE(target != mesh.edges().end());
+
+    ImpactIonizationModelConfig config;
+    bool valid = false;
+    const Point2 legacy = detail::eparallelElectricGradientForEdge(
+        config, edgeCells, mesh, target->id, cellCache, nodalCache, valid);
+    REQUIRE(valid);
+    REQUIRE(legacy.x() == Catch::Approx(0.5));
+    REQUIRE(legacy.y() == Catch::Approx(0.0).margin(1.0e-15));
+
+    config.eparallelFieldRecovery = "nodal_vertex_star";
+    const Point2 vertexStar = detail::eparallelElectricGradientForEdge(
+        config, edgeCells, mesh, target->id, cellCache, nodalCache, valid);
+    REQUIRE(valid);
+    REQUIRE(vertexStar.x() == Catch::Approx(1.0 / 3.0));
+    REQUIRE(vertexStar.y() == Catch::Approx(1.0 / 6.0));
 }
 
 TEST_CASE("Grad-QF avalanche source can rebuild driving field with GSS carrier truncation",
