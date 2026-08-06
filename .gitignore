@@ -71,6 +71,11 @@ __pycache__/
 *.pyc
 .worktrees/
 
+# Local diagnostics and rendered validation reports
+tmp/
+docs/validation/daily_report_*/
+docs/validation/leadership_report_*/
+
 # Example-generated outputs
 examples/*/outputs/
 
