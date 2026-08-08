@@ -137,6 +137,12 @@ if(VELA_ENABLE_GPROF)
         -pg
         -fno-omit-frame-pointer)
     target_link_options(vela_core INTERFACE -pg)
+    if(MINGW)
+        # MinGW gmon.out stores runtime virtual addresses. GNU gprof reads the
+        # PE image's preferred addresses, so ASLR would make every sample and
+        # call arc miss the executable symbol table.
+        target_link_options(vela_core INTERFACE -Wl,--disable-dynamicbase)
+    endif()
     message(STATUS "GNU gprof instrumentation enabled for Vela targets")
 endif()
 

@@ -457,7 +457,11 @@ def generate_gprof(output: Path, executable: Path, gprof: Path) -> None:
             stdout=handle,
             stderr=subprocess.STDOUT,
         )
-    parse_gprof_flat(flat, output / "gprof_hotspots.csv")
+    hotspot_rows = parse_gprof_flat(flat, output / "gprof_hotspots.csv")
+    if hotspot_rows == 0:
+        raise RuntimeError(
+            "gprof produced no mapped hotspot rows; check profiling linkage and ASLR"
+        )
 
 
 def run_scenario(
