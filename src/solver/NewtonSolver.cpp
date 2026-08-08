@@ -4342,14 +4342,15 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
                                const VectorXd& residual,
                                int iterations,
                                Real norm,
-                               const NewtonCarrierRowConvergenceEvaluation& rowEval) {
+                               const NewtonCarrierRowConvergenceEvaluation& rowEval,
+                               const NewtonGlobalContinuityClosureEvaluation& globalEval) {
         result.converged = true;
         result.iters = iterations;
         result.finalResidualNorm = norm;
         result.convergenceReason = reason;
         result.finalBlockNorms = blockResidualInfo(residual, mesh_.numNodes());
         result.finalCarrierRowConvergence = rowEval;
-        result.finalGlobalContinuityClosure = globalClosureEval(state);
+        result.finalGlobalContinuityClosure = globalEval;
         result.solution = makeSolution(assembler, state, iterations);
         writeCarrierRowDiagnosticCsv(rowEval, iterations, reason);
         writeCarrierRowTraceCsv(state, rowEval, iterations, norm, reason);
@@ -4435,7 +4436,9 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
     if (initialNorm <= cfg_.abstol &&
         carrierRowsAcceptConvergence(initialRowEval) &&
         globalClosureAcceptsConvergence(initialGlobalEval)) {
-        finishConverged("initial_abstol", x, r, 0, initialNorm, initialRowEval);
+        finishConverged(
+            "initial_abstol", x, r, 0, initialNorm,
+            initialRowEval, initialGlobalEval);
         return result;
     }
     if (initialNorm <= cfg_.abstol && initialRowEval.enforced &&
@@ -4473,16 +4476,16 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
     VectorXd acceptedX = x;
     VectorXd acceptedR = r;
     int acceptedIters = 0;
+    NewtonGlobalContinuityClosureEvaluation activeGlobalEval =
+        initialGlobalEval;
 
     for (int iter = 1; iter <= cfg_.maxIter; ++iter) {
         ScopedPerformanceTimer iterationTimer("newton.iteration");
-        const NewtonGlobalContinuityClosureEvaluation currentGlobalEval =
-            globalClosureEval(x);
         activeGlobalElectronScale = std::max(
-            std::abs(currentGlobalEval.electron.integratedSource),
+            std::abs(activeGlobalEval.electron.integratedSource),
             cfg_.globalContinuityClosure.sourceFloor);
         activeGlobalHoleScale = std::max(
-            std::abs(currentGlobalEval.hole.integratedSource),
+            std::abs(activeGlobalEval.hole.integratedSource),
             cfg_.globalContinuityClosure.sourceFloor);
         {
             ScopedPerformanceTimer timer("newton.row_weights");
@@ -4599,7 +4602,8 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
                 carrierRowsAcceptConvergence(stalledRowEval) &&
                 globalClosureAcceptsConvergence(stalledGlobalEval)) {
                 finishConverged("stall_residual_floor", acceptedX, acceptedR,
-                                acceptedIters, stalledNorm, stalledRowEval);
+                                acceptedIters, stalledNorm, stalledRowEval,
+                                stalledGlobalEval);
                 return result;
             }
             const DDSolution stalledSolution = makeSolution(assembler, acceptedX, acceptedIters);
@@ -4614,7 +4618,8 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
                 carrierRowsAcceptConvergence(stalledRowEval) &&
                 globalClosureAcceptsConvergence(stalledGlobalEval)) {
                 finishConverged("poisson_line_search_stall_floor", acceptedX, acceptedR,
-                                acceptedIters, stalledNorm, stalledRowEval);
+                                acceptedIters, stalledNorm, stalledRowEval,
+                                stalledGlobalEval);
                 return result;
             }
             if (isCarrierRowQualifiedLineSearchStall(
@@ -4624,7 +4629,7 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
                 finishConverged(
                     "carrier_row_qualified_stall_floor",
                     acceptedX, acceptedR, acceptedIters, stalledNorm,
-                    stalledRowEval);
+                    stalledRowEval, stalledGlobalEval);
                 return result;
             }
             if (stalledRowEval.enforced && !stalledRowEval.satisfied) {
@@ -4729,6 +4734,7 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
             result.history.back().carrierRowConvergence;
         const NewtonGlobalContinuityClosureEvaluation globalEval =
             globalClosureEval(x);
+        activeGlobalEval = globalEval;
         if ((absoluteConverged || relativeConverged) &&
             carrierRowsAcceptConvergence(rowEval) &&
             globalClosureAcceptsConvergence(globalEval)) {
@@ -4738,7 +4744,8 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
                 r,
                 iter,
                 residualNorm,
-                rowEval);
+                rowEval,
+                globalEval);
             return result;
         }
         if (cfg_.carrierRowQualifiedStallAcceptance &&
@@ -4754,8 +4761,8 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
                  contactMajorityQfDrop <=
                      cfg_.poissonLineSearchStallContactMajorityQfDropLimit_V)) {
                 finishConverged(
-                    "carrier_row_qualified_residual_floor",
-                    x, r, iter, residualNorm, rowEval);
+                    "carrier_row_qualified_residual_floor", x, r, iter,
+                    residualNorm, rowEval, globalEval);
                 return result;
             }
         }
@@ -4765,8 +4772,8 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
     result.finalResidualNorm = residualNormFn(acceptedR);
     result.solution = makeSolution(assembler, acceptedX, acceptedIters);
     const NewtonCarrierRowConvergenceEvaluation finalRowEval = carrierRowEval(acceptedX);
-    const NewtonGlobalContinuityClosureEvaluation finalGlobalEval =
-        globalClosureEval(acceptedX);
+    const NewtonGlobalContinuityClosureEvaluation& finalGlobalEval =
+        activeGlobalEval;
     result.finalBlockNorms = blockResidualInfo(acceptedR, mesh_.numNodes());
     result.finalCarrierRowConvergence = finalRowEval;
     result.finalGlobalContinuityClosure = finalGlobalEval;
@@ -4774,7 +4781,8 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
         carrierRowsAcceptConvergence(finalRowEval) &&
         globalClosureAcceptsConvergence(finalGlobalEval)) {
         finishConverged("max_iter_stall_residual_floor", acceptedX, acceptedR,
-                        acceptedIters, result.finalResidualNorm, finalRowEval);
+                        acceptedIters, result.finalResidualNorm, finalRowEval,
+                        finalGlobalEval);
         return result;
     }
 
