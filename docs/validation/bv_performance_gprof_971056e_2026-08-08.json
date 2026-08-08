@@ -1,0 +1,136 @@
+{
+  "schema_version": 1,
+  "profile_git_commit": "971056e",
+  "build": {
+    "directory": "build-profile",
+    "build_type": "RelWithDebInfo",
+    "cmake_options": [
+      "-DVELA_ENABLE_GPROF=ON"
+    ],
+    "compile_flags": [
+      "-O2",
+      "-g",
+      "-DNDEBUG",
+      "-pg",
+      "-fno-omit-frame-pointer"
+    ],
+    "link_flags": [
+      "-pg",
+      "-Wl,--disable-dynamicbase"
+    ]
+  },
+  "artifact_root": "build-bv-performance/gprof-971056e",
+  "limitations": [
+    "The gprof build is used for ranking only; its wall time is not an optimization baseline.",
+    "_mcount_private and __fentry__ account for 42.13 to 42.58 percent of sampled self time and are excluded from production hotspot ranking.",
+    "MinGW gprof high-frequency call-arc counts and propagated cumulative percentages overflow or become inconsistent on the long external-resistor run. Exact calls and stage shares must come from Vela internal counters.",
+    "Low-frequency counts for evaluateBVProcessProbe and SparseLU factorize remain internally consistent with Newton-scale work and are retained as advisory evidence."
+  ],
+  "scenarios": {
+    "high_field_transition": {
+      "wall_seconds": 830.1515643000021,
+      "full_dd_evaluations": 1,
+      "newton_iterations": 191,
+      "result": {
+        "converged": true,
+        "inner_voltage_V": 6.099590877047813,
+        "global_electron_continuity_ratio": 9.154308262299374e-10,
+        "global_hole_continuity_ratio": 1.0764422515567872e-09
+      },
+      "profiler_runtime_self_percent": 42.13,
+      "ranked_evidence": {
+        "active_branch_fingerprint_self_percent": 5.62,
+        "active_branch_fingerprint_cumulative_percent": 21.1,
+        "masetti_self_percent": 4.25,
+        "line_search_residual_callback_self_percent": 3.03,
+        "evaluate_bv_process_probe_self_percent": 1.75,
+        "evaluate_bv_process_probe_reported_calls": 193,
+        "sparselu_factorize_self_percent": 1.49,
+        "sparselu_factorize_reported_calls": 196
+      },
+      "artifacts": {
+        "gmon.out": "ce52d8503269c0929769ded44fc1484dab135241c0a73b1693b4156b510b4f33",
+        "gprof_flat.txt": "c0e34df6620f74a61937efe3b8b8d0c0a827049049fa0a21395dc21aca4c85eb",
+        "gprof_callgraph.txt": "d12b45d8c883a0d5c5d65b0bd7437ea3009a57b315e6610e438d090a4ded9c8e",
+        "gprof_hotspots.csv": "6774dca4066064f5bca639f7e99c2d51830c2457b3bef9579a2b6421d7eefbc3",
+        "gprof_callgraph_hotspots.csv": "26273ce8f6415ab871275e93a429eec2d1bb52bd6c516794eb762c127b1f0886"
+      }
+    },
+    "voltage_to_current_final": {
+      "wall_seconds": 1165.5117103999946,
+      "full_dd_evaluations": 2,
+      "newton_iterations": 279,
+      "result": {
+        "converged": true,
+        "vela_bv_V": 6.395904174606575,
+        "boundary_residual_A_per_um": 6.169747113378421e-12,
+        "global_electron_continuity_ratio": 1.2165948792087214e-9,
+        "global_hole_continuity_ratio": 1.3083379252697538e-9
+      },
+      "profiler_runtime_self_percent": 42.32,
+      "ranked_evidence": {
+        "active_branch_fingerprint_self_percent": 5.68,
+        "active_branch_fingerprint_cumulative_percent": 20.9,
+        "masetti_self_percent": 4.25,
+        "line_search_residual_callback_self_percent": 2.66,
+        "evaluate_bv_process_probe_self_percent": 1.82,
+        "evaluate_bv_process_probe_reported_calls": 283,
+        "sparselu_factorize_self_percent": 1.70,
+        "sparselu_factorize_reported_calls": 280
+      },
+      "artifacts": {
+        "gmon.out": "fcd8bc44a3363693774b5b4e29775f7977ddb889b8e4b2b18cfb1d2098b4ec7c",
+        "gprof_flat.txt": "7624590e3ead846d6a42e3a1986c728162bc6bec8e65b274689347825e36fea9",
+        "gprof_callgraph.txt": "7a78f5c2fea5d1175a20663bbdbe07a21a5043cfc89c623a344a214d7aed97fc",
+        "gprof_hotspots.csv": "1756212428e69fee50211d6774521a1c2396753552b56b1ff5372b3b1cc078e1",
+        "gprof_callgraph_hotspots.csv": "bbcc35e7ee9922462a69ab68ee1cfff2258dd5155f3524a62cf75ab5fd266a27"
+      }
+    },
+    "external_resistor_1206": {
+      "wall_seconds": 5950.799643800012,
+      "full_dd_evaluations": 7,
+      "newton_iterations": 1356,
+      "result": {
+        "converged": true,
+        "vela_bv_V": 6.395887865509238,
+        "boundary_residual_V": -3.5064070061707753e-5,
+        "global_electron_continuity_ratio": 1.2028055520343836e-9,
+        "global_hole_continuity_ratio": 1.2495065493626862e-9
+      },
+      "profiler_runtime_self_percent": 42.58,
+      "ranked_evidence": {
+        "active_branch_fingerprint_self_percent": 5.82,
+        "active_branch_fingerprint_cumulative_percent_advisory_only": 98.6,
+        "masetti_self_percent": 4.24,
+        "line_search_residual_callback_self_percent": 2.06,
+        "evaluate_bv_process_probe_self_percent": 1.86,
+        "evaluate_bv_process_probe_reported_calls": 1365,
+        "sparselu_factorize_self_percent": 1.64,
+        "sparselu_factorize_reported_calls": 1366
+      },
+      "artifacts": {
+        "gmon.out": "c41eb58abfd74b1343e1fd630f9f8babec6e8c6805fee95b1965d545589367f3",
+        "gprof_flat.txt": "d6db6f9bd0f62b8a50aaf5f8a15aa66c000ca0713d55c829242bab473bfd24ec",
+        "gprof_callgraph.txt": "9f84c692ab8e7a41467b83d92025318d7dcd34927ed4b060ad1a44eb10e3b820",
+        "gprof_hotspots.csv": "67679b57ee9f43c1a8ab864bea92a17e96c0bc02cf14deb7fe237a9bbfc4ecaf",
+        "gprof_callgraph_hotspots.csv": "fa3b4dc1a4be4b879fe8560532a213cf0ca920f945a5b7659628f510c973f8b5"
+      }
+    }
+  },
+  "instrumentation_gate": {
+    "passed": true,
+    "reasons": [
+      "active-branch fingerprint exceeds the 5 percent self-time threshold in all three scenarios",
+      "active-branch fingerprint exceeds the 10 percent cumulative-time threshold in the two non-overflowed call graphs",
+      "evaluateBVProcessProbe and SparseLU factorize calls scale with Newton work",
+      "assembler and line-search callback families recur in all three profiles"
+    ],
+    "required_internal_stages": [
+      "newton initial residual, row weights, continuity closure, Jacobian, row scaling, linear solve, line search, acceptance diagnostics",
+      "assembler residual, Jacobian, transport, recombination, BTBT, avalanche source, avalanche Jacobian, active-branch fingerprint",
+      "SparseLU analyze, factorize, solve",
+      "boundary targets, full DD evaluations, bracket and predictor updates",
+      "checkpoint and diagnostic output"
+    ]
+  }
+}

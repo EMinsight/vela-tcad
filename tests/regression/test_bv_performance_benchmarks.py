@@ -81,6 +81,81 @@ class BVPerformanceBenchmarksTest(unittest.TestCase):
             self.assertEqual(rows[1]["function"], "startup()")
             self.assertEqual(rows[1]["calls"], "")
 
+    def test_parse_gprof_callgraph_writes_cumulative_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            callgraph = root / "callgraph.txt"
+            callgraph.write_text(
+                "[1]  75.0  1.50  3.00  12  solver::solve() [1]\n"
+                "[2]  25.0  1.00  0.00      startup() [2]\n"
+                "    0.25  0.50  3/12       child() [3]\n",
+                encoding="utf-8",
+            )
+            output = root / "callgraph.csv"
+            self.assertEqual(
+                BENCHMARKS.parse_gprof_callgraph(callgraph, output), 2
+            )
+            with output.open(newline="", encoding="utf-8") as handle:
+                rows = list(csv.DictReader(handle))
+            self.assertEqual(rows[0]["function"], "solver::solve()")
+            self.assertEqual(rows[0]["calls"], "12")
+            self.assertAlmostEqual(float(rows[0]["cumulative_seconds"]), 4.5)
+            self.assertEqual(rows[1]["function"], "startup()")
+            self.assertEqual(rows[1]["calls"], "")
+
+    def test_summarize_gprof_applies_candidate_thresholds(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "gmon.out").write_bytes(b"profile")
+            for name in ("gprof_flat.txt", "gprof_callgraph.txt"):
+                (root / name).write_text("report\n", encoding="utf-8")
+            with (root / "gprof_hotspots.csv").open(
+                "w", newline="", encoding="utf-8"
+            ) as handle:
+                writer = csv.DictWriter(
+                    handle,
+                    fieldnames=[
+                        "percent_time", "cumulative_seconds", "self_seconds",
+                        "calls", "self_seconds_per_call",
+                        "total_seconds_per_call", "function",
+                    ],
+                )
+                writer.writeheader()
+                writer.writerows([
+                    {"percent_time": "20", "function": "_mcount_private"},
+                    {"percent_time": "6", "calls": "50", "function": "hot()"},
+                    {"percent_time": "4", "calls": "100", "function": "frequent()"},
+                ])
+            with (root / "gprof_callgraph_hotspots.csv").open(
+                "w", newline="", encoding="utf-8"
+            ) as handle:
+                writer = csv.DictWriter(
+                    handle,
+                    fieldnames=[
+                        "index", "percent_time", "self_seconds",
+                        "children_seconds", "cumulative_seconds", "calls",
+                        "function",
+                    ],
+                )
+                writer.writeheader()
+                writer.writerows([
+                    {"index": "1", "percent_time": "12", "function": "hot()"},
+                    {"index": "2", "percent_time": "8", "function": "other()"},
+                ])
+            summary = BENCHMARKS.summarize_gprof(root)
+            self.assertIsNotNone(summary)
+            assert summary is not None
+            self.assertEqual(
+                summary["self_time_candidates_over_5_percent"][0]["function"],
+                "hot()",
+            )
+            self.assertEqual(
+                summary["cumulative_time_candidates_over_10_percent"][0]["function"],
+                "hot()",
+            )
+            self.assertEqual(summary["top_call_counts"][0]["function"], "frequent()")
+            self.assertEqual(summary["profiler_runtime_percent"], 20.0)
+
 
 if __name__ == "__main__":
     unittest.main()

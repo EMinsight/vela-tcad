@@ -437,6 +437,109 @@ def parse_gprof_flat(flat_path: Path, csv_path: Path) -> int:
     return len(rows)
 
 
+def parse_gprof_callgraph(callgraph_path: Path, csv_path: Path) -> int:
+    """Extract the primary, cumulative-time-ranked gprof call-graph rows."""
+    number = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?"
+    primary = re.compile(
+        rf"^\[(\d+)\]\s+({number})\s+({number})\s+({number})\s+"
+        rf"(?:(\d+)\s+)?(.+?)\s+\[\d+\]\s*$"
+    )
+    rows: list[dict[str, str]] = []
+    for line in callgraph_path.read_text(
+        encoding="utf-8", errors="replace"
+    ).splitlines():
+        match = primary.match(line)
+        if not match:
+            continue
+        index, percent, self_seconds, children_seconds, calls, name = match.groups()
+        rows.append(
+            {
+                "index": index,
+                "percent_time": percent,
+                "self_seconds": self_seconds,
+                "children_seconds": children_seconds,
+                "cumulative_seconds": str(
+                    float(self_seconds) + float(children_seconds)
+                ),
+                "calls": calls or "",
+                "function": name,
+            }
+        )
+    with csv_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=[
+                "index",
+                "percent_time",
+                "self_seconds",
+                "children_seconds",
+                "cumulative_seconds",
+                "calls",
+                "function",
+            ],
+        )
+        writer.writeheader()
+        writer.writerows(rows)
+    return len(rows)
+
+
+def summarize_gprof(output: Path) -> dict[str, Any] | None:
+    flat_path = output / "gprof_hotspots.csv"
+    callgraph_path = output / "gprof_callgraph_hotspots.csv"
+    if not flat_path.exists() or not callgraph_path.exists():
+        return None
+
+    def read_rows(path: Path) -> list[dict[str, str]]:
+        with path.open(newline="", encoding="utf-8-sig") as handle:
+            return list(csv.DictReader(handle))
+
+    flat = read_rows(flat_path)
+    callgraph = read_rows(callgraph_path)
+    profiler_runtime = {"_mcount_private", "__fentry__"}
+    production_flat = [row for row in flat if row["function"] not in profiler_runtime]
+    production_callgraph = [
+        row for row in callgraph if row["function"] not in profiler_runtime
+    ]
+    calls_ranked = sorted(
+        (row for row in production_flat if row.get("calls")),
+        key=lambda row: int(row["calls"]),
+        reverse=True,
+    )
+    artifacts: dict[str, Any] = {}
+    for name in (
+        "gmon.out",
+        "gprof_flat.txt",
+        "gprof_callgraph.txt",
+        "gprof_hotspots.csv",
+        "gprof_callgraph_hotspots.csv",
+    ):
+        path = output / name
+        if path.exists():
+            artifacts[name] = {
+                "bytes": path.stat().st_size,
+                "sha256": sha256_file(path),
+            }
+    return {
+        "artifacts": artifacts,
+        "profiler_runtime_percent": sum(
+            float(row["percent_time"])
+            for row in flat
+            if row["function"] in profiler_runtime
+        ),
+        "top_self_time": production_flat[:15],
+        "top_cumulative_time": production_callgraph[:15],
+        "top_call_counts": calls_ranked[:15],
+        "self_time_candidates_over_5_percent": [
+            row for row in production_flat if float(row["percent_time"]) >= 5.0
+        ],
+        "cumulative_time_candidates_over_10_percent": [
+            row
+            for row in production_callgraph
+            if float(row["percent_time"]) >= 10.0
+        ],
+    }
+
+
 def generate_gprof(output: Path, executable: Path, gprof: Path) -> None:
     gmon = output / "gmon.out"
     if not gmon.exists():
@@ -462,6 +565,11 @@ def generate_gprof(output: Path, executable: Path, gprof: Path) -> None:
         raise RuntimeError(
             "gprof produced no mapped hotspot rows; check profiling linkage and ASLR"
         )
+    callgraph_rows = parse_gprof_callgraph(
+        callgraph, output / "gprof_callgraph_hotspots.csv"
+    )
+    if callgraph_rows == 0:
+        raise RuntimeError("gprof produced no mapped call-graph rows")
 
 
 def run_scenario(
@@ -543,6 +651,12 @@ def aggregate_runs(root: Path, scenarios: Iterable[str]) -> dict[str, Any]:
             ),
             "results": [run["result"] for run in runs],
         }
+        if runs:
+            gprof = summarize_gprof(
+                root / scenario / "rep_01"
+            )
+            if gprof is not None:
+                aggregate["scenarios"][scenario]["gprof"] = gprof
         for index, run in enumerate(runs, start=1):
             phase_rows.append(
                 {
