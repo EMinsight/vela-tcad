@@ -476,6 +476,13 @@ add_test(NAME reference_tcad_regression
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/regression/test_reference_tcad_tools.py)
 vela_set_windows_msys2_test_path(reference_tcad_regression)
 
+add_test(NAME bv_performance_benchmarks
+    COMMAND ${Python3_EXECUTABLE} -m unittest
+            tests.regression.test_bv_performance_benchmarks)
+set_tests_properties(bv_performance_benchmarks PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+vela_set_windows_msys2_test_path(bv_performance_benchmarks)
+
 add_test(NAME pn2d_config_templates
     COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/regression/test_pn2d_config_templates.py)

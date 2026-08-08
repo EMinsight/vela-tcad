@@ -1,0 +1,86 @@
+{
+  "schema_version": 1,
+  "kind": "bv_performance_baseline",
+  "git_commit": "c2f85f6a89ba8f49cc204dac6b39d7179925af34",
+  "branch": "codex/bv-performance-profiling",
+  "build": {
+    "type": "Release",
+    "compiler": "MSYS2 UCRT64 GCC 16.1.0",
+    "cmake": "4.4.2",
+    "generator": "Ninja",
+    "executable_sha256": "5a1dfef5f1e83b42a15e458663d488813e8eda221e528bf42f5ff0efec8d55fc"
+  },
+  "environment": {
+    "cpu": "Intel(R) N150",
+    "logical_processors": 4,
+    "physical_memory_bytes": 34019221504,
+    "os": "Windows 11 10.0.26200",
+    "OMP_NUM_THREADS": 1,
+    "OPENBLAS_NUM_THREADS": 1,
+    "MKL_NUM_THREADS": 1
+  },
+  "physics_config_sha256": "dc28b33f2a95e9664c8d93c7c54b3cb4cac22941175b43f8b36d955a25a2a7a2",
+  "scenarios": {
+    "high_field_transition": {
+      "source_config_sha256": "b095a961f0c47fcfc115830dce9abb942359ea7ce78106c581c6305e4fb0d5d1",
+      "initial_state_sha256": "7eee0b42cfebbb544dc6838c7b579510e0465d88160b90ff47e405ff81448e99",
+      "seed_evaluation_rows": 0,
+      "wall_seconds": [
+        808.5130778000021,
+        846.1509346999956,
+        811.158248000007
+      ],
+      "median_wall_seconds": 811.158248000007,
+      "max_deviation_fraction": 0.04313916154617989,
+      "full_dd_evaluations": 1,
+      "newton_iterations": 191,
+      "inner_voltage_V": 6.099590877047813,
+      "global_electron_continuity_ratio": 9.154308262299374e-10,
+      "global_hole_continuity_ratio": 1.0764422515567872e-09,
+      "converged": true
+    },
+    "voltage_to_current_final": {
+      "source_config_sha256": "b54bf2471c1c81cd0844ba8f62be89ca5b855a2a117e008d92c46cfd569b917a",
+      "initial_state_sha256": "e70a2634d8212cb9a2567b4867a3e1ddec1d4a8db66eca5301227b07f5deb8f4",
+      "seed_evaluation_rows": 33,
+      "wall_seconds": [
+        796.1847830000042,
+        811.0926116000046,
+        828.5115674999979
+      ],
+      "median_wall_seconds": 811.0926116000046,
+      "max_deviation_fraction": 0.021475914896613033,
+      "full_dd_evaluations": 2,
+      "newton_iterations": 279,
+      "vela_bv_V": 6.395904174606575,
+      "boundary_residual_A_per_um": 6.169747113378421e-12,
+      "global_electron_continuity_ratio": 1.216559466401011e-9,
+      "global_hole_continuity_ratio": 1.3083069725092697e-9,
+      "converged": true
+    },
+    "external_resistor_1206": {
+      "source_config_sha256": "ef44ae9acf6859cf09c0dec4aacd016c0db1800583ff9ea4c7a34ade329f3ed4",
+      "initial_state_sha256": "523e615c418ea04096afbb23074125f09458d96b81cbdf2941d798bbeabefc0c",
+      "seed_evaluation_rows": 63,
+      "wall_seconds": [4062.8513033000054],
+      "median_wall_seconds": 4062.8513033000054,
+      "long_run_repetitions_pending_after_candidate": 2,
+      "full_dd_evaluations": 7,
+      "newton_iterations": 1356,
+      "vela_bv_V": 6.395887865509238,
+      "boundary_residual_V": -3.506407006170775e-5,
+      "global_electron_continuity_ratio": 1.2028055520343836e-9,
+      "global_hole_continuity_ratio": 1.2495065493626862e-9,
+      "converged": true
+    }
+  },
+  "correctness": {
+    "voltage_to_current_sentaurus_reference_V": 6.38318420057198,
+    "external_resistor_sentaurus_reference_V": 6.379791636301563,
+    "bv_relative_error_limit": 0.03,
+    "current_boundary_residual_limit_A_per_um": 1e-10,
+    "load_line_residual_limit_V": 1e-4,
+    "global_continuity_ratio_limit": 1e-2,
+    "mobility_avalanche_btbt_or_empirical_scale_changed": false
+  }
+}
