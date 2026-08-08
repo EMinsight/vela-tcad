@@ -1181,6 +1181,47 @@ Diagnostics fields:
   as `<prefix>_bias_<encoded bias>.csv`. These states are restartable with
   `initial_state_file`; use this together with the nonlinear trace to seal
   exact parent states for failed-transition reproduction.
+
+### External circuit and voltage-to-current boundary control
+
+`sweep.external_circuit` enables a Sentaurus-compatible 2-D series-resistor
+load line. The supported mode is `series_resistor`. `resistance_ohm_um` uses
+`ohm*um`, terminal current uses `A/um`, and the closed equation is
+
+```text
+OuterVoltage = InnerVoltage + current_direction * Iterminal * Rseries
+```
+
+`bias_points` (or `start/stop/step`) are outer/source voltages. The nonlinear
+device boundary remains the inner voltage and is solved repeatedly until
+`load_line_residual_V` meets `residual_tolerance_V`. `current_direction` is
+`+1` for the BVmethods NMOS drain convention and may be `-1` for an oppositely
+oriented terminal. `initial_inner_voltage_V`, `max_inner_voltage_step_V`,
+`voltage_tolerance_V`, `max_bracket_steps`, and `max_iterations` control only
+the scalar boundary solve.
+
+`sweep.voltage_to_current` first solves the voltage points through the final
+point, which must equal `switch_voltage_V`, and then replaces the voltage
+target with each entry in `current_points_A_per_um`. The accepted equation is
+`current_direction * Iterminal = Itarget`; tolerances and voltage-step limits
+have the same scalar-control meaning as for the resistor mode. The two modes
+are mutually exclusive.
+
+When either mode is active, the main sweep CSV appends
+`boundary_control_mode`, `inner_voltage_V`, `outer_voltage_V`,
+`series_resistance_ohm_um`, `load_line_residual_V`,
+`target_current_A_per_um`, `current_boundary_residual_A_per_um`, and
+`boundary_control_evaluations`. `bias_V` remains the device/inner voltage so
+existing BV extraction and field diagnostics keep their physical meaning.
+
+`sweep.boundary_control` configures persistence and prediction shared by both
+boundary modes. `evaluation_csv` records every attempted device solve and its
+load-line/current residual. Each successful evaluation is written below
+`checkpoint_directory`; `resume=true` reloads the best matching checkpoint for
+the current target. `predictor_max_step_factor` limits guarded secant
+extrapolation relative to the normal inner-voltage step.
+`preferred_max_evaluations` is a performance target: exceeding it emits a
+warning but does not weaken the residual acceptance test.
 - `contact_current_reporting.endpoint_qf_floor.enabled`: opt-in reporting-only
   policy for Sentaurus restart parity. When enabled, DCSweep captures tiny
   contact-edge hole quasi-Fermi endpoint drops from the external

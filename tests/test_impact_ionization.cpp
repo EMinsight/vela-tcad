@@ -330,6 +330,79 @@ TEST_CASE("Fermi-Dirac SG avalanche post-processing matches generalized transpor
     REQUIRE(sawDegenerateFactor);
 }
 
+TEST_CASE("Fermi-Dirac avalanche carrier diagnostics reproduce the coupled residual",
+          "[impact][diagnostic][fermi_dirac][newton]")
+{
+    DeviceMesh mesh = makePNMesh(false);
+    MaterialDatabase matdb;
+    const std::vector<RegionDopingSpec> specs = {
+        {"n_region", 5.0e24, 0.0},
+        {"p_region", 0.0, 5.0e24},
+    };
+    DopingModel doping = DopingModel::fromMeshAndRegions(mesh, specs);
+    const Real Vt = constants::Vt_300;
+
+    CoupledDDState state;
+    const int nodeCount = static_cast<int>(mesh.numNodes());
+    state.psi.resize(nodeCount);
+    state.phin.resize(nodeCount);
+    state.phip.resize(nodeCount);
+    for (int node = 0; node < nodeCount; ++node) {
+        state.psi(node) = 0.58 + 0.035 * static_cast<Real>(node);
+        state.phin(node) = 0.01 * static_cast<Real>(node);
+        state.phip(node) = state.psi(node) + 0.20
+            - 0.005 * static_cast<Real>(node);
+    }
+
+    ImpactIonizationModelConfig impactConfig;
+    impactConfig.model = "selberherr";
+    impactConfig.drivingForce = "quasi_fermi_gradient";
+    impactConfig.generation = "current_density";
+    impactConfig.currentApproximation = "density_gradient";
+    impactConfig.electronA = 1.0;
+    impactConfig.electronB = 1.0e-30;
+    impactConfig.holeA = 1.0;
+    impactConfig.holeB = 1.0e-30;
+
+    const CarrierStatisticsConfig statistics{"fermi_dirac"};
+    CoupledDDAssembler assembler(
+        mesh,
+        matdb,
+        doping,
+        Vt,
+        mobilityModelConfig("constant"),
+        recombinationModelConfig({"none"}),
+        BandgapNarrowingConfig{},
+        impactConfig,
+        {},
+        {},
+        {},
+        {},
+        statistics);
+
+    const VectorXd x = assembler.pack(state);
+    const CoupledDDBoundaryConditions bcs;
+    const VectorXd residual = assembler.residual(x, bcs);
+    const auto terms =
+        assembler.carrierContinuityEquationTermDiagnostics(x, bcs);
+
+    bool sawImpactSource = false;
+    for (int node = 0; node < nodeCount; ++node) {
+        const auto& term = terms[static_cast<std::size_t>(node)];
+        const Real electronExpected = residual(nodeCount + node);
+        const Real holeExpected = residual(2 * nodeCount + node);
+        const Real electronScale = std::max<Real>(1.0, std::abs(electronExpected));
+        const Real holeScale = std::max<Real>(1.0, std::abs(holeExpected));
+        CHECK(std::abs(term.electronResidual - electronExpected) <=
+              1.0e-12 * electronScale);
+        CHECK(std::abs(term.holeResidual - holeExpected) <=
+              1.0e-12 * holeScale);
+        sawImpactSource = sawImpactSource ||
+            std::abs(term.impactCombinedSource) > 0.0;
+    }
+    REQUIRE(sawImpactSource);
+}
+
 TEST_CASE("Edge-source partition is directional only for grad-QF or explicit switch",
           "[impact][diagnostic]")
 {

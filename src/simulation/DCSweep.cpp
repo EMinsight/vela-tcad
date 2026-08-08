@@ -1,4 +1,5 @@
 #include "vela/simulation/DCSweep.h"
+#include "vela/simulation/BoundaryControl.h"
 #include "vela/boundary/BoundaryCondition.h"
 #include "vela/core/RuntimeLog.h"
 #include "vela/core/UnitScalingSystem.h"
@@ -1393,6 +1394,107 @@ DCSweepConfig dcSweepConfigFromJson(const nlohmann::json& cfg,
         throw std::invalid_argument(
             "DCSweep: sweep.initialization.mode='poisson_block' cannot be combined with initial_state_file.");
     }
+    if (j.contains("external_circuit")) {
+        const auto& circuit = j.at("external_circuit");
+        if (!circuit.is_object())
+            throw std::invalid_argument("DCSweep: sweep.external_circuit must be an object.");
+        const std::string mode = circuit.value("mode", std::string("series_resistor"));
+        if (mode != "series_resistor")
+            throw std::invalid_argument(
+                "DCSweep: sweep.external_circuit.mode must be 'series_resistor'.");
+        sweep.externalResistor.enabled = circuit.value("enabled", true);
+        sweep.externalResistor.resistance_ohm_um =
+            circuit.at("resistance_ohm_um").get<Real>();
+        sweep.externalResistor.currentDirection =
+            circuit.value("current_direction", 1.0);
+        sweep.externalResistor.initialInnerVoltage_V =
+            circuit.value("initial_inner_voltage_V", sweep.start);
+        sweep.externalResistor.residualTolerance_V =
+            circuit.value("residual_tolerance_V", 1.0e-6);
+        sweep.externalResistor.voltageTolerance_V =
+            circuit.value("voltage_tolerance_V", 1.0e-8);
+        sweep.externalResistor.maxInnerVoltageStep_V =
+            circuit.value("max_inner_voltage_step_V", 0.1);
+        sweep.externalResistor.maxBracketSteps =
+            circuit.value("max_bracket_steps", 200);
+        sweep.externalResistor.maxIterations =
+            circuit.value("max_iterations", 40);
+    }
+    if (j.contains("voltage_to_current")) {
+        const auto& control = j.at("voltage_to_current");
+        if (!control.is_object())
+            throw std::invalid_argument("DCSweep: sweep.voltage_to_current must be an object.");
+        sweep.voltageToCurrent.enabled = control.value("enabled", true);
+        sweep.voltageToCurrent.switchVoltage_V =
+            control.at("switch_voltage_V").get<Real>();
+        sweep.voltageToCurrent.currentDirection =
+            control.value("current_direction", 1.0);
+        sweep.voltageToCurrent.currentPoints_A_per_um =
+            control.at("current_points_A_per_um").get<std::vector<Real>>();
+        sweep.voltageToCurrent.currentTolerance_A_per_um =
+            control.value("current_tolerance_A_per_um", 1.0e-10);
+        sweep.voltageToCurrent.voltageTolerance_V =
+            control.value("voltage_tolerance_V", 1.0e-8);
+        sweep.voltageToCurrent.maxInnerVoltageStep_V =
+            control.value("max_inner_voltage_step_V", 0.05);
+        sweep.voltageToCurrent.maxBracketSteps =
+            control.value("max_bracket_steps", 200);
+            sweep.voltageToCurrent.maxIterations =
+                control.value("max_iterations", 40);
+    }
+    if (j.contains("boundary_control")) {
+        const auto& persistence = j.at("boundary_control");
+        if (!persistence.is_object())
+            throw std::invalid_argument(
+                "DCSweep: sweep.boundary_control must be an object.");
+        sweep.boundaryControl.evaluationCsv =
+            persistence.value("evaluation_csv", std::string{});
+        sweep.boundaryControl.checkpointDirectory =
+            persistence.value("checkpoint_directory", std::string{});
+        sweep.boundaryControl.resume = persistence.value("resume", false);
+        sweep.boundaryControl.predictorMaxStepFactor =
+            persistence.value("predictor_max_step_factor", 4.0);
+        sweep.boundaryControl.preferredMaxEvaluations =
+            persistence.value("preferred_max_evaluations", 3);
+    }
+    if (sweep.externalResistor.enabled && sweep.voltageToCurrent.enabled)
+        throw std::invalid_argument(
+            "DCSweep: external_circuit and voltage_to_current are mutually exclusive.");
+    const auto validateDirection = [](Real value, const char* field) {
+        if (!std::isfinite(value) || (value != 1.0 && value != -1.0))
+            throw std::invalid_argument(std::string("DCSweep: ") + field + " must be +1 or -1.");
+    };
+    if (sweep.externalResistor.enabled) {
+        validateDirection(sweep.externalResistor.currentDirection,
+                          "sweep.external_circuit.current_direction");
+        if (!std::isfinite(sweep.externalResistor.resistance_ohm_um) ||
+            sweep.externalResistor.resistance_ohm_um <= 0.0) {
+            throw std::invalid_argument(
+                "DCSweep: sweep.external_circuit.resistance_ohm_um must be finite and positive.");
+        }
+    }
+    if (sweep.voltageToCurrent.enabled) {
+        validateDirection(sweep.voltageToCurrent.currentDirection,
+                          "sweep.voltage_to_current.current_direction");
+        if (sweep.voltageToCurrent.currentPoints_A_per_um.empty())
+            throw std::invalid_argument(
+                "DCSweep: sweep.voltage_to_current.current_points_A_per_um must not be empty.");
+        for (Real current : sweep.voltageToCurrent.currentPoints_A_per_um) {
+            if (!std::isfinite(current) || current < 0.0)
+                throw std::invalid_argument(
+                    "DCSweep: voltage-to-current targets must be finite and non-negative.");
+        }
+    }
+    if (!std::isfinite(sweep.boundaryControl.predictorMaxStepFactor) ||
+        sweep.boundaryControl.predictorMaxStepFactor < 1.0) {
+        throw std::invalid_argument(
+            "DCSweep: sweep.boundary_control.predictor_max_step_factor "
+            "must be finite and at least one.");
+    }
+    if (sweep.boundaryControl.preferredMaxEvaluations <= 0) {
+        throw std::invalid_argument(
+            "DCSweep: sweep.boundary_control.preferred_max_evaluations must be positive.");
+    }
     sweep.writeStateEveryPointPrefix =
         j.value("write_state_every_point_prefix", std::string{});
     parseSweepContinuationConfig(j, sweep);
@@ -1806,6 +1908,25 @@ DCSweepConfig dcSweepConfigFromJson(const nlohmann::json& cfg,
         sweep.initialization.writeStateFile = resolve(sweep.initialization.writeStateFile);
     if (!sweep.writeStateEveryPointPrefix.empty())
         sweep.writeStateEveryPointPrefix = resolve(sweep.writeStateEveryPointPrefix);
+    const bool boundaryControlEnabled =
+        sweep.externalResistor.enabled || sweep.voltageToCurrent.enabled;
+    if (boundaryControlEnabled) {
+        const std::filesystem::path outputPath(sweep.csvFile);
+        if (sweep.boundaryControl.evaluationCsv.empty()) {
+            sweep.boundaryControl.evaluationCsv =
+                (outputPath.parent_path() / "boundary_control_evaluations.csv").string();
+        } else {
+            sweep.boundaryControl.evaluationCsv =
+                resolve(sweep.boundaryControl.evaluationCsv);
+        }
+        if (sweep.boundaryControl.checkpointDirectory.empty()) {
+            sweep.boundaryControl.checkpointDirectory =
+                (outputPath.parent_path() / "boundary_control_checkpoints").string();
+        } else {
+            sweep.boundaryControl.checkpointDirectory =
+                resolve(sweep.boundaryControl.checkpointDirectory);
+        }
+    }
     if (sweep.diagnostics.terminalBalance.enabled) {
         if (sweep.diagnostics.terminalBalance.csvFile.empty()) {
             const std::filesystem::path csvPath(sweep.csvFile);
@@ -2729,6 +2850,18 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
         header.push_back("current_hole_drift_A_per_um");
         header.push_back("current_hole_diffusion_A_per_um");
     }
+    const bool boundaryControlEnabled =
+        sweep.externalResistor.enabled || sweep.voltageToCurrent.enabled;
+    if (boundaryControlEnabled) {
+        header.push_back("boundary_control_mode");
+        header.push_back("inner_voltage_V");
+        header.push_back("outer_voltage_V");
+        header.push_back("series_resistance_ohm_um");
+        header.push_back("load_line_residual_V");
+        header.push_back("target_current_A_per_um");
+        header.push_back("current_boundary_residual_A_per_um");
+        header.push_back("boundary_control_evaluations");
+    }
     std::vector<std::pair<std::string, std::string>> chargeColumns;
     std::vector<std::pair<std::string, std::string>> capacitanceColumns;
     if (sweep.storedChargeEnabled)
@@ -3436,6 +3569,16 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
             "margin_V"});
     }
     std::vector<DCSweepPoint> points;
+    struct BoundaryControlObservation {
+        std::string mode;
+        Real innerVoltage_V = 0.0;
+        Real outerVoltage_V = 0.0;
+        Real seriesResistance_ohm_um = 0.0;
+        Real loadLineResidual_V = 0.0;
+        Real targetCurrent_A_per_um = 0.0;
+        Real currentResidual_A_per_um = 0.0;
+        int evaluations = 0;
+    } boundaryObservation;
     DDSolution previousSolution;
     DDSolution predictorPreviousSolution;
     Real predictorPreviousBias = 0.0;
@@ -3489,6 +3632,102 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
         bool nonlinearTraceWritten = false;
     };
     std::uint64_t nextNonlinearAttemptId = 1;
+
+    struct BoundaryEvaluationRecord {
+        std::string mode;
+        Real target = 0.0;
+        Real resistance_ohm_um = 0.0;
+        Real currentDirection = 1.0;
+        int evaluationIndex = 0;
+        Real innerVoltage_V = 0.0;
+        Real directedCurrent_A_per_um = 0.0;
+        Real residual = 0.0;
+        std::string stateFile;
+    };
+    std::vector<BoundaryEvaluationRecord> resumedBoundaryEvaluations;
+    std::ofstream boundaryEvaluationStream;
+    if (boundaryControlEnabled) {
+        const std::filesystem::path evaluationPath(
+            sweep.boundaryControl.evaluationCsv);
+        if (!evaluationPath.parent_path().empty())
+            std::filesystem::create_directories(evaluationPath.parent_path());
+        const bool appendExisting = sweep.boundaryControl.resume &&
+            std::filesystem::exists(evaluationPath) &&
+            std::filesystem::file_size(evaluationPath) > 0;
+        if (appendExisting) {
+            std::ifstream input(evaluationPath);
+            std::string line;
+            if (!std::getline(input, line))
+                throw std::runtime_error(
+                    "DCSweep: boundary-control evaluation CSV is empty.");
+            const auto header = splitCsvLine(line);
+            std::unordered_map<std::string, std::size_t> columns;
+            for (std::size_t i = 0; i < header.size(); ++i)
+                columns[header.at(i)] = i;
+            const auto requireColumn = [&](const std::string& name) {
+                if (!columns.contains(name))
+                    throw std::runtime_error(
+                        "DCSweep: boundary-control evaluation CSV missing column '" +
+                        name + "'.");
+                return columns.at(name);
+            };
+            const std::size_t modeCol = requireColumn("mode");
+            const std::size_t targetCol = requireColumn("target_value");
+            const std::size_t resistanceCol = requireColumn("resistance_ohm_um");
+            const std::size_t directionCol = requireColumn("current_direction");
+            const std::size_t evaluationCol = requireColumn("evaluation_index");
+            const std::size_t innerCol = requireColumn("inner_voltage_V");
+            const std::size_t currentCol = requireColumn("directed_current_A_per_um");
+            const std::size_t residualCol = requireColumn("residual");
+            const std::size_t convergedCol = requireColumn("device_converged");
+            const std::size_t stateCol = requireColumn("state_file");
+            while (std::getline(input, line)) {
+                if (trimCsvToken(line).empty())
+                    continue;
+                const auto row = splitCsvLine(line);
+                const std::size_t requiredMax = std::max({
+                    modeCol, targetCol, resistanceCol, directionCol,
+                    evaluationCol, innerCol, currentCol, residualCol,
+                    convergedCol, stateCol});
+                if (row.size() <= requiredMax || row.at(convergedCol) != "1" ||
+                    row.at(stateCol).empty()) {
+                    continue;
+                }
+                BoundaryEvaluationRecord record;
+                record.mode = row.at(modeCol);
+                record.target = std::stod(row.at(targetCol));
+                record.resistance_ohm_um = std::stod(row.at(resistanceCol));
+                record.currentDirection = std::stod(row.at(directionCol));
+                record.evaluationIndex = std::stoi(row.at(evaluationCol));
+                record.innerVoltage_V = std::stod(row.at(innerCol));
+                record.directedCurrent_A_per_um = std::stod(row.at(currentCol));
+                record.residual = std::stod(row.at(residualCol));
+                record.stateFile = row.at(stateCol);
+                if (std::filesystem::exists(record.stateFile))
+                    resumedBoundaryEvaluations.push_back(std::move(record));
+            }
+        }
+        const std::filesystem::path checkpointDir(
+            sweep.boundaryControl.checkpointDirectory);
+        std::filesystem::create_directories(checkpointDir);
+        boundaryEvaluationStream.open(
+            evaluationPath,
+            appendExisting ? (std::ios::out | std::ios::app)
+                           : (std::ios::out | std::ios::trunc));
+        if (!boundaryEvaluationStream.is_open())
+            throw std::runtime_error(
+                "DCSweep: cannot open boundary-control evaluation CSV: " +
+                evaluationPath.string());
+        if (!appendExisting) {
+            boundaryEvaluationStream
+                << "mode,target_value,target_unit,resistance_ohm_um,current_direction,"
+                   "evaluation_index,inner_voltage_V,directed_current_A_per_um,residual,"
+                   "residual_unit,device_converged,newton_iterations,carrier_row_violations,"
+                   "carrier_row_max_ratio,global_continuity_satisfied,state_file,"
+                   "failure_reason,resumed\n";
+            boundaryEvaluationStream.flush();
+        }
+    }
 
     if ((solverMethod == SolverMethod::Newton ||
          solverMethod == SolverMethod::GummelNewton) &&
@@ -4161,6 +4400,17 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
         DCSweepPoint point;
         point.voltage = voltage;
         point.bias = voltage;
+        point.innerVoltage_V = boundaryControlEnabled
+            ? boundaryObservation.innerVoltage_V : voltage;
+        point.outerVoltage_V = boundaryControlEnabled
+            ? boundaryObservation.outerVoltage_V : voltage;
+        point.seriesResistance_ohm_um = boundaryObservation.seriesResistance_ohm_um;
+        point.loadLineResidual_V = boundaryObservation.loadLineResidual_V;
+        point.targetCurrent_A_per_um = boundaryObservation.targetCurrent_A_per_um;
+        point.currentBoundaryResidual_A_per_um =
+            boundaryObservation.currentResidual_A_per_um;
+        point.boundaryControlEvaluations = boundaryObservation.evaluations;
+        point.boundaryControlMode = boundaryObservation.mode;
         point.outputCsv = sweep.csvFile;
         point.electronCurrent = current.electronCurrent;
         point.electronDriftCurrent = current.electronDriftCurrent;
@@ -5067,6 +5317,16 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
             row.push_back(formatReal(currentPerInternalDepthToAPerUm(sweep.scaling, point.holeCurrent)));
             row.push_back(formatReal(currentPerInternalDepthToAPerUm(sweep.scaling, point.holeDriftCurrent)));
             row.push_back(formatReal(currentPerInternalDepthToAPerUm(sweep.scaling, point.holeDiffusionCurrent)));
+        }
+        if (boundaryControlEnabled) {
+            row.push_back(point.boundaryControlMode);
+            row.push_back(formatReal(point.innerVoltage_V));
+            row.push_back(formatReal(point.outerVoltage_V));
+            row.push_back(formatReal(point.seriesResistance_ohm_um));
+            row.push_back(formatReal(point.loadLineResidual_V));
+            row.push_back(formatReal(point.targetCurrent_A_per_um));
+            row.push_back(formatReal(point.currentBoundaryResidual_A_per_um));
+            row.push_back(std::to_string(point.boundaryControlEvaluations));
         }
         if (sweep.storedChargeEnabled) {
             const char* storedColumn = sweep.storedCharge.perMeter ? "stored_charge_C_per_m" : "stored_charge_C";
@@ -5998,6 +6258,505 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                 initialBias,
                 initialization);
         }
+    }
+
+    auto explicitBoundaryVoltageTargets = [&]() {
+        if (!sweep.biasPoints.empty())
+            return sweep.biasPoints;
+        std::vector<Real> targets;
+        const Real direction = sweep.stop >= sweep.start ? 1.0 : -1.0;
+        if (sweep.step == 0.0 || sweep.step * direction <= 0.0)
+            throw std::invalid_argument(
+                "DCSweep: boundary-control sweep.step must move start toward stop.");
+        const Real tolerance = 1.0e-12;
+        for (Real value = sweep.start;
+             direction * (value - sweep.stop) <= tolerance;
+             value += sweep.step) {
+            targets.push_back(value);
+            if (targets.size() > 100000)
+                throw std::runtime_error("DCSweep: boundary-control voltage point budget exceeded.");
+        }
+        if (targets.empty() || std::abs(targets.back() - sweep.stop) > tolerance)
+            targets.push_back(sweep.stop);
+        return targets;
+    };
+
+    struct ControlledBoundarySolve {
+        detail::MonotoneBoundaryRootResult root;
+        SolvePointAttempt attempt;
+        Real directedCurrent_A_per_um = 0.0;
+        bool resumed = false;
+    };
+
+    const auto sameBoundaryValue = [](Real lhs, Real rhs) {
+        return std::abs(lhs - rhs) <=
+            1.0e-12 * std::max({1.0, std::abs(lhs), std::abs(rhs)});
+    };
+    const auto boundaryCsvToken = [](std::string value) {
+        std::replace(value.begin(), value.end(), ',', ';');
+        std::replace(value.begin(), value.end(), '\n', ' ');
+        std::replace(value.begin(), value.end(), '\r', ' ');
+        return value;
+    };
+    auto matchingBoundaryRecords = [&](const std::string& mode,
+                                       Real target,
+                                       Real resistance,
+                                       Real currentDirection) {
+        std::vector<const BoundaryEvaluationRecord*> matches;
+        for (const BoundaryEvaluationRecord& record : resumedBoundaryEvaluations) {
+            if (record.mode == mode &&
+                sameBoundaryValue(record.target, target) &&
+                sameBoundaryValue(record.resistance_ohm_um, resistance) &&
+                sameBoundaryValue(record.currentDirection, currentDirection)) {
+                matches.push_back(&record);
+            }
+        }
+        return matches;
+    };
+
+    auto solveControlledBoundary = [&](const std::string& controlMode,
+                                       Real targetValue,
+                                       const std::string& targetUnit,
+                                       Real resistance_ohm_um,
+                                       Real seedVoltage,
+                                       const DDSolution* seedState,
+                                       Real currentDirection,
+                                       const detail::MonotoneBoundaryRootConfig& rootConfig,
+                                       const std::function<Real(Real, Real)>& residual) {
+        ControlledBoundarySolve solved;
+        DDSolution evaluationState;
+        bool hasEvaluationState = seedState != nullptr;
+        DDSolution previousEvaluationState;
+        bool hasPreviousEvaluationState = false;
+        Real previousEvaluationVoltage = seedVoltage;
+        Real evaluationStateVoltage = seedVoltage;
+        if (seedState != nullptr)
+            evaluationState = *seedState;
+        if (hasEvaluationState && hasPredictorPreviousSolution &&
+            sameBoundaryValue(currentSolutionBias, seedVoltage) &&
+            !sameBoundaryValue(predictorPreviousBias, seedVoltage)) {
+            previousEvaluationState = predictorPreviousSolution;
+            previousEvaluationVoltage = predictorPreviousBias;
+            hasPreviousEvaluationState = true;
+        }
+        detail::MonotoneBoundaryRootConfig activeRootConfig = rootConfig;
+        int evaluationIndex = 0;
+        const auto matches = matchingBoundaryRecords(
+            controlMode, targetValue, resistance_ohm_um, currentDirection);
+        for (const BoundaryEvaluationRecord* record : matches)
+            evaluationIndex = std::max(evaluationIndex, record->evaluationIndex);
+        if (!matches.empty()) {
+            const BoundaryEvaluationRecord* negative = nullptr;
+            const BoundaryEvaluationRecord* positive = nullptr;
+            for (const BoundaryEvaluationRecord* record : matches) {
+                if (record->residual <= 0.0 &&
+                    (negative == nullptr ||
+                     std::abs(record->residual) < std::abs(negative->residual))) {
+                    negative = record;
+                }
+                if (record->residual >= 0.0 &&
+                    (positive == nullptr ||
+                     std::abs(record->residual) < std::abs(positive->residual))) {
+                    positive = record;
+                }
+            }
+            const BoundaryEvaluationRecord* best = *std::min_element(
+                matches.begin(), matches.end(),
+                [](const auto* lhs, const auto* rhs) {
+                    return std::abs(lhs->residual) < std::abs(rhs->residual);
+                });
+            if (hasEvaluationState &&
+                !sameBoundaryValue(evaluationStateVoltage, best->innerVoltage_V)) {
+                previousEvaluationState = evaluationState;
+                previousEvaluationVoltage = evaluationStateVoltage;
+                hasPreviousEvaluationState = true;
+            }
+            evaluationState = readDDSolutionStateCsv(
+                best->stateFile, mesh.numNodes(), sweep.scaling);
+            hasEvaluationState = true;
+            seedVoltage = best->innerVoltage_V;
+            evaluationStateVoltage = best->innerVoltage_V;
+            solved.directedCurrent_A_per_um = best->directedCurrent_A_per_um;
+            activeRootConfig.initialResidual = best->residual;
+            if (negative != nullptr && positive != nullptr &&
+                negative->innerVoltage_V < positive->innerVoltage_V) {
+                activeRootConfig.initialBracket =
+                    detail::MonotoneBoundaryRootBracket{
+                        negative->innerVoltage_V,
+                        negative->residual,
+                        positive->innerVoltage_V,
+                        positive->residual};
+                const Real denominator =
+                    positive->residual - negative->residual;
+                if (denominator != 0.0) {
+                    activeRootConfig.predictedVoltage =
+                        negative->innerVoltage_V - negative->residual *
+                        (positive->innerVoltage_V - negative->innerVoltage_V) /
+                        denominator;
+                }
+                runtimeLogInfo(
+                    "boundary_control: restored bracket mode=" + controlMode +
+                    " target=" + formatReal(targetValue) +
+                    " negative_V=" + formatReal(negative->innerVoltage_V) +
+                    " negative_residual=" + formatReal(negative->residual) +
+                    " positive_V=" + formatReal(positive->innerVoltage_V) +
+                    " positive_residual=" + formatReal(positive->residual) +
+                    " predicted_V=" +
+                    (activeRootConfig.predictedVoltage.has_value()
+                        ? formatReal(*activeRootConfig.predictedVoltage)
+                        : std::string()));
+            }
+            solved.attempt.ok = true;
+            solved.attempt.solution = evaluationState;
+            solved.attempt.solverMethod = "boundary_checkpoint";
+            solved.attempt.newtonConvergenceReason = "boundary_checkpoint_resume";
+            solved.resumed = true;
+            if (boundaryEvaluationStream.is_open()) {
+                boundaryEvaluationStream
+                    << controlMode << ','
+                    << formatReal(targetValue) << ','
+                    << targetUnit << ','
+                    << formatReal(resistance_ohm_um) << ','
+                    << formatReal(currentDirection) << ','
+                    << best->evaluationIndex << ','
+                    << formatReal(best->innerVoltage_V) << ','
+                    << formatReal(best->directedCurrent_A_per_um) << ','
+                    << formatReal(best->residual) << ','
+                    << (controlMode == "external_resistor" ? "V" : "A_per_um") << ','
+                    << "1,0,0,0,1,"
+                    << boundaryCsvToken(best->stateFile) << ','
+                    << ",1\n";
+                boundaryEvaluationStream.flush();
+            }
+        } else if (hasEvaluationState) {
+            const ContactCurrentResult seedCurrent =
+                contactCurrent.compute(evaluationState, sweep.currentContact);
+            solved.directedCurrent_A_per_um = currentDirection *
+                currentPerInternalDepthToAPerUm(
+                    sweep.scaling, seedCurrent.totalCurrent);
+            activeRootConfig.initialResidual =
+                residual(seedVoltage, solved.directedCurrent_A_per_um);
+            solved.attempt.ok = true;
+            solved.attempt.solution = evaluationState;
+            solved.attempt.solverMethod = "boundary_seed_state";
+            solved.attempt.newtonConvergenceReason = "boundary_seed_state_reuse";
+        }
+        auto evaluate = [&](Real innerVoltage) {
+            const DDSolution* initial = hasEvaluationState ? &evaluationState : nullptr;
+            DDSolution predictedState;
+            bool usedStatePredictor = false;
+            if (hasEvaluationState && hasPreviousEvaluationState &&
+                sweep.continuation.predictor.mode != "none") {
+                predictedState = detail::predictDCSweepInitialState(
+                    sweep.continuation.predictor,
+                    &previousEvaluationState,
+                    evaluationState,
+                    previousEvaluationVoltage,
+                    evaluationStateVoltage,
+                    innerVoltage);
+                initial = &predictedState;
+                usedStatePredictor = true;
+            }
+            auto solveBoundaryPoint = [&](const DDSolution* candidate) {
+                SolvePointAttempt candidateAttempt =
+                    solvePoint(innerVoltage, candidate, false);
+                return enforceQfBounds(
+                    innerVoltage,
+                    candidate,
+                    false,
+                    0,
+                    std::move(candidateAttempt),
+                    points.size());
+            };
+            SolvePointAttempt attempt = solveBoundaryPoint(initial);
+            attempt.predictedInitialState = usedStatePredictor;
+            if (!attempt.ok && usedStatePredictor) {
+                runtimeLogInfo(
+                    "boundary_control: secant state predictor failed at inner_V=" +
+                    formatReal(innerVoltage) + "; retrying constant warm start");
+                attempt = solveBoundaryPoint(&evaluationState);
+                attempt.predictedInitialState = false;
+            }
+            ++evaluationIndex;
+            Real directedCurrent = std::numeric_limits<Real>::quiet_NaN();
+            Real evaluationResidual = std::numeric_limits<Real>::quiet_NaN();
+            std::string stateFile;
+            if (attempt.ok) {
+                const ContactCurrentResult current =
+                    contactCurrent.compute(attempt.solution, sweep.currentContact);
+                directedCurrent = currentDirection *
+                    currentPerInternalDepthToAPerUm(
+                        sweep.scaling, current.totalCurrent);
+                evaluationResidual = residual(innerVoltage, directedCurrent);
+                const std::filesystem::path checkpointDir(
+                    sweep.boundaryControl.checkpointDirectory);
+                const std::filesystem::path checkpointPath = checkpointDir /
+                    (controlMode + "_target_" + biasToken(targetValue) +
+                     "_eval_" + std::to_string(evaluationIndex) + ".csv");
+                writeDDSolutionStateCsv(
+                    checkpointPath, attempt.solution, sweep.scaling);
+                stateFile = checkpointPath.string();
+            }
+            if (boundaryEvaluationStream.is_open()) {
+                boundaryEvaluationStream
+                    << controlMode << ','
+                    << formatReal(targetValue) << ','
+                    << targetUnit << ','
+                    << formatReal(resistance_ohm_um) << ','
+                    << formatReal(currentDirection) << ','
+                    << evaluationIndex << ','
+                    << formatReal(innerVoltage) << ','
+                    << (std::isfinite(directedCurrent)
+                            ? formatReal(directedCurrent) : std::string()) << ','
+                    << (std::isfinite(evaluationResidual)
+                            ? formatReal(evaluationResidual) : std::string()) << ','
+                    << (controlMode == "external_resistor" ? "V" : "A_per_um") << ','
+                    << (attempt.ok ? "1" : "0") << ','
+                    << attempt.newtonIterations << ','
+                    << attempt.carrierRowViolations << ','
+                    << formatReal(attempt.carrierRowMaxRatio) << ','
+                    << (attempt.globalContinuityClosure.satisfied ? "1" : "0") << ','
+                    << boundaryCsvToken(stateFile) << ','
+                    << boundaryCsvToken(attempt.failureReason) << ','
+                    << "0\n";
+                boundaryEvaluationStream.flush();
+            }
+            if (!attempt.ok) {
+                const std::string reason = attempt.failureReason.empty()
+                    ? std::string("non_convergence") : attempt.failureReason;
+                throw std::runtime_error(
+                    "DCSweep: boundary-control device solve failed at inner voltage " +
+                    formatReal(innerVoltage) + " V: " + reason);
+            }
+            solved.directedCurrent_A_per_um = directedCurrent;
+            if (hasEvaluationState) {
+                previousEvaluationState = evaluationState;
+                previousEvaluationVoltage = evaluationStateVoltage;
+                hasPreviousEvaluationState = true;
+            }
+            evaluationState = attempt.solution;
+            evaluationStateVoltage = innerVoltage;
+            hasEvaluationState = true;
+            solved.attempt = std::move(attempt);
+            return evaluationResidual;
+        };
+        solved.root = detail::solveMonotoneBoundaryRoot(
+            seedVoltage, activeRootConfig, evaluate);
+        if (solved.root.evaluations >
+            sweep.boundaryControl.preferredMaxEvaluations) {
+            runtimeLogWarn(
+                "boundary_control: mode=" + controlMode +
+                " target=" + formatReal(targetValue) +
+                " evaluations=" + std::to_string(solved.root.evaluations) +
+                " exceeds preferred_max_evaluations=" +
+                std::to_string(sweep.boundaryControl.preferredMaxEvaluations));
+        }
+        return solved;
+    };
+
+    if (sweep.externalResistor.enabled) {
+        const std::vector<Real> outerTargets = explicitBoundaryVoltageTargets();
+        if (outerTargets.empty())
+            throw std::invalid_argument(
+                "DCSweep: external-circuit sweep requires at least one outer-voltage point.");
+        for (std::size_t i = 1; i < outerTargets.size(); ++i) {
+            if (outerTargets.at(i) < outerTargets.at(i - 1))
+                throw std::invalid_argument(
+                    "DCSweep: external-circuit outer-voltage points must be nondecreasing.");
+        }
+
+        detail::MonotoneBoundaryRootConfig rootConfig;
+        rootConfig.maxStep = sweep.externalResistor.maxInnerVoltageStep_V;
+        rootConfig.predictorMaxStepFactor =
+            sweep.boundaryControl.predictorMaxStepFactor;
+        rootConfig.residualTolerance = sweep.externalResistor.residualTolerance_V;
+        rootConfig.voltageTolerance = sweep.externalResistor.voltageTolerance_V;
+        rootConfig.maxBracketSteps = sweep.externalResistor.maxBracketSteps;
+        rootConfig.maxIterations = sweep.externalResistor.maxIterations;
+
+        Real seedVoltage = sweep.externalResistor.initialInnerVoltage_V;
+        const DDSolution* seedState = initialState.get();
+        Real previousInnerVoltage = seedVoltage;
+        std::vector<std::pair<Real, Real>> outerInnerHistory;
+        if (seedState != nullptr) {
+            const ContactCurrentResult current =
+                contactCurrent.compute(*seedState, sweep.currentContact);
+            const Real directedCurrent = sweep.externalResistor.currentDirection *
+                currentPerInternalDepthToAPerUm(
+                    sweep.scaling, current.totalCurrent);
+            outerInnerHistory.emplace_back(
+                detail::externalResistorOuterVoltage(
+                    seedVoltage,
+                    sweep.externalResistor.resistance_ohm_um,
+                    directedCurrent),
+                seedVoltage);
+        }
+        for (Real outerVoltage : outerTargets) {
+            detail::MonotoneBoundaryRootConfig pointRootConfig = rootConfig;
+            if (outerInnerHistory.size() >= 2) {
+                const auto& [outer0, inner0] =
+                    outerInnerHistory.at(outerInnerHistory.size() - 2);
+                const auto& [outer1, inner1] = outerInnerHistory.back();
+                if (outer1 != outer0) {
+                    pointRootConfig.predictedVoltage = inner1 +
+                        (outerVoltage - outer1) *
+                        (inner1 - inner0) / (outer1 - outer0);
+                }
+            }
+            ControlledBoundarySolve solved = solveControlledBoundary(
+                "external_resistor",
+                outerVoltage,
+                "V",
+                sweep.externalResistor.resistance_ohm_um,
+                seedVoltage,
+                seedState,
+                sweep.externalResistor.currentDirection,
+                pointRootConfig,
+                [&](Real innerVoltage, Real directedCurrent) {
+                    return detail::externalResistorLoadLineResidual(
+                        innerVoltage,
+                        outerVoltage,
+                        sweep.externalResistor.resistance_ohm_um,
+                        directedCurrent);
+                });
+
+            boundaryObservation = {};
+            boundaryObservation.mode = "external_resistor";
+            boundaryObservation.innerVoltage_V = solved.root.voltage;
+            boundaryObservation.outerVoltage_V = outerVoltage;
+            boundaryObservation.seriesResistance_ohm_um =
+                sweep.externalResistor.resistance_ohm_um;
+            boundaryObservation.loadLineResidual_V = solved.root.residual;
+            boundaryObservation.evaluations = solved.root.evaluations;
+            recordPoint(
+                solved.root.voltage,
+                solved.attempt,
+                true,
+                solved.root.voltage - previousInnerVoltage,
+                solved.root.voltage - previousInnerVoltage,
+                0);
+
+            previousSolution = std::move(solved.attempt.solution);
+            seedState = &previousSolution;
+            previousInnerVoltage = solved.root.voltage;
+            seedVoltage = solved.root.voltage;
+            outerInnerHistory.emplace_back(outerVoltage, solved.root.voltage);
+            currentSolutionBias = solved.root.voltage;
+            hasCurrentSolutionBias = true;
+        }
+        return finishResult();
+    }
+
+    if (sweep.voltageToCurrent.enabled) {
+        const std::vector<Real> voltageTargets = explicitBoundaryVoltageTargets();
+        if (voltageTargets.empty() ||
+            std::abs(voltageTargets.back() - sweep.voltageToCurrent.switchVoltage_V) > 1.0e-10) {
+            throw std::invalid_argument(
+                "DCSweep: voltage_to_current requires the final voltage point to equal switch_voltage_V.");
+        }
+
+        const DDSolution* seedState = initialState.get();
+        Real seedVoltage = voltageTargets.front();
+        Real directedCurrent = 0.0;
+        std::vector<std::pair<Real, Real>> currentVoltageHistory;
+        for (std::size_t i = 0; i < voltageTargets.size(); ++i) {
+            const Real voltage = voltageTargets.at(i);
+            SolvePointAttempt attempt = solvePoint(voltage, seedState, false);
+            attempt = enforceQfBounds(
+                voltage, seedState, false, 0, std::move(attempt), points.size());
+            if (!attempt.ok)
+                throw std::runtime_error(
+                    "DCSweep: voltage-to-current voltage phase failed at " +
+                    formatReal(voltage) + " V: " + attempt.failureReason);
+            const ContactCurrentResult current =
+                contactCurrent.compute(attempt.solution, sweep.currentContact);
+            directedCurrent = sweep.voltageToCurrent.currentDirection *
+                currentPerInternalDepthToAPerUm(sweep.scaling, current.totalCurrent);
+            currentVoltageHistory.emplace_back(directedCurrent, voltage);
+            boundaryObservation = {};
+            boundaryObservation.mode = "voltage";
+            boundaryObservation.innerVoltage_V = voltage;
+            boundaryObservation.outerVoltage_V = voltage;
+            boundaryObservation.evaluations = 1;
+            recordPoint(
+                voltage,
+                attempt,
+                true,
+                i == 0 ? 0.0 : voltage - voltageTargets.at(i - 1),
+                i == 0 ? 0.0 : voltage - voltageTargets.at(i - 1),
+                0);
+            if (seedState != nullptr && !sameBoundaryValue(seedVoltage, voltage))
+                acceptPredictorHistory(*seedState, seedVoltage, voltage);
+            previousSolution = std::move(attempt.solution);
+            seedState = &previousSolution;
+            seedVoltage = voltage;
+            currentSolutionBias = voltage;
+            hasCurrentSolutionBias = true;
+        }
+
+        detail::MonotoneBoundaryRootConfig rootConfig;
+        rootConfig.maxStep = sweep.voltageToCurrent.maxInnerVoltageStep_V;
+        rootConfig.predictorMaxStepFactor =
+            sweep.boundaryControl.predictorMaxStepFactor;
+        rootConfig.residualTolerance = sweep.voltageToCurrent.currentTolerance_A_per_um;
+        rootConfig.voltageTolerance = sweep.voltageToCurrent.voltageTolerance_V;
+        rootConfig.maxBracketSteps = sweep.voltageToCurrent.maxBracketSteps;
+        rootConfig.maxIterations = sweep.voltageToCurrent.maxIterations;
+        Real previousTarget = directedCurrent;
+        for (Real targetCurrent : sweep.voltageToCurrent.currentPoints_A_per_um) {
+            if (targetCurrent + sweep.voltageToCurrent.currentTolerance_A_per_um < previousTarget)
+                throw std::invalid_argument(
+                    "DCSweep: voltage-to-current targets must not decrease below the active branch current.");
+            detail::MonotoneBoundaryRootConfig pointRootConfig = rootConfig;
+            if (currentVoltageHistory.size() >= 2) {
+                const auto& [current0, voltage0] =
+                    currentVoltageHistory.at(currentVoltageHistory.size() - 2);
+                const auto& [current1, voltage1] = currentVoltageHistory.back();
+                if (current1 != current0) {
+                    pointRootConfig.predictedVoltage = voltage1 +
+                        (targetCurrent - current1) *
+                        (voltage1 - voltage0) / (current1 - current0);
+                }
+            }
+            ControlledBoundarySolve solved = solveControlledBoundary(
+                "current",
+                targetCurrent,
+                "A_per_um",
+                0.0,
+                seedVoltage,
+                seedState,
+                sweep.voltageToCurrent.currentDirection,
+                pointRootConfig,
+                [&](Real, Real current) { return current - targetCurrent; });
+
+            boundaryObservation = {};
+            boundaryObservation.mode = "current";
+            boundaryObservation.innerVoltage_V = solved.root.voltage;
+            boundaryObservation.outerVoltage_V = solved.root.voltage;
+            boundaryObservation.targetCurrent_A_per_um = targetCurrent;
+            boundaryObservation.currentResidual_A_per_um = solved.root.residual;
+            boundaryObservation.evaluations = solved.root.evaluations;
+            recordPoint(
+                solved.root.voltage,
+                solved.attempt,
+                true,
+                solved.root.voltage - seedVoltage,
+                solved.root.voltage - seedVoltage,
+                0);
+            if (seedState != nullptr &&
+                !sameBoundaryValue(seedVoltage, solved.root.voltage)) {
+                acceptPredictorHistory(
+                    *seedState, seedVoltage, solved.root.voltage);
+            }
+            previousSolution = std::move(solved.attempt.solution);
+            seedState = &previousSolution;
+            seedVoltage = solved.root.voltage;
+            currentVoltageHistory.emplace_back(targetCurrent, solved.root.voltage);
+            currentSolutionBias = solved.root.voltage;
+            hasCurrentSolutionBias = true;
+            previousTarget = targetCurrent;
+        }
+        return finishResult();
     }
 
     if (!sweep.biasPoints.empty()) {

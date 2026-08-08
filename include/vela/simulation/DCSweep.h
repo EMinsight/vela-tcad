@@ -199,6 +199,38 @@ struct SweepInitializationConfig {
     std::string writeStateFile;
 };
 
+struct ExternalResistorControlConfig {
+    bool enabled = false;
+    Real resistance_ohm_um = 0.0;
+    Real currentDirection = 1.0;
+    Real initialInnerVoltage_V = 0.0;
+    Real residualTolerance_V = 1.0e-6;
+    Real voltageTolerance_V = 1.0e-8;
+    Real maxInnerVoltageStep_V = 0.1;
+    int maxBracketSteps = 200;
+    int maxIterations = 40;
+};
+
+struct VoltageToCurrentControlConfig {
+    bool enabled = false;
+    Real switchVoltage_V = 0.0;
+    Real currentDirection = 1.0;
+    std::vector<Real> currentPoints_A_per_um;
+    Real currentTolerance_A_per_um = 1.0e-10;
+    Real voltageTolerance_V = 1.0e-8;
+    Real maxInnerVoltageStep_V = 0.05;
+    int maxBracketSteps = 200;
+    int maxIterations = 40;
+};
+
+struct BoundaryControlPersistenceConfig {
+    std::string evaluationCsv;
+    std::string checkpointDirectory;
+    bool resume = false;
+    Real predictorMaxStepFactor = 4.0;
+    int preferredMaxEvaluations = 3;
+};
+
 struct DCSweepConfig {
     CurveSweepMode mode = CurveSweepMode::IV;
     std::string contact;
@@ -220,6 +252,9 @@ struct DCSweepConfig {
     std::string initialStateFile;
     std::string writeStateFile;
     SweepInitializationConfig initialization;
+    ExternalResistorControlConfig externalResistor;
+    VoltageToCurrentControlConfig voltageToCurrent;
+    BoundaryControlPersistenceConfig boundaryControl;
     std::string writeStateEveryPointPrefix;
     std::string chargeContact;
     std::vector<std::string> chargeRegions;
@@ -238,6 +273,14 @@ struct DCSweepConfig {
 struct DCSweepPoint {
     Real voltage = 0.0;
     Real bias = 0.0;
+    Real innerVoltage_V = 0.0;
+    Real outerVoltage_V = 0.0;
+    Real seriesResistance_ohm_um = 0.0;
+    Real loadLineResidual_V = 0.0;
+    Real targetCurrent_A_per_um = 0.0;
+    Real currentBoundaryResidual_A_per_um = 0.0;
+    int boundaryControlEvaluations = 0;
+    std::string boundaryControlMode;
     Real electronCurrent = 0.0;
     Real electronDriftCurrent = 0.0;
     Real electronDiffusionCurrent = 0.0;

@@ -172,6 +172,34 @@
           },
           "type": "object"
         },
+        "external_circuit": {
+          "additionalProperties": false,
+          "properties": {
+            "current_direction": {"enum": [-1.0, 1.0]},
+            "enabled": {"type": "boolean"},
+            "initial_inner_voltage_V": {"type": "number"},
+            "max_bracket_steps": {"minimum": 1, "type": "integer"},
+            "max_inner_voltage_step_V": {"exclusiveMinimum": 0.0, "type": "number"},
+            "max_iterations": {"minimum": 1, "type": "integer"},
+            "mode": {"const": "series_resistor"},
+            "residual_tolerance_V": {"exclusiveMinimum": 0.0, "type": "number"},
+            "resistance_ohm_um": {"exclusiveMinimum": 0.0, "type": "number"},
+            "voltage_tolerance_V": {"exclusiveMinimum": 0.0, "type": "number"}
+          },
+          "required": ["mode", "resistance_ohm_um"],
+          "type": "object"
+        },
+        "boundary_control": {
+          "additionalProperties": false,
+          "properties": {
+            "checkpoint_directory": {"minLength": 1, "type": "string"},
+            "evaluation_csv": {"minLength": 1, "type": "string"},
+            "predictor_max_step_factor": {"minimum": 1.0, "type": "number"},
+            "preferred_max_evaluations": {"minimum": 1, "type": "integer"},
+            "resume": {"type": "boolean"}
+          },
+          "type": "object"
+        },
         "growth_factor": {
           "exclusiveMinimum": 1.0,
           "type": "number"
@@ -210,6 +238,26 @@
         },
         "stop": {
           "type": "number"
+        },
+        "voltage_to_current": {
+          "additionalProperties": false,
+          "properties": {
+            "current_direction": {"enum": [-1.0, 1.0]},
+            "current_points_A_per_um": {
+              "items": {"minimum": 0.0, "type": "number"},
+              "minItems": 1,
+              "type": "array"
+            },
+            "current_tolerance_A_per_um": {"exclusiveMinimum": 0.0, "type": "number"},
+            "enabled": {"type": "boolean"},
+            "max_bracket_steps": {"minimum": 1, "type": "integer"},
+            "max_inner_voltage_step_V": {"exclusiveMinimum": 0.0, "type": "number"},
+            "max_iterations": {"minimum": 1, "type": "integer"},
+            "switch_voltage_V": {"type": "number"},
+            "voltage_tolerance_V": {"exclusiveMinimum": 0.0, "type": "number"}
+          },
+          "required": ["switch_voltage_V", "current_points_A_per_um"],
+          "type": "object"
         },
         "write_state_every_point_prefix": {
           "minLength": 1,

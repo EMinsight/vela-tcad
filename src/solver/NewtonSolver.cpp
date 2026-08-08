@@ -4620,15 +4620,21 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
             result.finalCarrierRowConvergence = stalledRowEval;
             result.finalGlobalContinuityClosure = stalledGlobalEval;
             result.solution = makeSolution(assembler, acceptedX, acceptedIters);
+            const std::string rejectedFailureReason =
+                (stalledGlobalEval.enforced && !stalledGlobalEval.satisfied)
+                    ? std::string("global_continuity_closure_line_search_rejected")
+                    : (stalledRowEval.enforced && !stalledRowEval.satisfied)
+                    ? std::string("carrier_row_convergence_line_search_rejected")
+                    : (ls.failureReason.empty()
+                        ? std::string("line_search_rejected")
+                        : ls.failureReason);
             result.failureDiagnostics = buildFailureDiagnostics(
                 mesh_,
                 doping_,
                 assembler,
                 acceptedX,
                 acceptedR,
-                (stalledRowEval.enforced && !stalledRowEval.satisfied)
-                    ? std::string("carrier_row_convergence_line_search_rejected")
-                    : (ls.failureReason.empty() ? std::string("line_search_rejected") : ls.failureReason),
+                rejectedFailureReason,
                 iter,
                 result.finalResidualNorm,
                 stepNorm,

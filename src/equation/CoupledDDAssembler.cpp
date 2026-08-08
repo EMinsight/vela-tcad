@@ -863,7 +863,10 @@ CoupledDDAssembler::carrierContinuityTermDiagnosticsImpl(
             p,
             ni_,
             Vt_,
-            fieldFactor)
+            fieldFactor,
+            carrierStatistics_,
+            Nc_,
+            Nv_)
         : detail::SgAvalancheSourceComponentIntegrals{};
 
     std::vector<bool> hasElectronContribution(static_cast<std::size_t>(N), false);

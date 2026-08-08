@@ -109,6 +109,7 @@ add_library(vela_core STATIC
     src/simulation/PoissonSimulation.cpp
     src/simulation/ConfigParsing.cpp
     src/simulation/CurveSweep.cpp
+    src/simulation/BoundaryControl.cpp
     src/simulation/DCSweep.cpp
 )
 

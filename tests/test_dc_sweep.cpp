@@ -4,6 +4,7 @@
 
 #include "vela/io/DDSolutionCsv.h"
 #include "vela/simulation/DCSweep.h"
+#include "vela/simulation/BoundaryControl.h"
 #include "vela/simulation/DCSweepPredictor.h"
 #include "vela/simulation/QfBoundsGuard.h"
 #include "vela/simulation/DCSweepStepControl.h"
@@ -25,6 +26,74 @@
 #include <vector>
 
 using namespace vela;
+
+TEST_CASE("Boundary control closes the Sentaurus external-resistor equation",
+          "[dc_sweep][external_circuit]")
+{
+    constexpr Real resistance = 1.0e7;
+    constexpr Real inner = 6.379791636301563;
+    constexpr Real current = 1.0e-4;
+    const Real outer = detail::externalResistorOuterVoltage(inner, resistance, current);
+    REQUIRE(outer == Catch::Approx(1006.3797916363016));
+    REQUIRE(detail::externalResistorLoadLineResidual(
+                inner, outer, resistance, current) == Catch::Approx(0.0).margin(1.0e-12));
+}
+
+TEST_CASE("Boundary control brackets and solves a monotone scalar device equation",
+          "[dc_sweep][external_circuit][current_boundary]")
+{
+    detail::MonotoneBoundaryRootConfig config;
+    config.maxStep = 0.25;
+    config.residualTolerance = 1.0e-12;
+    config.voltageTolerance = 1.0e-12;
+    const auto result = detail::solveMonotoneBoundaryRoot(
+        0.0, config, [](Real voltage) { return 2.0 * voltage - 3.0; });
+    REQUIRE(result.converged);
+    REQUIRE(result.voltage == Catch::Approx(1.5).margin(1.0e-10));
+    REQUIRE(std::abs(result.residual) <= config.residualTolerance);
+    REQUIRE(result.evaluations >= 2);
+}
+
+TEST_CASE("Boundary control reuses a seed residual and secant-predicts the root",
+          "[dc_sweep][external_circuit][predictor]")
+{
+    detail::MonotoneBoundaryRootConfig config;
+    config.maxStep = 0.25;
+    config.predictorMaxStepFactor = 8.0;
+    config.initialResidual = -3.0;
+    config.residualTolerance = 1.0e-12;
+    config.voltageTolerance = 1.0e-12;
+    const auto result = detail::solveMonotoneBoundaryRoot(
+        0.0, config, [](Real voltage) { return 2.0 * voltage - 3.0; });
+    REQUIRE(result.converged);
+    REQUIRE(result.voltage == Catch::Approx(1.5).margin(1.0e-12));
+    REQUIRE(result.evaluations <= 2);
+}
+
+TEST_CASE("Boundary control resumes a persisted sign-changing bracket with one correction",
+          "[dc_sweep][external_circuit][predictor][resume]")
+{
+    constexpr Real negativeVoltage = 6.0488388037700798;
+    constexpr Real negativeResidual = -0.60809078472732381;
+    constexpr Real positiveVoltage = 6.0544984871739977;
+    constexpr Real positiveResidual = 4.0118230523822263;
+    const Real predicted = negativeVoltage - negativeResidual *
+        (positiveVoltage - negativeVoltage) /
+        (positiveResidual - negativeResidual);
+
+    detail::MonotoneBoundaryRootConfig config;
+    config.initialBracket = detail::MonotoneBoundaryRootBracket{
+        negativeVoltage, negativeResidual, positiveVoltage, positiveResidual};
+    config.residualTolerance = 1.0e-12;
+    config.voltageTolerance = 1.0e-12;
+    const auto result = detail::solveMonotoneBoundaryRoot(
+        negativeVoltage,
+        config,
+        [&](Real voltage) { return voltage - predicted; });
+    REQUIRE(result.converged);
+    REQUIRE(result.voltage == Catch::Approx(predicted).margin(1.0e-12));
+    REQUIRE(result.evaluations == 1);
+}
 
 namespace {
 
@@ -344,6 +413,258 @@ Real csvReal(const std::vector<std::string>& row, std::size_t column)
 {
     REQUIRE(column < row.size());
     return std::stod(row.at(column));
+}
+
+TEST_CASE("DCSweep: external resistor records a closed inner/outer load line",
+          "[dc_sweep][external_circuit][integration]")
+{
+    const auto dir = makeUniqueSweepDir();
+    const ScopedDirectoryCleanup cleanup{dir};
+    std::filesystem::create_directories(dir);
+    const auto meshPath = writePNMeshMicrometers(dir);
+    const auto csvPath = dir / "external_resistor.csv";
+    const auto evaluationsPath = dir / "boundary_evaluations.csv";
+    const auto checkpointPath = dir / "boundary_checkpoints";
+    const auto cfgPath = writeUnitScalingSweepConfig(dir, meshPath, csvPath, {
+        {"start", 0.0},
+        {"stop", 0.25},
+        {"step", 0.25},
+        {"bias_points", {0.0, 0.25}},
+        {"write_vtk", false},
+        {"boundary_control", {
+            {"evaluation_csv", evaluationsPath.string()},
+            {"checkpoint_directory", checkpointPath.string()},
+            {"resume", true},
+            {"predictor_max_step_factor", 4.0},
+            {"preferred_max_evaluations", 3}
+        }},
+        {"external_circuit", {
+            {"mode", "series_resistor"},
+            {"resistance_ohm_um", 1.0e3},
+            {"initial_inner_voltage_V", 0.0},
+            {"max_inner_voltage_step_V", 0.05},
+            {"residual_tolerance_V", 1.0e-7}
+        }}
+    });
+
+    DCSweep sweep;
+    const DCSweepResult result = sweep.runWithResult(cfgPath.string());
+    REQUIRE(result.points.size() == 2);
+    for (const DCSweepPoint& point : result.points) {
+        REQUIRE(point.converged);
+        REQUIRE(point.boundaryControlMode == "external_resistor");
+        REQUIRE(std::abs(point.loadLineResidual_V) <= 1.0e-7);
+        REQUIRE(point.boundaryControlEvaluations >= 1);
+    }
+
+    const auto rows = readCsvRows(csvPath);
+    const auto& header = rows.front();
+    const std::size_t innerCol = csvColumnIndex(header, "inner_voltage_V");
+    const std::size_t outerCol = csvColumnIndex(header, "outer_voltage_V");
+    const std::size_t currentCol = csvColumnIndex(header, "current_total_A_per_um");
+    const std::size_t residualCol = csvColumnIndex(header, "load_line_residual_V");
+    for (std::size_t rowIndex = 1; rowIndex < rows.size(); ++rowIndex) {
+        const auto& row = rows.at(rowIndex);
+        const Real residual = detail::externalResistorLoadLineResidual(
+            csvReal(row, innerCol),
+            csvReal(row, outerCol),
+            1.0e3,
+            csvReal(row, currentCol));
+        REQUIRE(residual == Catch::Approx(csvReal(row, residualCol)).margin(2.0e-10));
+        REQUIRE(std::abs(residual) <= 1.0e-7);
+    }
+
+    const auto evaluationRows = readCsvRows(evaluationsPath);
+    REQUIRE(evaluationRows.size() > 1);
+    const std::size_t convergedCol =
+        csvColumnIndex(evaluationRows.front(), "device_converged");
+    const std::size_t stateCol =
+        csvColumnIndex(evaluationRows.front(), "state_file");
+    bool foundCheckpoint = false;
+    for (std::size_t rowIndex = 1; rowIndex < evaluationRows.size(); ++rowIndex) {
+        const auto& row = evaluationRows.at(rowIndex);
+        if (row.at(convergedCol) == "1" && !row.at(stateCol).empty()) {
+            REQUIRE(std::filesystem::exists(row.at(stateCol)));
+            foundCheckpoint = true;
+        }
+    }
+    REQUIRE(foundCheckpoint);
+
+    const DCSweepResult fullyResumed = sweep.runWithResult(cfgPath.string());
+    REQUIRE(fullyResumed.points.size() == 2);
+    for (const DCSweepPoint& point : fullyResumed.points)
+        REQUIRE(point.boundaryControlEvaluations == 0);
+    const auto resumedRows = readCsvRows(evaluationsPath);
+    const std::size_t resumedCol =
+        csvColumnIndex(resumedRows.front(), "resumed");
+    REQUIRE(std::any_of(
+        resumedRows.begin() + 1,
+        resumedRows.end(),
+        [&](const auto& row) { return row.at(resumedCol) == "1"; }));
+}
+
+TEST_CASE("DCSweep: external resistor restores an interrupted persisted bracket",
+          "[dc_sweep][external_circuit][integration][resume]")
+{
+    const auto dir = makeUniqueSweepDir();
+    const ScopedDirectoryCleanup cleanup{dir};
+    std::filesystem::create_directories(dir);
+    const auto meshPath = writePNMeshMicrometers(dir);
+    const auto csvPath = dir / "interrupted_sweep.csv";
+    const auto evaluationsPath = dir / "interrupted_evaluations.csv";
+    const auto checkpointPath = dir / "interrupted_checkpoints";
+    const auto cfgPath = writeUnitScalingSweepConfig(dir, meshPath, csvPath, {
+        {"start", 0.25},
+        {"stop", 0.25},
+        {"step", 0.25},
+        {"bias_points", {0.25}},
+        {"write_vtk", false},
+        {"boundary_control", {
+            {"evaluation_csv", evaluationsPath.string()},
+            {"checkpoint_directory", checkpointPath.string()},
+            {"resume", true},
+            {"predictor_max_step_factor", 4.0},
+            {"preferred_max_evaluations", 3}
+        }},
+        {"external_circuit", {
+            {"mode", "series_resistor"},
+            {"resistance_ohm_um", 1.0e3},
+            {"initial_inner_voltage_V", 0.0},
+            {"max_inner_voltage_step_V", 0.05},
+            {"residual_tolerance_V", 1.0e-30},
+            {"max_iterations", 1}
+        }}
+    });
+
+    DCSweep sweep;
+    REQUIRE_THROWS(sweep.runWithResult(cfgPath.string()));
+    const auto interruptedRows = readCsvRows(evaluationsPath);
+    const std::size_t targetCol =
+        csvColumnIndex(interruptedRows.front(), "target_value");
+    const std::size_t residualCol =
+        csvColumnIndex(interruptedRows.front(), "residual");
+    bool hasNegative = false;
+    bool hasPositive = false;
+    for (std::size_t rowIndex = 1; rowIndex < interruptedRows.size(); ++rowIndex) {
+        const auto& row = interruptedRows.at(rowIndex);
+        if (std::abs(csvReal(row, targetCol) - 0.25) > 1.0e-12)
+            continue;
+        const Real residual = csvReal(row, residualCol);
+        hasNegative = hasNegative || residual < 0.0;
+        hasPositive = hasPositive || residual > 0.0;
+    }
+    REQUIRE(hasNegative);
+    REQUIRE(hasPositive);
+
+    std::size_t closestRow = 0;
+    Real closestResidual = std::numeric_limits<Real>::infinity();
+    for (std::size_t rowIndex = 1; rowIndex < interruptedRows.size(); ++rowIndex) {
+        const auto& row = interruptedRows.at(rowIndex);
+        if (std::abs(csvReal(row, targetCol) - 0.25) > 1.0e-12)
+            continue;
+        const Real magnitude = std::abs(csvReal(row, residualCol));
+        if (magnitude < closestResidual) {
+            closestResidual = magnitude;
+            closestRow = rowIndex;
+        }
+    }
+    REQUIRE(closestRow > 0);
+    {
+        std::ofstream output(evaluationsPath, std::ios::trunc);
+        for (std::size_t rowIndex = 0; rowIndex < interruptedRows.size(); ++rowIndex) {
+            if (rowIndex == closestRow)
+                continue;
+            const auto& row = interruptedRows.at(rowIndex);
+            for (std::size_t column = 0; column < row.size(); ++column) {
+                if (column > 0)
+                    output << ',';
+                output << row.at(column);
+            }
+            output << '\n';
+        }
+    }
+
+    nlohmann::json config;
+    {
+        std::ifstream input(cfgPath);
+        input >> config;
+    }
+    config["sweep"]["external_circuit"]["residual_tolerance_V"] = 1.0e-7;
+    config["sweep"]["external_circuit"]["max_iterations"] = 40;
+    {
+        std::ofstream output(cfgPath, std::ios::trunc);
+        output << config.dump(2) << '\n';
+    }
+
+    const DCSweepResult bracketResumed = sweep.runWithResult(cfgPath.string());
+    REQUIRE(bracketResumed.points.size() == 1);
+    REQUIRE(bracketResumed.points.front().boundaryControlEvaluations >= 1);
+    REQUIRE(bracketResumed.points.front().boundaryControlEvaluations <= 2);
+    REQUIRE(std::abs(bracketResumed.points.front().loadLineResidual_V) <= 1.0e-7);
+
+    const DCSweepResult fullyResumed = sweep.runWithResult(cfgPath.string());
+    REQUIRE(fullyResumed.points.size() == 1);
+    REQUIRE(fullyResumed.points.front().boundaryControlEvaluations == 0);
+}
+
+TEST_CASE("DCSweep: voltage-to-current switches to a closed current boundary",
+          "[dc_sweep][current_boundary][integration]")
+{
+    const auto dir = makeUniqueSweepDir();
+    const ScopedDirectoryCleanup cleanup{dir};
+    std::filesystem::create_directories(dir);
+    const auto meshPath = writePNMeshMicrometers(dir);
+
+    const auto probeCsv = dir / "probe.csv";
+    const auto probeCfg = writeUnitScalingSweepConfig(dir, meshPath, probeCsv, {
+        {"start", 0.0}, {"stop", 0.2}, {"step", 0.1}, {"write_vtk", false}
+    });
+    DCSweep sweep;
+    const DCSweepResult probe = sweep.runWithResult(probeCfg.string());
+    REQUIRE(probe.points.size() == 3);
+    const auto probeRows = readCsvRows(probeCsv);
+    const std::size_t currentCol =
+        csvColumnIndex(probeRows.front(), "current_total_A_per_um");
+    const Real signedTarget1 = csvReal(probeRows.at(2), currentCol);
+    const Real signedTarget2 = csvReal(probeRows.at(3), currentCol);
+    const Real target1 = std::abs(signedTarget1);
+    const Real target2 = std::abs(signedTarget2);
+    REQUIRE(target1 > 0.0);
+    REQUIRE(target2 > target1);
+
+    const auto controlledCsv = dir / "voltage_to_current.csv";
+    const auto controlledCfg = writeUnitScalingSweepConfig(
+        dir, meshPath, controlledCsv, {
+            {"start", 0.0},
+            {"stop", 0.0},
+            {"step", 0.1},
+            {"bias_points", {0.0}},
+            {"write_vtk", false},
+            {"continuation", {
+                {"predictor", {
+                    {"mode", "secant"},
+                    {"fields", {"psi", "phin", "phip"}},
+                    {"max_extrapolation_ratio", 4.0}
+                }}
+            }},
+            {"voltage_to_current", {
+                {"switch_voltage_V", 0.0},
+                {"current_direction", signedTarget2 >= 0.0 ? 1.0 : -1.0},
+                {"current_points_A_per_um", {target1, target2}},
+                {"max_inner_voltage_step_V", 0.025},
+                {"current_tolerance_A_per_um", std::max(1.0e-18, target2 * 1.0e-6)}
+            }}
+        });
+    const DCSweepResult controlled = sweep.runWithResult(controlledCfg.string());
+    REQUIRE(controlled.points.size() == 3);
+    const DCSweepPoint& currentPoint = controlled.points.back();
+    REQUIRE(currentPoint.converged);
+    REQUIRE(currentPoint.predictedInitialState);
+    REQUIRE(currentPoint.boundaryControlMode == "current");
+    REQUIRE(currentPoint.targetCurrent_A_per_um == Catch::Approx(target2));
+    REQUIRE(std::abs(currentPoint.currentBoundaryResidual_A_per_um) <=
+            std::max(1.0e-18, target2 * 1.0e-6));
+    REQUIRE(currentPoint.innerVoltage_V == Catch::Approx(0.2).margin(2.0e-3));
 }
 
 bool hasExtraField(const DCSweepPoint& point, const std::string& name, Real* outValue = nullptr)
