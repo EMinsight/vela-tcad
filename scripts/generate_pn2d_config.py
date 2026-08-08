@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render validated, reproducible PN2D IV/BV simulation configurations."""
+"""Render validated, reproducible PN2D and BVmethods configurations."""
 
 from __future__ import annotations
 
@@ -15,6 +15,12 @@ from typing import Any
 REPO = Path(__file__).resolve().parents[1]
 TEMPLATE_DIR = REPO / "configs" / "templates"
 TEMPLATES = {
+    "bvmethods_nmos_external_resistor": (
+        TEMPLATE_DIR / "bvmethods_nmos_external_resistor.template.json"
+    ),
+    "bvmethods_nmos_voltage_to_current": (
+        TEMPLATE_DIR / "bvmethods_nmos_voltage_to_current.template.json"
+    ),
     "pn2d_iv": TEMPLATE_DIR / "pn2d_iv.template.json",
     "pn2d_bv": TEMPLATE_DIR / "pn2d_bv.template.json",
 }
@@ -194,6 +200,49 @@ def validate_pn2d_config(config: dict[str, Any], template_name: str) -> None:
                 "pn2d_bv solver and mesh geometry must match one complete atomic "
                 "profile; half-migrated or omitted profile fields are forbidden"
             )
+    elif template_name in {
+        "bvmethods_nmos_external_resistor",
+        "bvmethods_nmos_voltage_to_current",
+    }:
+        if sweep.get("mode") != "bv_reverse":
+            raise TemplateError(f"{template_name} must use bv_reverse mode")
+        if impact.get("model") != "van_overstraeten":
+            raise TemplateError(f"{template_name} must enable van_overstraeten")
+        if impact.get("coupling_mode") != "self_consistent":
+            raise TemplateError(f"{template_name} must use self_consistent avalanche")
+        if mobility.get("model") != "masetti_field":
+            raise TemplateError(f"{template_name} must use masetti_field")
+        if template_name == "bvmethods_nmos_external_resistor":
+            circuit = sweep.get("external_circuit")
+            if not isinstance(circuit, dict) or circuit.get("mode") != "series_resistor":
+                raise TemplateError(
+                    "bvmethods_nmos_external_resistor requires a series_resistor circuit"
+                )
+            if "voltage_to_current" in sweep:
+                raise TemplateError(
+                    "external-resistor and voltage-to-current controls are mutually exclusive"
+                )
+            if float(circuit.get("resistance_ohm_um", 0.0)) <= 0.0:
+                raise TemplateError("external resistance must be positive")
+        else:
+            control = sweep.get("voltage_to_current")
+            if not isinstance(control, dict):
+                raise TemplateError(
+                    "bvmethods_nmos_voltage_to_current requires voltage_to_current"
+                )
+            if "external_circuit" in sweep:
+                raise TemplateError(
+                    "external-resistor and voltage-to-current controls are mutually exclusive"
+                )
+            if control.get("switch_voltage_V") != sweep.get("stop"):
+                raise TemplateError(
+                    "voltage-to-current switch voltage must equal the voltage sweep stop"
+                )
+            points = control.get("current_points_A_per_um")
+            if not isinstance(points, list) or not points:
+                raise TemplateError("voltage-to-current target list must not be empty")
+            if any(not isinstance(value, (int, float)) or value <= 0 for value in points):
+                raise TemplateError("voltage-to-current targets must be positive")
     else:
         raise TemplateError(f"unsupported PN2D template: {template_name}")
 

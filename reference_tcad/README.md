@@ -1,9 +1,10 @@
 # Reference TCAD CSV Fixtures
 
 `reference_tcad/` contains neutral, text-based reference exports used to
-cross-check Vela `unit_scaling` decks. The directory intentionally uses generic
-CSV formats and avoids proprietary binary formats or commercial-tool-specific
-names.
+cross-check Vela `unit_scaling` decks. Reusable reference cases may also retain
+text-only commercial-tool input decks when they are required to reproduce a
+published comparison. Proprietary binary outputs remain generated artifacts
+and are not checked in.
 
 These fixtures validate signs, trends, finite outputs, and rough orders of
 magnitude. They do not make calibration claims.
@@ -23,6 +24,8 @@ Each device directory can contain:
 - `reports/*.json` and `reports/*.md`: generated comparison reports
 - `<device>_reference.json`: metadata inventory for checked-in Vela/reference
   curve fixtures
+- `source/*.cmd` and `source/*.par`: optional text-only source decks used to
+  regenerate a commercial-tool reference
 
 Only the README files and validation notes are hand-written. Files under
 `reports/` are generated comparison outputs and should be regenerated through
@@ -95,5 +98,8 @@ ctest --test-dir build --output-on-failure -R sentaurus
 - `igbt2d`: IGBT-like engineering trend validation for low-current IV,
   high-injection IV, stored charge proxy CV, BV diagnostics, and
   impact-ionization smoke diagnostics.
+- `bvmethods_sentaurus2018`: Sentaurus Training NMOS BV method inputs covering
+  ABA, external resistor, voltage-to-current, continuation, and transient
+  approaches, plus the corresponding supported Vela template mapping.
 
 See `docs/validation/` for the hand-written validation summaries.

@@ -1,0 +1,137 @@
+{
+  "config": {
+    "contacts": [
+      { "bias": 0.0, "flatband_voltage": -0.55, "name": "gate", "type": "metal_gate" },
+      { "bias": 0.0, "name": "substrate", "type": "ohmic" },
+      { "bias": 0.0, "name": "drain", "type": "ohmic" },
+      { "bias": 0.0, "name": "source", "type": "ohmic" }
+    ],
+    "materials_file": "${materials_file}",
+    "mesh_file": "${mesh_file}",
+    "node_doping_file": "${node_doping_file}",
+    "output_csv": "${output_csv}",
+    "scaling": { "mode": "unit_scaling" },
+    "simulation_type": "dc_sweep",
+    "solver": {
+      "abstol": 5e-10,
+      "band_to_band": {
+        "A_cm_inv_s_inv_V_inv2": 3.4e21,
+        "B_V_per_cm": 22600000.0,
+        "jacobian": "frozen_field",
+        "jacobian_relative_step": 1e-7,
+        "model": "e2"
+      },
+      "bandgap_narrowing": { "fermi_statistics_correction": true, "model": "old_slotboom" },
+      "carrier_row_convergence": {
+        "diagnostic_csv": "${carrier_row_csv}",
+        "eps_row": 0.001,
+        "min_source_scale": 1e-14,
+        "mode": "report",
+        "recovery": { "mode": "off" },
+        "trace_csv": "${carrier_row_trace_csv}"
+      },
+      "carrier_statistics": "fermi_dirac",
+      "global_continuity_closure": { "mode": "enforce", "source_floor": 1e-14, "tolerance": 0.01 },
+      "impact_ionization": {
+        "coupling_mode": "self_consistent",
+        "current_approximation": "nodal_vector_current_reconstructed",
+        "current_magnitude_mode": "edge_scalar_abs",
+        "driving_force": "eparallel",
+        "generation": "current_density",
+        "model": "van_overstraeten",
+        "source_mapping_mode": "node_F_node_alpha_node_G",
+        "source_volume_policy": "genius_truncated"
+      },
+      "line_search": true,
+      "max_iter": 220,
+      "method": "newton",
+      "mobility": {
+        "high_field_driving_force": "quasi_fermi_gradient",
+        "high_field_gradient_discretization": "transport_cell_vector",
+        "jacobian_field_derivatives": true,
+        "model": "masetti_field"
+      },
+      "quasi_fermi_update_limit_V": 0.02,
+      "quasi_fermi_update_limit_minority_V": 0.02,
+      "recombination": ["srh"],
+      "reltol": 0.0,
+      "residual_scales": { "phin": 1.0, "phip": 1.0, "psi": 1138.7290351540657 },
+      "stall_residual_floor": 1e-5,
+      "verbose": "${solver_diagnostics}",
+      "warm_start": true
+    },
+    "sweep": {
+      "boundary_control": {
+        "checkpoint_directory": "${checkpoint_directory}",
+        "evaluation_csv": "${evaluation_csv}",
+        "predictor_max_step_factor": 3.0,
+        "preferred_max_evaluations": 3,
+        "resume": "${resume}"
+      },
+      "contact": "drain",
+      "continuation": {
+        "predictor": { "fields": ["psi", "phin", "phip"], "max_extrapolation_ratio": 4.0, "mode": "secant" }
+      },
+      "current_contact": "drain",
+      "diagnostics": {
+        "newton_history": {
+          "attempts_csv_file": "${newton_attempts_csv}",
+          "csv_file": "${newton_history_csv}",
+          "enabled": true,
+          "iterations_csv_file": "${newton_iterations_csv}"
+        }
+      },
+      "growth_factor": 1.35,
+      "initial_state_file": "${initial_state_file}",
+      "initial_step": 0.0125,
+      "max_retries": 29,
+      "max_step": 0.025,
+      "min_step": 1e-8,
+      "mode": "bv_reverse",
+      "shrink_factor": 0.5,
+      "start": "${voltage_start_V}",
+      "step": "${voltage_step_V}",
+      "stop": "${switch_voltage_V}",
+      "stop_on_failure": true,
+      "voltage_to_current": {
+        "current_direction": 1.0,
+        "current_points_A_per_um": [4e-5, 6e-5, "${target_current_A_per_um}"],
+        "current_tolerance_A_per_um": 1e-10,
+        "max_bracket_steps": 120,
+        "max_inner_voltage_step_V": "${max_inner_voltage_step_V}",
+        "max_iterations": 40,
+        "switch_voltage_V": "${switch_voltage_V}",
+        "voltage_tolerance_V": 1e-8
+      },
+      "write_state_every_point_prefix": "${state_every_point_prefix}",
+      "write_state_file": "${state_output}",
+      "write_vtk": false
+    }
+  },
+  "parameters": {
+    "carrier_row_csv": { "default": "bv_voltage_to_current_carrier_rows.csv", "path": true, "type": "string" },
+    "carrier_row_trace_csv": { "default": "bv_voltage_to_current_carrier_trace.csv", "path": true, "type": "string" },
+    "checkpoint_directory": { "default": "bv_voltage_to_current_checkpoints", "path": true, "type": "string" },
+    "evaluation_csv": { "default": "bv_voltage_to_current_evaluations.csv", "path": true, "type": "string" },
+    "initial_state_file": { "default": "inputs/bv_prebias_5p9V_state.csv", "path": true, "type": "string" },
+    "materials_file": { "default": "inputs/materials.json", "path": true, "type": "string" },
+    "max_inner_voltage_step_V": { "default": 0.0125, "type": "number" },
+    "mesh_file": { "default": "inputs/mesh.json", "path": true, "type": "string" },
+    "newton_attempts_csv": { "default": "bv_voltage_to_current_newton_attempts.csv", "path": true, "type": "string" },
+    "newton_history_csv": { "default": "bv_voltage_to_current_newton.csv", "path": true, "type": "string" },
+    "newton_iterations_csv": { "default": "bv_voltage_to_current_newton_iterations.csv", "path": true, "type": "string" },
+    "node_doping_file": { "default": "inputs/doping.csv", "path": true, "type": "string" },
+    "output_csv": { "default": "bv_voltage_to_current.csv", "path": true, "type": "string" },
+    "resume": { "default": true, "type": "boolean" },
+    "solver_diagnostics": { "default": false, "type": "boolean" },
+    "state_every_point_prefix": { "default": "bv_voltage_to_current_states/state", "path": true, "type": "string" },
+    "state_output": { "default": "bv_voltage_to_current_last_state.csv", "path": true, "type": "string" },
+    "switch_voltage_V": { "default": 6.0, "type": "number" },
+    "target_current_A_per_um": { "default": 0.0001, "type": "number" },
+    "voltage_start_V": { "default": 5.9, "type": "number" },
+    "voltage_step_V": { "default": 0.025, "type": "number" }
+  },
+  "template": "bvmethods_nmos_voltage_to_current",
+  "template_schema": "vela.simulation-template.v1",
+  "version": 1
+}

@@ -20,6 +20,42 @@ if str(REPO) not in sys.path:
 
 
 class ReferenceTcadToolsTest(unittest.TestCase):
+    def test_bvmethods_sentaurus_source_inventory_is_complete(self) -> None:
+        root = REPO / "reference_tcad" / "bvmethods_sentaurus2018"
+        inventory = json.loads(
+            (root / "bvmethods_sentaurus2018_reference.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(
+            [method["name"] for method in inventory["methods"]],
+            [
+                "aba_poisson",
+                "aba_coupled",
+                "external_resistor",
+                "voltage_to_current",
+                "continuation",
+                "transient",
+            ],
+        )
+        source = root / inventory["source_directory"]
+        self.assertTrue((source / inventory["mesh"]["cmd"]).is_file())
+        self.assertTrue((source / inventory["shared_parameter_file"]).is_file())
+        for method in inventory["methods"]:
+            self.assertTrue((source / method["cmd"]).is_file(), method["name"])
+
+        resistor = (source / "external_resistor_sdevice.cmd").read_text(
+            encoding="utf-8"
+        )
+        switched = (source / "voltage_to_current_sdevice.cmd").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("Resistor=1e7", resistor)
+        self.assertIn('Goal { Name="drain" Voltage=100000.0 }', resistor)
+        self.assertIn('Set("drain" mode current)', switched)
+        self.assertIn('Goal { Name="drain" Voltage=6.0 }', switched)
+        self.assertIn('Goal { Name="drain" Current=1.443e-3 }', switched)
+
     def test_m2_sentaurus_frozen_replay_maps_contact_support_and_classifies_state_feedback(self) -> None:
         module_path = REPO / "scripts" / "run_pn2d_bv_m2_sentaurus_frozen_sg_laux.py"
         spec = importlib.util.spec_from_file_location(

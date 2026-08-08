@@ -972,7 +972,7 @@ Initialization semantics:
 - `initialization.mode="poisson_block"` cannot be combined with
   `initial_state_file`; use one first-point initialization source or the other.
 
-### Versioned PN2D templates
+### Versioned simulation templates
 
 Qualified PN2D production starting points are stored separately for forward
 and reverse operation:
@@ -994,6 +994,25 @@ barycentric rollback. The generator rejects partially mixed profiles. This
 template policy does not change the global barycentric parser default or the
 PN2D IV template.
 
+The Sentaurus BVmethods NMOS boundary-control equivalents are stored as
+separate templates because their sweep voltage has different semantics from a
+plain voltage sweep:
+
+- `configs/templates/bvmethods_nmos_external_resistor.template.json`:
+  self-consistent avalanche with a `1e7 ohm*um` series-resistor load line.
+  `sweep.start/stop/step` are outer circuit voltages; `bias_V` remains the
+  solved device/inner voltage.
+- `configs/templates/bvmethods_nmos_voltage_to_current.template.json`:
+  voltage continuation through `6.0 V`, followed by drain-current targets up
+  to `1e-4 A/um`.
+
+Both BVmethods templates freeze the validated NMOS physics combination:
+Fermi-Dirac statistics, Old Slotboom with the Fermi correction, Masetti
+high-field mobility, SRH, E2 band-to-band generation, and self-consistent Van
+Overstraeten avalanche. They do not scale mobility or avalanche parameters.
+Their defaults assume a restart state at `5.9 V`; override
+`initial_state_file` when materializing a run directory.
+
 Render a runnable configuration and its separate reproducibility manifest with:
 
 ```text
@@ -1003,6 +1022,18 @@ python scripts/generate_pn2d_config.py \
   --set mesh_file="inputs/mesh.json" \
   --set node_doping_file="inputs/doping.csv" \
   --set materials_file="inputs/materials.json"
+```
+
+For example, render the external-resistor method with:
+
+```text
+python scripts/generate_pn2d_config.py \
+  --template bvmethods_nmos_external_resistor \
+  --output runs/bvmethods_external_resistor/simulation.json \
+  --set mesh_file="inputs/mesh.json" \
+  --set node_doping_file="inputs/doping.csv" \
+  --set materials_file="inputs/materials.json" \
+  --set initial_state_file="inputs/bv_prebias_5p9V_state.csv"
 ```
 
 `--set` accepts only declared template parameters and parses its value as JSON

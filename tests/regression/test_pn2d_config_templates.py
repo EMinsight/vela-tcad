@@ -19,6 +19,7 @@ if str(REPO / "scripts") not in sys.path:
 from generate_pn2d_config import (  # noqa: E402
     BV_AVALANCHE_CURRENT_SUPPORT_PROFILES,
     BV_CONFIGURATION_PROFILES,
+    TEMPLATES,
     TemplateError,
     render_named_template,
     validate_pn2d_config,
@@ -179,8 +180,57 @@ class Pn2dConfigTemplatesTest(unittest.TestCase):
         config, _ = render_named_template("pn2d_iv")
         self.assertNotIn("mesh_geometry", config)
 
+    def test_bvmethods_external_resistor_defaults_match_validated_method(self) -> None:
+        config, manifest = render_named_template(
+            "bvmethods_nmos_external_resistor"
+        )
+        sweep = config["sweep"]
+        circuit = sweep["external_circuit"]
+        self.assertEqual(sweep["mode"], "bv_reverse")
+        self.assertEqual((sweep["start"], sweep["stop"], sweep["step"]),
+                         (406.0, 1206.0, 200.0))
+        self.assertEqual(circuit["mode"], "series_resistor")
+        self.assertEqual(circuit["resistance_ohm_um"], 1.0e7)
+        self.assertEqual(circuit["current_direction"], 1.0)
+        self.assertEqual(circuit["initial_inner_voltage_V"], 5.9)
+        self.assertEqual(circuit["max_inner_voltage_step_V"], 0.025)
+        self.assertNotIn("voltage_to_current", sweep)
+        self.assertEqual(
+            config["solver"]["impact_ionization"]["coupling_mode"],
+            "self_consistent",
+        )
+        self.assertEqual(manifest["template_version"], 1)
+
+    def test_bvmethods_voltage_to_current_defaults_match_validated_method(self) -> None:
+        config, manifest = render_named_template(
+            "bvmethods_nmos_voltage_to_current"
+        )
+        sweep = config["sweep"]
+        control = sweep["voltage_to_current"]
+        self.assertEqual((sweep["start"], sweep["stop"], sweep["step"]),
+                         (5.9, 6.0, 0.025))
+        self.assertEqual(control["switch_voltage_V"], 6.0)
+        self.assertEqual(control["current_direction"], 1.0)
+        self.assertEqual(
+            control["current_points_A_per_um"], [4.0e-5, 6.0e-5, 1.0e-4]
+        )
+        self.assertEqual(control["max_inner_voltage_step_V"], 0.0125)
+        self.assertNotIn("external_circuit", sweep)
+        self.assertEqual(manifest["template_version"], 1)
+
+    def test_bvmethods_templates_reject_invalid_boundary_controls(self) -> None:
+        external, _ = render_named_template("bvmethods_nmos_external_resistor")
+        external["sweep"]["external_circuit"]["resistance_ohm_um"] = 0.0
+        with self.assertRaisesRegex(TemplateError, "resistance must be positive"):
+            validate_pn2d_config(external, "bvmethods_nmos_external_resistor")
+
+        switched, _ = render_named_template("bvmethods_nmos_voltage_to_current")
+        switched["sweep"]["voltage_to_current"]["switch_voltage_V"] = 5.95
+        with self.assertRaisesRegex(TemplateError, "must equal"):
+            validate_pn2d_config(switched, "bvmethods_nmos_voltage_to_current")
+
     def test_defaults_contain_no_absolute_paths_or_placeholders(self) -> None:
-        for template in ("pn2d_iv", "pn2d_bv"):
+        for template in TEMPLATES:
             config, _ = render_named_template(template)
             for value in all_strings(config):
                 self.assertNotIn("${", value)

@@ -1,0 +1,54 @@
+{
+  "case": "bvmethods_sentaurus2018",
+  "device": "nmos",
+  "sentaurus_version": "O-2018.06-SP2",
+  "source_directory": "source",
+  "mesh": {
+    "cmd": "bvmethods_nmos_sde.cmd",
+    "output": "bvmethods_nmos_msh.tdr"
+  },
+  "shared_parameter_file": "models.par",
+  "methods": [
+    {
+      "name": "aba_poisson",
+      "workbench_node": 3,
+      "cmd": "aba_poisson_sdevice.cmd",
+      "vela_template": null
+    },
+    {
+      "name": "aba_coupled",
+      "workbench_node": 4,
+      "cmd": "aba_coupled_sdevice.cmd",
+      "vela_template": null
+    },
+    {
+      "name": "external_resistor",
+      "workbench_node": 5,
+      "cmd": "external_resistor_sdevice.cmd",
+      "resistance_ohm_um": 10000000.0,
+      "reference_breakdown_voltage_V": 6.379791636301563,
+      "vela_template": "bvmethods_nmos_external_resistor"
+    },
+    {
+      "name": "voltage_to_current",
+      "workbench_node": 6,
+      "cmd": "voltage_to_current_sdevice.cmd",
+      "switch_voltage_V": 6.0,
+      "reference_breakdown_voltage_V": 6.38318420057198,
+      "vela_template": "bvmethods_nmos_voltage_to_current"
+    },
+    {
+      "name": "continuation",
+      "workbench_node": 7,
+      "cmd": "continuation_sdevice.cmd",
+      "vela_template": null
+    },
+    {
+      "name": "transient",
+      "workbench_node": 8,
+      "cmd": "transient_sdevice.cmd",
+      "resistance_ohm_um": 10000000.0,
+      "vela_template": null
+    }
+  ]
+}
