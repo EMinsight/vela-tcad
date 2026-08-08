@@ -1,0 +1,248 @@
+{
+  "schema_version": 1,
+  "candidate_commit": "943bd9a",
+  "baseline": "docs/validation/bv_performance_internal_stages_796c731_2026-08-09.json",
+  "build": {
+    "type": "Release",
+    "compiler": "MSYS2 UCRT64 GCC 16.1.0",
+    "profiling": "internal steady_clock stages; gprof disabled",
+    "threads": 1
+  },
+  "physics_config_sha256": "dc28b33f2a95e9664c8d93c7c54b3cb4cac22941175b43f8b36d955a25a2a7a2",
+  "raw_root": "build-bv-performance/candidate-943bd9a",
+  "optimization_ladder": [
+    {
+      "commit": "c496e61",
+      "change": "reuse cross-target state prediction",
+      "raw_root": "build-bv-performance/candidate-c496e61",
+      "external_resistor_1206": {
+        "wall_seconds": 1961.7678167,
+        "full_dd_evaluations": 7,
+        "newton_updates": 880,
+        "vela_bv_V": 6.39588786555674,
+        "load_line_residual_V": -6.48477e-5
+      }
+    },
+    {
+      "commit": "9ee4f9a",
+      "change": "add guarded curvature prediction",
+      "raw_root": "build-bv-performance/candidate-9ee4f9a",
+      "external_resistor_1206": {
+        "wall_seconds": 1472.7844467,
+        "full_dd_evaluations": 4,
+        "newton_updates": 662,
+        "vela_bv_V": 6.395887865540998,
+        "load_line_residual_V": 9.136147127719596e-8
+      }
+    },
+    {
+      "commit": "943bd9a",
+      "change": "reuse accepted continuity closure",
+      "raw_root": "build-bv-performance/candidate-943bd9a",
+      "external_resistor_1206": {
+        "wall_seconds": 1435.4056839,
+        "full_dd_evaluations": 4,
+        "newton_updates": 662,
+        "global_continuity_evaluation_calls": 667,
+        "baseline_global_continuity_evaluation_calls": 2735,
+        "vela_bv_V": 6.395887865540998,
+        "load_line_residual_V": 9.136147127719596e-8
+      }
+    }
+  ],
+  "scenarios": {
+    "high_field_transition": {
+      "profile_sha256": "6ffc02008ef8772da3db177b0144d68f64084bbe645c9545d6899cc8c2b28a1f",
+      "wall_seconds": 432.8627462,
+      "baseline_wall_seconds": 617.9281708,
+      "wall_change_fraction": -0.2994982762,
+      "result": {
+        "full_dd_evaluations": 1,
+        "newton_updates": 191,
+        "residual_calls": 205,
+        "jacobian_calls": 192,
+        "continuity_diagnostic_calls": 579,
+        "baseline_continuity_diagnostic_calls": 772,
+        "global_continuity_evaluation_calls": 193,
+        "baseline_global_continuity_evaluation_calls": 386,
+        "sparselu_analyze_calls": 184,
+        "sparselu_factorize_calls": 196,
+        "sparselu_solve_calls": 196,
+        "global_electron_continuity_ratio": 9.154308262299374e-10,
+        "global_hole_continuity_ratio": 1.0764422515567872e-9
+      },
+      "stage_seconds": {
+        "bv.process_probe": 19.4096738,
+        "dc.record_point": 0.0656599,
+        "dc.solve_point": 432.4210683,
+        "dc_sweep.total": 432.5876692,
+        "dd.active_branch_fingerprint": 20.3637331,
+        "dd.continuity_diagnostics": 30.8765591,
+        "dd.jacobian": 345.6525912,
+        "dd.residual": 11.2617972,
+        "linear.analyze": 1.8629006,
+        "linear.factorize": 21.5217416,
+        "linear.solve": 0.4258388,
+        "linear.total": 23.8131391,
+        "newton.carrier_row_evaluation": 10.227647,
+        "newton.global_continuity_evaluation": 10.4507545,
+        "newton.initial_residual": 0.0646503,
+        "newton.iteration": 431.9585052,
+        "newton.jacobian": 345.6534379,
+        "newton.line_search": 11.3000711,
+        "newton.row_weights": 0.006117,
+        "newton.update_constraints": 0.0373073
+      }
+    },
+    "voltage_to_current_final": {
+      "profile_sha256": "5396481fea0b120151751fe0abc64bd8a9ab84132a6655dac79192176de66545",
+      "wall_seconds": 607.0845992,
+      "baseline_wall_seconds": 872.124599,
+      "wall_change_fraction": -0.303904937,
+      "result": {
+        "full_dd_evaluations": 2,
+        "newton_updates": 279,
+        "residual_calls": 301,
+        "jacobian_calls": 280,
+        "continuity_diagnostic_calls": 567,
+        "baseline_continuity_diagnostic_calls": 851,
+        "global_continuity_evaluation_calls": 283,
+        "baseline_global_continuity_evaluation_calls": 567,
+        "sparselu_analyze_calls": 280,
+        "sparselu_factorize_calls": 280,
+        "sparselu_solve_calls": 280,
+        "vela_bv_V": 6.395904174606575,
+        "baseline_vela_bv_V": 6.395904174606575,
+        "boundary_residual_A_per_um": 6.169747113378421e-12,
+        "global_electron_continuity_ratio": 1.216559466401011e-9,
+        "global_hole_continuity_ratio": 1.3083069725092697e-9
+      },
+      "stage_seconds": {
+        "boundary.checkpoint_write": 0.0386805,
+        "boundary.controlled_target": 606.4323554,
+        "boundary.full_dd_evaluation": 606.3406304,
+        "boundary.root_total": 606.340655,
+        "bv.process_probe": 28.1442766,
+        "dc.record_point": 0.1872,
+        "dc.solve_point": 606.6138362,
+        "dc_sweep.total": 607.0425993,
+        "dd.active_branch_fingerprint": 29.5277227,
+        "dd.continuity_diagnostics": 29.6570524,
+        "dd.jacobian": 497.9888796,
+        "dd.residual": 15.8131987,
+        "linear.analyze": 2.9386777,
+        "linear.factorize": 29.7533256,
+        "linear.solve": 0.5982199,
+        "linear.total": 33.2942257,
+        "newton.carrier_row_evaluation": 14.9197525,
+        "newton.global_continuity_evaluation": 14.7660022,
+        "newton.initial_residual": 0.1757657,
+        "newton.iteration": 605.6576497,
+        "newton.jacobian": 497.9900251,
+        "newton.line_search": 15.7791052,
+        "newton.row_weights": 0.0093568,
+        "newton.update_constraints": 0.0043855
+      }
+    },
+    "external_resistor_1206": {
+      "profile_sha256": "437fc98174c81d874d5cc3fe9bc89a6a6715f9fe0f7b3a78ee5a81fb2785430e",
+      "wall_seconds": 1435.4056839,
+      "baseline_wall_seconds": 3149.4473352,
+      "wall_change_fraction": -0.5442382099,
+      "result": {
+        "full_dd_evaluations": 4,
+        "baseline_full_dd_evaluations": 7,
+        "newton_updates": 662,
+        "baseline_newton_updates": 1356,
+        "residual_calls": 689,
+        "baseline_residual_calls": 1392,
+        "jacobian_calls": 663,
+        "baseline_jacobian_calls": 1358,
+        "continuity_diagnostic_calls": 1337,
+        "baseline_continuity_diagnostic_calls": 4105,
+        "global_continuity_evaluation_calls": 667,
+        "baseline_global_continuity_evaluation_calls": 2735,
+        "sparselu_analyze_calls": 659,
+        "sparselu_factorize_calls": 664,
+        "sparselu_solve_calls": 664,
+        "curvature_predictor_uses": 1,
+        "state_predictor_uses": 4,
+        "vela_bv_V": 6.395887865540998,
+        "baseline_vela_bv_V": 6.395887865509238,
+        "vela_bv_drift_V": 3.176037211005011e-11,
+        "load_line_residual_V": 9.136147127719596e-8,
+        "global_electron_continuity_ratio": 3.11586570101079e-10,
+        "global_hole_continuity_ratio": 3.237865748521399e-10
+      },
+      "newton_solves": [
+        {"iterations": 220, "initial_residual": 0.07370251073998323, "final_residual": 1.5132789736521807e-6},
+        {"iterations": 220, "initial_residual": 9.127576474507111e-5, "final_residual": 1.0700484705123254e-8},
+        {"iterations": 220, "initial_residual": 1.7856252603401812e-7, "final_residual": 1.4598342451124299e-9},
+        {"iterations": 2, "initial_residual": 6.661433033604298e-10, "final_residual": 6.291907361071501e-10}
+      ],
+      "stage_seconds": {
+        "boundary.checkpoint_write": 0.082017,
+        "boundary.controlled_target": 1435.0452738,
+        "boundary.full_dd_evaluation": 1434.8824277,
+        "boundary.root_total": 1434.882474,
+        "bv.process_probe": 65.3475482,
+        "dc.record_point": 0.230757,
+        "dc.solve_point": 1434.7937481,
+        "dc_sweep.total": 1435.3748995,
+        "dd.active_branch_fingerprint": 68.6333271,
+        "dd.continuity_diagnostics": 70.4861848,
+        "dd.jacobian": 1190.4795625,
+        "dd.residual": 36.3479838,
+        "linear.analyze": 7.0581086,
+        "linear.factorize": 59.746308,
+        "linear.solve": 1.3245144,
+        "linear.total": 68.1387157,
+        "newton.carrier_row_evaluation": 35.3933588,
+        "newton.global_continuity_evaluation": 35.1359534,
+        "newton.initial_residual": 0.2181163,
+        "newton.iteration": 1433.5096841,
+        "newton.jacobian": 1190.4822861,
+        "newton.line_search": 36.4645301,
+        "newton.row_weights": 0.0218582,
+        "newton.update_constraints": 0.0207524
+      }
+    }
+  },
+  "field_validation": {
+    "raw_json": "build-bv-performance/candidate-943bd9a/voltage_to_current_final/rep_01/vela_sentaurus_field_comparison.json",
+    "potential_absolute_error_p95_V": 0.015810851652886253,
+    "potential_correlation": 0.9999957375517389,
+    "electron_populated_density_error_p95_dex": 0.07862803484028427,
+    "electron_populated_qf_error_p95_V": 0.016476548470366524,
+    "hole_populated_density_error_p95_dex": 0.32550039629420874,
+    "hole_populated_qf_error_p95_V": 0.026275336908214857,
+    "high_field_relative_error_p95": 0.1728600367732051,
+    "high_field_correlation": 0.9928350791819129,
+    "matches_existing_validation": true
+  },
+  "verification": {
+    "release_build": "pass",
+    "ctest_all": "pass",
+    "ctest_exit_code": 0,
+    "python_bv_performance_benchmarks": {"tests": 8, "result": "pass"},
+    "python_pn2d_config_templates": {"tests": 14, "result": "pass"}
+  },
+  "acceptance": {
+    "physics_hash_unchanged": true,
+    "mobility_avalanche_btbt_unchanged": true,
+    "voltage_to_current_dd_limit_pass": true,
+    "voltage_to_current_residual_pass": true,
+    "external_wall_reduction_40_percent_pass": true,
+    "external_newton_reduction_50_percent_pass": true,
+    "external_load_line_residual_pass": true,
+    "global_continuity_pass": true,
+    "bv_drift_1mV_pass": true,
+    "external_dd_limit_3": {
+      "pass": false,
+      "observed": 4,
+      "target": 3,
+      "note": "guarded scalar root needs one final two-Newton correction to reduce load-line residual from -7.85e-3 V to 9.14e-8 V"
+    },
+    "timing_caveat": "single-run wall comparisons include a simultaneous 28-31 percent per-call machine-speed shift; exact call-count reductions are the stable attribution"
+  }
+}
