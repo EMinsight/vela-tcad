@@ -44,6 +44,11 @@ find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
 option(VELA_ENABLE_PYTHON "Build the pybind11 Python API" OFF)
 option(VELA_ENABLE_HDF5 "Build Sentaurus HDF5/TDR import tools when HDF5 is available" ON)
+option(VELA_ENABLE_GPROF "Instrument Vela targets for GNU gprof" OFF)
+
+if(VELA_ENABLE_GPROF AND NOT CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    message(FATAL_ERROR "VELA_ENABLE_GPROF requires the GNU C++ compiler")
+endif()
 
 if(VELA_ENABLE_HDF5)
     find_package(hdf5 CONFIG QUIET)
@@ -126,6 +131,14 @@ target_link_libraries(vela_core
         Boost::headers
 )
 target_compile_definitions(vela_core PUBLIC VELA_VERSION="${PROJECT_VERSION}")
+
+if(VELA_ENABLE_GPROF)
+    target_compile_options(vela_core PUBLIC
+        -pg
+        -fno-omit-frame-pointer)
+    target_link_options(vela_core INTERFACE -pg)
+    message(STATUS "GNU gprof instrumentation enabled for Vela targets")
+endif()
 
 if(VELA_HDF5_TARGET)
     add_library(vela_sentaurus STATIC
