@@ -2,6 +2,7 @@
 #include "vela/simulation/BoundaryControl.h"
 #include "vela/boundary/BoundaryCondition.h"
 #include "vela/core/RuntimeLog.h"
+#include "vela/core/PerformanceProfiler.h"
 #include "vela/core/UnitScalingSystem.h"
 #include "vela/discretization/ScharfetterGummel.h"
 #include "vela/equation/AssemblerUtils.h"
@@ -2576,6 +2577,16 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
         return fp.string();
     };
 
+    PerformanceProfilingConfig performanceConfig =
+        performanceProfilingConfigFromJson(
+            cfg.value("solver", nlohmann::json::object()));
+    if (!performanceConfig.jsonFile.empty())
+        performanceConfig.jsonFile = resolve(performanceConfig.jsonFile);
+    PerformanceProfiler performanceProfiler(performanceConfig);
+    ActivePerformanceProfilerScope performanceScope(
+        performanceConfig.enabled ? &performanceProfiler : nullptr);
+    const auto performanceRunStarted = std::chrono::steady_clock::now();
+
     JsonMeshReader reader;
     DeviceMesh mesh = reader.read(resolve(cfg.at("mesh_file").get<std::string>()), scaling);
     mesh.buildBoxGeometry(parseBoxGeometryOptions(cfg));
@@ -3753,6 +3764,8 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
     auto solvePoint = [&](Real voltage,
                           const DDSolution* initial,
                           bool allowContactCurrentQfFloorCapture) -> SolvePointAttempt {
+        ScopedPerformanceTimer timer("dc.solve_point");
+        incrementPerformanceCounter("dc.solve_point_calls");
         auto biases = baseBiases;
         biases[sweep.contact] = voltage;
         try {
@@ -4366,6 +4379,8 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                            Real attemptedStep, Real acceptedStep, int retryCount,
                            const std::string& failureReason = std::string(),
                            const std::string& validationDiagnostics = std::string()) {
+        ScopedPerformanceTimer timer("dc.record_point");
+        incrementPerformanceCounter("dc.record_point_calls");
         ContactCurrentResult current{};
         ContactCurrentDetailedResult currentDetailed{};
         const DDSolution& sol = attempt.solution;
@@ -6222,6 +6237,12 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
             }
             runtimeLog.finish(failureCount == 0, successCount, failureCount);
         }
+        performanceProfiler.observe("dc.points", static_cast<double>(points.size()));
+        performanceProfiler.recordStage(
+            "dc_sweep.total",
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - performanceRunStarted));
+        performanceProfiler.writeJson();
         return DCSweepResult{
             std::move(mesh),
             std::move(points),
@@ -6323,6 +6344,8 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                                        Real currentDirection,
                                        const detail::MonotoneBoundaryRootConfig& rootConfig,
                                        const std::function<Real(Real, Real)>& residual) {
+        ScopedPerformanceTimer timer("boundary.controlled_target");
+        incrementPerformanceCounter("boundary.controlled_targets");
         ControlledBoundarySolve solved;
         DDSolution evaluationState;
         bool hasEvaluationState = seedState != nullptr;
@@ -6442,11 +6465,14 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
             solved.attempt.newtonConvergenceReason = "boundary_seed_state_reuse";
         }
         auto evaluate = [&](Real innerVoltage) {
+            ScopedPerformanceTimer evaluationTimer("boundary.full_dd_evaluation");
+            incrementPerformanceCounter("boundary.full_dd_evaluations");
             const DDSolution* initial = hasEvaluationState ? &evaluationState : nullptr;
             DDSolution predictedState;
             bool usedStatePredictor = false;
             if (hasEvaluationState && hasPreviousEvaluationState &&
                 sweep.continuation.predictor.mode != "none") {
+                incrementPerformanceCounter("boundary.state_predictor_uses");
                 predictedState = detail::predictDCSweepInitialState(
                     sweep.continuation.predictor,
                     &previousEvaluationState,
@@ -6471,6 +6497,7 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
             SolvePointAttempt attempt = solveBoundaryPoint(initial);
             attempt.predictedInitialState = usedStatePredictor;
             if (!attempt.ok && usedStatePredictor) {
+                incrementPerformanceCounter("boundary.state_predictor_fallbacks");
                 runtimeLogInfo(
                     "boundary_control: secant state predictor failed at inner_V=" +
                     formatReal(innerVoltage) + "; retrying constant warm start");
@@ -6493,8 +6520,12 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                 const std::filesystem::path checkpointPath = checkpointDir /
                     (controlMode + "_target_" + biasToken(targetValue) +
                      "_eval_" + std::to_string(evaluationIndex) + ".csv");
-                writeDDSolutionStateCsv(
-                    checkpointPath, attempt.solution, sweep.scaling);
+                {
+                    ScopedPerformanceTimer timer("boundary.checkpoint_write");
+                    incrementPerformanceCounter("boundary.checkpoint_writes");
+                    writeDDSolutionStateCsv(
+                        checkpointPath, attempt.solution, sweep.scaling);
+                }
                 stateFile = checkpointPath.string();
             }
             if (boundaryEvaluationStream.is_open()) {

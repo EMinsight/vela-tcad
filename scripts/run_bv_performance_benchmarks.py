@@ -119,9 +119,18 @@ def cpu_name() -> str:
     return platform.processor() or "unknown"
 
 
-def configure_output_paths(config: dict[str, Any], output: Path) -> None:
+def configure_output_paths(
+    config: dict[str, Any],
+    output: Path,
+    enable_performance_profiling: bool = False,
+) -> None:
     config["output_csv"] = str((output / "sweep.csv").resolve())
     solver = config["solver"]
+    if enable_performance_profiling:
+        solver["performance_profiling"] = {
+            "enabled": True,
+            "json_file": str((output / "performance_profile.json").resolve()),
+        }
     carrier = solver.get("carrier_row_convergence", {})
     if "diagnostic_csv" in carrier:
         carrier["diagnostic_csv"] = str(
@@ -232,12 +241,16 @@ def scenario_source(scenario: str) -> Path:
     raise ValueError(f"unknown scenario: {scenario}")
 
 
-def prepare_scenario(scenario: str, output: Path) -> dict[str, Any]:
+def prepare_scenario(
+    scenario: str,
+    output: Path,
+    enable_performance_profiling: bool = False,
+) -> dict[str, Any]:
     source = scenario_source(scenario)
     config_source = source / "simulation.json"
     config = load_json(config_source)
     output.mkdir(parents=True, exist_ok=True)
-    configure_output_paths(config, output)
+    configure_output_paths(config, output, enable_performance_profiling)
     copy_initial_state(config, output)
 
     seed_rows = 0
@@ -578,8 +591,11 @@ def run_scenario(
     executable: Path,
     gprof: Path | None,
     runtime_bin: Path | None,
+    enable_performance_profiling: bool = False,
 ) -> dict[str, Any]:
-    manifest = prepare_scenario(scenario, output)
+    manifest = prepare_scenario(
+        scenario, output, enable_performance_profiling
+    )
     command = [str(executable.resolve()), "--config", str((output / "simulation.json").resolve())]
     metadata = build_metadata(executable, command)
     environment = os.environ.copy()
@@ -634,6 +650,9 @@ def aggregate_runs(root: Path, scenarios: Iterable[str]) -> dict[str, Any]:
         for path in sorted((root / scenario).glob("rep_*/performance_run.json")):
             run = load_json(path)
             run["result"] = parse_result(path.parent, run["benchmark"])
+            profile_path = path.parent / "performance_profile.json"
+            if profile_path.exists():
+                run["internal_profile"] = load_json(profile_path)
             write_json(path, run)
             runs.append(run)
         times = [float(run["wall_seconds"]) for run in runs if run["exit_code"] == 0]
@@ -650,6 +669,11 @@ def aggregate_runs(root: Path, scenarios: Iterable[str]) -> dict[str, Any]:
                 max_deviation / median if median and max_deviation is not None else None
             ),
             "results": [run["result"] for run in runs],
+            "internal_profiles": [
+                run["internal_profile"]
+                for run in runs
+                if "internal_profile" in run
+            ],
         }
         if runs:
             gprof = summarize_gprof(
@@ -696,6 +720,11 @@ def main() -> int:
     parser.add_argument("--repetitions", type=int, default=1)
     parser.add_argument("--gprof", type=Path)
     parser.add_argument(
+        "--enable-performance-profiling",
+        action="store_true",
+        help="enable low-overhead internal stage timers and counters",
+    )
+    parser.add_argument(
         "--runtime-bin",
         type=Path,
         default=Path(r"D:\msys64\ucrt64\bin") if os.name == "nt" else None,
@@ -730,7 +759,9 @@ def main() -> int:
                 )
             print(f"running {scenario} repetition {repetition}: {output}", flush=True)
             if args.prepare_only:
-                manifest = prepare_scenario(scenario, output)
+                manifest = prepare_scenario(
+                    scenario, output, args.enable_performance_profiling
+                )
                 print(json.dumps(manifest, indent=2), flush=True)
                 continue
             performance = run_scenario(
@@ -739,6 +770,7 @@ def main() -> int:
                 args.runner.resolve(),
                 args.gprof,
                 args.runtime_bin,
+                args.enable_performance_profiling,
             )
             print(
                 json.dumps(

@@ -1,5 +1,6 @@
 #include "vela/solver/NewtonSolver.h"
 #include "vela/core/PhysicalConstants.h"
+#include "vela/core/PerformanceProfiler.h"
 #include "vela/core/RuntimeLog.h"
 #include "vela/core/UnitScalingSystem.h"
 #include "vela/equation/AssemblerUtils.h"
@@ -10,6 +11,7 @@
 #include <Eigen/SparseLU>
 #include <Eigen/SVD>
 #include <algorithm>
+#include <chrono>
 #include <cctype>
 #include <cmath>
 #include <filesystem>
@@ -4169,9 +4171,17 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
         psiInit / potentialScale,
         phinInit / potentialScale,
         phipInit / potentialScale});
-    VectorXd r = assembler.residual(x, bcs);
-    VectorXd activeRowWeights = continuityRowWeights(
-        assembler, x, bcs, cfg_.continuityRowScaling);
+    VectorXd r;
+    {
+        ScopedPerformanceTimer timer("newton.initial_residual");
+        r = assembler.residual(x, bcs);
+    }
+    VectorXd activeRowWeights;
+    {
+        ScopedPerformanceTimer timer("newton.row_weights");
+        activeRowWeights = continuityRowWeights(
+            assembler, x, bcs, cfg_.continuityRowScaling);
+    }
     const ResidualBlockNormValue initialBlocks =
         ResidualNorm::computeBlocks(r, mesh_.numNodes());
     const ResidualBlockNormValue residualScales =
@@ -4195,6 +4205,7 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
     result.finalBlockNorms = blockResidualInfo(r, mesh_.numNodes());
 
     auto carrierRowEval = [&](const VectorXd& state) {
+        ScopedPerformanceTimer timer("newton.carrier_row_evaluation");
         if (cfg_.carrierRowConvergence.mode == "off")
             return NewtonCarrierRowConvergenceEvaluation{};
         return evaluateCarrierRowConvergence(
@@ -4213,6 +4224,7 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
     for (const auto& [node, _] : bcs.phip)
         holeContactNodes.push_back(node);
     auto globalClosureEval = [&](const VectorXd& state) {
+        ScopedPerformanceTimer timer("newton.global_continuity_evaluation");
         if (cfg_.globalContinuityClosure.mode == "off")
             return NewtonGlobalContinuityClosureEvaluation{};
         return evaluateGlobalContinuityClosure(
@@ -4463,6 +4475,7 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
     int acceptedIters = 0;
 
     for (int iter = 1; iter <= cfg_.maxIter; ++iter) {
+        ScopedPerformanceTimer iterationTimer("newton.iteration");
         const NewtonGlobalContinuityClosureEvaluation currentGlobalEval =
             globalClosureEval(x);
         activeGlobalElectronScale = std::max(
@@ -4471,15 +4484,23 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
         activeGlobalHoleScale = std::max(
             std::abs(currentGlobalEval.hole.integratedSource),
             cfg_.globalContinuityClosure.sourceFloor);
-        activeRowWeights = continuityRowWeights(
-            assembler, x, bcs, cfg_.continuityRowScaling);
-        SparseMatrixd J = (cfg_.jacobian == "finite_difference")
-            ? assembler.finiteDifferenceJacobian(x, bcs, cfg_.finiteDifferenceStep)
-            : assembler.assembleJacobian(x, bcs);
-        addCarrierRowRegularization(J, N, cfg_.carrierRegularizationScale);
+        {
+            ScopedPerformanceTimer timer("newton.row_weights");
+            activeRowWeights = continuityRowWeights(
+                assembler, x, bcs, cfg_.continuityRowScaling);
+        }
+        SparseMatrixd J;
+        {
+            ScopedPerformanceTimer timer("newton.jacobian");
+            J = (cfg_.jacobian == "finite_difference")
+                ? assembler.finiteDifferenceJacobian(x, bcs, cfg_.finiteDifferenceStep)
+                : assembler.assembleJacobian(x, bcs);
+            addCarrierRowRegularization(J, N, cfg_.carrierRegularizationScale);
+        }
         VectorXd step;
         try {
             if (cfg_.continuityRowScaling.enabled) {
+                ScopedPerformanceTimer timer("newton.linear_row_scaling");
                 const SparseMatrixd scaledJ = leftScaleRows(J, activeRowWeights);
                 step = linearSolver.solve(
                     scaledJ,
@@ -4525,7 +4546,10 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
             }
             return result;
         }
-        capConfiguredStep(step, J, r);
+        {
+            ScopedPerformanceTimer timer("newton.update_constraints");
+            capConfiguredStep(step, J, r);
+        }
         Real stepNorm = step.norm();
 
         auto ls = lineSearch.search(
@@ -4800,7 +4824,18 @@ NewtonResult runNewton(const DeviceMesh& mesh,
                        const std::unordered_map<std::string, Real>& contactBiases,
                        const NewtonConfig& cfg)
 {
-    return NewtonSolver(mesh, matdb, doping, contactBiases, cfg).solve();
+    const auto started = std::chrono::steady_clock::now();
+    NewtonResult result = NewtonSolver(mesh, matdb, doping, contactBiases, cfg).solve();
+    if (PerformanceProfiler* profiler = activePerformanceProfiler()) {
+        profiler->recordNewtonSolve(
+            result.converged, result.iters, result.initialResidualNorm,
+            result.finalResidualNorm,
+            result.converged ? result.convergenceReason
+                             : result.failureDiagnostics.failureReason,
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - started));
+    }
+    return result;
 }
 
 NewtonResult runNewton(const DeviceMesh& mesh,
@@ -4810,7 +4845,19 @@ NewtonResult runNewton(const DeviceMesh& mesh,
                        const DDSolution& initial,
                        const NewtonConfig& cfg)
 {
-    return NewtonSolver(mesh, matdb, doping, contactBiases, cfg).solve(initial);
+    const auto started = std::chrono::steady_clock::now();
+    NewtonResult result =
+        NewtonSolver(mesh, matdb, doping, contactBiases, cfg).solve(initial);
+    if (PerformanceProfiler* profiler = activePerformanceProfiler()) {
+        profiler->recordNewtonSolve(
+            result.converged, result.iters, result.initialResidualNorm,
+            result.finalResidualNorm,
+            result.converged ? result.convergenceReason
+                             : result.failureDiagnostics.failureReason,
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - started));
+    }
+    return result;
 }
 
 NewtonResult runNewton(const DeviceMesh& mesh,
@@ -4822,7 +4869,8 @@ NewtonResult runNewton(const DeviceMesh& mesh,
                        std::vector<InterfaceSheetChargeSpec> sheetCharges,
                        ContactSpecsMap contactSpecs)
 {
-    return NewtonSolver(
+    const auto started = std::chrono::steady_clock::now();
+    NewtonResult result = NewtonSolver(
         mesh,
         matdb,
         doping,
@@ -4831,6 +4879,16 @@ NewtonResult runNewton(const DeviceMesh& mesh,
         std::move(fixedCharges),
         std::move(sheetCharges),
         std::move(contactSpecs)).solve();
+    if (PerformanceProfiler* profiler = activePerformanceProfiler()) {
+        profiler->recordNewtonSolve(
+            result.converged, result.iters, result.initialResidualNorm,
+            result.finalResidualNorm,
+            result.converged ? result.convergenceReason
+                             : result.failureDiagnostics.failureReason,
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - started));
+    }
+    return result;
 }
 
 NewtonResult runNewton(const DeviceMesh& mesh,
@@ -4843,7 +4901,8 @@ NewtonResult runNewton(const DeviceMesh& mesh,
                        std::vector<InterfaceSheetChargeSpec> sheetCharges,
                        ContactSpecsMap contactSpecs)
 {
-    return NewtonSolver(
+    const auto started = std::chrono::steady_clock::now();
+    NewtonResult result = NewtonSolver(
         mesh,
         matdb,
         doping,
@@ -4852,6 +4911,16 @@ NewtonResult runNewton(const DeviceMesh& mesh,
         std::move(fixedCharges),
         std::move(sheetCharges),
         std::move(contactSpecs)).solve(initial);
+    if (PerformanceProfiler* profiler = activePerformanceProfiler()) {
+        profiler->recordNewtonSolve(
+            result.converged, result.iters, result.initialResidualNorm,
+            result.finalResidualNorm,
+            result.converged ? result.convergenceReason
+                             : result.failureDiagnostics.failureReason,
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - started));
+    }
+    return result;
 }
 
 } // namespace vela

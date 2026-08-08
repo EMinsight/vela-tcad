@@ -1,4 +1,5 @@
 #include "vela/simulation/BoundaryControl.h"
+#include "vela/core/PerformanceProfiler.h"
 
 #include <algorithm>
 #include <cmath>
@@ -37,12 +38,15 @@ MonotoneBoundaryRootResult solveMonotoneBoundaryRoot(
     const MonotoneBoundaryRootConfig& config,
     const BoundaryResidualEvaluator& evaluate)
 {
+    ScopedPerformanceTimer timer("boundary.root_total");
+    incrementPerformanceCounter("boundary.root_calls");
     validate(config);
     if (!std::isfinite(initialVoltage))
         throw std::invalid_argument("Boundary control: initial voltage must be finite.");
 
     MonotoneBoundaryRootResult result;
     auto evaluated = [&](Real voltage) {
+        incrementPerformanceCounter("boundary.residual_evaluations");
         const Real residual = evaluate(voltage);
         ++result.evaluations;
         if (!std::isfinite(residual))
@@ -126,6 +130,7 @@ MonotoneBoundaryRootResult solveMonotoneBoundaryRoot(
             return result;
         }
         for (int step = 0; step < config.maxBracketSteps; ++step) {
+            incrementPerformanceCounter("boundary.bracket_steps");
             if ((f0 <= 0.0 && f1 >= 0.0) || (f0 >= 0.0 && f1 <= 0.0)) {
                 bracketed = true;
                 break;
@@ -174,6 +179,7 @@ MonotoneBoundaryRootResult solveMonotoneBoundaryRoot(
     }
 
     for (int iteration = 0; iteration < config.maxIterations; ++iteration) {
+        incrementPerformanceCounter("boundary.root_updates");
         const Real width = upperX - lowerX;
         Real trial = lowerX - lowerF * width / (upperF - lowerF);
         const Real guard = std::max(1.0e-12, 1.0e-6 * width);

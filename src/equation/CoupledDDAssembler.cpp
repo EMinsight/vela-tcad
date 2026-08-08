@@ -1,5 +1,6 @@
 #include "vela/equation/CoupledDDAssembler.h"
 #include "vela/equation/BVProcessProbe.h"
+#include "vela/core/PerformanceProfiler.h"
 #include "vela/core/PhysicalConstants.h"
 #include "vela/discretization/Bernoulli.h"
 #include "vela/discretization/ScharfetterGummel.h"
@@ -310,6 +311,8 @@ VectorXd CoupledDDAssembler::residualImpl(
     const CoupledDDBoundaryConditions& bcs,
     const CoupledDDFeedbackStateSubstitution* substitution) const
 {
+    ScopedPerformanceTimer timer("dd.residual");
+    incrementPerformanceCounter("dd.residual_calls");
     const Index Nidx = mesh_.numNodes();
     const int N = static_cast<int>(Nidx);
     if (x.size() != 3 * N)
@@ -741,6 +744,8 @@ CoupledDDAssembler::carrierContinuityTermDiagnosticsImpl(
     const CoupledDDFeedbackStateSubstitution* substitution,
     bool includeImpactIonization) const
 {
+    ScopedPerformanceTimer timer("dd.continuity_diagnostics");
+    incrementPerformanceCounter("dd.continuity_diagnostics_calls");
     const Index Nidx = mesh_.numNodes();
     const int N = static_cast<int>(Nidx);
     if (x.size() != 3 * N)
@@ -1809,6 +1814,8 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
     const VectorXd& x,
     const CoupledDDBoundaryConditions& bcs) const
 {
+    ScopedPerformanceTimer timer("dd.jacobian");
+    incrementPerformanceCounter("dd.jacobian_calls");
     const Index Nidx = mesh_.numNodes();
     const int N = static_cast<int>(Nidx);
     if (x.size() != 3 * N)
@@ -3225,6 +3232,8 @@ std::string CoupledDDAssembler::impactIonizationConfigurationFingerprint() const
 std::string CoupledDDAssembler::impactIonizationActiveBranchFingerprint(
     const VectorXd& x) const
 {
+    ScopedPerformanceTimer timer("dd.active_branch_fingerprint");
+    incrementPerformanceCounter("dd.active_branch_fingerprint_calls");
     const CoupledDDState state = unpack(x);
     const Real potentialScale = scaling_.enabled ? scaling_.V0 : 1.0;
 

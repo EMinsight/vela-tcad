@@ -73,6 +73,7 @@ endif()
 add_library(vela_core STATIC
     src/boundary/BoundaryCondition.cpp
     src/core/ScalingSystem.cpp
+    src/core/PerformanceProfiler.cpp
     src/core/RuntimeLog.cpp
     src/core/UnitScaling.cpp
     src/core/UnitScalingSystem.cpp
@@ -294,6 +295,9 @@ target_link_libraries(test_poisson PRIVATE vela_core Catch2::Catch2WithMain)
 add_executable(test_linear_solver tests/test_linear_solver.cpp)
 target_link_libraries(test_linear_solver PRIVATE vela_core Catch2::Catch2WithMain)
 
+add_executable(test_performance_profiler tests/test_performance_profiler.cpp)
+target_link_libraries(test_performance_profiler PRIVATE vela_core Catch2::Catch2WithMain)
+
 add_executable(test_box_geometry tests/test_box_geometry.cpp)
 target_link_libraries(test_box_geometry PRIVATE vela_core Catch2::Catch2WithMain)
 
@@ -415,6 +419,7 @@ vela_catch_discover_tests(test_mesh)
 vela_catch_discover_tests(test_poisson)
 add_test(NAME poisson COMMAND test_poisson [poisson])
 vela_catch_discover_tests(test_linear_solver)
+vela_catch_discover_tests(test_performance_profiler)
 vela_catch_discover_tests(test_box_geometry)
 vela_catch_discover_tests(test_csv_utils)
 vela_catch_discover_tests(test_bernoulli)

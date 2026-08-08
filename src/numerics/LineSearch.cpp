@@ -1,4 +1,5 @@
 #include "vela/numerics/LineSearch.h"
+#include "vela/core/PerformanceProfiler.h"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -36,6 +37,8 @@ LineSearchResult BacktrackingLineSearch::search(
     const AcceptFunction& acceptFunction,
     const NormFunction& normFunction) const
 {
+    ScopedPerformanceTimer timer("newton.line_search");
+    incrementPerformanceCounter("newton.line_search_calls");
     const auto normOf = [&](const VectorXd& residual) {
         return normFunction ? normFunction(residual) : residual.norm();
     };
@@ -62,6 +65,7 @@ LineSearchResult BacktrackingLineSearch::search(
     Real bestRejectedDamping = 0.0;
     Real bestRejectedResidualNorm = std::numeric_limits<Real>::infinity();
     for (int k = 0; k < attempts; ++k) {
+        incrementPerformanceCounter("newton.line_search_attempts");
         VectorXd candidate = x + alpha * step;
         VectorXd residual = residualFunction(candidate);
         const Real norm = normOf(residual);
@@ -89,6 +93,7 @@ LineSearchResult BacktrackingLineSearch::search(
         }
 
         if (accepted) {
+            incrementPerformanceCounter("newton.line_search_accepted");
             return {candidate, residual, alpha, norm, true, attemptCount, {}, std::move(history)};
         }
 
@@ -109,6 +114,7 @@ LineSearchResult BacktrackingLineSearch::search(
 
     if (lastRejectionReason.empty())
         lastRejectionReason = "line_search_rejected";
+    incrementPerformanceCounter("newton.line_search_rejected");
     LineSearchResult result{x, currentResidual, 0.0, currentNorm, false, attemptCount,
                             lastRejectionReason, std::move(history)};
     result.bestRejectedCandidate = bestRejectedCandidate;

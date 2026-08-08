@@ -1,4 +1,5 @@
 #include "vela/solver/LinearSolver.h"
+#include "vela/core/PerformanceProfiler.h"
 
 #include <Eigen/IterativeLinearSolvers>
 #include <Eigen/SparseCholesky>
@@ -200,6 +201,10 @@ VectorXd solveWithAlternateBackend(const std::string& backend,
 
 VectorXd LinearSolver::solve(const SparseMatrixd& A, const VectorXd& b)
 {
+    ScopedPerformanceTimer totalTimer("linear.total");
+    incrementPerformanceCounter("linear.solve_calls");
+    observePerformanceValue("linear.rows", static_cast<double>(A.rows()));
+    observePerformanceValue("linear.nonzeros", static_cast<double>(A.nonZeros()));
     if (A.rows() != A.cols())
         throw std::invalid_argument("LinearSolver: matrix must be square.");
     if (A.rows() != b.size())
@@ -217,8 +222,15 @@ VectorXd LinearSolver::solve(const SparseMatrixd& A, const VectorXd& b)
     if (backend != "sparselu")
         return solveWithAlternateBackend(backend, *matrix, b);
 
-    analyzePatternIfNeeded(*matrix);
-    solver_.factorize(*matrix);
+    {
+        ScopedPerformanceTimer timer("linear.analyze");
+        analyzePatternIfNeeded(*matrix);
+    }
+    {
+        ScopedPerformanceTimer timer("linear.factorize");
+        incrementPerformanceCounter("linear.factorize_calls");
+        solver_.factorize(*matrix);
+    }
 
     if (solver_.info() != Eigen::Success)
         throw std::runtime_error(
@@ -226,7 +238,11 @@ VectorXd LinearSolver::solve(const SparseMatrixd& A, const VectorXd& b)
             "Matrix may be singular or ill-conditioned." +
             sparseMatrixDiagnostics(*matrix, b));
 
-    VectorXd x = solver_.solve(b);
+    VectorXd x;
+    {
+        ScopedPerformanceTimer timer("linear.solve");
+        x = solver_.solve(b);
+    }
 
     if (solver_.info() != Eigen::Success)
         throw std::runtime_error(
@@ -290,9 +306,12 @@ void LinearSolver::cachePattern(const SparseMatrixd& A)
 
 void LinearSolver::analyzePatternIfNeeded(const SparseMatrixd& A)
 {
-    if (patternMatches(A))
+    if (patternMatches(A)) {
+        incrementPerformanceCounter("linear.analyze_cache_hits");
         return;
+    }
 
+    incrementPerformanceCounter("linear.analyze_calls");
     solver_.analyzePattern(A);
     if (!solver_.analysisIsOk()) {
         clearPatternCache();

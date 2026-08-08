@@ -15,6 +15,20 @@ SPEC.loader.exec_module(BENCHMARKS)
 
 
 class BVPerformanceBenchmarksTest(unittest.TestCase):
+    def test_configure_output_paths_enables_internal_profile_on_request(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            config = {"solver": {}, "sweep": {}}
+            BENCHMARKS.configure_output_paths(
+                config, output, enable_performance_profiling=True
+            )
+            profile = config["solver"]["performance_profiling"]
+            self.assertTrue(profile["enabled"])
+            self.assertEqual(
+                Path(profile["json_file"]),
+                (output / "performance_profile.json").resolve(),
+            )
+
     def test_voltage_to_current_seed_stops_before_measured_evaluations(self) -> None:
         self.assertTrue(
             BENCHMARKS.keep_seed_evaluation("voltage_to_current_final", 6e-5, 7)

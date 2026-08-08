@@ -1,6 +1,7 @@
 #include "vela/equation/BVProcessProbe.h"
 
 #include "vela/core/PhysicalConstants.h"
+#include "vela/core/PerformanceProfiler.h"
 #include "vela/equation/AssemblerUtils.h"
 
 #include <algorithm>
@@ -310,6 +311,8 @@ BVProcessProbeResult evaluateBVProcessProbe(
     Real temperature_K,
     Real fieldFactor)
 {
+    ScopedPerformanceTimer timer("bv.process_probe");
+    incrementPerformanceCounter("bv.process_probe_calls");
     requireState(state, mesh.numNodes());
     if (doping.numNodes() != mesh.numNodes())
         throw std::invalid_argument("BV process probe doping size mismatch");
