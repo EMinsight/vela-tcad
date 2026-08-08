@@ -70,6 +70,32 @@ TEST_CASE("Boundary control reuses a seed residual and secant-predicts the root"
     REQUIRE(result.evaluations <= 2);
 }
 
+TEST_CASE("Boundary control predicts the next target with guarded curvature",
+          "[dc_sweep][external_circuit][predictor]")
+{
+    const std::vector<std::pair<Real, Real>> history{
+        {406.0, 6.0495908770478124},
+        {606.0, 6.2304329562310556},
+        {806.0, 6.3325404098464952},
+        {1006.0, 6.3958035757733978}};
+    const auto prediction =
+        detail::predictBoundaryVoltageFromHistory(history, 1206.0);
+    REQUIRE(prediction.has_value());
+    REQUIRE(prediction->curvatureAccelerated);
+    REQUIRE(prediction->voltage ==
+            Catch::Approx(6.43847626564087).margin(1.0e-12));
+
+    const auto secant = detail::predictBoundaryVoltageFromHistory(
+        std::vector<std::pair<Real, Real>>{
+            {806.0, 6.3325404098464952},
+            {1006.0, 6.3958035757733978}},
+        1206.0);
+    REQUIRE(secant.has_value());
+    REQUIRE_FALSE(secant->curvatureAccelerated);
+    REQUIRE(secant->voltage ==
+            Catch::Approx(6.4590667417003003).margin(1.0e-12));
+}
+
 TEST_CASE("Boundary control resumes a persisted sign-changing bracket with one correction",
           "[dc_sweep][external_circuit][predictor][resume]")
 {

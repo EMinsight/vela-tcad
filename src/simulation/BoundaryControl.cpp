@@ -33,6 +33,68 @@ void validate(const MonotoneBoundaryRootConfig& config)
 
 } // namespace
 
+std::optional<BoundaryVoltagePrediction> predictBoundaryVoltageFromHistory(
+    const std::vector<std::pair<Real, Real>>& history,
+    Real target)
+{
+    if (history.size() < 2)
+        return std::nullopt;
+    const auto& [target0, voltage0] = history.at(history.size() - 2);
+    const auto& [target1, voltage1] = history.back();
+    const Real targetStep = target1 - target0;
+    if (!std::isfinite(targetStep) || targetStep == 0.0)
+        return std::nullopt;
+
+    BoundaryVoltagePrediction prediction;
+    prediction.voltage = voltage1 +
+        (target - target1) * (voltage1 - voltage0) / targetStep;
+    if (history.size() < 4)
+        return prediction;
+
+    const auto& [targetM3, voltageM3] = history.at(history.size() - 4);
+    const auto& [targetM2, voltageM2] = history.at(history.size() - 3);
+    const Real stepM2 = targetM2 - targetM3;
+    const Real stepM1 = target0 - targetM2;
+    const Real scale = std::max({
+        std::abs(stepM2), std::abs(stepM1), std::abs(targetStep),
+        std::abs(target - target1), Real{1.0}});
+    const Real tolerance = 1.0e-10 * scale;
+    if (std::abs(stepM2 - targetStep) > tolerance ||
+        std::abs(stepM1 - targetStep) > tolerance ||
+        std::abs((target - target1) - targetStep) > tolerance) {
+        return prediction;
+    }
+
+    const Real delta0 = voltageM2 - voltageM3;
+    const Real delta1 = voltage0 - voltageM2;
+    const Real delta2 = voltage1 - voltage0;
+    if (!std::isfinite(delta0) || !std::isfinite(delta1) ||
+        !std::isfinite(delta2) || delta0 == 0.0 || delta1 == 0.0 ||
+        std::signbit(delta0) != std::signbit(delta1) ||
+        std::signbit(delta1) != std::signbit(delta2)) {
+        return prediction;
+    }
+    const Real ratio0 = delta1 / delta0;
+    const Real ratio1 = delta2 / delta1;
+    const Real predictedRatio = 2.0 * ratio1 - ratio0;
+    if (!std::isfinite(predictedRatio) ||
+        predictedRatio < 0.25 || predictedRatio > 1.25) {
+        return prediction;
+    }
+    const Real accelerated = voltage1 + delta2 * predictedRatio;
+    const Real linearDelta = prediction.voltage - voltage1;
+    const Real acceleratedDelta = accelerated - voltage1;
+    if (!std::isfinite(accelerated) ||
+        std::signbit(acceleratedDelta) != std::signbit(linearDelta) ||
+        std::abs(acceleratedDelta) < 0.25 * std::abs(linearDelta) ||
+        std::abs(acceleratedDelta) > 1.25 * std::abs(linearDelta)) {
+        return prediction;
+    }
+    prediction.voltage = accelerated;
+    prediction.curvatureAccelerated = true;
+    return prediction;
+}
+
 MonotoneBoundaryRootResult solveMonotoneBoundaryRoot(
     Real initialVoltage,
     const MonotoneBoundaryRootConfig& config,

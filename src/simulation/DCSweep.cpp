@@ -6628,15 +6628,14 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
         }
         for (Real outerVoltage : outerTargets) {
             detail::MonotoneBoundaryRootConfig pointRootConfig = rootConfig;
-            if (outerInnerHistory.size() >= 2) {
-                const auto& [outer0, inner0] =
-                    outerInnerHistory.at(outerInnerHistory.size() - 2);
-                const auto& [outer1, inner1] = outerInnerHistory.back();
-                if (outer1 != outer0) {
-                    pointRootConfig.predictedVoltage = inner1 +
-                        (outerVoltage - outer1) *
-                        (inner1 - inner0) / (outer1 - outer0);
-                }
+            if (const auto prediction =
+                    detail::predictBoundaryVoltageFromHistory(
+                        outerInnerHistory, outerVoltage)) {
+                pointRootConfig.predictedVoltage = prediction->voltage;
+                incrementPerformanceCounter(
+                    prediction->curvatureAccelerated
+                        ? "boundary.curvature_predictor_uses"
+                        : "boundary.secant_predictor_uses");
             }
             ControlledBoundarySolve solved = solveControlledBoundary(
                 "external_resistor",
@@ -6752,15 +6751,14 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                 throw std::invalid_argument(
                     "DCSweep: voltage-to-current targets must not decrease below the active branch current.");
             detail::MonotoneBoundaryRootConfig pointRootConfig = rootConfig;
-            if (currentVoltageHistory.size() >= 2) {
-                const auto& [current0, voltage0] =
-                    currentVoltageHistory.at(currentVoltageHistory.size() - 2);
-                const auto& [current1, voltage1] = currentVoltageHistory.back();
-                if (current1 != current0) {
-                    pointRootConfig.predictedVoltage = voltage1 +
-                        (targetCurrent - current1) *
-                        (voltage1 - voltage0) / (current1 - current0);
-                }
+            if (const auto prediction =
+                    detail::predictBoundaryVoltageFromHistory(
+                        currentVoltageHistory, targetCurrent)) {
+                pointRootConfig.predictedVoltage = prediction->voltage;
+                incrementPerformanceCounter(
+                    prediction->curvatureAccelerated
+                        ? "boundary.curvature_predictor_uses"
+                        : "boundary.secant_predictor_uses");
             }
             ControlledBoundarySolve solved = solveControlledBoundary(
                 "current",

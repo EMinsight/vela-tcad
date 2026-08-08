@@ -4,6 +4,8 @@
 
 #include <functional>
 #include <optional>
+#include <utility>
+#include <vector>
 
 namespace vela::detail {
 
@@ -40,6 +42,18 @@ struct MonotoneBoundaryRootResult {
 };
 
 using BoundaryResidualEvaluator = std::function<Real(Real)>;
+
+struct BoundaryVoltagePrediction {
+    Real voltage = 0.0;
+    bool curvatureAccelerated = false;
+};
+
+/// Predict the next boundary voltage from accepted (target, voltage) pairs.
+/// Two points give a secant predictor. Four equally spaced targets additionally
+/// support a guarded second-order trend in the shrinking voltage increments.
+std::optional<BoundaryVoltagePrediction> predictBoundaryVoltageFromHistory(
+    const std::vector<std::pair<Real, Real>>& history,
+    Real target);
 
 /// Solve a scalar boundary equation whose residual increases with device
 /// voltage. The evaluator may run a complete device solve at each voltage.
