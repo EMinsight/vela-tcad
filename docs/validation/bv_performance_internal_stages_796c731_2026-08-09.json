@@ -1,0 +1,164 @@
+{
+  "schema_version": 1,
+  "benchmark_commit": "796c731",
+  "build": {
+    "type": "Release",
+    "compiler": "MSYS2 UCRT64 GCC 16.1.0",
+    "profiling": "internal steady_clock stages; gprof disabled",
+    "threads": 1
+  },
+  "physics_config_sha256": "dc28b33f2a95e9664c8d93c7c54b3cb4cac22941175b43f8b36d955a25a2a7a2",
+  "raw_root": "build-bv-performance/staged-796c731",
+  "scenarios": {
+    "high_field_transition": {
+      "profile_sha256": "54d0b033b7d60eb77a2c69e61e91c3f078fa86d272f27a3a3aa5c29e32b3758b",
+      "wall_seconds": 617.9281708,
+      "result": {
+        "full_dd_evaluations": 1,
+        "newton_updates": 191,
+        "residual_calls": 205,
+        "jacobian_calls": 192,
+        "sparselu_analyze_calls": 184,
+        "sparselu_factorize_calls": 196,
+        "sparselu_solve_calls": 196,
+        "boundary_dd_evaluations": 0,
+        "global_electron_continuity_ratio": 9.154308262299374e-10,
+        "global_hole_continuity_ratio": 1.0764422515567872e-09
+      },
+      "stages": {
+        "bv.process_probe": {"calls": 193, "seconds": 28.2484528},
+        "dc.record_point": {"calls": 1, "seconds": 0.0770378},
+        "dc.solve_point": {"calls": 1, "seconds": 617.0956652},
+        "dc_sweep.total": {"calls": 1, "seconds": 617.3460703},
+        "dd.active_branch_fingerprint": {"calls": 193, "seconds": 29.6663223},
+        "dd.continuity_diagnostics": {"calls": 772, "seconds": 56.7016316},
+        "dd.jacobian": {"calls": 192, "seconds": 480.9990543},
+        "dd.residual": {"calls": 205, "seconds": 15.2960356},
+        "linear.analyze": {"calls": 196, "seconds": 2.5983704},
+        "linear.factorize": {"calls": 196, "seconds": 30.5376422},
+        "linear.solve": {"calls": 196, "seconds": 0.5979253},
+        "linear.total": {"calls": 196, "seconds": 33.737369},
+        "newton.carrier_row_evaluation": {"calls": 193, "seconds": 14.6624538},
+        "newton.global_continuity_evaluation": {"calls": 386, "seconds": 28.1707257},
+        "newton.initial_residual": {"calls": 1, "seconds": 0.0957478},
+        "newton.iteration": {"calls": 192, "seconds": 616.5635918},
+        "newton.jacobian": {"calls": 192, "seconds": 481.0003135},
+        "newton.line_search": {"calls": 192, "seconds": 15.3313549},
+        "newton.row_weights": {"calls": 193, "seconds": 0.0057982},
+        "newton.update_constraints": {"calls": 192, "seconds": 0.0518699}
+      }
+    },
+    "voltage_to_current_final": {
+      "profile_sha256": "4fc622f3e9d42a037251618da452f72b18ba424572e4825df471ed2cdb035ed8",
+      "wall_seconds": 872.124599,
+      "result": {
+        "full_dd_evaluations": 2,
+        "newton_updates": 279,
+        "residual_calls": 301,
+        "jacobian_calls": 280,
+        "sparselu_analyze_calls": 280,
+        "sparselu_factorize_calls": 280,
+        "sparselu_solve_calls": 280,
+        "boundary_dd_evaluations": 2,
+        "vela_bv_V": 6.395904174606575,
+        "boundary_residual_A_per_um": 6.169747113378421e-12,
+        "global_electron_continuity_ratio": 1.216559466401011e-9,
+        "global_hole_continuity_ratio": 1.3083069725092697e-9
+      },
+      "newton_solves": [
+        {"iterations": 0, "initial_residual": 4.6023840919237766e-10, "final_residual": 4.6023840919237766e-10},
+        {"iterations": 220, "initial_residual": 3.129175409551157e-4, "final_residual": 3.2504996389113815e-9},
+        {"iterations": 59, "initial_residual": 8.578375408941188e-9, "final_residual": 8.535937750021121e-10}
+      ],
+      "stages": {
+        "boundary.checkpoint_write": {"calls": 2, "seconds": 0.0633733},
+        "boundary.controlled_target": {"calls": 3, "seconds": 871.2023704},
+        "boundary.full_dd_evaluation": {"calls": 2, "seconds": 871.0181758},
+        "boundary.root_total": {"calls": 3, "seconds": 871.0182133},
+        "bv.process_probe": {"calls": 283, "seconds": 40.2356964},
+        "dc.record_point": {"calls": 4, "seconds": 0.266119},
+        "dc.solve_point": {"calls": 3, "seconds": 871.428725},
+        "dc_sweep.total": {"calls": 1, "seconds": 872.0849924},
+        "dd.active_branch_fingerprint": {"calls": 283, "seconds": 42.5713733},
+        "dd.continuity_diagnostics": {"calls": 851, "seconds": 62.6686678},
+        "dd.jacobian": {"calls": 280, "seconds": 695.1508021},
+        "dd.residual": {"calls": 301, "seconds": 21.9727969},
+        "linear.analyze": {"calls": 280, "seconds": 4.1359578},
+        "linear.factorize": {"calls": 280, "seconds": 43.4775},
+        "linear.solve": {"calls": 280, "seconds": 0.8766744},
+        "linear.total": {"calls": 280, "seconds": 48.495052},
+        "newton.carrier_row_evaluation": {"calls": 284, "seconds": 21.2795295},
+        "newton.global_continuity_evaluation": {"calls": 567, "seconds": 41.4992088},
+        "newton.initial_residual": {"calls": 3, "seconds": 0.240362},
+        "newton.iteration": {"calls": 280, "seconds": 869.9416564},
+        "newton.jacobian": {"calls": 280, "seconds": 695.152454},
+        "newton.line_search": {"calls": 280, "seconds": 21.9270694},
+        "newton.row_weights": {"calls": 283, "seconds": 0.0069954},
+        "newton.update_constraints": {"calls": 280, "seconds": 0.0050825}
+      }
+    },
+    "external_resistor_1206": {
+      "profile_sha256": "08858b73920535a2701b88fc2b6a3259d9505514b4b2473fb4dd8844b83aae9b",
+      "wall_seconds": 3149.4473352,
+      "result": {
+        "full_dd_evaluations": 7,
+        "newton_updates": 1356,
+        "residual_calls": 1392,
+        "jacobian_calls": 1358,
+        "sparselu_analyze_calls": 1363,
+        "sparselu_factorize_calls": 1366,
+        "sparselu_solve_calls": 1366,
+        "boundary_dd_evaluations": 7,
+        "vela_bv_V": 6.395887865509238,
+        "load_line_residual_V": -3.506407006170775e-5,
+        "global_electron_continuity_ratio": 1.2028055520343836e-9,
+        "global_hole_continuity_ratio": 1.2495065493626862e-9
+      },
+      "newton_solves": [
+        {"iterations": 220, "initial_residual": 6543.663377530552, "final_residual": 6.142111766876134e-6},
+        {"iterations": 220, "initial_residual": 5731.47749494606, "final_residual": 9.02868844530019e-6},
+        {"iterations": 220, "initial_residual": 1337.8160770491456, "final_residual": 2.0738677718729965e-6},
+        {"iterations": 220, "initial_residual": 50.462841205707214, "final_residual": 3.3693539696266184e-8},
+        {"iterations": 220, "initial_residual": 11.372788575788137, "final_residual": 1.1428980625283511e-8},
+        {"iterations": 138, "initial_residual": 0.35636073013831915, "final_residual": 1.6420992306916399e-9},
+        {"iterations": 118, "initial_residual": 0.07982031642522416, "final_residual": 9.766953496607895e-10}
+      ],
+      "stages": {
+        "boundary.checkpoint_write": {"calls": 7, "seconds": 0.1576429},
+        "boundary.controlled_target": {"calls": 5, "seconds": 3148.9485542},
+        "boundary.full_dd_evaluation": {"calls": 7, "seconds": 3148.7279475},
+        "boundary.root_total": {"calls": 5, "seconds": 3148.7280245},
+        "bv.process_probe": {"calls": 1365, "seconds": 141.4763972},
+        "dc.record_point": {"calls": 5, "seconds": 0.3199146},
+        "dc.solve_point": {"calls": 7, "seconds": 3148.5554249},
+        "dc_sweep.total": {"calls": 1, "seconds": 3149.4088026},
+        "dd.active_branch_fingerprint": {"calls": 1365, "seconds": 148.4680995},
+        "dd.continuity_diagnostics": {"calls": 4105, "seconds": 226.4926148},
+        "dd.jacobian": {"calls": 1358, "seconds": 2543.0416753},
+        "dd.residual": {"calls": 1392, "seconds": 76.7187737},
+        "linear.analyze": {"calls": 1366, "seconds": 14.9285639},
+        "linear.factorize": {"calls": 1366, "seconds": 134.2383549},
+        "linear.solve": {"calls": 1366, "seconds": 2.9376085},
+        "linear.total": {"calls": 1366, "seconds": 152.1250234},
+        "newton.carrier_row_evaluation": {"calls": 1370, "seconds": 75.6993416},
+        "newton.global_continuity_evaluation": {"calls": 2735, "seconds": 151.0841092},
+        "newton.initial_residual": {"calls": 7, "seconds": 0.4269},
+        "newton.iteration": {"calls": 1358, "seconds": 3145.4618623},
+        "newton.jacobian": {"calls": 1358, "seconds": 2543.0476134},
+        "newton.line_search": {"calls": 1358, "seconds": 77.0253334},
+        "newton.row_weights": {"calls": 1365, "seconds": 0.0311492},
+        "newton.update_constraints": {"calls": 1358, "seconds": 0.1064644}
+      }
+    }
+  },
+  "conclusion": {
+    "primary_stage": "dd.jacobian",
+    "external_jacobian_wall_fraction": 0.8075,
+    "first_optimization_layer": "reduce external-resistor full DD evaluations and Newton updates before per-update Jacobian work",
+    "gprof_cross_check": [
+      "impactIonizationActiveBranchFingerprint",
+      "SparseLU factorize",
+      "evaluateBVProcessProbe"
+    ]
+  }
+}
