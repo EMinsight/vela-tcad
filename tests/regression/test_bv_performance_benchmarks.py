@@ -48,6 +48,19 @@ class BVPerformanceBenchmarksTest(unittest.TestCase):
             BENCHMARKS.keep_seed_evaluation("external_resistor_1206", 1206.0, 1)
         )
 
+    def test_external_candidate_enables_protected_cross_target_prediction(self) -> None:
+        config = {"sweep": {"boundary_control": {}}}
+        BENCHMARKS.configure_scenario_optimizations(
+            "external_resistor_1206", config
+        )
+        self.assertEqual(
+            config["sweep"]["boundary_control"]["predictor_max_step_factor"],
+            3.0,
+        )
+        predictor = config["sweep"]["continuation"]["predictor"]
+        self.assertEqual(predictor["mode"], "secant")
+        self.assertEqual(predictor["fields"], ["psi", "phin", "phip"])
+
     def test_extract_bv_interpolates_at_threshold(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "sweep.csv"

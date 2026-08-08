@@ -241,6 +241,21 @@ def scenario_source(scenario: str) -> Path:
     raise ValueError(f"unknown scenario: {scenario}")
 
 
+def configure_scenario_optimizations(
+    scenario: str, config: dict[str, Any]
+) -> None:
+    if scenario != "external_resistor_1206":
+        return
+    config["sweep"]["boundary_control"]["predictor_max_step_factor"] = 3.0
+    config["sweep"]["continuation"] = {
+        "predictor": {
+            "mode": "secant",
+            "fields": ["psi", "phin", "phip"],
+            "max_extrapolation_ratio": 4.0,
+        }
+    }
+
+
 def prepare_scenario(
     scenario: str,
     output: Path,
@@ -258,6 +273,7 @@ def prepare_scenario(
         config["sweep"]["boundary_control"]["resume"] = False
     else:
         seed_rows = copy_boundary_seed(scenario, source, output)
+    configure_scenario_optimizations(scenario, config)
 
     config_path = output / "simulation.json"
     write_json(config_path, config)

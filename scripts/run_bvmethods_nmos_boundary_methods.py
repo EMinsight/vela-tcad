@@ -84,12 +84,10 @@ def configure_common(config: dict[str, Any], output: Path, initial_state: Path) 
         "evaluation_csv": absolute(output / "boundary_control_evaluations.csv"),
         "checkpoint_directory": absolute(output / "boundary_control_checkpoints"),
         "resume": True,
-        # Keep cross-target prediction within the verified 25 mV high-field
-        # continuation step.  A 50 mV prediction accelerated the 806/1006 V
-        # targets, but the 1006 -> 1206 V transition remained just above the
-        # unchanged 1e-5 Newton stall floor after 220 iterations.  Persisted
-        # evaluations still provide secant prediction inside each target.
-        "predictor_max_step_factor": 1.0,
+        # Cross-target scalar and state prediction may span up to three proven
+        # 25 mV high-field continuation steps. Failed state predictions retain
+        # the existing constant-warm-start fallback.
+        "predictor_max_step_factor": 3.0,
         "preferred_max_evaluations": 3,
     }
     diagnostics = sweep.setdefault("diagnostics", {})
@@ -119,6 +117,13 @@ def configure_common(config: dict[str, Any], output: Path, initial_state: Path) 
 
 def configure_external_resistor(config: dict[str, Any], max_points: int | None = None) -> None:
     sweep = config["sweep"]
+    sweep["continuation"] = {
+        "predictor": {
+            "mode": "secant",
+            "fields": ["psi", "phin", "phip"],
+            "max_extrapolation_ratio": 4.0,
+        }
+    }
     # Continue forward from the 5.9 V self-consistent state. Earlier 67.5 V and
     # 206 V targets lie below that state's actual 10 Mohm*um load-line outer
     # voltage and would force an unnecessary backward branch traversal.

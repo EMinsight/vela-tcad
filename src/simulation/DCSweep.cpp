@@ -6341,6 +6341,8 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                                        Real resistance_ohm_um,
                                        Real seedVoltage,
                                        const DDSolution* seedState,
+                                       const DDSolution* predictorPreviousState,
+                                       Real predictorPreviousStateVoltage,
                                        Real currentDirection,
                                        const detail::MonotoneBoundaryRootConfig& rootConfig,
                                        const std::function<Real(Real, Real)>& residual) {
@@ -6350,11 +6352,13 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
         DDSolution evaluationState;
         bool hasEvaluationState = seedState != nullptr;
         DDSolution previousEvaluationState;
-        bool hasPreviousEvaluationState = false;
-        Real previousEvaluationVoltage = seedVoltage;
+        bool hasPreviousEvaluationState = predictorPreviousState != nullptr;
+        Real previousEvaluationVoltage = predictorPreviousStateVoltage;
         Real evaluationStateVoltage = seedVoltage;
         if (seedState != nullptr)
             evaluationState = *seedState;
+        if (predictorPreviousState != nullptr)
+            previousEvaluationState = *predictorPreviousState;
         if (hasEvaluationState && hasPredictorPreviousSolution &&
             sameBoundaryValue(currentSolutionBias, seedVoltage) &&
             !sameBoundaryValue(predictorPreviousBias, seedVoltage)) {
@@ -6641,6 +6645,10 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                 sweep.externalResistor.resistance_ohm_um,
                 seedVoltage,
                 seedState,
+                hasPredictorPreviousSolution
+                    ? &predictorPreviousSolution
+                    : nullptr,
+                predictorPreviousBias,
                 sweep.externalResistor.currentDirection,
                 pointRootConfig,
                 [&](Real innerVoltage, Real directedCurrent) {
@@ -6667,6 +6675,11 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                 solved.root.voltage - previousInnerVoltage,
                 0);
 
+            if (seedState != nullptr &&
+                !sameBoundaryValue(seedVoltage, solved.root.voltage)) {
+                acceptPredictorHistory(
+                    *seedState, seedVoltage, solved.root.voltage);
+            }
             previousSolution = std::move(solved.attempt.solution);
             seedState = &previousSolution;
             previousInnerVoltage = solved.root.voltage;
@@ -6756,6 +6769,10 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                 0.0,
                 seedVoltage,
                 seedState,
+                hasPredictorPreviousSolution
+                    ? &predictorPreviousSolution
+                    : nullptr,
+                predictorPreviousBias,
                 sweep.voltageToCurrent.currentDirection,
                 pointRootConfig,
                 [&](Real, Real current) { return current - targetCurrent; });
