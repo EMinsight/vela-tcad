@@ -1,0 +1,126 @@
+{
+  "schema_version": 1,
+  "base_commit": "896e689",
+  "change": "cache immutable Fermi-Dirac edge constants and reuse the already evaluated vector-QF edge mobility in transport finite differences",
+  "candidate_raw_root": "build-bv-performance/edge-transport-reuse",
+  "adjacent_baseline_raw_root": "build-bv-performance/edge-ab-baseline-adjacent",
+  "implementation": {
+    "fermi_edge_constants": [
+      "log(ni/Nc) at both edge nodes",
+      "log(ni/Nv) at both edge nodes",
+      "electron and hole density-of-states drift offsets"
+    ],
+    "mobility_reuse": "transport_cell_vector mobility is independent of each local finite-difference perturbation and is reused for the eight perturbed flux evaluations per carrier",
+    "fallback": "surface-field and other state-dependent mobility modes retain perturbed-state mobility evaluation",
+    "physics_parameters_changed": false,
+    "empirical_current_scaling_changed": false
+  },
+  "adjacent_high_field_ab": {
+    "baseline": {
+      "wall_seconds": 238.667366699985,
+      "profile_elapsed_seconds": 238.3541763,
+      "jacobian_edge_physics_seconds": 121.3839375,
+      "dd_jacobian_seconds": 158.4790966,
+      "newton_updates": 191
+    },
+    "candidate": {
+      "wall_seconds": 232.83372860000236,
+      "profile_elapsed_seconds": 232.5730826,
+      "jacobian_edge_physics_seconds": 117.2068357,
+      "dd_jacobian_seconds": 153.6751238,
+      "newton_updates": 191
+    },
+    "candidate_change_fraction": {
+      "wall": -0.02444254604491347,
+      "jacobian_edge_physics": -0.034412310936939305,
+      "dd_jacobian": -0.03031297441154135
+    },
+    "result_equivalence": "exact final residual, inner voltage, continuity ratios, Newton count, sparse pattern, and factor fill"
+  },
+  "candidate_scenarios": {
+    "high_field_transition": {
+      "wall_seconds": 232.83372860000236,
+      "newton_updates": 191,
+      "full_dd_evaluations": 1,
+      "stages_seconds": {
+        "dd_residual": 18.62344,
+        "dd_jacobian": 153.6751238,
+        "jacobian_edge_physics": 117.2068357,
+        "jacobian_node_sources": 35.4371364,
+        "linear_analyze": 0.0383137,
+        "linear_factorize": 23.5886264,
+        "linear_solve": 0.4611785
+      },
+      "result": {
+        "inner_voltage_V": 6.099590877047813,
+        "global_electron_continuity_ratio": 9.154294013563705e-10,
+        "global_hole_continuity_ratio": 1.0764411116579334e-9
+      }
+    },
+    "voltage_to_current_final": {
+      "wall_seconds": 334.67686860001413,
+      "newton_updates": 279,
+      "full_dd_evaluations": 2,
+      "stages_seconds": {
+        "dd_residual": 28.3335126,
+        "dd_jacobian": 231.589944,
+        "jacobian_edge_physics": 176.4728814,
+        "jacobian_node_sources": 53.4399978,
+        "linear_analyze": 0.0386685,
+        "linear_factorize": 37.0919184,
+        "linear_solve": 0.7036859
+      },
+      "result": {
+        "inner_voltage_V": 6.395904200106065,
+        "vela_bv_V": 6.395904174606575,
+        "boundary_residual_A_per_um": 6.169747113378421e-12,
+        "global_electron_continuity_ratio": 1.2165595928167767e-9,
+        "global_hole_continuity_ratio": 1.3083049498570184e-9
+      }
+    },
+    "external_resistor_1206": {
+      "wall_seconds": 794.4560576000076,
+      "newton_updates": 662,
+      "full_dd_evaluations": 4,
+      "stages_seconds": {
+        "dd_residual": 63.7223063,
+        "dd_jacobian": 555.2038133,
+        "jacobian_edge_physics": 424.3134738,
+        "jacobian_node_sources": 127.1881744,
+        "linear_analyze": 0.1008338,
+        "linear_factorize": 87.0833751,
+        "linear_solve": 1.6467797
+      },
+      "result": {
+        "inner_voltage_V": 6.438388795883303,
+        "vela_bv_V": 6.395887865540998,
+        "load_line_residual_V": 9.136147127719596e-8,
+        "global_electron_continuity_ratio": 3.1158509473598274e-10,
+        "global_hole_continuity_ratio": 3.2378678561858275e-10
+      }
+    }
+  },
+  "field_validation": {
+    "file": "build-bv-performance/edge-transport-reuse/voltage_to_current_final/vela_sentaurus_field_comparison.json",
+    "potential_correlation": 0.9999957375517389,
+    "electron_qf_populated_correlation": 0.9999958208687154,
+    "hole_qf_populated_correlation": 0.9999901501973965,
+    "high_field_edge_correlation": 0.9928350791819129
+  },
+  "verification": {
+    "linear_solver_tests": "pass: 6 test cases and 23 assertions",
+    "newton_solver_tests": "pass: 77 test cases and 1087 assertions",
+    "bv_process_probe_tests": "pass: 5 test cases and 202 assertions",
+    "full_serial_ctest": "pass: 572 of 572",
+    "bv_performance_python_tests": "pass: included in full CTest",
+    "pn2d_config_template_python_tests": "pass: included in full CTest",
+    "same_newton_counts": "pass",
+    "same_state_result_gate": "pass",
+    "field_gate": "pass"
+  },
+  "conclusion": {
+    "accepted": true,
+    "reason": "the adjacent controlled run reduces edge-physics time without changing the solve trajectory; all three complete physics and boundary scenarios pass",
+    "cross_run_wall_time_note": "non-adjacent complete-scenario wall times are retained as observations only because machine load varied materially"
+  }
+}

@@ -365,6 +365,22 @@ void CoupledDDAssembler::buildEdgeAssemblyKernels()
         kernel.n1 = edge.n1;
         kernel.length = edge.length;
         kernel.coupling = couple_[edgeId];
+        if (usesFermiDirac(carrierStatistics_)) {
+            kernel.electronLogNiNc0 =
+                std::log(ni_[edge.n0] / Nc_[edge.n0]);
+            kernel.electronLogNiNc1 =
+                std::log(ni_[edge.n1] / Nc_[edge.n1]);
+            kernel.electronDriftOffset = Vt_ * std::log(
+                (ni_[edge.n1] / Nc_[edge.n1]) /
+                (ni_[edge.n0] / Nc_[edge.n0]));
+            kernel.holeLogNiNv0 =
+                std::log(ni_[edge.n0] / Nv_[edge.n0]);
+            kernel.holeLogNiNv1 =
+                std::log(ni_[edge.n1] / Nv_[edge.n1]);
+            kernel.holeDriftOffset = Vt_ * std::log(
+                (ni_[edge.n0] / Nv_[edge.n0]) /
+                (ni_[edge.n1] / Nv_[edge.n1]));
+        }
         if (edge.length > 1.0e-30) {
             kernel.poissonCoupling =
                 detail::edgeEpsilon(edgeCells_, mesh_, matdb_, edgeId) *
@@ -2933,7 +2949,9 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
 
     auto edgeElectronTransportFlux =
         [&](Index e, int i, int j, Real h,
-            Real psi_i, Real psi_j, Real phin_i, Real phin_j) -> Real {
+            Real psi_i, Real psi_j, Real phin_i, Real phin_j,
+            Real fixedMobility) -> Real {
+        const EdgeAssemblyKernel& edgeKernel = edgeAssemblyKernels_[e];
         const Real couple_e = couple_[e];
         if (h <= 1.0e-30 || couple_e <= 0.0)
             return 0.0;
@@ -2954,24 +2972,25 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
             psiForSurface(j) = psi_j;
             psiForMobility = &psiForSurface;
         }
-        const Real mun = cachedEdgeMobility(
-            e, CarrierType::Electron, electronMobilityField, psiForMobility);
+        const Real mun = fixedMobility >= 0.0
+            ? fixedMobility
+            : cachedEdgeMobility(
+                e, CarrierType::Electron, electronMobilityField,
+                psiForMobility);
         if (mun <= 0.0)
             return 0.0;
         const Real coef = mun * Vt_ * fieldFactor * couple_e / h;
         if (usesFermiDirac(carrierStatistics_)) {
             const Real psiRelativeI = psi_i - electronQfReference_V_;
             const Real psiRelativeJ = psi_j - electronQfReference_V_;
-            const Real n_i = vela::electronDensity(
-                ni_[idxI], Nc_[idxI], psiRelativeI, phin_i, Vt_, carrierStatistics_);
-            const Real n_j = vela::electronDensity(
-                ni_[idxJ], Nc_[idxJ], psiRelativeJ, phin_j, Vt_, carrierStatistics_);
             const Real etaI = (psiRelativeI - phin_i) / Vt_
-                + std::log(ni_[idxI] / Nc_[idxI]);
+                + edgeKernel.electronLogNiNc0;
             const Real etaJ = (psiRelativeJ - phin_j) / Vt_
-                + std::log(ni_[idxJ] / Nc_[idxJ]);
-            const Real driftPotential = dpsi + Vt_ * std::log(
-                (ni_[idxJ] / Nc_[idxJ]) / (ni_[idxI] / Nc_[idxI]));
+                + edgeKernel.electronLogNiNc1;
+            const Real n_i = Nc_[idxI] * fermiDiracHalf(etaI);
+            const Real n_j = Nc_[idxJ] * fermiDiracHalf(etaJ);
+            const Real driftPotential =
+                dpsi + edgeKernel.electronDriftOffset;
             return sgElectronFermiDiracContinuityFlux(
                 n_i, n_j, etaI, etaJ, driftPotential,
                 phin_i, phin_j, Vt_, coef);
@@ -2999,7 +3018,9 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
 
     auto edgeHoleTransportFlux =
         [&](Index e, int i, int j, Real h,
-            Real psi_i, Real psi_j, Real phip_i, Real phip_j) -> Real {
+            Real psi_i, Real psi_j, Real phip_i, Real phip_j,
+            Real fixedMobility) -> Real {
+        const EdgeAssemblyKernel& edgeKernel = edgeAssemblyKernels_[e];
         const Real couple_e = couple_[e];
         if (h <= 1.0e-30 || couple_e <= 0.0)
             return 0.0;
@@ -3020,24 +3041,23 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
             psiForSurface(j) = psi_j;
             psiForMobility = &psiForSurface;
         }
-        const Real mup = cachedEdgeMobility(
-            e, CarrierType::Hole, holeMobilityField, psiForMobility);
+        const Real mup = fixedMobility >= 0.0
+            ? fixedMobility
+            : cachedEdgeMobility(
+                e, CarrierType::Hole, holeMobilityField, psiForMobility);
         if (mup <= 0.0)
             return 0.0;
         const Real coef = mup * Vt_ * fieldFactor * couple_e / h;
         if (usesFermiDirac(carrierStatistics_)) {
             const Real psiRelativeI = psi_i - holeQfReference_V_;
             const Real psiRelativeJ = psi_j - holeQfReference_V_;
-            const Real p_i = vela::holeDensity(
-                ni_[idxI], Nv_[idxI], psiRelativeI, phip_i, Vt_, carrierStatistics_);
-            const Real p_j = vela::holeDensity(
-                ni_[idxJ], Nv_[idxJ], psiRelativeJ, phip_j, Vt_, carrierStatistics_);
             const Real etaI = (phip_i - psiRelativeI) / Vt_
-                + std::log(ni_[idxI] / Nv_[idxI]);
+                + edgeKernel.holeLogNiNv0;
             const Real etaJ = (phip_j - psiRelativeJ) / Vt_
-                + std::log(ni_[idxJ] / Nv_[idxJ]);
-            const Real driftPotential = dpsi + Vt_ * std::log(
-                (ni_[idxI] / Nv_[idxI]) / (ni_[idxJ] / Nv_[idxJ]));
+                + edgeKernel.holeLogNiNv1;
+            const Real p_i = Nv_[idxI] * fermiDiracHalf(etaI);
+            const Real p_j = Nv_[idxJ] * fermiDiracHalf(etaJ);
+            const Real driftPotential = dpsi + edgeKernel.holeDriftOffset;
             return sgHoleFermiDiracContinuityFlux(
                 p_i, p_j, etaI, etaJ, driftPotential,
                 phip_i, phip_j, Vt_, coef);
@@ -3111,6 +3131,7 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
                     psiOffset() + i, psiOffset() + j,
                     phinOffset() + i, phinOffset() + j,
                 };
+                const Real fixedMobility = vectorQfMobility ? mun : -1.0;
                 for (int k = 0; k < 4; ++k) {
                     const Real step = 1.0e-6 * std::max(1.0, std::abs(vals[k]));
                     Real vp[4] = {vals[0], vals[1], vals[2], vals[3]};
@@ -3118,9 +3139,11 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
                     vp[k] += step;
                     vm[k] -= step;
                     const Real fp = edgeElectronTransportFlux(
-                        e, i, j, h, vp[0], vp[1], vp[2], vp[3]);
+                        e, i, j, h, vp[0], vp[1], vp[2], vp[3],
+                        fixedMobility);
                     const Real fm = edgeElectronTransportFlux(
-                        e, i, j, h, vm[0], vm[1], vm[2], vm[3]);
+                        e, i, j, h, vm[0], vm[1], vm[2], vm[3],
+                        fixedMobility);
                     const Real dF = (fp - fm) / (2.0 * step);
                     add(phinOffset() + i, cols[k], dF);
                     add(phinOffset() + j, cols[k], -dF);
@@ -3172,6 +3195,7 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
                     psiOffset() + i, psiOffset() + j,
                     phipOffset() + i, phipOffset() + j,
                 };
+                const Real fixedMobility = vectorQfMobility ? mup : -1.0;
                 for (int k = 0; k < 4; ++k) {
                     const Real step = 1.0e-6 * std::max(1.0, std::abs(vals[k]));
                     Real vp[4] = {vals[0], vals[1], vals[2], vals[3]};
@@ -3179,9 +3203,11 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
                     vp[k] += step;
                     vm[k] -= step;
                     const Real fp = edgeHoleTransportFlux(
-                        e, i, j, h, vp[0], vp[1], vp[2], vp[3]);
+                        e, i, j, h, vp[0], vp[1], vp[2], vp[3],
+                        fixedMobility);
                     const Real fm = edgeHoleTransportFlux(
-                        e, i, j, h, vm[0], vm[1], vm[2], vm[3]);
+                        e, i, j, h, vm[0], vm[1], vm[2], vm[3],
+                        fixedMobility);
                     const Real dF = (fp - fm) / (2.0 * step);
                     add(phipOffset() + i, cols[k], dF);
                     add(phipOffset() + j, cols[k], -dF);

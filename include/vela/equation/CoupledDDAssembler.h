@@ -309,6 +309,12 @@ private:
         Real length = 0.0;
         Real coupling = 0.0;
         Real poissonCoupling = 0.0;
+        Real electronLogNiNc0 = 0.0;
+        Real electronLogNiNc1 = 0.0;
+        Real electronDriftOffset = 0.0;
+        Real holeLogNiNv0 = 0.0;
+        Real holeLogNiNv1 = 0.0;
+        Real holeDriftOffset = 0.0;
         bool activeTransport = false;
         std::array<Index, maxEdgeAvalancheStencilNodes> avalancheStencilNodes{};
         std::uint8_t avalancheStencilNodeCount = 0;
