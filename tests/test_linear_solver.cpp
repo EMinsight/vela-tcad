@@ -2,9 +2,11 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include "vela/core/PerformanceProfiler.h"
 #include "vela/solver/LinearSolver.h"
 
 #include <Eigen/Sparse>
+#include <nlohmann/json.hpp>
 #include <stdexcept>
 #include <vector>
 
@@ -81,6 +83,29 @@ TEST_CASE("LinearSolver re-analyzes when sparse pattern changes", "[linear_solve
     const VectorXd x3 = solver.solve(coupled, b);
     REQUIRE(solver.patternAnalysisCount() == 3);
     REQUIRE((coupled * x3 - b).norm() == Catch::Approx(0.0).margin(1e-12));
+}
+
+TEST_CASE("LinearSolver profiles numeric factor fill", "[linear_solver][performance]")
+{
+    const SparseMatrixd A = makeSparseMatrix(3, 3, {
+        {0, 0, 4.0}, {1, 0, -1.0},
+        {0, 1, -1.0}, {1, 1, 4.0}, {2, 1, -1.0},
+        {1, 2, -1.0}, {2, 2, 4.0},
+    });
+    const VectorXd expected = (VectorXd(3) << 1.0, 2.0, 3.0).finished();
+    PerformanceProfiler profiler({true, "unused.json"});
+    LinearSolver solver;
+    {
+        ActivePerformanceProfilerScope active(&profiler);
+        const VectorXd solution = solver.solve(A, A * expected);
+        REQUIRE((solution - expected).norm() ==
+                Catch::Approx(0.0).margin(1e-12));
+    }
+
+    const nlohmann::json observations = profiler.toJson().at("observations");
+    REQUIRE(observations.at("linear.factor_nonzeros_l").at("last") > 0.0);
+    REQUIRE(observations.at("linear.factor_nonzeros_u").at("last") > 0.0);
+    REQUIRE(observations.at("linear.factor_fill_ratio").at("last") > 0.0);
 }
 
 TEST_CASE("LinearSolver rejects invalid dimensions", "[linear_solver]")

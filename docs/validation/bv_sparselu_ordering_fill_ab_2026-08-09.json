@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "base_commit": "eb813a0",
+  "change": "record SparseLU factor nonzeros and compare COLAMD with AMD ordering",
+  "default_ordering": "COLAMD",
+  "candidate_ordering": "AMD on the structural pattern of A^T+A",
+  "colamd_raw_root": "build-bv-performance/ordering-colamd",
+  "amd_raw_root": "build-bv-performance/ordering-amd",
+  "single_factor_roots": {
+    "colamd": "build-bv-performance/ordering-colamd-single",
+    "amd": "build-bv-performance/ordering-amd-single"
+  },
+  "actual_bv_initial_factorization": {
+    "matrix_nonzeros": 18129,
+    "colamd": {
+      "factor_nonzeros_l": 74205,
+      "factor_nonzeros_u": 76415,
+      "fill_ratio": 8.308235423906448,
+      "analyze_seconds": 0.0198302,
+      "factorize_seconds": 0.1499716
+    },
+    "amd": {
+      "factor_nonzeros_l": 448557,
+      "factor_nonzeros_u": 448592,
+      "fill_ratio": 49.48695460312207,
+      "analyze_seconds": 0.00718,
+      "factorize_seconds": 51.1898181
+    },
+    "candidate_change": {
+      "factor_nonzeros_increase_fraction": 4.9563736556,
+      "factorize_time_increase_fraction": 340.3300791617
+    }
+  },
+  "colamd_full_scenarios": {
+    "high_field_transition": {
+      "wall_seconds": 342.80325769999763,
+      "newton_updates": 191,
+      "factorize_seconds": 34.797269,
+      "factorize_calls": 196,
+      "fill_ratio_min": 8.308235423906448,
+      "fill_ratio_max": 11.601352333162193
+    },
+    "voltage_to_current_final": {
+      "wall_seconds": 425.34583649999695,
+      "newton_updates": 279,
+      "factorize_seconds": 46.7436773,
+      "factorize_calls": 280,
+      "fill_ratio_min": 11.608017126970134,
+      "fill_ratio_max": 11.608017126970134
+    },
+    "external_resistor_1206": {
+      "wall_seconds": 787.8764160999854,
+      "newton_updates": 662,
+      "factorize_seconds": 85.7049441,
+      "factorize_calls": 664,
+      "fill_ratio_min": 8.308235423906448,
+      "fill_ratio_max": 11.608453050983735
+    }
+  },
+  "amd_full_scenario": {
+    "high_field_transition": {
+      "decision": "terminated_after_31_newton_iterations",
+      "reason": "the elapsed time already exceeded 29 minutes and projected completion was several hours"
+    },
+    "remaining_scenarios": "not run because the actual-Jacobian fill and factorization gates already failed decisively"
+  },
+  "verification": {
+    "colamd_linear_solver_tests": "pass: 6 test cases and 23 assertions",
+    "amd_linear_solver_tests": "pass: 6 test cases and 23 assertions",
+    "colamd_full_scenario_results": "exactly match the accepted baseline Newton counts and outputs",
+    "profiling_only_physics_changes": false
+  },
+  "conclusion": {
+    "amd_rejected": true,
+    "colamd_retained_as_default": true,
+    "analyze_pattern_is_not_the_target": true,
+    "next_linear_algebra_target": "reduce COLAMD factor fill or evaluate a genuinely unsymmetric ordering/backend, not AMD(A^T+A)"
+  }
+}

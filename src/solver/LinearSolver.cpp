@@ -238,6 +238,17 @@ VectorXd LinearSolver::solve(const SparseMatrixd& A, const VectorXd& b)
             "Matrix may be singular or ill-conditioned." +
             sparseMatrixDiagnostics(*matrix, b));
 
+    const double factorNonzerosL = static_cast<double>(solver_.nnzL());
+    const double factorNonzerosU = static_cast<double>(solver_.nnzU());
+    observePerformanceValue("linear.factor_nonzeros_l", factorNonzerosL);
+    observePerformanceValue("linear.factor_nonzeros_u", factorNonzerosU);
+    observePerformanceValue(
+        "linear.factor_fill_ratio",
+        matrix->nonZeros() > 0
+            ? (factorNonzerosL + factorNonzerosU) /
+                static_cast<double>(matrix->nonZeros())
+            : 0.0);
+
     VectorXd x;
     {
         ScopedPerformanceTimer timer("linear.solve");

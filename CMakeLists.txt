@@ -46,6 +46,9 @@ option(VELA_ENABLE_PYTHON "Build the pybind11 Python API" OFF)
 option(VELA_ENABLE_HDF5 "Build Sentaurus HDF5/TDR import tools when HDF5 is available" ON)
 option(VELA_ENABLE_GPROF "Instrument Vela targets for GNU gprof" OFF)
 option(VELA_ENABLE_LTO "Enable conservative link-time optimization for Vela targets" OFF)
+set(VELA_SPARSELU_ORDERING "COLAMD" CACHE STRING
+    "Eigen SparseLU column ordering (COLAMD or AMD)")
+set_property(CACHE VELA_SPARSELU_ORDERING PROPERTY STRINGS COLAMD AMD)
 
 if(VELA_ENABLE_GPROF AND NOT CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     message(FATAL_ERROR "VELA_ENABLE_GPROF requires the GNU C++ compiler")
@@ -139,6 +142,14 @@ target_link_libraries(vela_core
         Boost::headers
 )
 target_compile_definitions(vela_core PUBLIC VELA_VERSION="${PROJECT_VERSION}")
+
+if(VELA_SPARSELU_ORDERING STREQUAL "AMD")
+    target_compile_definitions(vela_core PUBLIC VELA_SPARSELU_ORDERING_AMD=1)
+elseif(NOT VELA_SPARSELU_ORDERING STREQUAL "COLAMD")
+    message(FATAL_ERROR
+        "VELA_SPARSELU_ORDERING must be COLAMD or AMD")
+endif()
+message(STATUS "Eigen SparseLU ordering: ${VELA_SPARSELU_ORDERING}")
 
 if(VELA_ENABLE_GPROF)
     target_compile_options(vela_core PUBLIC

@@ -2,6 +2,7 @@
 
 #include "vela/core/Types.h"
 
+#include <Eigen/OrderingMethods>
 #include <Eigen/SparseLU>
 #include <cstddef>
 #include <string>
@@ -51,8 +52,14 @@ public:
 
 private:
     using StorageIndex = SparseMatrixd::StorageIndex;
+#if defined(VELA_SPARSELU_ORDERING_AMD)
+    using SparseLUOrdering = Eigen::AMDOrdering<StorageIndex>;
+#else
+    using SparseLUOrdering = Eigen::COLAMDOrdering<StorageIndex>;
+#endif
 
-    class SparseLUSolver : public Eigen::SparseLU<SparseMatrixd> {
+    class SparseLUSolver
+        : public Eigen::SparseLU<SparseMatrixd, SparseLUOrdering> {
     public:
         bool analysisIsOk() const noexcept { return this->m_analysisIsOk; }
     };
