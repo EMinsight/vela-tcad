@@ -16,6 +16,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace vela {
@@ -314,6 +315,9 @@ private:
     // Mesh-derived quantities cached at construction time.
     std::vector<std::vector<Index>> edgeCells_;
     std::vector<std::vector<Index>> nodeCells_;
+    std::vector<std::vector<Index>> cellEdges_;
+    std::vector<std::vector<Index>> nodeEdges_;
+    std::vector<bool> contactNodes_;
     std::vector<Real> vol_;
     std::vector<Real> couple_;
     VectorXd fixedInterfaceChargeRhs_;
@@ -323,6 +327,10 @@ private:
     Real holeQfReference_V_ = 0.0;
     mutable bool hasObservedJacobianPattern_ = false;
     mutable std::uint64_t lastObservedJacobianPattern_ = 0;
+    mutable bool hasFixedJacobianPattern_ = false;
+    mutable std::uint64_t fixedJacobianBoundarySignature_ = 0;
+    mutable SparseMatrixd fixedJacobianPattern_;
+    mutable std::unordered_set<std::uint64_t> fixedJacobianPatternEntries_;
 };
 
 } // namespace vela

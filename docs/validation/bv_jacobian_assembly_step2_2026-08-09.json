@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "base_commit": "8cb46e6",
+  "change": "cache mesh topology and stabilize the configured Jacobian sparsity pattern",
+  "baseline": "docs/validation/bv_jacobian_assembly_step1_2026-08-09.json",
+  "raw_root": "build-bv-performance/jacobian-step2-fixed-pattern",
+  "scenario": "high_field_transition",
+  "physics_config_sha256": "dc28b33f2a95e9664c8d93c7c54b3cb4cac22941175b43f8b36d955a25a2a7a2",
+  "result": {
+    "wall_seconds": 626.0905726,
+    "full_dd_evaluations": 1,
+    "newton_updates": 191,
+    "jacobian_calls": 192,
+    "global_electron_continuity_ratio": 9.15428261457517e-10,
+    "global_hole_continuity_ratio": 1.0764374069866628e-9
+  },
+  "pattern": {
+    "build_calls": 1,
+    "observations": 192,
+    "changes": 0,
+    "structural_nonzeros": 133943,
+    "average_numeric_nonzeros": 82252.13020833333,
+    "structural_overhead_fraction": 0.628444
+  },
+  "linear_solver": {
+    "baseline_analyze_calls": 184,
+    "candidate_analyze_calls": 5,
+    "baseline_analyze_seconds": 2.4279313,
+    "candidate_analyze_seconds": 0.0675211,
+    "analyze_time_change_fraction": -0.9721898639,
+    "baseline_factorize_seconds": 31.4627255,
+    "candidate_factorize_seconds": 33.961235,
+    "factorize_time_change_fraction": 0.0794117312
+  },
+  "jacobian": {
+    "baseline_seconds": 490.0602264,
+    "candidate_seconds": 501.0377668,
+    "change_fraction": 0.0224003904,
+    "baseline_finalize_seconds": 1.1381825,
+    "candidate_finalize_seconds": 3.4644783,
+    "finalize_change_fraction": 2.0438688875,
+    "candidate_topology_seconds": 0.0000173,
+    "pattern_build_seconds": 0.0553463
+  },
+  "verification": {
+    "newton_test_cases": 77,
+    "newton_assertions": 1083,
+    "full_serial_ctest": "pass",
+    "missing_pattern_entry_checks": "pass",
+    "same_state_result_gate": "pass"
+  },
+  "conclusion": {
+    "fixed_pattern_goal": "pass",
+    "transitional_performance_goal": "not_applicable",
+    "note": "The transitional coeffRef projection deliberately retains triplets as a numerical oracle. Direct precomputed value offsets are required to remove its lookup overhead. The current cell superset also raises structural nnz by about 62.8 percent and factorization by 7.9 percent, so step 3 should tighten the configured stencil where possible."
+  }
+}

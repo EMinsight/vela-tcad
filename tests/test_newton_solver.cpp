@@ -666,10 +666,14 @@ TEST_CASE("CoupledDDAssembler: profiling separates Jacobian assembly phases",
     bcs.phip[0] = 0.0;
 
     PerformanceProfiler profiler({true, "unused.json"});
+    VectorXd perturbed = x;
+    perturbed(1) += 0.01;
+    perturbed(nodeCount + 1) -= 0.002;
+    perturbed(2 * nodeCount + 1) += 0.003;
     {
         ActivePerformanceProfilerScope active(&profiler);
         (void)assembler.assembleJacobian(x, bcs);
-        (void)assembler.assembleJacobian(x, bcs);
+        (void)assembler.assembleJacobian(perturbed, bcs);
     }
 
     const nlohmann::json profile = profiler.toJson();
@@ -685,8 +689,12 @@ TEST_CASE("CoupledDDAssembler: profiling separates Jacobian assembly phases",
     }
     REQUIRE(profile.at("counters").at("jacobian.pattern_observations") == 2);
     REQUIRE(profile.at("counters").value("jacobian.pattern_change_count", 0) == 0);
+    REQUIRE(profile.at("counters").at("jacobian.pattern_build_calls") == 1);
     REQUIRE(profile.at("observations").at("jacobian.triplet_count").at("min") > 0.0);
     REQUIRE(profile.at("observations").at("jacobian.nonzero_count").at("min") > 0.0);
+    REQUIRE(profile.at("observations")
+                .at("jacobian.structural_nonzero_count").at("min") >=
+            profile.at("observations").at("jacobian.nonzero_count").at("max"));
 }
 
 TEST_CASE("CoupledDDAssembler: contact-referenced quasi-Fermi coordinates preserve physical state",
