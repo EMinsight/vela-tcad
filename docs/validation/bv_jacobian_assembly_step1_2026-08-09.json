@@ -1,0 +1,107 @@
+{
+  "schema_version": 1,
+  "base_commit": "eaa887e",
+  "change": "phased Jacobian assembly instrumentation",
+  "build": {
+    "type": "Release",
+    "compiler": "MSYS2 UCRT64 GCC 16.1.0",
+    "threads": 1,
+    "profiling": "internal steady_clock stages"
+  },
+  "physics_config_sha256": "dc28b33f2a95e9664c8d93c7c54b3cb4cac22941175b43f8b36d955a25a2a7a2",
+  "raw_root": "build-bv-performance/jacobian-step1-phases",
+  "scenarios": {
+    "high_field_transition": {
+      "wall_seconds": 613.1014957,
+      "newton_updates": 191,
+      "jacobian_calls": 192,
+      "pattern_observations": 192,
+      "pattern_changes": 179,
+      "linear_analyze_calls": 184,
+      "linear_analyze_cache_hits": 12,
+      "linear_factorize_calls": 196,
+      "average_triplets": 212017.30208333334,
+      "average_nonzeros": 82409.55208333333,
+      "average_duplicate_triplets": 129607.75,
+      "stages_seconds": {
+        "dd.jacobian": 490.0602264,
+        "jacobian.topology": 0.4558503,
+        "jacobian.edge_physics": 444.3775578,
+        "jacobian.cell_physics": 0.000027,
+        "jacobian.node_sources": 42.8210607,
+        "jacobian.boundary_rows": 0.0009638,
+        "jacobian.finalize_triplets": 1.1381825
+      },
+      "result": {
+        "full_dd_evaluations": 1,
+        "global_electron_continuity_ratio": 9.154308262299374e-10,
+        "global_hole_continuity_ratio": 1.0764422515567872e-9
+      }
+    },
+    "voltage_to_current_final": {
+      "wall_seconds": 801.7522014,
+      "newton_updates": 279,
+      "jacobian_calls": 280,
+      "pattern_observations": 280,
+      "pattern_changes": 278,
+      "linear_analyze_calls": 280,
+      "linear_analyze_cache_hits": 0,
+      "linear_factorize_calls": 280,
+      "average_triplets": 215341.42857142858,
+      "average_nonzeros": 83027.81785714286,
+      "average_duplicate_triplets": 132313.61071428572,
+      "stages_seconds": {
+        "dd.jacobian": 656.1355225,
+        "jacobian.topology": 0.599448,
+        "jacobian.edge_physics": 593.8937253,
+        "jacobian.cell_physics": 0.0000399,
+        "jacobian.node_sources": 58.3437012,
+        "jacobian.boundary_rows": 0.0012152,
+        "jacobian.finalize_triplets": 1.6023553
+      },
+      "result": {
+        "full_dd_evaluations": 2,
+        "vela_bv_V": 6.395904174606575,
+        "boundary_residual_A_per_um": 6.169747113378421e-12,
+        "global_electron_continuity_ratio": 1.216559466401011e-9,
+        "global_hole_continuity_ratio": 1.3083069725092697e-9
+      }
+    },
+    "external_resistor_1206": {
+      "wall_seconds": 1866.3723457,
+      "newton_updates": 662,
+      "jacobian_calls": 663,
+      "pattern_observations": 663,
+      "pattern_changes": 654,
+      "linear_analyze_calls": 659,
+      "linear_analyze_cache_hits": 5,
+      "linear_factorize_calls": 664,
+      "average_triplets": 215318.0,
+      "average_nonzeros": 82998.00301659125,
+      "average_duplicate_triplets": 132319.99698340875,
+      "stages_seconds": {
+        "dd.jacobian": 1540.0089487,
+        "jacobian.topology": 1.3557467,
+        "jacobian.edge_physics": 1395.1546621,
+        "jacobian.cell_physics": 0.0000985,
+        "jacobian.node_sources": 135.6557366,
+        "jacobian.boundary_rows": 0.0024875,
+        "jacobian.finalize_triplets": 3.6454695
+      },
+      "result": {
+        "full_dd_evaluations": 4,
+        "vela_bv_V": 6.395887865540998,
+        "load_line_residual_V": 9.136147127719596e-8,
+        "global_electron_continuity_ratio": 3.11586570101079e-10,
+        "global_hole_continuity_ratio": 3.237865748521399e-10
+      }
+    }
+  },
+  "conclusion": {
+    "edge_physics_fraction_range": [0.9051, 0.9070],
+    "node_sources_fraction_range": [0.0874, 0.0890],
+    "finalize_triplets_fraction_range": [0.00232, 0.00244],
+    "pattern_is_state_dependent_in_current_path": true,
+    "fixed_pattern_expected_primary_benefit": "stable symbolic structure; triplet finalization alone is below 0.25 percent of Jacobian time"
+  }
+}

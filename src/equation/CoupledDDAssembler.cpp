@@ -64,6 +64,23 @@ std::string fnv1a64(std::string_view text)
     return output.str();
 }
 
+std::uint64_t sparsePatternHash(const SparseMatrixd& matrix)
+{
+    std::uint64_t hash = 14695981039346656037ULL;
+    auto mix = [&](std::uint64_t value) {
+        hash ^= value;
+        hash *= 1099511628211ULL;
+    };
+    mix(static_cast<std::uint64_t>(matrix.rows()));
+    mix(static_cast<std::uint64_t>(matrix.cols()));
+    mix(static_cast<std::uint64_t>(matrix.nonZeros()));
+    for (Eigen::Index outer = 0; outer <= matrix.outerSize(); ++outer)
+        mix(static_cast<std::uint64_t>(matrix.outerIndexPtr()[outer]));
+    for (Eigen::Index inner = 0; inner < matrix.nonZeros(); ++inner)
+        mix(static_cast<std::uint64_t>(matrix.innerIndexPtr()[inner]));
+    return hash;
+}
+
 } // namespace
 
 CoupledDDAssembler::CoupledDDAssembler(const DeviceMesh& mesh,
@@ -1877,9 +1894,15 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
     const Real sourceIntegralFactor = scaling_.enabled
         ? scaling_.unitSystem.continuitySourceIntegralFactor()
         : 1.0;
-    const std::vector<bool> contactNodes = detail::contactNodeMask(mesh_);
-    const std::vector<std::vector<Index>> cellEdges = detail::buildCellEdgeMap(edgeCells_, mesh_);
-    const std::vector<std::vector<Index>> nodeEdges = detail::buildNodeEdgeMap(mesh_);
+    std::vector<bool> contactNodes;
+    std::vector<std::vector<Index>> cellEdges;
+    std::vector<std::vector<Index>> nodeEdges;
+    {
+        ScopedPerformanceTimer topologyTimer("jacobian.topology");
+        contactNodes = detail::contactNodeMask(mesh_);
+        cellEdges = detail::buildCellEdgeMap(edgeCells_, mesh_);
+        nodeEdges = detail::buildNodeEdgeMap(mesh_);
+    }
     const bool transportMobilityDerivative = transportMobilityDependsOnPotentials(mobilityConfig_);
     const bool sgCurrentAvalanche = impactIonizationCoupled_ &&
         detail::usesEdgeCurrentAvalancheSource(impactIonizationConfig_);
@@ -2443,7 +2466,9 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
         return sgHoleContinuityFlux(p_i, p_j, dpsi, Vt_, coef);
     };
 
-    for (Index e = 0; e < mesh_.numEdges(); ++e) {
+    {
+        ScopedPerformanceTimer edgePhysicsTimer("jacobian.edge_physics");
+        for (Index e = 0; e < mesh_.numEdges(); ++e) {
         const Edge& edge = mesh_.getEdge(e);
         const Real h = edge.length;
         if (h < 1.0e-30) continue;
@@ -2710,9 +2735,12 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
                 hasHoleContribution[static_cast<std::size_t>(j)] = true;
             }
         }
+        }
     }
 
-    if (cellLocalAvalanche) {
+    {
+        ScopedPerformanceTimer cellPhysicsTimer("jacobian.cell_physics");
+        if (cellLocalAvalanche) {
         if (isSurfaceMobilityModel(mobilityConfig_)) {
             throw std::invalid_argument(
                 "cell-local avalanche source does not support surface mobility");
@@ -2904,9 +2932,12 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
                 }
             }
         }
+        }
     }
 
-    for (Index i = 0; i < Nidx; ++i) {
+    {
+        ScopedPerformanceTimer nodeSourcesTimer("jacobian.node_sources");
+        for (Index i = 0; i < Nidx; ++i) {
         const int ii = static_cast<int>(i);
         const Real psiRelativeN = psi(ii) - electronQfReference_V_;
         const Real psiRelativeP = psi(ii) - holeQfReference_V_;
@@ -3162,26 +3193,55 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
                 addCarrierFloor(phipOffset() + ii, p(ii), ni, vol_[i], 1.0);
             }
         }
+        }
     }
 
-    for (const auto& [node, value] : bcs.psi) {
+    {
+        ScopedPerformanceTimer boundaryRowsTimer("jacobian.boundary_rows");
+        for (const auto& [node, value] : bcs.psi) {
         (void)value;
         triplets.emplace_back(psiOffset() + static_cast<int>(node),
                               psiOffset() + static_cast<int>(node), 1.0);
     }
-    for (const auto& [node, value] : bcs.phin) {
+        for (const auto& [node, value] : bcs.phin) {
         (void)value;
         triplets.emplace_back(phinOffset() + static_cast<int>(node),
                               phinOffset() + static_cast<int>(node), 1.0);
     }
-    for (const auto& [node, value] : bcs.phip) {
+        for (const auto& [node, value] : bcs.phip) {
         (void)value;
         triplets.emplace_back(phipOffset() + static_cast<int>(node),
                               phipOffset() + static_cast<int>(node), 1.0);
+        }
     }
 
     SparseMatrixd J(3 * N, 3 * N);
-    J.setFromTriplets(triplets.begin(), triplets.end());
+    {
+        ScopedPerformanceTimer finalizeTimer("jacobian.finalize_triplets");
+        J.setFromTriplets(triplets.begin(), triplets.end());
+    }
+    if (PerformanceProfiler* profiler = activePerformanceProfiler();
+        profiler != nullptr && profiler->enabled()) {
+        const std::size_t tripletCount = triplets.size();
+        const std::size_t nonzeroCount = static_cast<std::size_t>(J.nonZeros());
+        observePerformanceValue("jacobian.triplet_count",
+                                static_cast<double>(tripletCount));
+        observePerformanceValue("jacobian.triplet_capacity",
+                                static_cast<double>(triplets.capacity()));
+        observePerformanceValue("jacobian.nonzero_count",
+                                static_cast<double>(nonzeroCount));
+        observePerformanceValue("jacobian.duplicate_count",
+                                static_cast<double>(tripletCount - nonzeroCount));
+        const std::uint64_t pattern = sparsePatternHash(J);
+        constexpr std::uint64_t exactDoubleMask = (std::uint64_t{1} << 52) - 1;
+        observePerformanceValue("jacobian.pattern_hash_52bit",
+                                static_cast<double>(pattern & exactDoubleMask));
+        incrementPerformanceCounter("jacobian.pattern_observations");
+        if (hasObservedJacobianPattern_ && pattern != lastObservedJacobianPattern_)
+            incrementPerformanceCounter("jacobian.pattern_change_count");
+        hasObservedJacobianPattern_ = true;
+        lastObservedJacobianPattern_ = pattern;
+    }
     return J;
 }
 

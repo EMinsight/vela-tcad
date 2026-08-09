@@ -5,6 +5,7 @@
 #include <nlohmann/json.hpp>
 
 #include "vela/core/PhysicalConstants.h"
+#include "vela/core/PerformanceProfiler.h"
 #include "vela/core/UnitScaling.h"
 #include "vela/core/UnitScalingSystem.h"
 #include "vela/equation/CoupledDDAssembler.h"
@@ -642,6 +643,50 @@ TEST_CASE("CoupledDDAssembler: zero-mobility continuity rows are pinned", "[newt
     Eigen::SparseLU<SparseMatrixd> lu;
     lu.compute(J);
     REQUIRE(lu.info() == Eigen::Success);
+}
+
+TEST_CASE("CoupledDDAssembler: profiling separates Jacobian assembly phases",
+          "[newton][coupled][performance_profiler]")
+{
+    DeviceMesh mesh = makePNMesh();
+    MaterialDatabase matdb;
+    DopingModel doping = makePNDoping(mesh);
+    CoupledDDAssembler assembler(
+        mesh, matdb, doping, constants::Vt_300, 1.0e-6, 1.0e-6);
+
+    const int nodeCount = static_cast<int>(mesh.numNodes());
+    CoupledDDState state;
+    state.psi = VectorXd::Zero(nodeCount);
+    state.phin = VectorXd::Zero(nodeCount);
+    state.phip = VectorXd::Zero(nodeCount);
+    const VectorXd x = assembler.pack(state);
+    CoupledDDBoundaryConditions bcs;
+    bcs.psi[0] = 0.0;
+    bcs.phin[0] = 0.0;
+    bcs.phip[0] = 0.0;
+
+    PerformanceProfiler profiler({true, "unused.json"});
+    {
+        ActivePerformanceProfilerScope active(&profiler);
+        (void)assembler.assembleJacobian(x, bcs);
+        (void)assembler.assembleJacobian(x, bcs);
+    }
+
+    const nlohmann::json profile = profiler.toJson();
+    std::unordered_map<std::string, std::uint64_t> stageCalls;
+    for (const auto& stage : profile.at("stages"))
+        stageCalls[stage.at("name").get<std::string>()] =
+            stage.at("calls").get<std::uint64_t>();
+    for (const std::string name : {
+             "jacobian.topology", "jacobian.edge_physics",
+             "jacobian.cell_physics", "jacobian.node_sources",
+             "jacobian.boundary_rows", "jacobian.finalize_triplets"}) {
+        REQUIRE(stageCalls.at(name) == 2);
+    }
+    REQUIRE(profile.at("counters").at("jacobian.pattern_observations") == 2);
+    REQUIRE(profile.at("counters").value("jacobian.pattern_change_count", 0) == 0);
+    REQUIRE(profile.at("observations").at("jacobian.triplet_count").at("min") > 0.0);
+    REQUIRE(profile.at("observations").at("jacobian.nonzero_count").at("min") > 0.0);
 }
 
 TEST_CASE("CoupledDDAssembler: contact-referenced quasi-Fermi coordinates preserve physical state",

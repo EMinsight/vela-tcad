@@ -12,6 +12,7 @@
 #include "vela/physics/ImpactIonizationModel.h"
 #include "vela/physics/MobilityModel.h"
 #include "vela/physics/RecombinationModel.h"
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -320,6 +321,8 @@ private:
     CarrierDiagonalFloorRegularizationConfig carrierDiagonalFloor_;
     Real electronQfReference_V_ = 0.0;
     Real holeQfReference_V_ = 0.0;
+    mutable bool hasObservedJacobianPattern_ = false;
+    mutable std::uint64_t lastObservedJacobianPattern_ = 0;
 };
 
 } // namespace vela
