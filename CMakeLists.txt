@@ -45,9 +45,16 @@ find_package(Python3 REQUIRED COMPONENTS Interpreter)
 option(VELA_ENABLE_PYTHON "Build the pybind11 Python API" OFF)
 option(VELA_ENABLE_HDF5 "Build Sentaurus HDF5/TDR import tools when HDF5 is available" ON)
 option(VELA_ENABLE_GPROF "Instrument Vela targets for GNU gprof" OFF)
+option(VELA_ENABLE_LTO "Enable conservative link-time optimization for Vela targets" OFF)
 
 if(VELA_ENABLE_GPROF AND NOT CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     message(FATAL_ERROR "VELA_ENABLE_GPROF requires the GNU C++ compiler")
+endif()
+if(VELA_ENABLE_GPROF AND VELA_ENABLE_LTO)
+    message(FATAL_ERROR "VELA_ENABLE_GPROF and VELA_ENABLE_LTO cannot be enabled together")
+endif()
+if(VELA_ENABLE_LTO AND NOT CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    message(FATAL_ERROR "VELA_ENABLE_LTO currently requires the GNU C++ compiler")
 endif()
 
 if(VELA_ENABLE_HDF5)
@@ -145,6 +152,16 @@ if(VELA_ENABLE_GPROF)
         target_link_options(vela_core INTERFACE -Wl,--disable-dynamicbase)
     endif()
     message(STATUS "GNU gprof instrumentation enabled for Vela targets")
+endif()
+
+if(VELA_ENABLE_LTO)
+    # MinGW GCC 16 expands CMake IPO to -flto=auto, whose parallel LTRANS
+    # workers fail in the supported UCRT64 environment. A single LTRANS worker
+    # is deterministic, preserves the measured Newton trajectory, and still
+    # enables whole-program optimization.
+    target_compile_options(vela_core PUBLIC -flto=1)
+    target_link_options(vela_core INTERFACE -flto=1)
+    message(STATUS "GNU single-worker link-time optimization enabled")
 endif()
 
 if(VELA_HDF5_TARGET)

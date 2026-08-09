@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "base_commit": "c8c684c",
+  "baseline": "docs/validation/bv_active_branch_fingerprint_cache_2026-08-09.json",
+  "compiler": "MSYS2 UCRT64 GCC 16.1.0",
+  "eigen_package": "mingw-w64-ucrt-x86_64-eigen3 5.0.1-1",
+  "baseline_flags": ["-O3", "-DNDEBUG"],
+  "experiments": {
+    "native": {
+      "flags": ["-march=native", "-mtune=native"],
+      "raw_root": "build-bv-performance/compiler-native",
+      "decision": "rejected",
+      "reason": "mixed wall-time results and changed Newton trajectories"
+    },
+    "lto": {
+      "flags": ["-flto=1"],
+      "raw_root": "build-bv-performance/compiler-lto1",
+      "decision": "accepted_as_opt_in",
+      "reason": "all three scenarios improved while preserving exact Newton trajectories and outputs"
+    },
+    "native_lto": {
+      "flags": ["-march=native", "-mtune=native", "-flto=1"],
+      "raw_root": "build-bv-performance/compiler-native-lto1",
+      "decision": "rejected",
+      "reason": "changed Newton trajectories and missing Voltage-to-Current BV summary"
+    }
+  },
+  "scenarios": {
+    "high_field_transition": {
+      "baseline": {"wall_seconds": 228.75618289998965, "newton_updates": 191},
+      "native": {"wall_seconds": 213.93076259997906, "wall_change_fraction": -0.0648088288, "newton_updates": 184},
+      "lto": {"wall_seconds": 228.50424460001523, "wall_change_fraction": -0.0011013398, "newton_updates": 191},
+      "native_lto": {"wall_seconds": 219.77263009999297, "wall_change_fraction": -0.0392713005, "newton_updates": 184}
+    },
+    "voltage_to_current_final": {
+      "baseline": {"wall_seconds": 318.06989269997575, "newton_updates": 279, "vela_bv_V": 6.395904174606575},
+      "native": {"wall_seconds": 355.5163839000161, "wall_change_fraction": 0.1177303859, "newton_updates": 282, "vela_bv_V": 6.3959048407894326},
+      "lto": {"wall_seconds": 314.1955290000187, "wall_change_fraction": -0.0121808564, "newton_updates": 279, "vela_bv_V": 6.395904174606575},
+      "native_lto": {"wall_seconds": 331.66069350001635, "wall_change_fraction": 0.0427289760, "newton_updates": 252, "vela_bv_V": null}
+    },
+    "external_resistor_1206": {
+      "baseline": {"wall_seconds": 776.4890282000124, "newton_updates": 662, "vela_bv_V": 6.395887865540998},
+      "native": {"wall_seconds": 718.7533064000017, "wall_change_fraction": -0.0743548456, "newton_updates": 661, "vela_bv_V": 6.3958878665088745},
+      "lto": {"wall_seconds": 762.451094100019, "wall_change_fraction": -0.0180787282, "newton_updates": 662, "vela_bv_V": 6.395887865540998},
+      "native_lto": {"wall_seconds": 747.1517752999789, "wall_change_fraction": -0.0377819284, "newton_updates": 662, "vela_bv_V": 6.395887866508786}
+    }
+  },
+  "accepted_lto_field_validation": {
+    "file": "build-bv-performance/compiler-lto1/voltage_to_current_final/vela_sentaurus_field_comparison.json",
+    "potential_correlation": 0.9999957375517389,
+    "electron_qf_populated_correlation": 0.9999958208687154,
+    "hole_qf_populated_correlation": 0.9999901501973965,
+    "high_field_edge_correlation": 0.9928350791819129
+  },
+  "conclusion": {
+    "default_flags_changed": false,
+    "opt_in_cmake_option": "VELA_ENABLE_LTO",
+    "native_instruction_set_is_not_a_stable_optimization": true,
+    "lto_wall_time_improved_in_all_controlled_scenarios": true,
+    "lto_exact_newton_and_result_gate": "pass"
+  }
+}
