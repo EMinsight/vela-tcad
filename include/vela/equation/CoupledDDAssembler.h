@@ -295,6 +295,24 @@ private:
 
     using JacobianStorageIndex = SparseMatrixd::StorageIndex;
     static constexpr JacobianStorageIndex invalidJacobianOffset = -1;
+    struct EdgeAssemblyKernel {
+        Index n0 = 0;
+        Index n1 = 0;
+        Real length = 0.0;
+        Real coupling = 0.0;
+        Real poissonCoupling = 0.0;
+        bool activeTransport = false;
+        std::vector<Index> avalancheStencilNodes;
+        std::vector<Real> electronLowFieldMobilities;
+        std::vector<Real> holeLowFieldMobilities;
+    };
+
+    void buildEdgeAssemblyKernels();
+    Real cachedEdgeMobility(
+        Index edgeId,
+        CarrierType carrier,
+        Real drivingField,
+        const VectorXd* psi) const;
     void rebuildFixedJacobianPattern(
         const std::vector<bool>& constrainedRows,
         bool includeCellStencil,
@@ -327,6 +345,7 @@ private:
     std::vector<std::vector<Index>> cellEdges_;
     std::vector<std::vector<Index>> nodeEdges_;
     std::vector<bool> contactNodes_;
+    std::vector<EdgeAssemblyKernel> edgeAssemblyKernels_;
     std::vector<Real> vol_;
     std::vector<Real> couple_;
     VectorXd fixedInterfaceChargeRhs_;

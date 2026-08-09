@@ -1,0 +1,125 @@
+{
+  "schema_version": 1,
+  "base_commit": "09cab93",
+  "change": "cache immutable edge assembly kernels and reconstructed avalanche neighbor-edge fluxes within each Jacobian evaluation",
+  "baseline": "docs/validation/bv_jacobian_assembly_step3_2026-08-09.json",
+  "raw_root": "build-bv-performance/jacobian-edge-cache",
+  "physics_config_sha256": "dc28b33f2a95e9664c8d93c7c54b3cb4cac22941175b43f8b36d955a25a2a7a2",
+  "implementation": {
+    "static_edge_topology_and_geometry": true,
+    "static_avalanche_stencils": true,
+    "cached_low_field_edge_mobility": true,
+    "surface_mobility_fallback_to_existing_path": true,
+    "per_jacobian_avalanche_flux_cache": true,
+    "transport_and_avalanche_derivative_scheme": "unchanged central differences"
+  },
+  "scenarios": {
+    "high_field_transition": {
+      "wall_seconds": 264.53124240000034,
+      "newton_updates": 191,
+      "jacobian_calls": 192,
+      "avalanche_flux_cache_hits": 303048192,
+      "avalanche_flux_cache_misses": 239271936,
+      "stages_seconds": {
+        "dd.jacobian": 163.0050773,
+        "jacobian.edge_physics": 125.6472982,
+        "jacobian.node_sources": 36.270517,
+        "jacobian.pattern_fingerprint": 24.3020663,
+        "linear.factorize": 24.7700751
+      },
+      "result": {
+        "full_dd_evaluations": 1,
+        "inner_voltage_V": 6.099590877047813,
+        "global_electron_continuity_ratio": 9.154294013563705e-10,
+        "global_hole_continuity_ratio": 1.0764411116579334e-9
+      }
+    },
+    "voltage_to_current_final": {
+      "wall_seconds": 356.83649879999575,
+      "newton_updates": 279,
+      "jacobian_calls": 280,
+      "avalanche_flux_cache_hits": 441945280,
+      "avalanche_flux_cache_misses": 348938240,
+      "stages_seconds": {
+        "dd.jacobian": 232.3358138,
+        "jacobian.edge_physics": 178.9113002,
+        "jacobian.node_sources": 51.9440541,
+        "jacobian.pattern_fingerprint": 33.8306927,
+        "linear.factorize": 36.0200105
+      },
+      "result": {
+        "full_dd_evaluations": 2,
+        "inner_voltage_V": 6.395904200106065,
+        "vela_bv_V": 6.395904174606575,
+        "boundary_residual_A_per_um": 6.169747113378421e-12,
+        "global_electron_continuity_ratio": 1.2165595928167767e-9,
+        "global_hole_continuity_ratio": 1.3083049498570184e-9
+      }
+    },
+    "external_resistor_1206": {
+      "wall_seconds": 821.3917038000072,
+      "newton_updates": 662,
+      "jacobian_calls": 663,
+      "avalanche_flux_cache_hits": 1046463288,
+      "avalanche_flux_cache_misses": 826235904,
+      "stages_seconds": {
+        "dd.jacobian": 537.7228523,
+        "jacobian.edge_physics": 413.951901,
+        "jacobian.node_sources": 120.3297144,
+        "jacobian.pattern_fingerprint": 77.9789236,
+        "linear.factorize": 81.6329975
+      },
+      "result": {
+        "full_dd_evaluations": 4,
+        "inner_voltage_V": 6.438388795883303,
+        "vela_bv_V": 6.395887865540998,
+        "load_line_residual_V": 9.136147127719596e-8,
+        "global_electron_continuity_ratio": 3.1158509473598274e-10,
+        "global_hole_continuity_ratio": 3.2378678561858275e-10
+      }
+    }
+  },
+  "baseline_comparison": {
+    "high_field_transition": {
+      "wall_time_change_fraction": -0.5088398,
+      "jacobian_time_change_fraction": -0.6215616,
+      "edge_physics_time_change_fraction": -0.6776131,
+      "newton_updates_change": 0
+    },
+    "voltage_to_current_final": {
+      "wall_time_change_fraction": -0.6389035,
+      "jacobian_time_change_fraction": -0.7142525,
+      "edge_physics_time_change_fraction": -0.7581791,
+      "newton_updates_change": 0
+    },
+    "external_resistor_1206": {
+      "wall_time_change_fraction": -0.5694171,
+      "jacobian_time_change_fraction": -0.6575791,
+      "edge_physics_time_change_fraction": -0.7103092,
+      "newton_updates_change": 0
+    }
+  },
+  "field_validation": {
+    "file": "build-bv-performance/jacobian-edge-cache/voltage_to_current_final/vela_sentaurus_field_comparison.json",
+    "potential_correlation": 0.9999957375517389,
+    "electron_qf_populated_correlation": 0.9999958208687154,
+    "hole_qf_populated_correlation": 0.9999901501973965,
+    "high_field_edge_correlation": 0.9928350791819129
+  },
+  "verification": {
+    "newton_solver_test": "pass: 77 test cases and 1087 assertions",
+    "full_serial_ctest": "pass: 570 of 570",
+    "bv_performance_python_tests": "pass: 8",
+    "pn2d_config_template_python_tests": "pass: 14",
+    "same_newton_counts": "pass",
+    "same_state_result_gate": "pass",
+    "field_gate": "pass"
+  },
+  "conclusion": {
+    "static_edge_kernel_goal": "pass",
+    "per_jacobian_flux_cache_goal": "pass",
+    "physics_and_boundary_gates": "pass",
+    "stable_end_to_end_speedup": "demonstrated on all three controlled scenarios",
+    "next_candidate": "fixed-dimension forward automatic differentiation for edge derivatives"
+  }
+}
