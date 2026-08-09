@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "base_commit": "7b1456f",
+  "candidate": "fixed-dimension double-precision forward automatic differentiation for four-variable Fermi-Dirac edge transport fluxes",
+  "status": "rejected",
+  "baseline": "docs/validation/bv_jacobian_edge_cache_2026-08-09.json",
+  "raw_root": "build-bv-performance/jacobian-transport-ad",
+  "scope": {
+    "electron_transport_variables": [
+      "psi_i",
+      "psi_j",
+      "phin_i",
+      "phin_j"
+    ],
+    "hole_transport_variables": [
+      "psi_i",
+      "psi_j",
+      "phip_i",
+      "phip_j"
+    ],
+    "included_derivative_chains": [
+      "high-field mobility",
+      "Fermi-Dirac carrier density",
+      "generalized Einstein factor",
+      "Bernoulli flux"
+    ],
+    "surface_mobility_policy": "retain central-difference fallback"
+  },
+  "high_field_transition": {
+    "wall_seconds": 278.3209993999917,
+    "exit_code": 1,
+    "newton_updates": 220,
+    "converged": false,
+    "inner_voltage_V": 6.099590877047813,
+    "global_electron_continuity_ratio": 0.9995843148343664,
+    "global_hole_continuity_ratio": 9.577123372480222e-5,
+    "baseline_newton_updates": 191,
+    "baseline_converged": true
+  },
+  "derivative_audit": [
+    {
+      "edge": 347,
+      "local_dof": 3,
+      "flux_value": 1.36732e17,
+      "ad_derivative": 4.89338e8,
+      "central_difference_derivative_step_1e-6": 5.59223e8,
+      "relative_difference": 0.124968
+    },
+    {
+      "edge": 2174,
+      "local_dof": 3,
+      "flux_value": 3.15403e19,
+      "ad_derivative": -524288.0,
+      "central_difference_derivative_step_1e-4": -3.66874e8,
+      "relative_difference": 0.998571
+    }
+  ],
+  "decision": {
+    "physics_and_continuity_gates": "fail",
+    "run_remaining_long_benchmarks": false,
+    "merge_candidate_code": false,
+    "reason": "ordinary double forward-mode propagation loses significant digits when derivatives of very large Fermi-Dirac flux factors cancel",
+    "required_follow_up": "differentiate the stable logarithmic flux representation directly and validate derivatives against multiprecision directional references before another BV run"
+  }
+}
