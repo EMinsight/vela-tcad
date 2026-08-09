@@ -251,13 +251,29 @@ CoupledDDAssembler::CoupledDDAssembler(
                 "CoupledDDAssembler: carrier diagonal floor minority density ratio must be non-negative and finite.");
         }
     }
+    surfaceMobilityEnabled_ = isSurfaceMobilityModel(mobilityConfig_);
+    highFieldMobilityEnabled_ = usesHighFieldMobility(mobilityConfig_);
+    qfMobilityEnabled_ =
+        mobilityConfig_.highFieldDrivingForce == "quasi_fermi_gradient";
+    vectorQfMobilityEnabled_ = qfMobilityEnabled_ &&
+        mobilityConfig_.highFieldGradientDiscretization ==
+            "transport_cell_vector";
+    transportMobilityDerivativeEnabled_ =
+        transportMobilityDependsOnPotentials(mobilityConfig_);
+    if (mobilityConfig_.dopingConcentrationBasis == "total_impurity") {
+        mobilityDopingBasis_ = MobilityDopingBasis::TotalImpurity;
+    } else if (mobilityConfig_.dopingConcentrationBasis ==
+               "cell_reconstructed_total_impurity") {
+        mobilityDopingBasis_ =
+            MobilityDopingBasis::CellReconstructedTotalImpurity;
+    }
     buildEdgeAssemblyKernels();
 }
 
 void CoupledDDAssembler::buildEdgeAssemblyKernels()
 {
     edgeAssemblyKernels_.resize(mesh_.numEdges());
-    const bool cacheMobility = !isSurfaceMobilityModel(mobilityConfig_);
+    const bool cacheMobility = !surfaceMobilityEnabled_;
     for (Index edgeId = 0; edgeId < mesh_.numEdges(); ++edgeId) {
         EdgeAssemblyKernel& kernel = edgeAssemblyKernels_[edgeId];
         const Edge& edge = mesh_.getEdge(edgeId);
@@ -271,25 +287,43 @@ void CoupledDDAssembler::buildEdgeAssemblyKernels()
                 kernel.coupling / edge.length;
         }
 
-        kernel.avalancheStencilNodes = {edge.n0, edge.n1};
+        const auto appendStencilNode = [&](Index node) {
+            const auto begin = kernel.avalancheStencilNodes.begin();
+            const auto end = begin + kernel.avalancheStencilNodeCount;
+            if (std::find(begin, end, node) != end)
+                return;
+            if (kernel.avalancheStencilNodeCount >=
+                maxEdgeAvalancheStencilNodes) {
+                throw std::runtime_error(
+                    "CoupledDDAssembler: edge avalanche stencil exceeds fixed capacity");
+            }
+            kernel.avalancheStencilNodes[kernel.avalancheStencilNodeCount++] = node;
+        };
+        appendStencilNode(edge.n0);
+        appendStencilNode(edge.n1);
         for (Index cellId : edgeCells_[edgeId]) {
             const Cell& cell = mesh_.getCell(cellId);
             const Material& material =
                 cellMaterials_.at(static_cast<std::size_t>(cellId));
             if (detail::isTransportMaterial(material))
                 kernel.activeTransport = true;
-            for (Index node : cell.node_ids) {
-                if (std::find(kernel.avalancheStencilNodes.begin(),
-                              kernel.avalancheStencilNodes.end(), node) ==
-                    kernel.avalancheStencilNodes.end()) {
-                    kernel.avalancheStencilNodes.push_back(node);
-                }
-            }
+            for (Index node : cell.node_ids)
+                appendStencilNode(node);
 
             if (!cacheMobility)
                 continue;
-            const Real mobilityDoping = detail::edgeMobilityDopingConcentration(
-                mesh_, doping_, edge, cellId, &mobilityConfig_);
+            Real mobilityDoping =
+                0.5 * (doping_.netDoping(edge.n0) +
+                       doping_.netDoping(edge.n1));
+            if (mobilityDopingBasis_ == MobilityDopingBasis::TotalImpurity) {
+                mobilityDoping =
+                    0.5 * (doping_.totalImpurity(edge.n0) +
+                           doping_.totalImpurity(edge.n1));
+            } else if (mobilityDopingBasis_ ==
+                       MobilityDopingBasis::CellReconstructedTotalImpurity) {
+                mobilityDoping = detail::cellAverageTotalImpurity(
+                    mesh_, doping_, cellId);
+            }
             if (material.mun > 0.0) {
                 const Real lowField = mobility_->electronMobility(
                     material, mobilityDoping, 0.0, 0.0, 0.0);
@@ -312,7 +346,7 @@ Real CoupledDDAssembler::cachedEdgeMobility(
     Real drivingField,
     const VectorXd* psi) const
 {
-    if (isSurfaceMobilityModel(mobilityConfig_)) {
+    if (surfaceMobilityEnabled_) {
         return detail::edgeMobility(
             edgeCells_, mesh_, doping_, *mobility_, cellMaterials_, edgeId,
             carrier, drivingField, &mobilityConfig_, psi);
@@ -332,7 +366,7 @@ Real CoupledDDAssembler::cachedEdgeMobility(
         : mobilityConfig_.holeField;
     Real sum = 0.0;
     for (Real lowField : lowFieldMobilities) {
-        sum += usesHighFieldMobility(mobilityConfig_)
+        sum += highFieldMobilityEnabled_
             ? applyFieldMobilityLimit(lowField, drivingField, fieldParameters)
             : lowField;
     }
@@ -735,9 +769,8 @@ VectorXd CoupledDDAssembler::residualImpl(
         ? detail::computeHoleAvalancheNodeQuasiFermiDrivingFields(
             impactIonizationConfig_, mesh_, nodeCells_, psi, phipPhysical, p, ni_, Vt_, fieldFactor)
         : nodeElectricFields;
-    const bool qfMobility = mobilityConfig_.highFieldDrivingForce == "quasi_fermi_gradient";
-    const bool vectorQfMobility = qfMobility &&
-        mobilityConfig_.highFieldGradientDiscretization == "transport_cell_vector";
+    const bool qfMobility = qfMobilityEnabled_;
+    const bool vectorQfMobility = vectorQfMobilityEnabled_;
     const std::vector<Real> electronVectorMobilityFields = vectorQfMobility
         ? detail::transportCellVectorEdgeGradientMagnitudes(
               mesh_, edgeCells_, cellMaterials_, phinPhysical, fieldFactor)
@@ -1172,9 +1205,8 @@ CoupledDDAssembler::carrierContinuityTermDiagnosticsImpl(
         ? detail::computeHoleAvalancheNodeQuasiFermiDrivingFields(
             impactIonizationConfig_, mesh_, nodeCells_, psi, phipPhysical, p, ni_, Vt_, fieldFactor)
         : nodeElectricFields;
-    const bool qfMobility = mobilityConfig_.highFieldDrivingForce == "quasi_fermi_gradient";
-    const bool vectorQfMobility = qfMobility &&
-        mobilityConfig_.highFieldGradientDiscretization == "transport_cell_vector";
+    const bool qfMobility = qfMobilityEnabled_;
+    const bool vectorQfMobility = vectorQfMobilityEnabled_;
     const std::vector<Real> electronVectorMobilityFields = vectorQfMobility
         ? detail::transportCellVectorEdgeGradientMagnitudes(
               mesh_, edgeCells_, cellMaterials_, phinPhysical, fieldFactor)
@@ -1491,9 +1523,8 @@ CoupledDDAssembler::sgEdgeFluxDiagnostics(
     const VectorXd n = electronDensity(x);
     const VectorXd p = holeDensity(x);
 
-    const bool qfMobility = mobilityConfig_.highFieldDrivingForce == "quasi_fermi_gradient";
-    const bool vectorQfMobility = qfMobility &&
-        mobilityConfig_.highFieldGradientDiscretization == "transport_cell_vector";
+    const bool qfMobility = qfMobilityEnabled_;
+    const bool vectorQfMobility = vectorQfMobilityEnabled_;
     const VectorXd phinField = x.segment(phinOffset(), N) * potentialScale;
     const VectorXd phipField = x.segment(phipOffset(), N) * potentialScale;
     const std::vector<Real> electronVectorMobilityFields = vectorQfMobility
@@ -1642,8 +1673,7 @@ CoupledDDAssembler::transportEdgeJacobianDiagnostics(
     const Real derivativeScale = scaling_.enabled
         ? scaling_.V0 / continuityScale : 1.0;
     const VectorXd psi = x.segment(psiOffset(), N) * potentialScale;
-    const bool qfMobility =
-        mobilityConfig_.highFieldDrivingForce == "quasi_fermi_gradient";
+    const bool qfMobility = qfMobilityEnabled_;
 
     auto isConstrained = [&](CarrierType carrier, Index node) {
         return carrier == CarrierType::Electron
@@ -1854,7 +1884,7 @@ SparseMatrixd CoupledDDAssembler::impactIonizationSourceJacobian(
             "CoupledDDAssembler::impactIonizationSourceJacobian requires the "
             "element_edge_sg_gss_laux avalanche source.");
     }
-    if (isSurfaceMobilityModel(mobilityConfig_)) {
+    if (surfaceMobilityEnabled_) {
         throw std::invalid_argument(
             "element-edge source-only Jacobian does not support surface mobility");
     }
@@ -2009,7 +2039,7 @@ CoupledDDAssembler::impactIonizationSourceFiniteDifferenceJacobianImpl(
             "CoupledDDAssembler::impactIonizationSourceFiniteDifferenceJacobian "
             "requires the element_edge_sg_gss_laux avalanche source.");
     }
-    if (isSurfaceMobilityModel(mobilityConfig_)) {
+    if (surfaceMobilityEnabled_) {
         throw std::invalid_argument(
             "element-edge source-only FD Jacobian does not support surface mobility");
     }
@@ -2200,9 +2230,8 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
         ? detail::computeHoleAvalancheNodeQuasiFermiDrivingFields(
             impactIonizationConfig_, mesh_, nodeCells_, psi, phipState, p, ni_, Vt_, fieldFactor)
         : nodeElectricFields;
-    const bool qfMobility = mobilityConfig_.highFieldDrivingForce == "quasi_fermi_gradient";
-    const bool vectorQfMobility = qfMobility &&
-        mobilityConfig_.highFieldGradientDiscretization == "transport_cell_vector";
+    const bool qfMobility = qfMobilityEnabled_;
+    const bool vectorQfMobility = vectorQfMobilityEnabled_;
     const std::vector<Real> electronVectorMobilityFields = vectorQfMobility
         ? detail::transportCellVectorEdgeGradientMagnitudes(
               mesh_, edgeCells_, cellMaterials_, phinState, fieldFactor)
@@ -2227,7 +2256,8 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
     const auto& contactNodes = *contactNodesPtr;
     const auto& cellEdges = *cellEdgesPtr;
     const auto& nodeEdges = *nodeEdgesPtr;
-    const bool transportMobilityDerivative = transportMobilityDependsOnPotentials(mobilityConfig_);
+    const bool transportMobilityDerivative =
+        transportMobilityDerivativeEnabled_;
     const bool sgCurrentAvalanche = impactIonizationCoupled_ &&
         detail::usesEdgeCurrentAvalancheSource(impactIonizationConfig_);
     const bool triangleGssAvalanche = sgCurrentAvalanche &&
@@ -2780,7 +2810,7 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
                 : electricField);
         VectorXd psiForSurface;
         const VectorXd* psiForMobility = &psi;
-        if (isSurfaceMobilityModel(mobilityConfig_)) {
+        if (surfaceMobilityEnabled_) {
             psiForSurface = psi;
             psiForSurface(i) = psi_i;
             psiForSurface(j) = psi_j;
@@ -2846,7 +2876,7 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
                 : electricField);
         VectorXd psiForSurface;
         const VectorXd* psiForMobility = &psi;
-        if (isSurfaceMobilityModel(mobilityConfig_)) {
+        if (surfaceMobilityEnabled_) {
             psiForSurface = psi;
             psiForSurface(i) = psi_i;
             psiForSurface(j) = psi_j;
@@ -3062,22 +3092,30 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
             auto phipAt = [&](Index node) { return phipState(static_cast<int>(node)); };
             const EdgeAvalancheNodeSources base = edgeAvalancheNodeSources(
                 e, i, j, h, psi_i, psi_j, phinAt, phipAt);
-            const std::vector<Index>& qfStencilNodes =
-                edgeKernel.avalancheStencilNodes;
+            const auto& qfStencilNodes = edgeKernel.avalancheStencilNodes;
+            const std::size_t qfStencilNodeCount =
+                edgeKernel.avalancheStencilNodeCount;
 
-            std::vector<int> cols;
-            std::vector<Real> dS0;
-            std::vector<Real> dS1;
+            std::array<int, maxEdgeAvalancheDerivativeColumns> cols{};
+            std::array<Real, maxEdgeAvalancheDerivativeColumns> dS0{};
+            std::array<Real, maxEdgeAvalancheDerivativeColumns> dS1{};
+            std::size_t derivativeCount = 0;
             bool anyNonzero = false;
             auto appendDerivative = [&](int col, const EdgeAvalancheNodeSources& sp,
                                         const EdgeAvalancheNodeSources& sm, Real step) {
-                cols.push_back(col);
-                dS0.push_back(
-                    (sp.node0 - sm.node0) * sourceIntegralFactor / (2.0 * step));
-                dS1.push_back(
-                    (sp.node1 - sm.node1) * sourceIntegralFactor / (2.0 * step));
-                if (dS0.back() != 0.0 || dS1.back() != 0.0)
+                if (derivativeCount >= maxEdgeAvalancheDerivativeColumns) {
+                    throw std::runtime_error(
+                        "CoupledDDAssembler: edge avalanche derivative scratch exceeds fixed capacity");
+                }
+                cols[derivativeCount] = col;
+                dS0[derivativeCount] =
+                    (sp.node0 - sm.node0) * sourceIntegralFactor / (2.0 * step);
+                dS1[derivativeCount] =
+                    (sp.node1 - sm.node1) * sourceIntegralFactor / (2.0 * step);
+                if (dS0[derivativeCount] != 0.0 ||
+                    dS1[derivativeCount] != 0.0)
                     anyNonzero = true;
+                ++derivativeCount;
             };
 
             const Real psiVals[2] = {psi_i, psi_j};
@@ -3095,7 +3133,9 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
                 appendDerivative(psiCols[k], sp, sm, step);
             }
 
-            for (const Index node : qfStencilNodes) {
+            for (std::size_t stencilIndex = 0;
+                 stencilIndex < qfStencilNodeCount; ++stencilIndex) {
+                const Index node = qfStencilNodes[stencilIndex];
                 const int nodeIndex = static_cast<int>(node);
                 const Real phinValue = phinState(nodeIndex);
                 const Real step = 1.0e-7 * std::max(1.0, std::abs(phinValue));
@@ -3114,7 +3154,9 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
                 appendDerivative(phinOffset() + nodeIndex, sp, sm, step);
             }
 
-            for (const Index node : qfStencilNodes) {
+            for (std::size_t stencilIndex = 0;
+                 stencilIndex < qfStencilNodeCount; ++stencilIndex) {
+                const Index node = qfStencilNodes[stencilIndex];
                 const int nodeIndex = static_cast<int>(node);
                 const Real phipValue = phipState(nodeIndex);
                 const Real step = 1.0e-7 * std::max(1.0, std::abs(phipValue));
@@ -3137,10 +3179,10 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
                 const int node0Rows[2] = {phinOffset() + i, phipOffset() + i};
                 const int node1Rows[2] = {phinOffset() + j, phipOffset() + j};
                 for (int row : node0Rows)
-                    for (std::size_t k = 0; k < cols.size(); ++k)
+                    for (std::size_t k = 0; k < derivativeCount; ++k)
                         add(row, cols[k], -dS0[k]);
                 for (int row : node1Rows)
-                    for (std::size_t k = 0; k < cols.size(); ++k)
+                    for (std::size_t k = 0; k < derivativeCount; ++k)
                         add(row, cols[k], -dS1[k]);
                 hasElectronContribution[static_cast<std::size_t>(i)] = true;
                 hasElectronContribution[static_cast<std::size_t>(j)] = true;
@@ -3159,7 +3201,7 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
     {
         ScopedPerformanceTimer cellPhysicsTimer("jacobian.cell_physics");
         if (cellLocalAvalanche) {
-        if (isSurfaceMobilityModel(mobilityConfig_)) {
+        if (surfaceMobilityEnabled_) {
             throw std::invalid_argument(
                 "cell-local avalanche source does not support surface mobility");
         }

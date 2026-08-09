@@ -1,0 +1,110 @@
+{
+  "schema_version": 1,
+  "base_commit": "5478879",
+  "change": "replace per-edge avalanche derivative vectors with fixed scratch arrays and preparse mobility execution branches",
+  "baseline": "docs/validation/bv_jacobian_edge_cache_2026-08-09.json",
+  "raw_root": "build-bv-performance/jacobian-fixed-scratch",
+  "implementation": {
+    "fixed_stencil_capacity": 8,
+    "fixed_derivative_column_capacity": 18,
+    "per_edge_derivative_heap_allocations": 0,
+    "preparsed_mobility_flags": [
+      "surface mobility",
+      "high-field mobility",
+      "quasi-Fermi driving force",
+      "vector quasi-Fermi driving force",
+      "Jacobian field derivatives"
+    ],
+    "preparsed_doping_basis": true
+  },
+  "scenarios": {
+    "high_field_transition": {
+      "wall_seconds": 245.6905861000123,
+      "newton_updates": 191,
+      "stages_seconds": {
+        "dd.jacobian": 152.0431126,
+        "jacobian.edge_physics": 116.6775229,
+        "jacobian.node_sources": 34.371974,
+        "dd.active_branch_fingerprint": 22.4276364,
+        "linear.factorize": 22.7380886
+      },
+      "result": {
+        "inner_voltage_V": 6.099590877047813,
+        "global_electron_continuity_ratio": 9.154294013563705e-10,
+        "global_hole_continuity_ratio": 1.0764411116579334e-9
+      },
+      "baseline_change_fraction": {
+        "wall": -0.0712228020,
+        "dd_jacobian": -0.0672492224,
+        "edge_physics": -0.0713885251
+      }
+    },
+    "voltage_to_current_final": {
+      "wall_seconds": 342.4248332999996,
+      "newton_updates": 279,
+      "stages_seconds": {
+        "dd.jacobian": 221.5295422,
+        "jacobian.edge_physics": 169.7249079,
+        "jacobian.node_sources": 50.334935,
+        "dd.active_branch_fingerprint": 32.790537,
+        "linear.factorize": 34.76897
+      },
+      "result": {
+        "inner_voltage_V": 6.395904200106065,
+        "vela_bv_V": 6.395904174606575,
+        "boundary_residual_A_per_um": 6.169747113378421e-12,
+        "global_electron_continuity_ratio": 1.2165595928167767e-9,
+        "global_hole_continuity_ratio": 1.3083049498570184e-9
+      },
+      "baseline_change_fraction": {
+        "wall": -0.0403873078,
+        "dd_jacobian": -0.0465114328,
+        "edge_physics": -0.0513460709
+      }
+    },
+    "external_resistor_1206": {
+      "wall_seconds": 805.4662033999921,
+      "newton_updates": 662,
+      "stages_seconds": {
+        "dd.jacobian": 524.6730025,
+        "jacobian.edge_physics": 401.9883663,
+        "jacobian.node_sources": 119.3242617,
+        "dd.active_branch_fingerprint": 77.2733876,
+        "linear.factorize": 80.4218555
+      },
+      "result": {
+        "inner_voltage_V": 6.438388795883303,
+        "vela_bv_V": 6.395887865540998,
+        "load_line_residual_V": 9.136147127719596e-8,
+        "global_electron_continuity_ratio": 3.1158509473598274e-10,
+        "global_hole_continuity_ratio": 3.2378678561858275e-10
+      },
+      "baseline_change_fraction": {
+        "wall": -0.0193884359,
+        "dd_jacobian": -0.0242687283,
+        "edge_physics": -0.0289007845
+      }
+    }
+  },
+  "field_validation": {
+    "file": "build-bv-performance/jacobian-fixed-scratch/voltage_to_current_final/vela_sentaurus_field_comparison.json",
+    "potential_correlation": 0.9999957375517389,
+    "electron_qf_populated_correlation": 0.9999958208687154,
+    "hole_qf_populated_correlation": 0.9999901501973965,
+    "high_field_edge_correlation": 0.9928350791819129
+  },
+  "verification": {
+    "newton_solver_test": "pass: 77 test cases and 1087 assertions",
+    "full_serial_ctest": "pass: 570 of 570",
+    "bv_performance_python_tests": "pass: 8",
+    "pn2d_config_template_python_tests": "pass: 14",
+    "same_newton_counts": "pass",
+    "same_state_result_gate": "pass",
+    "field_gate": "pass"
+  },
+  "conclusion": {
+    "physics_and_boundary_gates": "pass",
+    "wall_time_improved_in_all_controlled_scenarios": true,
+    "next_hotspot": "active-branch fingerprint still repeats the full BV process probe"
+  }
+}

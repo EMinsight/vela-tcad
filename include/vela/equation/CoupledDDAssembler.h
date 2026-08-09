@@ -295,6 +295,14 @@ private:
 
     using JacobianStorageIndex = SparseMatrixd::StorageIndex;
     static constexpr JacobianStorageIndex invalidJacobianOffset = -1;
+    static constexpr std::size_t maxEdgeAvalancheStencilNodes = 8;
+    static constexpr std::size_t maxEdgeAvalancheDerivativeColumns =
+        2 + 2 * maxEdgeAvalancheStencilNodes;
+    enum class MobilityDopingBasis : std::uint8_t {
+        NetDoping,
+        TotalImpurity,
+        CellReconstructedTotalImpurity,
+    };
     struct EdgeAssemblyKernel {
         Index n0 = 0;
         Index n1 = 0;
@@ -302,7 +310,8 @@ private:
         Real coupling = 0.0;
         Real poissonCoupling = 0.0;
         bool activeTransport = false;
-        std::vector<Index> avalancheStencilNodes;
+        std::array<Index, maxEdgeAvalancheStencilNodes> avalancheStencilNodes{};
+        std::uint8_t avalancheStencilNodeCount = 0;
         std::vector<Real> electronLowFieldMobilities;
         std::vector<Real> holeLowFieldMobilities;
     };
@@ -353,6 +362,12 @@ private:
     CarrierDiagonalFloorRegularizationConfig carrierDiagonalFloor_;
     Real electronQfReference_V_ = 0.0;
     Real holeQfReference_V_ = 0.0;
+    MobilityDopingBasis mobilityDopingBasis_ = MobilityDopingBasis::NetDoping;
+    bool surfaceMobilityEnabled_ = false;
+    bool highFieldMobilityEnabled_ = false;
+    bool qfMobilityEnabled_ = false;
+    bool vectorQfMobilityEnabled_ = false;
+    bool transportMobilityDerivativeEnabled_ = false;
     mutable bool hasObservedJacobianPattern_ = false;
     mutable std::uint64_t lastObservedJacobianPattern_ = 0;
     mutable bool hasFixedJacobianPattern_ = false;
