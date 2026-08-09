@@ -86,6 +86,90 @@ std::string fnv1a64(std::string_view text)
     return output.str();
 }
 
+std::string directSgActiveBranchFingerprint(
+    const std::string& configurationFingerprint,
+    const ImpactIonizationModelConfig& impact,
+    const std::vector<bool>& contactNodes,
+    const std::vector<detail::SgEdgeCurrentAvalancheSourceRecord>& records)
+{
+    const bool reconstructedCurrent =
+        impact.currentMagnitudeMode != "edge_scalar_abs" ||
+        detail::usesCellCurrentReconstructedAvalancheCurrent(impact) ||
+        detail::usesCellVectorCurrentReconstructedAvalancheCurrent(impact);
+    const bool directionalPartition =
+        detail::usesDirectionalEdgeAvalancheSourcePartition(impact);
+
+    std::string canonical = configurationFingerprint;
+    canonical.reserve(configurationFingerprint.size() + records.size() * 34);
+    for (const auto& record : records) {
+        const bool contactAdjacent =
+            contactNodes.at(static_cast<std::size_t>(record.node0)) ||
+            contactNodes.at(static_cast<std::size_t>(record.node1));
+        for (int carrierIndex = 0; carrierIndex < 2; ++carrierIndex) {
+            const bool electron = carrierIndex == 0;
+            const Real mobility = electron
+                ? record.electronMobility
+                : record.holeMobility;
+            const Real alpha = electron
+                ? record.electronAlpha
+                : record.holeAlpha;
+            const Real directedFlux = electron
+                ? record.electronRawSignedFluxProxy
+                : record.holeRawSignedFluxProxy;
+
+            std::ostringstream branches;
+            branches << "support=sg_edge"
+                     << ";carrier=" << (electron ? "electron" : "hole")
+                     << ";coupling=" << impact.couplingMode
+                     << ";contact=" << (contactAdjacent ? 1 : 0)
+                     << ";zero_measure=" << (record.edgeAreaProxy <= 0.0 ? 1 : 0)
+                     << ";zero_mobility=" << (mobility <= 0.0 ? 1 : 0)
+                     << ";zero_alpha=" << (alpha <= 0.0 ? 1 : 0)
+                     << ";reconstructed_current="
+                     << (reconstructedCurrent ? 1 : 0)
+                     << ";directional_partition="
+                     << (directionalPartition ? 1 : 0)
+                     << ";source_mapping=" << impact.sourceMappingMode
+                     << ";source_volume=" << impact.sourceVolumePolicy
+                     << ";qf_discretization="
+                     << impact.quasiFermiGradientDiscretization
+                     << ";contact_fallback_mode="
+                     << impact.contactElectricFieldFallbackMode
+                     << ";qf_carrier_floor="
+                     << (impact.quasiFermiCarrierTruncation > 0.0 ? 1 : 0)
+                     << ";minimum_field_cutoff="
+                     << (impact.minimumField > 0.0 ? 1 : 0)
+                     << ";refdens_interpolation="
+                     << ((impact.electronDrivingForceRefDensity > 0.0 ||
+                          impact.holeDrivingForceRefDensity > 0.0) ? 1 : 0)
+                     << ";flux_sign="
+                     << (directedFlux > 0.0
+                            ? "positive"
+                            : (directedFlux < 0.0 ? "negative" : "zero"));
+            if (electron && record.electronSgDiagnosticsCollected) {
+                const auto& sg = record.electronSgFluxDecomposition;
+                branches
+                    << ";sg_flat_qf_short_circuit="
+                    << (sg.flatQuasiFermiShortCircuit ? 1 : 0)
+                    << ";sg_node0_clamped_low="
+                    << (sg.node0ExponentClampedLow ? 1 : 0)
+                    << ";sg_node0_clamped_high="
+                    << (sg.node0ExponentClampedHigh ? 1 : 0)
+                    << ";sg_node1_clamped_low="
+                    << (sg.node1ExponentClampedLow ? 1 : 0)
+                    << ";sg_node1_clamped_high="
+                    << (sg.node1ExponentClampedHigh ? 1 : 0)
+                    << ";sg_ni_gradient_drift="
+                    << (sg.includeNiGradientDrift ? 1 : 0);
+            }
+            canonical.push_back('|');
+            canonical += fnv1a64(
+                configurationFingerprint + ";" + branches.str());
+        }
+    }
+    return fnv1a64(canonical);
+}
+
 std::uint64_t sparsePatternHash(const SparseMatrixd& matrix)
 {
     std::uint64_t hash = 14695981039346656037ULL;
@@ -785,28 +869,82 @@ VectorXd CoupledDDAssembler::residualImpl(
         : 1.0;
     const bool sgCurrentAvalanche = impactIonizationCoupled_ &&
         detail::usesEdgeCurrentAvalancheSource(impactIonizationConfig_);
-    const std::vector<Real> sgAvalancheSourceIntegrals = sgCurrentAvalanche
-        ? detail::currentDensityAvalancheSourceIntegrals(
-            impactIonizationConfig_,
-            *impactIonization_,
-            mobilityConfig_,
-            *mobility_,
-            edgeCells_,
-            mesh_,
-            doping_,
-            cellMaterials_,
-            psi,
-            phinPhysical,
-            phipPhysical,
-            n,
-            p,
-            ni_,
-            Vt_,
-            fieldFactor,
-            carrierStatistics_,
-            Nc_,
-            Nv_)
-        : std::vector<Real>{};
+    std::vector<Real> sgAvalancheSourceIntegrals;
+    if (sgCurrentAvalanche) {
+        const bool directSgSource =
+            !detail::usesElementEdgeGssLauxAvalancheSource(
+                impactIonizationConfig_) &&
+            !detail::usesTriangleGssAvalancheSource(
+                impactIonizationConfig_);
+        if (directSgSource) {
+            const auto records = detail::sgEdgeCurrentAvalancheSourceRecords(
+                impactIonizationConfig_,
+                *impactIonization_,
+                mobilityConfig_,
+                *mobility_,
+                edgeCells_,
+                mesh_,
+                doping_,
+                cellMaterials_,
+                psi,
+                phinPhysical,
+                phipPhysical,
+                n,
+                p,
+                ni_,
+                Vt_,
+                fieldFactor,
+                true,
+                carrierStatistics_,
+                Nc_,
+                Nv_);
+            sgAvalancheSourceIntegrals.assign(
+                static_cast<std::size_t>(mesh_.numNodes()), 0.0);
+            for (const auto& record : records) {
+                detail::addMappedEdgeSourceToNodes(
+                    impactIonizationConfig_,
+                    sgAvalancheSourceIntegrals,
+                    edgeCells_,
+                    mesh_,
+                    record,
+                    record.node0SourceIntegral,
+                    record.node1SourceIntegral,
+                    record.edgeSourceIntegral);
+            }
+            if (substitution == nullptr) {
+                cachedActiveBranchFingerprintState_ = x;
+                cachedActiveBranchFingerprint_ =
+                    directSgActiveBranchFingerprint(
+                        impactIonizationConfigurationFingerprint(),
+                        impactIonizationConfig_,
+                        contactNodes_,
+                        records);
+                hasCachedActiveBranchFingerprint_ = true;
+            }
+        } else {
+            sgAvalancheSourceIntegrals =
+                detail::currentDensityAvalancheSourceIntegrals(
+                    impactIonizationConfig_,
+                    *impactIonization_,
+                    mobilityConfig_,
+                    *mobility_,
+                    edgeCells_,
+                    mesh_,
+                    doping_,
+                    cellMaterials_,
+                    psi,
+                    phinPhysical,
+                    phipPhysical,
+                    n,
+                    p,
+                    ni_,
+                    Vt_,
+                    fieldFactor,
+                    carrierStatistics_,
+                    Nc_,
+                    Nv_);
+        }
+    }
 
     VectorXd r = VectorXd::Zero(3 * N);
     std::vector<bool> hasElectronContribution(static_cast<std::size_t>(N), false);
@@ -3771,6 +3909,14 @@ std::string CoupledDDAssembler::impactIonizationActiveBranchFingerprint(
 {
     ScopedPerformanceTimer timer("dd.active_branch_fingerprint");
     incrementPerformanceCounter("dd.active_branch_fingerprint_calls");
+    if (hasCachedActiveBranchFingerprint_ &&
+        cachedActiveBranchFingerprintState_.size() == x.size() &&
+        (cachedActiveBranchFingerprintState_.array() == x.array()).all()) {
+        incrementPerformanceCounter(
+            "dd.active_branch_fingerprint_cache_hits");
+        return cachedActiveBranchFingerprint_;
+    }
+    incrementPerformanceCounter("dd.active_branch_fingerprint_cache_misses");
     const CoupledDDState state = unpack(x);
     const Real potentialScale = scaling_.enabled ? scaling_.V0 : 1.0;
 
@@ -3797,7 +3943,10 @@ std::string CoupledDDAssembler::impactIonizationActiveBranchFingerprint(
         canonical.push_back('|');
         canonical += record.activeBranchFingerprint;
     }
-    return fnv1a64(canonical);
+    cachedActiveBranchFingerprintState_ = x;
+    cachedActiveBranchFingerprint_ = fnv1a64(canonical);
+    hasCachedActiveBranchFingerprint_ = true;
+    return cachedActiveBranchFingerprint_;
 }
 
 } // namespace vela

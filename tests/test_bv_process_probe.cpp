@@ -200,6 +200,56 @@ TEST_CASE("BV process probe closes production source and residual scatter",
     }
 }
 
+TEST_CASE("Coupled DD residual caches the direct SG active-branch fingerprint",
+          "[bv_process_probe][fingerprint_cache]")
+{
+    const DeviceMesh mesh = makeTriangle(
+        {Point2{0.0, 0.0}, Point2{1.0e-6, 0.0}, Point2{0.0, 1.0e-6}},
+        false,
+        true);
+    const MaterialDatabase materials;
+    const DopingModel doping = makeDoping(mesh.numNodes());
+    ImpactIonizationModelConfig impact;
+    impact.model = "selberherr";
+    impact.couplingMode = "self_consistent";
+    impact.drivingForce = "electric_field";
+    impact.generation = "current_density";
+    impact.currentApproximation = "density_gradient";
+    impact.electronA = 1.0;
+    impact.electronB = 1.0;
+    impact.holeA = 1.0;
+    impact.holeB = 1.0;
+
+    auto makeAssembler = [&] {
+        return CoupledDDAssembler(
+            mesh,
+            materials,
+            doping,
+            constants::kb * 300.0 / constants::q,
+            mobilityModelConfig("constant"),
+            recombinationModelConfig({"none"}),
+            BandgapNarrowingConfig{},
+            impact);
+    };
+    CoupledDDState state;
+    state.psi = makeState(mesh.numNodes()).psi;
+    state.phin = makeState(mesh.numNodes()).phin;
+    state.phip = makeState(mesh.numNodes()).phip;
+
+    CoupledDDAssembler uncachedAssembler = makeAssembler();
+    const VectorXd uncachedState = uncachedAssembler.pack(state);
+    const std::string expected =
+        uncachedAssembler.impactIonizationActiveBranchFingerprint(
+            uncachedState);
+
+    CoupledDDAssembler cachedAssembler = makeAssembler();
+    const VectorXd cachedState = cachedAssembler.pack(state);
+    (void)cachedAssembler.residual(
+        cachedState, CoupledDDBoundaryConditions{});
+    REQUIRE(cachedAssembler.impactIonizationActiveBranchFingerprint(
+                cachedState) == expected);
+}
+
 TEST_CASE("BV process probe postprocess branch observes source without residual scatter",
           "[bv_process_probe][postprocess_only]")
 {

@@ -1,0 +1,127 @@
+{
+  "schema_version": 1,
+  "base_commit": "b7fae85",
+  "change": "reuse the direct-SG avalanche records produced by residual evaluation to cache the exact-state active-branch fingerprint",
+  "baseline": "docs/validation/bv_jacobian_fixed_scratch_2026-08-09.json",
+  "raw_root": "build-bv-performance/jacobian-fingerprint-cache",
+  "implementation": {
+    "cache_population": "direct SG residual evaluation computes the canonical fingerprint from the already-produced diagnostic records",
+    "cache_key": "exact solution-state vector equality",
+    "fallback": "a cache miss or a non-direct-SG avalanche method performs the existing full BV process probe",
+    "physics_changes": false
+  },
+  "scenarios": {
+    "high_field_transition": {
+      "wall_seconds": 228.75618289998965,
+      "newton_updates": 191,
+      "stages_seconds": {
+        "dd.residual": 18.0570291,
+        "dd.jacobian": 152.0863669,
+        "jacobian.edge_physics": 116.5432908,
+        "jacobian.node_sources": 34.5051919,
+        "dd.active_branch_fingerprint": 0.1224343,
+        "bv.process_probe": 0.1150176,
+        "linear.factorize": 22.7583973
+      },
+      "fingerprint_counters": {
+        "calls": 193,
+        "cache_hits": 192,
+        "cache_misses": 1,
+        "full_bv_process_probes": 1
+      },
+      "result": {
+        "inner_voltage_V": 6.099590877047813,
+        "global_electron_continuity_ratio": 9.154294013563705e-10,
+        "global_hole_continuity_ratio": 1.0764411116579334e-9
+      },
+      "baseline_change_fraction": {
+        "wall": -0.06892573,
+        "active_branch_fingerprint": -0.99454092
+      }
+    },
+    "voltage_to_current_final": {
+      "wall_seconds": 318.06989269997575,
+      "newton_updates": 279,
+      "stages_seconds": {
+        "dd.residual": 26.2307993,
+        "dd.jacobian": 221.8440694,
+        "jacobian.edge_physics": 169.8342548,
+        "jacobian.node_sources": 50.4696478,
+        "dd.active_branch_fingerprint": 0.1128536,
+        "bv.process_probe": 0.1049626,
+        "linear.factorize": 34.5475424
+      },
+      "fingerprint_counters": {
+        "calls": 283,
+        "cache_hits": 282,
+        "cache_misses": 1,
+        "full_bv_process_probes": 1
+      },
+      "result": {
+        "inner_voltage_V": 6.395904200106065,
+        "vela_bv_V": 6.395904174606575,
+        "boundary_residual_A_per_um": 6.169747113378421e-12,
+        "global_electron_continuity_ratio": 1.2165595928167767e-9,
+        "global_hole_continuity_ratio": 1.3083049498570184e-9
+      },
+      "baseline_change_fraction": {
+        "wall": -0.07112493,
+        "active_branch_fingerprint": -0.99655835
+      }
+    },
+    "external_resistor_1206": {
+      "wall_seconds": 776.4890282000124,
+      "newton_updates": 662,
+      "stages_seconds": {
+        "dd.residual": 61.8665321,
+        "dd.jacobian": 545.3565312,
+        "jacobian.edge_physics": 418.463359,
+        "jacobian.node_sources": 123.3403586,
+        "dd.active_branch_fingerprint": 0.1340641,
+        "bv.process_probe": 0.1216486,
+        "linear.factorize": 84.3970772
+      },
+      "fingerprint_counters": {
+        "calls": 667,
+        "cache_hits": 666,
+        "cache_misses": 1,
+        "full_bv_process_probes": 1
+      },
+      "result": {
+        "inner_voltage_V": 6.438388795883303,
+        "vela_bv_V": 6.395887865540998,
+        "load_line_residual_V": 9.136147127719596e-8,
+        "global_electron_continuity_ratio": 3.1158509473598274e-10,
+        "global_hole_continuity_ratio": 3.2378678561858275e-10
+      },
+      "baseline_change_fraction": {
+        "wall": -0.03597566,
+        "active_branch_fingerprint": -0.99826507
+      }
+    }
+  },
+  "field_validation": {
+    "file": "build-bv-performance/jacobian-fingerprint-cache/voltage_to_current_final/vela_sentaurus_field_comparison.json",
+    "potential_correlation": 0.9999957375517389,
+    "electron_qf_populated_correlation": 0.9999958208687154,
+    "hole_qf_populated_correlation": 0.9999901501973965,
+    "high_field_edge_correlation": 0.9928350791819129
+  },
+  "verification": {
+    "fingerprint_equivalence_test": "pass: uncached full-probe and residual-cached fingerprints are equal",
+    "bv_process_probe_test": "pass: 5 test cases and 202 assertions",
+    "newton_solver_test": "pass: 77 test cases and 1087 assertions",
+    "full_serial_ctest": "pass: 571 of 571",
+    "bv_performance_python_tests": "pass: 8",
+    "pn2d_config_template_python_tests": "pass: 14",
+    "same_newton_counts": "pass",
+    "same_state_result_gate": "pass",
+    "field_gate": "pass"
+  },
+  "conclusion": {
+    "physics_and_boundary_gates": "pass",
+    "full_probe_calls_reduced_to_one_per_scenario": true,
+    "wall_time_improved_in_all_controlled_scenarios": true,
+    "residual_stage_cost_tradeoff": "diagnostic records are now retained during residual evaluation, but eliminated fingerprint probes provide a larger net reduction"
+  }
+}

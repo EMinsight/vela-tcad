@@ -382,6 +382,9 @@ private:
         fixedJacobianNodeScatter_;
     mutable std::vector<std::array<JacobianStorageIndex, 81>>
         fixedJacobianCellScatter_;
+    mutable bool hasCachedActiveBranchFingerprint_ = false;
+    mutable VectorXd cachedActiveBranchFingerprintState_;
+    mutable std::string cachedActiveBranchFingerprint_;
 };
 
 } // namespace vela
