@@ -12,6 +12,7 @@
 #include "vela/physics/ImpactIonizationModel.h"
 #include "vela/physics/MobilityModel.h"
 #include "vela/physics/RecombinationModel.h"
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -292,6 +293,14 @@ private:
     int phinOffset() const { return static_cast<int>(mesh_.numNodes()); }
     int phipOffset() const { return 2 * static_cast<int>(mesh_.numNodes()); }
 
+    using JacobianStorageIndex = SparseMatrixd::StorageIndex;
+    static constexpr JacobianStorageIndex invalidJacobianOffset = -1;
+    void rebuildFixedJacobianPattern(
+        const std::vector<bool>& constrainedRows,
+        bool includeCellStencil,
+        std::uint64_t boundarySignature) const;
+    JacobianStorageIndex fixedJacobianOffset(int row, int col) const;
+
     const DeviceMesh& mesh_;
     const MaterialDatabase& matdb_;
     const DopingModel& doping_;
@@ -329,8 +338,16 @@ private:
     mutable std::uint64_t lastObservedJacobianPattern_ = 0;
     mutable bool hasFixedJacobianPattern_ = false;
     mutable std::uint64_t fixedJacobianBoundarySignature_ = 0;
+    mutable bool fixedJacobianIncludesCellStencil_ = false;
     mutable SparseMatrixd fixedJacobianPattern_;
-    mutable std::unordered_set<std::uint64_t> fixedJacobianPatternEntries_;
+    mutable std::unordered_map<std::uint64_t, JacobianStorageIndex>
+        fixedJacobianOffsets_;
+    mutable std::vector<std::array<JacobianStorageIndex, 36>>
+        fixedJacobianEdgeScatter_;
+    mutable std::vector<std::array<JacobianStorageIndex, 9>>
+        fixedJacobianNodeScatter_;
+    mutable std::vector<std::array<JacobianStorageIndex, 81>>
+        fixedJacobianCellScatter_;
 };
 
 } // namespace vela

@@ -1,0 +1,170 @@
+{
+  "schema_version": 1,
+  "base_commit": "9530c41",
+  "change": "precompute edge/node/cell sparse offsets and assemble Jacobian values in place",
+  "baseline": "docs/validation/bv_jacobian_assembly_step1_2026-08-09.json",
+  "transitional_candidate": "docs/validation/bv_jacobian_assembly_step2_2026-08-09.json",
+  "raw_root": "build-bv-performance/jacobian-step3-fixed-scatter-tight",
+  "physics_config_sha256": "dc28b33f2a95e9664c8d93c7c54b3cb4cac22941175b43f8b36d955a25a2a7a2",
+  "implementation": {
+    "fixed_compressed_pattern": true,
+    "precomputed_edge_offsets": true,
+    "precomputed_node_offsets": true,
+    "precomputed_cell_offsets": true,
+    "direct_value_ptr_accumulation": true,
+    "triplet_capacity": 0,
+    "dirichlet_policy": "constrained rows contain only a unit diagonal",
+    "pattern_cache_key": [
+      "Dirichlet row mask",
+      "cell stencil enabled"
+    ]
+  },
+  "scenarios": {
+    "high_field_transition": {
+      "wall_seconds": 538.5844634000096,
+      "newton_updates": 191,
+      "jacobian_calls": 192,
+      "pattern_build_calls": 1,
+      "pattern_changes": 0,
+      "linear_analyze_calls": 5,
+      "linear_analyze_cache_hits": 191,
+      "linear_factorize_calls": 196,
+      "structural_nonzeros": 103229,
+      "average_numeric_nonzeros": 82252.10416666667,
+      "structural_overhead_fraction": 0.255033,
+      "stages_seconds": {
+        "dd.jacobian": 430.730835,
+        "jacobian.topology": 0.0000138,
+        "jacobian.edge_physics": 389.7407112,
+        "jacobian.cell_physics": 0.0000104,
+        "jacobian.node_sources": 39.8639841,
+        "jacobian.boundary_rows": 0.0038739,
+        "jacobian.initialize_values": 0.0602306,
+        "jacobian.finalize_triplets": 0.0000082,
+        "jacobian.pattern_build": 0.0545196,
+        "linear.analyze": 0.0333039,
+        "linear.factorize": 27.4259714,
+        "linear.solve": 0.5318693
+      },
+      "result": {
+        "full_dd_evaluations": 1,
+        "inner_voltage_V": 6.099590877047813,
+        "global_electron_continuity_ratio": 9.154294013563705e-10,
+        "global_hole_continuity_ratio": 1.0764411116579334e-9
+      }
+    },
+    "voltage_to_current_final": {
+      "wall_seconds": 988.202655799978,
+      "newton_updates": 279,
+      "jacobian_calls": 280,
+      "pattern_build_calls": 2,
+      "pattern_changes": 0,
+      "linear_analyze_calls": 2,
+      "linear_analyze_cache_hits": 278,
+      "linear_factorize_calls": 280,
+      "structural_nonzeros": 103229,
+      "average_numeric_nonzeros": 82966.9,
+      "structural_overhead_fraction": 0.244217,
+      "stages_seconds": {
+        "dd.jacobian": 813.0809455,
+        "jacobian.topology": 0.0000267,
+        "jacobian.edge_physics": 739.8505965,
+        "jacobian.cell_physics": 0.0000158,
+        "jacobian.node_sources": 70.9844479,
+        "jacobian.boundary_rows": 0.0167281,
+        "jacobian.initialize_values": 0.1299156,
+        "jacobian.finalize_triplets": 0.0000149,
+        "jacobian.pattern_build": 0.180624,
+        "linear.analyze": 0.0684907,
+        "linear.factorize": 51.7520617,
+        "linear.solve": 0.9563248
+      },
+      "result": {
+        "full_dd_evaluations": 2,
+        "inner_voltage_V": 6.395904200106065,
+        "vela_bv_V": 6.395904174606575,
+        "boundary_residual_A_per_um": 6.169747113378421e-12,
+        "global_electron_continuity_ratio": 1.2165595928167767e-9,
+        "global_hole_continuity_ratio": 1.3083049498570184e-9
+      }
+    },
+    "external_resistor_1206": {
+      "wall_seconds": 1907.627416400006,
+      "newton_updates": 662,
+      "jacobian_calls": 663,
+      "pattern_build_calls": 4,
+      "pattern_changes": 0,
+      "linear_analyze_calls": 5,
+      "linear_analyze_cache_hits": 659,
+      "linear_factorize_calls": 664,
+      "structural_nonzeros": 103229,
+      "average_numeric_nonzeros": 82943.3197586727,
+      "structural_overhead_fraction": 0.244580,
+      "stages_seconds": {
+        "dd.jacobian": 1570.3563225,
+        "jacobian.topology": 0.0000603,
+        "jacobian.edge_physics": 1428.9438859,
+        "jacobian.cell_physics": 0.0000358,
+        "jacobian.node_sources": 137.1765133,
+        "jacobian.boundary_rows": 0.0163247,
+        "jacobian.initialize_values": 0.1972599,
+        "jacobian.finalize_triplets": 0.0000327,
+        "jacobian.pattern_build": 0.4351822,
+        "linear.analyze": 0.1043356,
+        "linear.factorize": 98.3724999,
+        "linear.solve": 1.9853673
+      },
+      "result": {
+        "full_dd_evaluations": 4,
+        "inner_voltage_V": 6.438388795883303,
+        "vela_bv_V": 6.395887865540998,
+        "load_line_residual_V": 9.136147127719596e-8,
+        "global_electron_continuity_ratio": 3.1158509473598274e-10,
+        "global_hole_continuity_ratio": 3.2378678561858275e-10
+      }
+    }
+  },
+  "baseline_comparison": {
+    "high_field_transition": {
+      "wall_time_change_fraction": -0.1215411034,
+      "jacobian_time_change_fraction": -0.1210655103,
+      "finalize_time_change_fraction": -0.9999927955,
+      "analyze_call_reduction_fraction": 0.9728260870
+    },
+    "voltage_to_current_final": {
+      "wall_time_change_fraction": 0.2325537168,
+      "jacobian_time_change_fraction": 0.2391966562,
+      "finalize_time_change_fraction": -0.9999907012,
+      "analyze_call_reduction_fraction": 0.9928571429
+    },
+    "external_resistor_1206": {
+      "wall_time_change_fraction": 0.0221044160,
+      "jacobian_time_change_fraction": 0.0197059724,
+      "finalize_time_change_fraction": -0.9999910300,
+      "analyze_call_reduction_fraction": 0.9924127466
+    },
+    "timing_interpretation": "Single-run wall and Jacobian times move in inconsistent directions and are not evidence of a stable end-to-end speedup. Pattern stability, analyze-call reduction, zero triplet capacity, and finalize elimination are deterministic improvements."
+  },
+  "field_validation": {
+    "file": "build-bv-performance/jacobian-step3-fixed-scatter-tight/voltage_to_current_final/rep_01/vela_sentaurus_field_comparison.json",
+    "potential_correlation": 0.9999957375517389,
+    "electron_qf_populated_correlation": 0.9999958208687154,
+    "hole_qf_populated_correlation": 0.9999901501973965,
+    "high_field_edge_correlation": 0.9928350791819129
+  },
+  "verification": {
+    "targeted_profiler_test": "pass: 14 assertions",
+    "full_serial_ctest": "pass: 570 of 570",
+    "bv_performance_python_tests": "pass: 8",
+    "pn2d_config_template_python_tests": "pass: 14",
+    "missing_pattern_entry_checks": "pass",
+    "same_state_result_gate": "pass"
+  },
+  "conclusion": {
+    "fixed_pattern_goal": "pass",
+    "direct_sparse_value_assembly_goal": "pass",
+    "physics_and_boundary_gates": "pass",
+    "stable_end_to_end_speedup": "not_demonstrated",
+    "next_hotspot": "edge physics derivative evaluation remains about 91 percent of Jacobian time"
+  }
+}

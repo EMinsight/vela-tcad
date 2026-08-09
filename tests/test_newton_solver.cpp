@@ -684,13 +684,15 @@ TEST_CASE("CoupledDDAssembler: profiling separates Jacobian assembly phases",
     for (const std::string name : {
              "jacobian.topology", "jacobian.edge_physics",
              "jacobian.cell_physics", "jacobian.node_sources",
-             "jacobian.boundary_rows", "jacobian.finalize_triplets"}) {
+             "jacobian.boundary_rows", "jacobian.initialize_values",
+             "jacobian.finalize_triplets"}) {
         REQUIRE(stageCalls.at(name) == 2);
     }
     REQUIRE(profile.at("counters").at("jacobian.pattern_observations") == 2);
     REQUIRE(profile.at("counters").value("jacobian.pattern_change_count", 0) == 0);
     REQUIRE(profile.at("counters").at("jacobian.pattern_build_calls") == 1);
     REQUIRE(profile.at("observations").at("jacobian.triplet_count").at("min") > 0.0);
+    REQUIRE(profile.at("observations").at("jacobian.triplet_capacity").at("max") == 0.0);
     REQUIRE(profile.at("observations").at("jacobian.nonzero_count").at("min") > 0.0);
     REQUIRE(profile.at("observations")
                 .at("jacobian.structural_nonzero_count").at("min") >=

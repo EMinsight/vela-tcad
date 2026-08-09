@@ -231,6 +231,200 @@ CoupledDDAssembler::CoupledDDAssembler(
     }
 }
 
+void CoupledDDAssembler::rebuildFixedJacobianPattern(
+    const std::vector<bool>& constrainedRows,
+    bool includeCellStencil,
+    std::uint64_t boundarySignature) const
+{
+    ScopedPerformanceTimer patternTimer("jacobian.pattern_build");
+    const int nodeCount = static_cast<int>(mesh_.numNodes());
+    std::vector<Eigen::Triplet<double>> patternTriplets;
+    patternTriplets.reserve(static_cast<std::size_t>(nodeCount) * 45);
+    std::unordered_set<std::uint64_t> entries;
+    entries.reserve(static_cast<std::size_t>(nodeCount) * 45);
+    auto addPattern = [&](int row, int col) {
+        if (constrainedRows[static_cast<std::size_t>(row)] && row != col)
+            return;
+        const std::uint64_t key = sparseEntryKey(row, col);
+        if (entries.insert(key).second)
+            patternTriplets.emplace_back(row, col, 1.0);
+    };
+
+    for (Index node = 0; node < mesh_.numNodes(); ++node) {
+        const int i = static_cast<int>(node);
+        const int psi = psiOffset() + i;
+        const int phin = phinOffset() + i;
+        const int phip = phipOffset() + i;
+        addPattern(psi, psi);
+        addPattern(phin, phin);
+        addPattern(phip, phip);
+        if (ni_[node] > 0.0) {
+            addPattern(psi, phin);
+            addPattern(psi, phip);
+            for (int col : {psi, phin, phip}) {
+                addPattern(phin, col);
+                addPattern(phip, col);
+            }
+        }
+    }
+
+    for (const Edge& edge : mesh_.edges()) {
+        const int i = static_cast<int>(edge.n0);
+        const int j = static_cast<int>(edge.n1);
+        const int psiColumns[2] = {psiOffset() + i, psiOffset() + j};
+        const int phinColumns[2] = {phinOffset() + i, phinOffset() + j};
+        const int phipColumns[2] = {phipOffset() + i, phipOffset() + j};
+        for (int rowNode : {i, j}) {
+            const int psiRow = psiOffset() + rowNode;
+            const int phinRow = phinOffset() + rowNode;
+            const int phipRow = phipOffset() + rowNode;
+            for (int col : psiColumns)
+                addPattern(psiRow, col);
+            if (ni_[edge.n0] > 0.0 || ni_[edge.n1] > 0.0) {
+                for (int col : psiColumns) {
+                    addPattern(phinRow, col);
+                    addPattern(phipRow, col);
+                }
+                for (int col : phinColumns)
+                    addPattern(phinRow, col);
+                for (int col : phipColumns)
+                    addPattern(phipRow, col);
+            }
+        }
+    }
+
+    if (includeCellStencil) {
+        for (const Cell& cell : mesh_.cells()) {
+            const bool hasTransportNode = std::any_of(
+                cell.node_ids.begin(), cell.node_ids.end(),
+                [&](Index node) { return ni_[node] > 0.0; });
+            if (!hasTransportNode)
+                continue;
+            for (Index rowNode : cell.node_ids) {
+                const int row = static_cast<int>(rowNode);
+                const int carrierRows[2] = {
+                    phinOffset() + row, phipOffset() + row};
+                for (Index columnNode : cell.node_ids) {
+                    const int column = static_cast<int>(columnNode);
+                    const int columns[3] = {
+                        psiOffset() + column,
+                        phinOffset() + column,
+                        phipOffset() + column};
+                    for (int carrierRow : carrierRows)
+                        for (int col : columns)
+                            addPattern(carrierRow, col);
+                }
+            }
+        }
+    }
+
+    fixedJacobianPattern_ = SparseMatrixd(3 * nodeCount, 3 * nodeCount);
+    fixedJacobianPattern_.setFromTriplets(
+        patternTriplets.begin(), patternTriplets.end());
+    std::fill(fixedJacobianPattern_.valuePtr(),
+              fixedJacobianPattern_.valuePtr() +
+                  fixedJacobianPattern_.nonZeros(),
+              0.0);
+
+    fixedJacobianOffsets_.clear();
+    fixedJacobianOffsets_.reserve(
+        static_cast<std::size_t>(fixedJacobianPattern_.nonZeros()));
+    for (Eigen::Index col = 0; col < fixedJacobianPattern_.outerSize(); ++col) {
+        const JacobianStorageIndex begin =
+            fixedJacobianPattern_.outerIndexPtr()[col];
+        const JacobianStorageIndex end =
+            fixedJacobianPattern_.outerIndexPtr()[col + 1];
+        for (JacobianStorageIndex offset = begin; offset < end; ++offset) {
+            const int row = fixedJacobianPattern_.innerIndexPtr()[offset];
+            fixedJacobianOffsets_.emplace(
+                sparseEntryKey(row, static_cast<int>(col)), offset);
+        }
+    }
+
+    const auto offsetOrInvalid = [&](int row, int col) {
+        const auto found = fixedJacobianOffsets_.find(sparseEntryKey(row, col));
+        return found == fixedJacobianOffsets_.end()
+            ? invalidJacobianOffset
+            : found->second;
+    };
+
+    fixedJacobianEdgeScatter_.assign(mesh_.numEdges(), {});
+    for (Index edgeId = 0; edgeId < mesh_.numEdges(); ++edgeId) {
+        auto& scatter = fixedJacobianEdgeScatter_[edgeId];
+        scatter.fill(invalidJacobianOffset);
+        const Edge& edge = mesh_.getEdge(edgeId);
+        const int nodes[2] = {
+            static_cast<int>(edge.n0), static_cast<int>(edge.n1)};
+        for (int rowBlock = 0; rowBlock < 3; ++rowBlock) {
+            for (int colBlock = 0; colBlock < 3; ++colBlock) {
+                for (int localRow = 0; localRow < 2; ++localRow) {
+                    for (int localCol = 0; localCol < 2; ++localCol) {
+                        const std::size_t index = static_cast<std::size_t>(
+                            (((rowBlock * 3 + colBlock) * 2 + localRow) * 2) +
+                            localCol);
+                        scatter[index] = offsetOrInvalid(
+                            rowBlock * nodeCount + nodes[localRow],
+                            colBlock * nodeCount + nodes[localCol]);
+                    }
+                }
+            }
+        }
+    }
+
+    fixedJacobianNodeScatter_.assign(mesh_.numNodes(), {});
+    for (Index node = 0; node < mesh_.numNodes(); ++node) {
+        auto& scatter = fixedJacobianNodeScatter_[node];
+        scatter.fill(invalidJacobianOffset);
+        const int i = static_cast<int>(node);
+        for (int rowBlock = 0; rowBlock < 3; ++rowBlock)
+            for (int colBlock = 0; colBlock < 3; ++colBlock)
+                scatter[static_cast<std::size_t>(rowBlock * 3 + colBlock)] =
+                    offsetOrInvalid(
+                        rowBlock * nodeCount + i,
+                        colBlock * nodeCount + i);
+    }
+
+    fixedJacobianCellScatter_.assign(mesh_.numCells(), {});
+    for (Index cellId = 0; cellId < mesh_.numCells(); ++cellId) {
+        auto& scatter = fixedJacobianCellScatter_[cellId];
+        scatter.fill(invalidJacobianOffset);
+        const Cell& cell = mesh_.getCell(cellId);
+        for (int rowBlock = 0; rowBlock < 3; ++rowBlock) {
+            for (int colBlock = 0; colBlock < 3; ++colBlock) {
+                for (int localRow = 0; localRow < 3; ++localRow) {
+                    for (int localCol = 0; localCol < 3; ++localCol) {
+                        const std::size_t index = static_cast<std::size_t>(
+                            (((rowBlock * 3 + colBlock) * 3 + localRow) * 3) +
+                            localCol);
+                        scatter[index] = offsetOrInvalid(
+                            rowBlock * nodeCount + static_cast<int>(
+                                cell.node_ids[static_cast<std::size_t>(localRow)]),
+                            colBlock * nodeCount + static_cast<int>(
+                                cell.node_ids[static_cast<std::size_t>(localCol)]));
+                    }
+                }
+            }
+        }
+    }
+
+    fixedJacobianBoundarySignature_ = boundarySignature;
+    fixedJacobianIncludesCellStencil_ = includeCellStencil;
+    hasFixedJacobianPattern_ = true;
+    incrementPerformanceCounter("jacobian.pattern_build_calls");
+}
+
+CoupledDDAssembler::JacobianStorageIndex
+CoupledDDAssembler::fixedJacobianOffset(int row, int col) const
+{
+    const auto found = fixedJacobianOffsets_.find(sparseEntryKey(row, col));
+    if (found == fixedJacobianOffsets_.end()) {
+        throw std::logic_error(
+            "CoupledDDAssembler: fixed Jacobian pattern misses assembled entry (" +
+            std::to_string(row) + "," + std::to_string(col) + ").");
+    }
+    return found->second;
+}
+
 VectorXd CoupledDDAssembler::pack(const CoupledDDState& state) const
 {
     const int N = static_cast<int>(mesh_.numNodes());
@@ -1952,8 +2146,87 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
         constrainedRows[static_cast<std::size_t>(phipOffset() + static_cast<int>(node))] = true;
     }
 
-    std::vector<Eigen::Triplet<double>> triplets;
-    triplets.reserve(static_cast<std::size_t>(N) * 27);
+    const std::uint64_t boundarySignature = booleanMaskHash(constrainedRows);
+    const bool includeCellStencil = sgCurrentAvalanche ||
+        recombination_.bandToBandEnabled();
+    if (!hasFixedJacobianPattern_ ||
+        boundarySignature != fixedJacobianBoundarySignature_ ||
+        includeCellStencil != fixedJacobianIncludesCellStencil_) {
+        rebuildFixedJacobianPattern(
+            constrainedRows, includeCellStencil, boundarySignature);
+    }
+
+    SparseMatrixd J;
+    {
+        ScopedPerformanceTimer initializeTimer("jacobian.initialize_values");
+        J = fixedJacobianPattern_;
+    }
+    double* jacobianValues = J.valuePtr();
+    std::size_t assembledContributionCount = 0;
+    Index activeEdge = mesh_.numEdges();
+    Index activeCell = mesh_.numCells();
+    Index activeNode = mesh_.numNodes();
+
+    auto scatterOffset = [&](int row, int col) {
+        const int rowBlock = row / N;
+        const int colBlock = col / N;
+        const int rowNode = row % N;
+        const int colNode = col % N;
+
+        if (activeEdge < mesh_.numEdges()) {
+            const Edge& edge = mesh_.getEdge(activeEdge);
+            const int nodes[2] = {
+                static_cast<int>(edge.n0), static_cast<int>(edge.n1)};
+            const int localRow = rowNode == nodes[0] ? 0 :
+                (rowNode == nodes[1] ? 1 : -1);
+            const int localCol = colNode == nodes[0] ? 0 :
+                (colNode == nodes[1] ? 1 : -1);
+            if (localRow >= 0 && localCol >= 0) {
+                const std::size_t index = static_cast<std::size_t>(
+                    (((rowBlock * 3 + colBlock) * 2 + localRow) * 2) +
+                    localCol);
+                const JacobianStorageIndex offset =
+                    fixedJacobianEdgeScatter_[activeEdge][index];
+                if (offset != invalidJacobianOffset)
+                    return offset;
+            }
+        }
+
+        if (activeCell < mesh_.numCells()) {
+            const Cell& cell = mesh_.getCell(activeCell);
+            int localRow = -1;
+            int localCol = -1;
+            for (int local = 0; local < 3; ++local) {
+                const int node = static_cast<int>(
+                    cell.node_ids[static_cast<std::size_t>(local)]);
+                if (rowNode == node)
+                    localRow = local;
+                if (colNode == node)
+                    localCol = local;
+            }
+            if (localRow >= 0 && localCol >= 0) {
+                const std::size_t index = static_cast<std::size_t>(
+                    (((rowBlock * 3 + colBlock) * 3 + localRow) * 3) +
+                    localCol);
+                const JacobianStorageIndex offset =
+                    fixedJacobianCellScatter_[activeCell][index];
+                if (offset != invalidJacobianOffset)
+                    return offset;
+            }
+        }
+
+        if (activeNode < mesh_.numNodes() &&
+            rowNode == static_cast<int>(activeNode) &&
+            colNode == static_cast<int>(activeNode)) {
+            const JacobianStorageIndex offset =
+                fixedJacobianNodeScatter_[activeNode][static_cast<std::size_t>(
+                    rowBlock * 3 + colBlock)];
+            if (offset != invalidJacobianOffset)
+                return offset;
+        }
+        return fixedJacobianOffset(row, col);
+    };
+
     std::vector<Real> assembledDiagonal(static_cast<std::size_t>(3 * N), 0.0);
     auto scaleDerivative = [&](int row, int, Real value) {
         if (!scaling_.enabled)
@@ -1967,7 +2240,8 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
     auto add = [&](int row, int col, Real value) {
         if (value != 0.0 && !constrainedRows[static_cast<std::size_t>(row)]) {
             const Real scaled = scaleDerivative(row, col, value);
-            triplets.emplace_back(row, col, scaled);
+            jacobianValues[scatterOffset(row, col)] += scaled;
+            ++assembledContributionCount;
             if (row == col)
                 assembledDiagonal[static_cast<std::size_t>(row)] += scaled;
         }
@@ -1975,7 +2249,8 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
 
     auto addGauge = [&](int row, int col, Real value) {
         if (value != 0.0 && !constrainedRows[static_cast<std::size_t>(row)]) {
-            triplets.emplace_back(row, col, value);
+            jacobianValues[scatterOffset(row, col)] += value;
+            ++assembledContributionCount;
             if (row == col)
                 assembledDiagonal[static_cast<std::size_t>(row)] += value;
         }
@@ -2491,6 +2766,7 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
     {
         ScopedPerformanceTimer edgePhysicsTimer("jacobian.edge_physics");
         for (Index e = 0; e < mesh_.numEdges(); ++e) {
+        activeEdge = e;
         const Edge& edge = mesh_.getEdge(e);
         const Real h = edge.length;
         if (h < 1.0e-30) continue;
@@ -2758,6 +3034,7 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
             }
         }
         }
+        activeEdge = mesh_.numEdges();
     }
 
     {
@@ -2769,6 +3046,7 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
         }
         if (elementEdgeGssLauxAvalanche) {
             for (Index cellId = 0; cellId < mesh_.numCells(); ++cellId) {
+                activeCell = cellId;
                 const Cell& cell = mesh_.getCell(cellId);
                 std::array<detail::Tri3LocalForwardDual, 3> localPsi{};
                 std::array<detail::Tri3LocalForwardDual, 3> localPhin{};
@@ -2882,6 +3160,7 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
             };
 
             for (Index cellId = 0; cellId < mesh_.numCells(); ++cellId) {
+                activeCell = cellId;
                 const Cell& cell = mesh_.getCell(cellId);
                 const VectorXd baseSources =
                     cellNodeSources(cellId, psi, phinState, phipState, n, p);
@@ -2955,11 +3234,13 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
             }
         }
         }
+        activeCell = mesh_.numCells();
     }
 
     {
         ScopedPerformanceTimer nodeSourcesTimer("jacobian.node_sources");
         for (Index i = 0; i < Nidx; ++i) {
+        activeNode = i;
         const int ii = static_cast<int>(i);
         const Real psiRelativeN = psi(ii) - electronQfReference_V_;
         const Real psiRelativeP = psi(ii) - holeQfReference_V_;
@@ -3202,11 +3483,13 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
                     return;
                 const Real sign = diagonal < 0.0 ? -1.0 : (diagonal > 0.0 ? 1.0 : fallbackSign);
                 const Real addition = sign * (floor - absDiagonal);
-                triplets.emplace_back(row, row, addition);
+                jacobianValues[scatterOffset(row, row)] += addition;
+                ++assembledContributionCount;
                 assembledDiagonal[static_cast<std::size_t>(row)] += addition;
             };
 
             for (Index i = 0; i < Nidx; ++i) {
+                activeNode = i;
                 const int ii = static_cast<int>(i);
                 const Real ni = ni_[i];
                 // In a depleted SRH generation row, dR/dqF is O(ni / ((taun + taup) Vt));
@@ -3220,128 +3503,36 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
 
     {
         ScopedPerformanceTimer boundaryRowsTimer("jacobian.boundary_rows");
+        activeEdge = mesh_.numEdges();
+        activeCell = mesh_.numCells();
+        activeNode = mesh_.numNodes();
         for (const auto& [node, value] : bcs.psi) {
             (void)value;
-            triplets.emplace_back(psiOffset() + static_cast<int>(node),
-                                  psiOffset() + static_cast<int>(node), 1.0);
+            const int row = psiOffset() + static_cast<int>(node);
+            jacobianValues[fixedJacobianOffset(row, row)] += 1.0;
+            ++assembledContributionCount;
         }
         for (const auto& [node, value] : bcs.phin) {
             (void)value;
-            triplets.emplace_back(phinOffset() + static_cast<int>(node),
-                                  phinOffset() + static_cast<int>(node), 1.0);
+            const int row = phinOffset() + static_cast<int>(node);
+            jacobianValues[fixedJacobianOffset(row, row)] += 1.0;
+            ++assembledContributionCount;
         }
         for (const auto& [node, value] : bcs.phip) {
             (void)value;
-            triplets.emplace_back(phipOffset() + static_cast<int>(node),
-                                  phipOffset() + static_cast<int>(node), 1.0);
+            const int row = phipOffset() + static_cast<int>(node);
+            jacobianValues[fixedJacobianOffset(row, row)] += 1.0;
+            ++assembledContributionCount;
         }
     }
 
-    const std::uint64_t boundarySignature = booleanMaskHash(constrainedRows);
-    if (!hasFixedJacobianPattern_ ||
-        boundarySignature != fixedJacobianBoundarySignature_) {
-        ScopedPerformanceTimer patternTimer("jacobian.pattern_build");
-        std::vector<Eigen::Triplet<double>> patternTriplets;
-        patternTriplets.reserve(static_cast<std::size_t>(N) * 45);
-        fixedJacobianPatternEntries_.clear();
-        fixedJacobianPatternEntries_.reserve(static_cast<std::size_t>(N) * 45);
-        auto addPattern = [&](int row, int col) {
-            if (constrainedRows[static_cast<std::size_t>(row)] && row != col)
-                return;
-            const std::uint64_t key = sparseEntryKey(row, col);
-            if (fixedJacobianPatternEntries_.insert(key).second)
-                patternTriplets.emplace_back(row, col, 1.0);
-        };
-
-        for (Index node = 0; node < Nidx; ++node) {
-            const int i = static_cast<int>(node);
-            const int psi = psiOffset() + i;
-            const int phin = phinOffset() + i;
-            const int phip = phipOffset() + i;
-            addPattern(psi, psi);
-            addPattern(psi, phin);
-            addPattern(psi, phip);
-            for (int col : {psi, phin, phip}) {
-                addPattern(phin, col);
-                addPattern(phip, col);
-            }
-        }
-
-        for (const Edge& edge : mesh_.edges()) {
-            const int i = static_cast<int>(edge.n0);
-            const int j = static_cast<int>(edge.n1);
-            const int psiColumns[2] = {psiOffset() + i, psiOffset() + j};
-            const int phinColumns[2] = {phinOffset() + i, phinOffset() + j};
-            const int phipColumns[2] = {phipOffset() + i, phipOffset() + j};
-            for (int rowNode : {i, j}) {
-                const int psiRow = psiOffset() + rowNode;
-                const int phinRow = phinOffset() + rowNode;
-                const int phipRow = phipOffset() + rowNode;
-                for (int col : psiColumns) {
-                    addPattern(psiRow, col);
-                    addPattern(phinRow, col);
-                    addPattern(phipRow, col);
-                }
-                for (int col : phinColumns)
-                    addPattern(phinRow, col);
-                for (int col : phipColumns)
-                    addPattern(phipRow, col);
-            }
-        }
-
-        const bool cellStencil = sgCurrentAvalanche ||
-            recombination_.bandToBandEnabled();
-        if (cellStencil) {
-            for (const Cell& cell : mesh_.cells()) {
-                for (Index rowNode : cell.node_ids) {
-                    const int row = static_cast<int>(rowNode);
-                    const int carrierRows[2] = {
-                        phinOffset() + row, phipOffset() + row};
-                    for (Index columnNode : cell.node_ids) {
-                        const int column = static_cast<int>(columnNode);
-                        const int columns[3] = {
-                            psiOffset() + column,
-                            phinOffset() + column,
-                            phipOffset() + column};
-                        for (int carrierRow : carrierRows)
-                            for (int col : columns)
-                                addPattern(carrierRow, col);
-                    }
-                }
-            }
-        }
-
-        fixedJacobianPattern_ = SparseMatrixd(3 * N, 3 * N);
-        fixedJacobianPattern_.setFromTriplets(
-            patternTriplets.begin(), patternTriplets.end());
-        std::fill(fixedJacobianPattern_.valuePtr(),
-                  fixedJacobianPattern_.valuePtr() +
-                      fixedJacobianPattern_.nonZeros(),
-                  0.0);
-        fixedJacobianBoundarySignature_ = boundarySignature;
-        hasFixedJacobianPattern_ = true;
-        incrementPerformanceCounter("jacobian.pattern_build_calls");
-    }
-
-    SparseMatrixd J = fixedJacobianPattern_;
     {
         ScopedPerformanceTimer finalizeTimer("jacobian.finalize_triplets");
-        for (const Eigen::Triplet<double>& triplet : triplets) {
-            const std::uint64_t key = sparseEntryKey(
-                static_cast<int>(triplet.row()),
-                static_cast<int>(triplet.col()));
-            if (fixedJacobianPatternEntries_.count(key) == 0) {
-                throw std::logic_error(
-                    "CoupledDDAssembler: fixed Jacobian pattern misses assembled entry (" +
-                    std::to_string(triplet.row()) + "," +
-                    std::to_string(triplet.col()) + ").");
-            }
-            J.coeffRef(triplet.row(), triplet.col()) += triplet.value();
-        }
+        // Values are already accumulated directly through precomputed offsets.
     }
     if (PerformanceProfiler* profiler = activePerformanceProfiler();
         profiler != nullptr && profiler->enabled()) {
-        const std::size_t tripletCount = triplets.size();
+        const std::size_t tripletCount = assembledContributionCount;
         const std::size_t structuralNonzeroCount =
             static_cast<std::size_t>(J.nonZeros());
         const std::size_t numericNonzeroCount = static_cast<std::size_t>(
@@ -3350,7 +3541,7 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
         observePerformanceValue("jacobian.triplet_count",
                                 static_cast<double>(tripletCount));
         observePerformanceValue("jacobian.triplet_capacity",
-                                static_cast<double>(triplets.capacity()));
+                                0.0);
         observePerformanceValue("jacobian.nonzero_count",
                                 static_cast<double>(numericNonzeroCount));
         observePerformanceValue("jacobian.structural_nonzero_count",
