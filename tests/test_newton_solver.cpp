@@ -699,6 +699,71 @@ TEST_CASE("CoupledDDAssembler: profiling separates Jacobian assembly phases",
             profile.at("observations").at("jacobian.nonzero_count").at("max"));
 }
 
+TEST_CASE("CoupledDDAssembler: edge avalanche profiling counters preserve exact accounting",
+          "[newton][coupled][performance_profiler][impact]")
+{
+    DeviceMesh mesh = makePNMesh();
+    MaterialDatabase matdb;
+    DopingModel doping = makePNDoping(mesh);
+
+    MobilityModelConfig mobility = mobilityModelConfig("constant");
+    mobility.highFieldDrivingForce = "quasi_fermi_gradient";
+
+    ImpactIonizationModelConfig impact;
+    impact.model = "selberherr";
+    impact.drivingForce = "eparallel";
+    impact.generation = "current_density";
+    impact.currentApproximation = "nodal_vector_current_reconstructed";
+    impact.sourceVolumePolicy = "edge_box";
+    impact.electronA = 1.0e8;
+    impact.electronB = 1.0e-30;
+    impact.holeA = 1.0e8;
+    impact.holeB = 1.0e-30;
+
+    CoupledDDAssembler assembler(
+        mesh,
+        matdb,
+        doping,
+        constants::Vt_300,
+        mobility,
+        recombinationModelConfig({"none"}),
+        BandgapNarrowingConfig{},
+        impact);
+
+    const int nodeCount = static_cast<int>(mesh.numNodes());
+    CoupledDDState state;
+    state.psi = VectorXd::LinSpaced(nodeCount, 0.0, -0.8);
+    state.phin = VectorXd::LinSpaced(nodeCount, 0.0, -1.4);
+    state.phip = VectorXd::LinSpaced(nodeCount, -0.2, -0.9);
+    const VectorXd x = assembler.pack(state);
+
+    PerformanceProfiler profiler({true, "unused.json"});
+    {
+        ActivePerformanceProfilerScope active(&profiler);
+        (void)assembler.assembleJacobian(x, {});
+    }
+
+    const nlohmann::json counters = profiler.toJson().at("counters");
+    const std::uint64_t evaluations =
+        counters.at("jacobian.edge_avalanche_source_evaluations");
+    const std::uint64_t baseEvaluations =
+        counters.at("jacobian.edge_avalanche_base_evaluations");
+    const std::uint64_t perturbedEvaluations =
+        counters.at("jacobian.edge_avalanche_perturbed_evaluations");
+    const std::uint64_t fluxRequests =
+        counters.at("jacobian.edge_avalanche_neighbor_flux_requests");
+    const std::uint64_t fluxHits =
+        counters.at("jacobian.avalanche_flux_cache_hits");
+    const std::uint64_t fluxMisses =
+        counters.at("jacobian.avalanche_flux_cache_misses");
+
+    REQUIRE(baseEvaluations > 0);
+    REQUIRE(perturbedEvaluations > baseEvaluations);
+    REQUIRE(evaluations == baseEvaluations + perturbedEvaluations);
+    REQUIRE(fluxRequests == fluxHits + fluxMisses);
+    REQUIRE(counters.at("jacobian.edge_avalanche_nodal_reconstruction_calls") > 0);
+}
+
 TEST_CASE("CoupledDDAssembler: contact-referenced quasi-Fermi coordinates preserve physical state",
           "[newton][coupled][qf-reference]")
 {

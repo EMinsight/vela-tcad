@@ -2562,6 +2562,11 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
     std::uint32_t avalancheFluxGeneration = 0;
     std::uint64_t avalancheFluxCacheHits = 0;
     std::uint64_t avalancheFluxCacheMisses = 0;
+    std::uint64_t avalancheSourceEvaluations = 0;
+    std::uint64_t avalancheBaseEvaluations = 0;
+    std::uint64_t avalanchePerturbedEvaluations = 0;
+    std::uint64_t avalancheNodalReconstructionCalls = 0;
+    std::uint64_t avalancheNeighborFluxRequests = 0;
 
     // Scharfetter-Gummel edge-current avalanche source for one edge, evaluated
     // directly from the endpoint potentials. This mirrors
@@ -2573,6 +2578,7 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
             auto&& phinAt,
             auto&& phipAt) -> EdgeAvalancheNodeSources {
         EdgeAvalancheNodeSources sources;
+        ++avalancheSourceEvaluations;
         ++avalancheFluxGeneration;
         if (avalancheFluxGeneration == 0) {
             std::fill(avalancheElectronFluxStamp.begin(),
@@ -2653,6 +2659,7 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
             impactIonizationConfig_, edgeCells_, mesh_, e, &cellMaterials_);
 
         auto signedElectronFluxForEdge = [&](Index queryEdge) -> Real {
+            ++avalancheNeighborFluxRequests;
             if (avalancheElectronFluxStamp[queryEdge] == fluxGeneration) {
                 ++avalancheFluxCacheHits;
                 return avalancheElectronFluxCache[queryEdge];
@@ -2688,6 +2695,7 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
                 munLocal * Vt_ / queryH, bgnEnabled_));
         };
         auto signedHoleFluxForEdge = [&](Index queryEdge) -> Real {
+            ++avalancheNeighborFluxRequests;
             if (avalancheHoleFluxStamp[queryEdge] == fluxGeneration) {
                 ++avalancheFluxCacheHits;
                 return avalancheHoleFluxCache[queryEdge];
@@ -2808,11 +2816,13 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
                 edgeAssemblyKernels_[queryEdge].activeTransport;
         };
         auto nodalVectorCurrent = [&](auto&& signedFluxForEdge) -> Point2 {
+            avalancheNodalReconstructionCalls += 2;
             return detail::edgeAveragedNodalCurrentVector(
                 e, nodeEdges, mesh_, signedFluxForEdge, activeTransportEdge);
         };
         auto nodalVectorCurrentReconstructedFlux =
             [&](auto&& signedFluxForEdge) -> Real {
+            avalancheNodalReconstructionCalls += 2;
             return detail::edgeAveragedNodalCurrentMagnitude(
                 e, nodeEdges, mesh_, signedFluxForEdge, activeTransportEdge);
         };
@@ -3254,6 +3264,7 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
             // mobility, and qF-gradient partition derivatives together.
             auto phinAt = [&](Index node) { return phinState(static_cast<int>(node)); };
             auto phipAt = [&](Index node) { return phipState(static_cast<int>(node)); };
+            ++avalancheBaseEvaluations;
             const EdgeAvalancheNodeSources base = edgeAvalancheNodeSources(
                 e, i, j, h, psi_i, psi_j, phinAt, phipAt);
             const auto& qfStencilNodes = edgeKernel.avalancheStencilNodes;
@@ -3290,6 +3301,7 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
                 Real psiM[2] = {psi_i, psi_j};
                 psiP[k] += step;
                 psiM[k] -= step;
+                avalanchePerturbedEvaluations += 2;
                 const EdgeAvalancheNodeSources sp = edgeAvalancheNodeSources(
                     e, i, j, h, psiP[0], psiP[1], phinAt, phipAt);
                 const EdgeAvalancheNodeSources sm = edgeAvalancheNodeSources(
@@ -3311,6 +3323,7 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
                     return queryNode == node ? phinValue - step
                                              : phinState(static_cast<int>(queryNode));
                 };
+                avalanchePerturbedEvaluations += 2;
                 const EdgeAvalancheNodeSources sp = edgeAvalancheNodeSources(
                     e, i, j, h, psi_i, psi_j, phinPlusAt, phipAt);
                 const EdgeAvalancheNodeSources sm = edgeAvalancheNodeSources(
@@ -3332,6 +3345,7 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
                     return queryNode == node ? phipValue - step
                                              : phipState(static_cast<int>(queryNode));
                 };
+                avalanchePerturbedEvaluations += 2;
                 const EdgeAvalancheNodeSources sp = edgeAvalancheNodeSources(
                     e, i, j, h, psi_i, psi_j, phinAt, phipPlusAt);
                 const EdgeAvalancheNodeSources sm = edgeAvalancheNodeSources(
@@ -3361,6 +3375,21 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
         "jacobian.avalanche_flux_cache_hits", avalancheFluxCacheHits);
     incrementPerformanceCounter(
         "jacobian.avalanche_flux_cache_misses", avalancheFluxCacheMisses);
+    incrementPerformanceCounter(
+        "jacobian.edge_avalanche_source_evaluations",
+        avalancheSourceEvaluations);
+    incrementPerformanceCounter(
+        "jacobian.edge_avalanche_base_evaluations",
+        avalancheBaseEvaluations);
+    incrementPerformanceCounter(
+        "jacobian.edge_avalanche_perturbed_evaluations",
+        avalanchePerturbedEvaluations);
+    incrementPerformanceCounter(
+        "jacobian.edge_avalanche_nodal_reconstruction_calls",
+        avalancheNodalReconstructionCalls);
+    incrementPerformanceCounter(
+        "jacobian.edge_avalanche_neighbor_flux_requests",
+        avalancheNeighborFluxRequests);
 
     {
         ScopedPerformanceTimer cellPhysicsTimer("jacobian.cell_physics");
