@@ -756,17 +756,22 @@ TEST_CASE("CoupledDDAssembler: edge avalanche profiling counters preserve exact 
         counters.at("jacobian.avalanche_flux_cache_hits");
     const std::uint64_t fluxMisses =
         counters.at("jacobian.avalanche_flux_cache_misses");
+    const std::uint64_t baseFluxReuses =
+        counters.at("jacobian.edge_avalanche_base_flux_reuses");
+    const std::uint64_t perturbedFluxRecomputations =
+        counters.at("jacobian.edge_avalanche_perturbed_flux_recomputations");
 
     REQUIRE(baseEvaluations > 0);
     REQUIRE(perturbedEvaluations > baseEvaluations);
     REQUIRE(evaluations == baseEvaluations + perturbedEvaluations);
-    REQUIRE(fluxRequests == fluxHits + fluxMisses);
+    REQUIRE(fluxRequests == fluxHits + fluxMisses + baseFluxReuses);
+    REQUIRE(perturbedFluxRecomputations == fluxMisses);
     REQUIRE(counters.at("jacobian.edge_avalanche_nodal_reconstruction_calls") > 0);
     REQUIRE(counters.at("jacobian.edge_avalanche_direct_flux_evaluations") == 0);
     REQUIRE(counters.at("jacobian.edge_avalanche_direct_flux_skips") > 0);
 }
 
-TEST_CASE("CoupledDDAssembler: characterize nodal Eparallel residual Jacobian edge-flux divergence",
+TEST_CASE("CoupledDDAssembler: nodal Eparallel avalanche Jacobian matches residual finite differences",
           "[newton][coupled][impact][edge_flux_audit]")
 {
     DeviceMesh mesh = makePNMesh();
@@ -827,8 +832,7 @@ TEST_CASE("CoupledDDAssembler: characterize nodal Eparallel residual Jacobian ed
         (analyticImpact - residualFiniteDifferenceImpact).norm() /
         std::max<Real>(1.0, residualFiniteDifferenceImpact.norm());
     CAPTURE(relativeError);
-    REQUIRE(relativeError ==
-            Catch::Approx(0.75918927793097102).margin(1.0e-10));
+    REQUIRE(relativeError < 5.0e-4);
 }
 
 TEST_CASE("CoupledDDAssembler: contact-referenced quasi-Fermi coordinates preserve physical state",
