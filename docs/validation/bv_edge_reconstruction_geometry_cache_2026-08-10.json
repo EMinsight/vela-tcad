@@ -1,0 +1,91 @@
+{
+  "schema_version": 1,
+  "optimization": "C2a cache avalanche source area, tangent, Gram terms, and degeneracy branch",
+  "baseline_commit": "2601fd7",
+  "candidate_commit": "0d08130",
+  "build": {
+    "type": "Release",
+    "compiler": "MSYS2 UCRT64 GCC 16.1.0",
+    "profiling": "internal steady_clock stages; gprof disabled",
+    "threads": 1,
+    "lto": false,
+    "sparselu_ordering": "COLAMD"
+  },
+  "physics_config_sha256": "dc28b33f2a95e9664c8d93c7c54b3cb4cac22941175b43f8b36d955a25a2a7a2",
+  "raw_roots": {
+    "baseline": "build-bv-performance/edge-c1-2601fd7",
+    "candidate": "build-bv-performance/edge-c2-0d08130"
+  },
+  "scenarios": {
+    "high_field_transition": {
+      "baseline_profile_sha256": "4d8467295d6c0b7a903a12c35616a2565d1f724d7efc1b71056fd184314ac4d7",
+      "candidate_profile_sha256": "68431d71bac5e35039d4831eb783c9122ca31b559285a030ff5a81fdec1eedee",
+      "baseline_wall_seconds": 229.3716151,
+      "candidate_wall_seconds": 218.7475683,
+      "wall_change_fraction": -0.04631805376,
+      "baseline_edge_physics_seconds": 112.2627754,
+      "candidate_edge_physics_seconds": 102.7164143,
+      "edge_physics_change_fraction": -0.08503585508,
+      "full_dd_evaluations": 1,
+      "newton_updates": 191,
+      "inner_voltage_V": 6.099590877047813,
+      "state_sha256": "61f65b5f0fdb379b5039169542f067a2092df6a4c011722485c140b4a5bc96b8"
+    },
+    "voltage_to_current_final": {
+      "baseline_profile_sha256": "8d7333353dde76779f3df21f2c1dafbe84499165dfdbede0d9433155ab2622ec",
+      "candidate_profile_sha256": "98ae3b07e87aaf899e947679125efdf4652a4d32d62c9fe8d29fee61d1d0b988",
+      "baseline_wall_seconds": 337.9229482,
+      "candidate_wall_seconds": 301.2963613,
+      "wall_change_fraction": -0.1083873915,
+      "baseline_edge_physics_seconds": 174.3242518,
+      "candidate_edge_physics_seconds": 149.5805422,
+      "edge_physics_change_fraction": -0.1419407188,
+      "full_dd_evaluations": 2,
+      "newton_updates": 279,
+      "vela_bv_V": 6.395904174606575,
+      "boundary_residual_A_per_um": 6.169747113378421e-12,
+      "state_sha256": "c9d2cc7ab24ad99ec82b91c79a794b7e91e517aebfdd58a5140565893c0eda81"
+    },
+    "external_resistor_1206": {
+      "baseline_profile_sha256": "9d9d45c7857f508bd54a2f91e7861b96c14b89b2f15cfecc479efeb4bacab340",
+      "candidate_profile_sha256": "716135b36235862bed9561a855dbdf219c28b887ad1ef33acb5fb8ac5c8a88a8",
+      "baseline_wall_seconds": 765.6520265,
+      "candidate_wall_seconds": 662.0904254,
+      "wall_change_fraction": -0.1352593574,
+      "baseline_edge_physics_seconds": 396.5792594,
+      "candidate_edge_physics_seconds": 330.2339956,
+      "edge_physics_change_fraction": -0.1672938315,
+      "full_dd_evaluations": 4,
+      "newton_updates": 662,
+      "vela_bv_V": 6.395887865540998,
+      "boundary_residual_V": 9.136147127719596e-8,
+      "state_sha256": "d14b44b8bee4eeefa1ffc59f2b43fcdfc820bb0dd41acd834f219255c4197355"
+    }
+  },
+  "counter_equivalence": {
+    "source_evaluations_unchanged": true,
+    "nodal_reconstruction_calls_unchanged": true,
+    "neighbor_flux_requests_unchanged": true,
+    "flux_cache_hits_unchanged": true,
+    "flux_cache_misses_unchanged": true
+  },
+  "field_validation": {
+    "source": "build-bv-performance/edge-c1-2601fd7/voltage_to_current_final/rep_01/vela_sentaurus_field_comparison.json",
+    "reuse_reason": "candidate V2I state SHA-256 is byte-identical to C1",
+    "potential_absolute_error_p95_V": 0.015810851652886784,
+    "high_field_relative_error_p95": 0.1728600367732048,
+    "matches_existing_validation": true
+  },
+  "verification": {
+    "test_newton_solver": "pass: 1092 assertions in 78 test cases",
+    "all_candidate_states_byte_identical_to_baseline": true,
+    "bv_boundary_and_continuity_outputs_unchanged": true,
+    "mobility_avalanche_btbt_parameters_unchanged": true
+  },
+  "acceptance": {
+    "single_update_cost_reduced": true,
+    "solver_path_unchanged": true,
+    "field_gate_pass": true,
+    "timing_caveat": "single-run wall comparisons remain workload-sensitive; exact call counts and byte-identical state hashes establish equivalence"
+  }
+}
