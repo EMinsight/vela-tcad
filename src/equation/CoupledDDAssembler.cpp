@@ -2478,6 +2478,42 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
     const bool directEdgeFluxRequired =
         scalarCurrentAlignedImpact || conservedTotalCurrent ||
         rawAvalancheCurrent;
+    const bool rawVanOverstraetenDebug =
+        impactIonizationConfig_.debugRawVanOverstraeten;
+    const bool qfCarrierTruncation =
+        !rawVanOverstraetenDebug &&
+        impactIonizationConfig_.quasiFermiCarrierTruncation > 0.0;
+    const bool cellGradientQfAvalancheDrive =
+        qfImpact &&
+        impactIonizationConfig_.quasiFermiGradientDiscretization ==
+            "cell_gradient";
+    const bool interpolateAvalancheDrivingField =
+        !rawVanOverstraetenDebug &&
+        impactIonizationConfig_.drivingForceInterpolation ==
+            "quasi_fermi_to_electric_field";
+    const bool arithmeticAvalancheMidpoint =
+        impactIonizationConfig_.cellReconstructedMidpointDensity ==
+            "arithmetic";
+    enum class AvalancheFluxProxyMode : std::uint8_t {
+        Reconstructed,
+        PsiGradient,
+        CellReconstructed,
+        ConservedTotal,
+        Raw,
+    };
+    const AvalancheFluxProxyMode avalancheFluxProxyMode =
+        reconstructedAvalancheCurrent
+            ? AvalancheFluxProxyMode::Reconstructed
+            : (psiGradientProxyCurrent
+                ? AvalancheFluxProxyMode::PsiGradient
+                : (cellReconstructedProxyCurrent
+                    ? AvalancheFluxProxyMode::CellReconstructed
+                    : (conservedTotalCurrent
+                        ? AvalancheFluxProxyMode::ConservedTotal
+                        : AvalancheFluxProxyMode::Raw)));
+    const bool avalancheFluxProxyUsesMidpoint =
+        avalancheFluxProxyMode == AvalancheFluxProxyMode::PsiGradient ||
+        avalancheFluxProxyMode == AvalancheFluxProxyMode::CellReconstructed;
     const std::vector<Real> nodeElectronDrivingFields = (impactIonizationCoupled_ && qfImpact)
         ? detail::computeElectronAvalancheNodeQuasiFermiDrivingFields(
             impactIonizationConfig_, mesh_, nodeCells_, psi, phinState, n, ni_, Vt_, fieldFactor)
@@ -2712,6 +2748,66 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
     std::uint64_t avalancheElectricVectorReuses = 0;
     std::uint64_t avalancheElectricVectorRecomputations = 0;
 
+    const auto electronAvalancheQf =
+        [&](Real psiValue, Real phinValue, Real density,
+            Real intrinsicDensity) {
+        if (!qfCarrierTruncation || intrinsicDensity <= 0.0)
+            return phinValue;
+        const Real carrier = std::max(
+            std::max(density, 0.0),
+            impactIonizationConfig_.quasiFermiCarrierTruncation *
+                intrinsicDensity);
+        return psiValue - Vt_ * std::log(carrier / intrinsicDensity);
+    };
+    const auto holeAvalancheQf =
+        [&](Real psiValue, Real phipValue, Real density,
+            Real intrinsicDensity) {
+        if (!qfCarrierTruncation || intrinsicDensity <= 0.0)
+            return phipValue;
+        const Real carrier = std::max(
+            std::max(density, 0.0),
+            impactIonizationConfig_.quasiFermiCarrierTruncation *
+                intrinsicDensity);
+        return psiValue + Vt_ * std::log(carrier / intrinsicDensity);
+    };
+    const auto avalancheMidpointDensity =
+        [&](Real density0, Real density1, Real potential0,
+            Real potential1) {
+        return arithmeticAvalancheMidpoint
+            ? 0.5 * (density0 + density1)
+            : detail::bernoulliWeightedMidpointDensity(
+                density0, density1, potential0, potential1, Vt_);
+    };
+    const auto interpolatedAvalancheField =
+        [&](Real drivingField, Real electricField, Real density,
+            Real referenceDensity) {
+        if (!interpolateAvalancheDrivingField || referenceDensity <= 0.0)
+            return drivingField;
+        const Real carrier = std::max(density, 0.0);
+        const Real weight = carrier / (carrier + referenceDensity);
+        return weight * drivingField + (1.0 - weight) * electricField;
+    };
+    const auto avalancheFluxProxy =
+        [&](Real rawFlux, Real reconstructedFlux, Real mobility,
+            Real midpointDensity, Real impactField, Real electricField,
+            Real conservedFlux) {
+        switch (avalancheFluxProxyMode) {
+        case AvalancheFluxProxyMode::Reconstructed:
+            return reconstructedFlux;
+        case AvalancheFluxProxyMode::PsiGradient:
+            return detail::reconstructedAvalancheCurrentDensityMagnitude(
+                mobility, midpointDensity, electricField);
+        case AvalancheFluxProxyMode::CellReconstructed:
+            return detail::reconstructedAvalancheCurrentDensityMagnitude(
+                mobility, midpointDensity, impactField);
+        case AvalancheFluxProxyMode::ConservedTotal:
+            return conservedFlux;
+        case AvalancheFluxProxyMode::Raw:
+            return rawFlux;
+        }
+        return rawFlux;
+    };
+
     const auto edgeStencilContainsNode = [&](Index edgeId, Index node) {
         if (node >= mesh_.numNodes())
             return false;
@@ -2764,10 +2860,10 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
             ni_[a], Nc_[a], psiA, phinA, Vt_, carrierStatistics_);
         const Real nB = vela::electronDensity(
             ni_[b], Nc_[b], psiB, phinB, Vt_, carrierStatistics_);
-        const Real qfA = detail::electronQfForAvalancheGradient(
-            psiA, phinA, nA, ni_[a], Vt_, impactIonizationConfig_);
-        const Real qfB = detail::electronQfForAvalancheGradient(
-            psiB, phinB, nB, ni_[b], Vt_, impactIonizationConfig_);
+        const Real qfA = electronAvalancheQf(
+            psiA, phinA, nA, ni_[a]);
+        const Real qfB = electronAvalancheQf(
+            psiB, phinB, nB, ni_[b]);
         const Real electricField =
             std::abs((psiB - psiA) / edge.length) * fieldFactor;
         const Real mobilityField = vectorQfMobility
@@ -2815,10 +2911,10 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
             ni_[a], Nv_[a], psiA, phipA, Vt_, carrierStatistics_);
         const Real pB = vela::holeDensity(
             ni_[b], Nv_[b], psiB, phipB, Vt_, carrierStatistics_);
-        const Real qfA = detail::holeQfForAvalancheGradient(
-            psiA, phipA, pA, ni_[a], Vt_, impactIonizationConfig_);
-        const Real qfB = detail::holeQfForAvalancheGradient(
-            psiB, phipB, pB, ni_[b], Vt_, impactIonizationConfig_);
+        const Real qfA = holeAvalancheQf(
+            psiA, phipA, pA, ni_[a]);
+        const Real qfB = holeAvalancheQf(
+            psiB, phipB, pB, ni_[b]);
         const Real electricField =
             std::abs((psiB - psiA) / edge.length) * fieldFactor;
         const Real mobilityField = vectorQfMobility
@@ -2974,8 +3070,8 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
             const Real nNode = vela::electronDensity(
                 ni_[node], Nc_[node], psiNode, phinNode, Vt_,
                 carrierStatistics_);
-            return detail::electronQfForAvalancheGradient(
-                psiNode, phinNode, nNode, ni_[node], Vt_, impactIonizationConfig_);
+            return electronAvalancheQf(
+                psiNode, phinNode, nNode, ni_[node]);
         };
         auto holeQfAt = [&](Index node) {
             const Real psiNode = psiAt(node);
@@ -2983,8 +3079,8 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
             const Real pNode = vela::holeDensity(
                 ni_[node], Nv_[node], psiNode, phipNode, Vt_,
                 carrierStatistics_);
-            return detail::holeQfForAvalancheGradient(
-                psiNode, phipNode, pNode, ni_[node], Vt_, impactIonizationConfig_);
+            return holeAvalancheQf(
+                psiNode, phipNode, pNode, ni_[node]);
         };
         const Real electronQf_i = evaluateElectronCarrier ? electronQfAt(idxI) : 0.0;
         const Real electronQf_j = evaluateElectronCarrier ? electronQfAt(idxJ) : 0.0;
@@ -2994,7 +3090,7 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
         const Real electronQfField = std::abs((electronQf_j - electronQf_i) / h) * fieldFactor;
         const Real holeQfField = std::abs((holeQf_j - holeQf_i) / h) * fieldFactor;
         auto coefficientField = [&](Real edgeQfField, auto&& qfAt) {
-            if (detail::usesCellGradientQuasiFermiAvalancheDrive(impactIonizationConfig_)) {
+            if (cellGradientQfAvalancheDrive) {
                 bool validGradient = false;
                 const Point2 gradient = detail::edgeAveragedCellScalarGradient(
                     edgeCells_, mesh_, e, qfAt, validGradient);
@@ -3002,7 +3098,7 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
                     ? gradient.norm() * fieldFactor
                     : edgeQfField;
             }
-            if (impactIonizationConfig_.debugRawVanOverstraeten)
+            if (rawVanOverstraetenDebug)
                 return edgeQfField;
             return detail::edgeHighFieldDrivingField(
                 qfImpact, edgeQfField, electricField, edgeCells_, mesh_, e, contactNodes);
@@ -3033,10 +3129,10 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
                 ? (qfMobility ? holeQfField : electricField) : 0.0);
         const Real nAvg = 0.5 * (n_i + n_j);
         const Real pAvg = 0.5 * (p_i + p_j);
-        const Real nMid = detail::cellReconstructedAvalancheMidpointDensity(
-            impactIonizationConfig_, n_i, n_j, psi_i, psi_j, Vt_);
-        const Real pMid = detail::cellReconstructedAvalancheMidpointDensity(
-            impactIonizationConfig_, p_i, p_j, psi_j, psi_i, Vt_);
+        const Real nMid = avalancheFluxProxyUsesMidpoint
+            ? avalancheMidpointDensity(n_i, n_j, psi_i, psi_j) : 0.0;
+        const Real pMid = avalancheFluxProxyUsesMidpoint
+            ? avalancheMidpointDensity(p_i, p_j, psi_j, psi_i) : 0.0;
         const Real signedElectricField01 = -(psi_j - psi_i) / h * fieldFactor;
         const Real edgeArea = edgeAssemblyKernels_[e].avalancheSourceArea;
 
@@ -3340,8 +3436,9 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
                     -reconstructedElectronNodalCurrent().vector)
                 : (currentAlignedImpact
                 ? detail::parallelCurrentAvalancheDrivingField(signedElectricField01, signedFluxN)
-                : detail::electronAvalancheDrivingField(
-                    impactIonizationConfig_, electronCoefficientField, electricField, nAvg));
+                : interpolatedAvalancheField(
+                    electronCoefficientField, electricField, nAvg,
+                    impactIonizationConfig_.electronDrivingForceRefDensity));
             const Real rawFluxN = std::abs(signedFluxN);
             const Real reconstructedFluxN = dualFaceVectorCurrentMagnitude
                 ? dualFaceVectorCurrentReconstructedFlux(signedElectronFluxForEdge)
@@ -3352,8 +3449,7 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
                     : (cellCurrentReconstructedCurrent
                         ? cellCurrentReconstructedFlux(signedElectronFluxForEdge)
                         : rawFluxN)));
-            const Real fluxN = detail::selectAvalancheCurrentFluxProxy(
-                impactIonizationConfig_,
+            const Real fluxN = avalancheFluxProxy(
                 rawFluxN,
                 reconstructedFluxN,
                 mun,
@@ -3375,8 +3471,9 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
                     reconstructedHoleNodalCurrent().vector)
                 : (currentAlignedImpact
                 ? detail::parallelCurrentAvalancheDrivingField(signedElectricField01, signedFluxP)
-                : detail::holeAvalancheDrivingField(
-                    impactIonizationConfig_, holeCoefficientField, electricField, pAvg));
+                : interpolatedAvalancheField(
+                    holeCoefficientField, electricField, pAvg,
+                    impactIonizationConfig_.holeDrivingForceRefDensity));
             const Real rawFluxP = std::abs(signedFluxP);
             const Real reconstructedFluxP = dualFaceVectorCurrentMagnitude
                 ? dualFaceVectorCurrentReconstructedFlux(signedHoleFluxForEdge)
@@ -3387,8 +3484,7 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
                     : (cellCurrentReconstructedCurrent
                         ? cellCurrentReconstructedFlux(signedHoleFluxForEdge)
                         : rawFluxP)));
-            const Real fluxP = detail::selectAvalancheCurrentFluxProxy(
-                impactIonizationConfig_,
+            const Real fluxP = avalancheFluxProxy(
                 rawFluxP,
                 reconstructedFluxP,
                 mup,
@@ -3913,6 +4009,9 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
     incrementPerformanceCounter(
         "jacobian.edge_avalanche_precomputed_scatter_adds",
         avalanchePrecomputedScatterAdds);
+    incrementPerformanceCounter(
+        "jacobian.edge_avalanche_preparsed_config_evaluations",
+        avalancheSourceEvaluations);
 
     {
         ScopedPerformanceTimer cellPhysicsTimer("jacobian.cell_physics");

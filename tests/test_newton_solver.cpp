@@ -781,6 +781,9 @@ TEST_CASE("CoupledDDAssembler: edge avalanche profiling counters preserve exact 
     REQUIRE(electricVectorRecomputations > 0);
     REQUIRE(counters.at(
         "jacobian.edge_avalanche_precomputed_scatter_adds") > 0);
+    REQUIRE(counters.at(
+        "jacobian.edge_avalanche_preparsed_config_evaluations") ==
+        evaluations);
     REQUIRE(counters.at("jacobian.edge_avalanche_nodal_reconstruction_calls") > 0);
     REQUIRE(counters.at("jacobian.edge_avalanche_direct_flux_evaluations") == 0);
     REQUIRE(counters.at("jacobian.edge_avalanche_direct_flux_skips") > 0);
