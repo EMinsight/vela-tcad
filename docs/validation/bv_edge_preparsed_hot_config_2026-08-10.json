@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "optimization": "C7 preparse remaining avalanche hot-path configuration",
+  "baseline_commit": "7703567",
+  "candidate_commit": "a3cdf47",
+  "raw_roots": {
+    "baseline": "build-bv-performance/edge-c6-7703567",
+    "candidate": "build-bv-performance/edge-c7-a3cdf47"
+  },
+  "preparsed": [
+    "quasi-Fermi carrier truncation",
+    "cell-gradient QF drive",
+    "driving-field interpolation",
+    "midpoint density policy",
+    "current-flux proxy mode",
+    "raw Van Overstraeten debug branch"
+  ],
+  "lazy_operand": "midpoint density is not evaluated when the selected current-flux proxy cannot consume it",
+  "scenarios": {
+    "high_field_transition": {
+      "baseline_wall_seconds": 59.5315398,
+      "candidate_wall_seconds": 60.0015909,
+      "wall_change_fraction": 0.00789583305889896,
+      "baseline_edge_physics_seconds": 22.7511229,
+      "candidate_edge_physics_seconds": 22.8516082,
+      "edge_physics_change_fraction": 0.00441671826228851,
+      "preparsed_config_evaluations": 10266208,
+      "full_dd_evaluations": 1,
+      "newton_updates": 62,
+      "profile_sha256": "8ecd8812864842d42e669ac4dfc2a593cd84e3979946b03e9e819304e0c3cc8d",
+      "state_sha256": "906fca04d55608d13700256de4e3a7596dc17e270fdc49a7e1982567ef52ff8a"
+    },
+    "voltage_to_current_final": {
+      "baseline_wall_seconds": 61.0815842,
+      "candidate_wall_seconds": 61.0950243,
+      "wall_change_fraction": 0.00022003522298952305,
+      "baseline_edge_physics_seconds": 24.5933862,
+      "candidate_edge_physics_seconds": 24.3770837,
+      "edge_physics_change_fraction": -0.008795149160874871,
+      "preparsed_config_evaluations": 10928544,
+      "full_dd_evaluations": 2,
+      "newton_updates": 66,
+      "vela_bv_V": 6.395904148131495,
+      "boundary_residual_A_per_um": -9.824013198528499e-12,
+      "profile_sha256": "561ba15b4eeb6e930096c3e12f717f987c707d1b9c9729ab8f8e85e43d1f8132",
+      "state_sha256": "c03a6f4e8df3535505e49a9ec83334f08bd3cce2cc8e93ea2af06adbe66d9433"
+    },
+    "external_resistor_1206": {
+      "baseline_wall_seconds": 150.3310308,
+      "candidate_wall_seconds": 146.86922,
+      "wall_change_fraction": -0.02302791899701384,
+      "baseline_edge_physics_seconds": 60.4976832,
+      "candidate_edge_physics_seconds": 58.6210068,
+      "edge_physics_change_fraction": -0.03102063253886711,
+      "preparsed_config_evaluations": 26327856,
+      "full_dd_evaluations": 3,
+      "newton_updates": 158,
+      "vela_bv_V": 6.39588786553429,
+      "boundary_residual_V": -0.000030927941679692594,
+      "boundary_residual_tolerance_V": 0.0001,
+      "profile_sha256": "29c6dbfd42453d6b431c8f4261ba97d6d94e74f2767a8e2bfe3eda322179fe14",
+      "state_sha256": "9df5a87eff788adce23017a7f9c88f5f66841760e26f69da8f0b8baab31b2032"
+    }
+  },
+  "verification": {
+    "test_newton_solver": "pass: 1104 assertions in 79 test cases",
+    "all_candidate_states_byte_identical_to_baseline": true,
+    "non_nodal_proxy_unit_tests_pass": true,
+    "bv_boundary_and_continuity_outputs_unchanged": true,
+    "field_gate_reused_from_byte_identical_C6_state": true,
+    "mobility_avalanche_btbt_parameters_unchanged": true
+  },
+  "acceptance": {
+    "all_three_controlled_benchmarks_pass": true,
+    "performance_decision": "retain: deterministic string-branch removal, unchanged states, and external-resistor edge-physics improvement; sub-percent deltas in the two shorter scenarios are treated as single-run noise",
+    "timing_caveat": "single-run wall and stage timing is workload-sensitive"
+  }
+}
