@@ -2637,6 +2637,8 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
     std::vector<Real> avalancheHoleFluxCache(mesh_.numEdges(), 0.0);
     std::vector<Real> avalancheBaseElectronFlux(mesh_.numEdges(), 0.0);
     std::vector<Real> avalancheBaseHoleFlux(mesh_.numEdges(), 0.0);
+    std::vector<Point2> avalancheBaseElectricVector(
+        mesh_.numEdges(), Point2::Zero());
     std::vector<std::uint32_t> avalancheElectronFluxStamp(mesh_.numEdges(), 0);
     std::vector<std::uint32_t> avalancheHoleFluxStamp(mesh_.numEdges(), 0);
     std::uint32_t avalancheFluxGeneration = 0;
@@ -2653,6 +2655,8 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
     std::uint64_t avalanchePerturbedFluxRecomputations = 0;
     std::uint64_t avalancheCarrierSideEvaluations = 0;
     std::uint64_t avalancheCarrierSideReuses = 0;
+    std::uint64_t avalancheElectricVectorReuses = 0;
+    std::uint64_t avalancheElectricVectorRecomputations = 0;
 
     const auto edgeStencilContainsNode = [&](Index edgeId, Index node) {
         if (node >= mesh_.numNodes())
@@ -2807,6 +2811,33 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
                     edgeId, basePsiAt, basePhinAt, true, &psi);
             avalancheBaseHoleFlux[edgeId] = evaluateHoleAvalancheFlux(
                 edgeId, basePsiAt, basePhipAt, true, &psi);
+            if (sentaurusEparallelImpact &&
+                nodalVectorCurrentReconstructedCurrent) {
+                bool validElectricGradient = false;
+                const Point2 electricGradient =
+                    detail::edgeAveragedCellScalarGradient(
+                        edgeCells_, mesh_, edgeId, basePsiAt,
+                        validElectricGradient);
+                if (validElectricGradient) {
+                    avalancheBaseElectricVector[edgeId] =
+                        -fieldFactor * electricGradient;
+                } else {
+                    const EdgeAssemblyKernel& edge =
+                        edgeAssemblyKernels_[edgeId];
+                    if (edge.length > 1.0e-30) {
+                        const Node& node0 = mesh_.getNode(edge.n0);
+                        const Node& node1 = mesh_.getNode(edge.n1);
+                        const Real signedField =
+                            -(psi(static_cast<int>(edge.n1)) -
+                              psi(static_cast<int>(edge.n0))) /
+                            edge.length * fieldFactor;
+                        avalancheBaseElectricVector[edgeId] =
+                            signedField * Point2{
+                                (node1.x - node0.x) / edge.length,
+                                (node1.y - node0.y) / edge.length};
+                    }
+                }
+            }
         }
     }
 
@@ -3198,17 +3229,25 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
         Point2 edgeElectricVector = Point2::Zero();
         if (sentaurusEparallelImpact &&
             nodalVectorCurrentReconstructedCurrent) {
-            bool validElectricGradient = false;
-            const Point2 electricGradient = detail::edgeAveragedCellScalarGradient(
-                edgeCells_, mesh_, e, psiAt, validElectricGradient);
-            if (validElectricGradient) {
-                edgeElectricVector = -fieldFactor * electricGradient;
+            if (perturbation.psiNode >= mesh_.numNodes()) {
+                edgeElectricVector = avalancheBaseElectricVector[e];
+                ++avalancheElectricVectorReuses;
             } else {
-                const Node& node0 = mesh_.getNode(idxI);
-                const Node& node1 = mesh_.getNode(idxJ);
-                edgeElectricVector = signedElectricField01 * Point2{
-                    (node1.x - node0.x) / h,
-                    (node1.y - node0.y) / h};
+                ++avalancheElectricVectorRecomputations;
+                bool validElectricGradient = false;
+                const Point2 electricGradient =
+                    detail::edgeAveragedCellScalarGradient(
+                        edgeCells_, mesh_, e, psiAt,
+                        validElectricGradient);
+                if (validElectricGradient) {
+                    edgeElectricVector = -fieldFactor * electricGradient;
+                } else {
+                    const Node& node0 = mesh_.getNode(idxI);
+                    const Node& node1 = mesh_.getNode(idxJ);
+                    edgeElectricVector = signedElectricField01 * Point2{
+                        (node1.x - node0.x) / h,
+                        (node1.y - node0.y) / h};
+                }
             }
         }
         const Real mun = evaluateElectronCarrier ? cachedEdgeMobility(
@@ -3805,6 +3844,12 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
     incrementPerformanceCounter(
         "jacobian.edge_avalanche_carrier_side_reuses",
         avalancheCarrierSideReuses);
+    incrementPerformanceCounter(
+        "jacobian.edge_avalanche_electric_vector_reuses",
+        avalancheElectricVectorReuses);
+    incrementPerformanceCounter(
+        "jacobian.edge_avalanche_electric_vector_recomputations",
+        avalancheElectricVectorRecomputations);
 
     {
         ScopedPerformanceTimer cellPhysicsTimer("jacobian.cell_physics");

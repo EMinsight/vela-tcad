@@ -764,6 +764,10 @@ TEST_CASE("CoupledDDAssembler: edge avalanche profiling counters preserve exact 
         counters.at("jacobian.edge_avalanche_carrier_side_evaluations");
     const std::uint64_t carrierSideReuses =
         counters.at("jacobian.edge_avalanche_carrier_side_reuses");
+    const std::uint64_t electricVectorReuses =
+        counters.at("jacobian.edge_avalanche_electric_vector_reuses");
+    const std::uint64_t electricVectorRecomputations =
+        counters.at("jacobian.edge_avalanche_electric_vector_recomputations");
 
     REQUIRE(baseEvaluations > 0);
     REQUIRE(perturbedEvaluations > baseEvaluations);
@@ -772,6 +776,9 @@ TEST_CASE("CoupledDDAssembler: edge avalanche profiling counters preserve exact 
     REQUIRE(perturbedFluxRecomputations == fluxMisses);
     REQUIRE(carrierSideEvaluations + carrierSideReuses == 2 * evaluations);
     REQUIRE(carrierSideReuses > 0);
+    REQUIRE(electricVectorReuses + electricVectorRecomputations <= evaluations);
+    REQUIRE(electricVectorReuses > 0);
+    REQUIRE(electricVectorRecomputations > 0);
     REQUIRE(counters.at("jacobian.edge_avalanche_nodal_reconstruction_calls") > 0);
     REQUIRE(counters.at("jacobian.edge_avalanche_direct_flux_evaluations") == 0);
     REQUIRE(counters.at("jacobian.edge_avalanche_direct_flux_skips") > 0);
