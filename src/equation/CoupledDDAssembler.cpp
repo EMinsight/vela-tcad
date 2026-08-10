@@ -660,6 +660,40 @@ void CoupledDDAssembler::rebuildFixedJacobianPattern(
         }
     }
 
+    fixedJacobianAvalancheScatter_.assign(mesh_.numEdges(), {});
+    for (Index edgeId = 0; edgeId < mesh_.numEdges(); ++edgeId) {
+        auto& scatter = fixedJacobianAvalancheScatter_[edgeId];
+        scatter.fill(invalidJacobianOffset);
+        const EdgeAssemblyKernel& edge = edgeAssemblyKernels_[edgeId];
+        const int node0 = static_cast<int>(edge.n0);
+        const int node1 = static_cast<int>(edge.n1);
+        std::array<int, maxEdgeAvalancheDerivativeColumns> columns{};
+        std::size_t columnCount = 0;
+        columns[columnCount++] = psiOffset() + node0;
+        columns[columnCount++] = psiOffset() + node1;
+        for (std::size_t stencilIndex = 0;
+             stencilIndex < edge.avalancheStencilNodeCount; ++stencilIndex) {
+            columns[columnCount++] = phinOffset() + static_cast<int>(
+                edge.avalancheStencilNodes[stencilIndex]);
+        }
+        for (std::size_t stencilIndex = 0;
+             stencilIndex < edge.avalancheStencilNodeCount; ++stencilIndex) {
+            columns[columnCount++] = phipOffset() + static_cast<int>(
+                edge.avalancheStencilNodes[stencilIndex]);
+        }
+        const int rows[4] = {
+            phinOffset() + node0, phipOffset() + node0,
+            phinOffset() + node1, phipOffset() + node1};
+        for (std::size_t rowSlot = 0; rowSlot < 4; ++rowSlot) {
+            for (std::size_t columnSlot = 0;
+                 columnSlot < columnCount; ++columnSlot) {
+                scatter[rowSlot * maxEdgeAvalancheDerivativeColumns +
+                        columnSlot] =
+                    offsetOrInvalid(rows[rowSlot], columns[columnSlot]);
+            }
+        }
+    }
+
     fixedJacobianNodeScatter_.assign(mesh_.numNodes(), {});
     for (Index node = 0; node < mesh_.numNodes(); ++node) {
         auto& scatter = fixedJacobianNodeScatter_[node];
@@ -2523,6 +2557,7 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
     }
     double* jacobianValues = J.valuePtr();
     std::size_t assembledContributionCount = 0;
+    std::uint64_t avalanchePrecomputedScatterAdds = 0;
     Index activeEdge = mesh_.numEdges();
     Index activeCell = mesh_.numCells();
     Index activeNode = mesh_.numNodes();
@@ -2605,6 +2640,25 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
             if (row == col)
                 assembledDiagonal[static_cast<std::size_t>(row)] += scaled;
         }
+    };
+
+    auto addAtOffset = [&](int row, int col, Real value,
+                           JacobianStorageIndex offset) {
+        if (value == 0.0 ||
+            constrainedRows[static_cast<std::size_t>(row)]) {
+            return;
+        }
+        if (offset == invalidJacobianOffset) {
+            throw std::logic_error(
+                "CoupledDDAssembler: precomputed avalanche scatter misses assembled entry (" +
+                std::to_string(row) + "," + std::to_string(col) + ").");
+        }
+        const Real scaled = scaleDerivative(row, col, value);
+        jacobianValues[offset] += scaled;
+        ++assembledContributionCount;
+        ++avalanchePrecomputedScatterAdds;
+        if (row == col)
+            assembledDiagonal[static_cast<std::size_t>(row)] += scaled;
     };
 
     auto addGauge = [&](int row, int col, Real value) {
@@ -3790,14 +3844,20 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
             }
 
             if (base.node0 != 0.0 || base.node1 != 0.0 || anyNonzero) {
-                const int node0Rows[2] = {phinOffset() + i, phipOffset() + i};
-                const int node1Rows[2] = {phinOffset() + j, phipOffset() + j};
-                for (int row : node0Rows)
-                    for (std::size_t k = 0; k < derivativeCount; ++k)
-                        add(row, cols[k], -dS0[k]);
-                for (int row : node1Rows)
-                    for (std::size_t k = 0; k < derivativeCount; ++k)
-                        add(row, cols[k], -dS1[k]);
+                const int rows[4] = {
+                    phinOffset() + i, phipOffset() + i,
+                    phinOffset() + j, phipOffset() + j};
+                const auto& scatter = fixedJacobianAvalancheScatter_[e];
+                for (std::size_t rowSlot = 0; rowSlot < 4; ++rowSlot) {
+                    const auto& derivatives = rowSlot < 2 ? dS0 : dS1;
+                    for (std::size_t k = 0; k < derivativeCount; ++k) {
+                        addAtOffset(
+                            rows[rowSlot], cols[k], -derivatives[k],
+                            scatter[
+                                rowSlot * maxEdgeAvalancheDerivativeColumns +
+                                k]);
+                    }
+                }
                 hasElectronContribution[static_cast<std::size_t>(i)] = true;
                 hasElectronContribution[static_cast<std::size_t>(j)] = true;
                 hasHoleContribution[static_cast<std::size_t>(i)] = true;
@@ -3850,6 +3910,9 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
     incrementPerformanceCounter(
         "jacobian.edge_avalanche_electric_vector_recomputations",
         avalancheElectricVectorRecomputations);
+    incrementPerformanceCounter(
+        "jacobian.edge_avalanche_precomputed_scatter_adds",
+        avalanchePrecomputedScatterAdds);
 
     {
         ScopedPerformanceTimer cellPhysicsTimer("jacobian.cell_physics");

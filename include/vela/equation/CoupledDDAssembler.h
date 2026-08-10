@@ -403,6 +403,9 @@ private:
         fixedJacobianOffsets_;
     mutable std::vector<std::array<JacobianStorageIndex, 36>>
         fixedJacobianEdgeScatter_;
+    mutable std::vector<std::array<
+        JacobianStorageIndex, 4 * maxEdgeAvalancheDerivativeColumns>>
+        fixedJacobianAvalancheScatter_;
     mutable std::vector<std::array<JacobianStorageIndex, 9>>
         fixedJacobianNodeScatter_;
     mutable std::vector<std::array<JacobianStorageIndex, 81>>
