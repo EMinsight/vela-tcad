@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "audit": "residual versus Jacobian neighbor edge-flux consistency",
+  "audited_commit": "abcabb0",
+  "configuration": {
+    "mobility": "masetti_field",
+    "mobility_driving_force": "quasi_fermi_gradient",
+    "mobility_gradient_discretization": "transport_cell_vector",
+    "carrier_statistics": "fermi_dirac",
+    "impact_model": "van_overstraeten",
+    "impact_driving_force": "eparallel",
+    "current_approximation": "nodal_vector_current_reconstructed",
+    "source_volume_policy": "genius_truncated",
+    "source_mapping_mode": "node_F_node_alpha_node_G",
+    "field_from_coordinate_delta_factor": 10000.0
+  },
+  "method": {
+    "mesh": "five-node, four-triangle PN unit mesh",
+    "analytic_impact_jacobian": "assembleJacobian(with impact) minus assembleJacobian(without impact)",
+    "residual_finite_difference_impact_jacobian": "finiteDifferenceJacobian(with impact) minus finiteDifferenceJacobian(without impact)",
+    "relative_error_norm": "norm(analytic - finite_difference) / max(1, norm(finite_difference))",
+    "finite_difference_relative_step": 1e-7
+  },
+  "result": {
+    "relative_error": 0.75918927793097102,
+    "consistent_at_5e-4": false
+  },
+  "code_path_differences": [
+    "Jacobian neighbor flux does not apply fieldFromCoordinateDeltaFactor to scalar electric and quasi-Fermi fields or the SG coefficient",
+    "Jacobian neighbor flux uses the Boltzmann variable-ni SG formula when the residual uses the Fermi-Dirac generalized SG formula",
+    "Jacobian neighbor flux does not use the transport-cell-vector mobility field selected by the residual configuration",
+    "Jacobian perturbed QF access reconstructs Boltzmann carrier density for avalanche-gradient inputs instead of the configured carrier-statistics density"
+  ],
+  "decision": {
+    "cache_current_jacobian_neighbor_flux_as_C3": false,
+    "required_C3_scope": "build residual-consistent base carrier edge-flux arrays and invalidate/recompute only edges affected by each local perturbation",
+    "acceptance_test": "replace the characterization expectation with relative_error below 5e-4",
+    "physics_parameters_changed": false
+  }
+}

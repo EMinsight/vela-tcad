@@ -766,6 +766,71 @@ TEST_CASE("CoupledDDAssembler: edge avalanche profiling counters preserve exact 
     REQUIRE(counters.at("jacobian.edge_avalanche_direct_flux_skips") > 0);
 }
 
+TEST_CASE("CoupledDDAssembler: characterize nodal Eparallel residual Jacobian edge-flux divergence",
+          "[newton][coupled][impact][edge_flux_audit]")
+{
+    DeviceMesh mesh = makePNMesh();
+    MaterialDatabase matdb;
+    DopingModel doping = makePNDoping(mesh);
+
+    MobilityModelConfig mobility = mobilityModelConfig("masetti_field");
+    mobility.highFieldDrivingForce = "quasi_fermi_gradient";
+    mobility.highFieldGradientDiscretization = "transport_cell_vector";
+    mobility.jacobianFieldDerivatives = true;
+
+    ImpactIonizationModelConfig impact =
+        impactIonizationModelConfig("van_overstraeten");
+    impact.couplingMode = "self_consistent";
+    impact.drivingForce = "eparallel";
+    impact.generation = "current_density";
+    impact.currentApproximation = "nodal_vector_current_reconstructed";
+    impact.currentMagnitudeMode = "edge_scalar_abs";
+    impact.sourceVolumePolicy = "genius_truncated";
+    impact.sourceMappingMode = "node_F_node_alpha_node_G";
+
+    DDScalingSpec scaling;
+    scaling.enabled = true;
+    scaling.V0 = constants::Vt_300;
+    scaling.C0 = 1.0;
+    scaling.mu0 = 1.0;
+    scaling.D0 = 1.0;
+    scaling.L0 = 1.0;
+    scaling.permittivityReference_F_per_m = constants::eps0 * 11.7;
+    scaling.fieldFromCoordinateDeltaFactor = 1.0e4;
+    scaling.currentDensityLineIntegralFactor = 1.0e-2;
+
+    const CarrierStatisticsConfig statistics{"fermi_dirac"};
+    const auto makeAssembler = [&](const ImpactIonizationModelConfig& config) {
+        return std::make_unique<CoupledDDAssembler>(
+            mesh, matdb, doping, constants::Vt_300, mobility,
+            recombinationModelConfig({"none"}), BandgapNarrowingConfig{},
+            config, std::vector<RegionFixedChargeSpec>{},
+            std::vector<InterfaceSheetChargeSpec>{}, scaling,
+            CarrierDiagonalFloorRegularizationConfig{}, statistics);
+    };
+    const auto baseline = makeAssembler(ImpactIonizationModelConfig{});
+    const auto coupled = makeAssembler(impact);
+
+    const int N = static_cast<int>(mesh.numNodes());
+    CoupledDDState state;
+    state.psi = VectorXd::LinSpaced(N, -0.10, 0.85) / scaling.V0;
+    state.phin = VectorXd::LinSpaced(N, -0.15, 0.20) / scaling.V0;
+    state.phip = VectorXd::LinSpaced(N, 0.10, -0.35) / scaling.V0;
+    const VectorXd x = coupled->pack(state);
+
+    const Eigen::MatrixXd analyticImpact = Eigen::MatrixXd(
+        coupled->assembleJacobian(x, {}) - baseline->assembleJacobian(x, {}));
+    const Eigen::MatrixXd residualFiniteDifferenceImpact = Eigen::MatrixXd(
+        coupled->finiteDifferenceJacobian(x, {}, 1.0e-7) -
+        baseline->finiteDifferenceJacobian(x, {}, 1.0e-7));
+    const Real relativeError =
+        (analyticImpact - residualFiniteDifferenceImpact).norm() /
+        std::max<Real>(1.0, residualFiniteDifferenceImpact.norm());
+    CAPTURE(relativeError);
+    REQUIRE(relativeError ==
+            Catch::Approx(0.75918927793097102).margin(1.0e-10));
+}
+
 TEST_CASE("CoupledDDAssembler: contact-referenced quasi-Fermi coordinates preserve physical state",
           "[newton][coupled][qf-reference]")
 {
