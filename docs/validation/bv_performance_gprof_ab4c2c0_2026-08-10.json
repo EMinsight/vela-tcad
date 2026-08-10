@@ -1,0 +1,154 @@
+{
+  "schema_version": 1,
+  "commit": "ab4c2c0",
+  "build": {
+    "directory": "build-profile-ab4c2c0",
+    "type": "RelWithDebInfo",
+    "compiler": "MSYS2 UCRT64 GCC 16.1.0",
+    "gprof": true,
+    "lto": false,
+    "sparselu_ordering": "COLAMD",
+    "flags": ["-pg", "-fno-omit-frame-pointer", "-Wl,--disable-dynamicbase"],
+    "executable_sha256": "5fe8c1da508baae880f0c5c0c7d4c1997371b2feb7df61a4c8afa572bd0d7aa7"
+  },
+  "artifact_root": "build-bv-performance/gprof-ab4c2c0",
+  "limitations": [
+    "The gprof build is for hotspot ranking only; production timing comes from the independent Release build.",
+    "_mcount_private and __fentry__ consume 28.08 to 29.08 percent of sampled self time and are excluded from Vela hotspot ranking.",
+    "MinGW gprof high-frequency call counts and spontaneous attribution are unreliable; exact calls come from internal counters.",
+    "Optimized std::_Function_handler manager symbols combine inlined callback work and require a line-level sampling profiler before direct optimization.",
+    "Internal parent and child stage times overlap and must not be summed."
+  ],
+  "common_ranked_hotspots": {
+    "sparselu_factorize_self_percent": [6.26, 7.64, 6.43],
+    "fermi_dirac_half_self_percent": [4.38, 4.83, 4.50],
+    "newton_residual_callback_manager_self_percent": [6.04, 5.88, 6.24],
+    "uses_fermi_dirac_self_percent": [2.15, 2.46, 2.20],
+    "cached_edge_mobility_self_percent": [1.97, 1.89, 1.78],
+    "edge_avalanche_source_lambda_self_percent": [1.18, 1.36, 1.20]
+  },
+  "scenarios": {
+    "high_field_transition": {
+      "wall_seconds_gprof": 74.7126019,
+      "full_dd_evaluations": 1,
+      "newton_updates": 62,
+      "production_internal_seconds": {
+        "dd_jacobian": 34.6631818,
+        "jacobian_edge_physics": 22.8516082,
+        "jacobian_node_sources": 11.133393,
+        "dd_continuity_diagnostics": 11.2922954,
+        "dd_residual": 5.4900431,
+        "linear_factorize": 7.4952961,
+        "linear_analyze": 0.2099686,
+        "linear_solve": 0.1581695,
+        "active_branch_fingerprint": 0.0006646
+      },
+      "gprof_self_hotspots": {
+        "sparselu_factorize": {"percent": 6.26, "seconds": 1.43, "calls": 122},
+        "fermi_dirac_half": {"percent": 4.38, "seconds": 1.00},
+        "uses_fermi_dirac": {"percent": 2.15, "seconds": 0.49},
+        "cached_edge_mobility": {"percent": 1.97, "seconds": 0.45},
+        "edge_avalanche_source_lambda": {"percent": 1.18, "seconds": 0.27}
+      },
+      "gprof_cumulative_hotspots": {
+        "assemble_jacobian": {"percent": 7.5, "seconds": 1.72, "calls": 62},
+        "continuity_diagnostics": {"percent": 7.4, "seconds": 1.69, "calls": 190},
+        "sparselu_factorize": {"percent": 6.8, "seconds": 1.56, "calls": 122}
+      },
+      "artifacts_sha256": {
+        "gmon.out": "b29890dbc06a0e13f9bcf3fc4d94b3ff0f0f6202c2eebe3bb8fc8ee7e4d5c3c4",
+        "gprof_flat.txt": "1f1e7349e6d1b34cc91f55c9e60eb89e4327634b1bca7f3273a3b6cda167b445",
+        "gprof_callgraph.txt": "c276f8c23b11da3b6c199c2ebe0bfa6e874a40923b49e07eed72d19870a04d67",
+        "gprof_hotspots.csv": "6c56cda146bc8ef9ef31d30a6a4f19ce13999f406b35344987684cbb08694a74",
+        "gprof_callgraph_hotspots.csv": "60d0c3b74998b2d86531f5d4fa27013f861ce305cfe8b79332a66dcfecfedd0e",
+        "performance_profile.json": "039ed66a3c86ba79e0efed6d0b147e615984c5135e53116a7ea34e506cc3120e",
+        "last_state.csv": "906fca04d55608d13700256de4e3a7596dc17e270fdc49a7e1982567ef52ff8a"
+      }
+    },
+    "voltage_to_current_final": {
+      "wall_seconds_gprof": 75.2233724,
+      "full_dd_evaluations": 2,
+      "newton_updates": 66,
+      "production_internal_seconds": {
+        "dd_jacobian": 37.2184336,
+        "jacobian_edge_physics": 24.3770837,
+        "jacobian_node_sources": 12.0509851,
+        "dd_continuity_diagnostics": 8.1697869,
+        "dd_residual": 6.6690823,
+        "linear_factorize": 8.1684376,
+        "linear_analyze": 0.0345466,
+        "linear_solve": 0.1730963,
+        "active_branch_fingerprint": 0.0006538
+      },
+      "gprof_self_hotspots": {
+        "sparselu_factorize": {"percent": 7.64, "seconds": 1.74, "calls": 69},
+        "fermi_dirac_half": {"percent": 4.83, "seconds": 1.10},
+        "uses_fermi_dirac": {"percent": 2.46, "seconds": 0.56},
+        "cached_edge_mobility": {"percent": 1.89, "seconds": 0.43},
+        "edge_avalanche_source_lambda": {"percent": 1.36, "seconds": 0.31}
+      },
+      "gprof_cumulative_hotspots": {
+        "sparselu_factorize": {"percent": 8.3, "seconds": 1.88, "calls": 69},
+        "assemble_jacobian": {"percent": 7.9, "seconds": 1.81, "calls": 66},
+        "continuity_diagnostics": {"percent": 5.4, "seconds": 1.23, "calls": 138}
+      },
+      "artifacts_sha256": {
+        "gmon.out": "67ac3e3aab63966ad8e55461c5fdb6626e14c6c0fe369e22c3d8ccd286298737",
+        "gprof_flat.txt": "91380db53761f0e6e2a88fbe393f018ab35fdb0899526e4781c2808a8d52fd98",
+        "gprof_callgraph.txt": "eddf3247551d652e6f3063bb3b11b8759a5773490f59039281e32397138d19c6",
+        "gprof_hotspots.csv": "83b35480ec4587babf222c44aba5772e714d38b2ed041032bd9f0cc4d1b4537b",
+        "gprof_callgraph_hotspots.csv": "2f7fd278a5d75dad0592a8aeecf2d9e5b678b9bb95aa4f3ae1a46965e833b717",
+        "performance_profile.json": "13b4ec8fab2270a8fe47b8a0525b0f2b9fb58819f23593931a441617a1d3a582",
+        "last_state.csv": "c03a6f4e8df3535505e49a9ec83334f08bd3cce2cc8e93ea2af06adbe66d9433"
+      }
+    },
+    "external_resistor_1206": {
+      "wall_seconds_gprof": 190.2146331,
+      "full_dd_evaluations": 3,
+      "newton_updates": 158,
+      "production_internal_seconds": {
+        "dd_jacobian": 89.1518668,
+        "jacobian_edge_physics": 58.6210068,
+        "jacobian_node_sources": 28.7974487,
+        "dd_continuity_diagnostics": 18.9822987,
+        "dd_residual": 16.3762407,
+        "linear_factorize": 20.2218422,
+        "linear_analyze": 0.5537885,
+        "linear_solve": 0.4263233,
+        "active_branch_fingerprint": 0.1092939,
+        "bv_process_probe": 0.1031087
+      },
+      "gprof_self_hotspots": {
+        "sparselu_factorize": {"percent": 6.43, "seconds": 3.80, "calls": 318},
+        "fermi_dirac_half": {"percent": 4.50, "seconds": 2.66},
+        "uses_fermi_dirac": {"percent": 2.20, "seconds": 1.30},
+        "cached_edge_mobility": {"percent": 1.78, "seconds": 1.05},
+        "edge_avalanche_source_lambda": {"percent": 1.20, "seconds": 0.71}
+      },
+      "gprof_cumulative_hotspots": {
+        "assemble_jacobian": {"percent": 7.8, "seconds": 4.61, "calls": 159},
+        "sparselu_factorize": {"percent": 7.1, "seconds": 4.22, "calls": 318},
+        "continuity_diagnostics": {"percent": 5.0, "seconds": 2.95, "calls": 324}
+      },
+      "artifacts_sha256": {
+        "gmon.out": "cfacd2f5ca91620e905cc054e9f07f9df14f5527a371a9fb47dd4539141f41a4",
+        "gprof_flat.txt": "1b3faad5539d8462295511dc73f2f9fafe1b178d308ff935c785ca8733e47728",
+        "gprof_callgraph.txt": "ca347c8f08cfc29bd2835a9b602c1208cdcee5f0596dd65bff0caf725f4f40af",
+        "gprof_hotspots.csv": "9e343c50b9c43cdd84271164fff0b489615f6e66889ef015d162279f08f63141",
+        "gprof_callgraph_hotspots.csv": "edae3ba9e6a9f8f9c94709444e62a98bc6438375ef1278649d3f11fc9fe59cb5",
+        "performance_profile.json": "76a1ddd6a5302521d4c2f0b517bd76be8ed77bf4b3b8d8f5704ad3529437c8e5",
+        "last_state.csv": "9df5a87eff788adce23017a7f9c88f5f66841760e26f69da8f0b8baab31b2032"
+      }
+    }
+  },
+  "residual_fingerprint_decision": {
+    "optimize_now": false,
+    "reason": "active-branch fingerprint is cache-hit dominated and costs 0.0007 s in both short scenarios and 0.1093 s in the external-resistor scenario; the sole external cache miss plus process probe costs another 0.1031 s, below 0.15 percent of production wall time",
+    "fnv1a64_note": "gprof reports spontaneous fnv1a64 samples without a reliable caller; internal scoped timing is authoritative for this decision"
+  },
+  "next_priority": [
+    "reduce edge-physics Fermi-Dirac density and SG evaluation count or cost",
+    "reduce continuity-diagnostic work when acceptance semantics permit",
+    "evaluate numerical-factorization alternatives separately from symbolic analyzePattern"
+  ]
+}
