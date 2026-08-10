@@ -1,0 +1,93 @@
+{
+  "schema_version": 1,
+  "assessment": "stable analytic derivatives versus local automatic differentiation for edge avalanche physics",
+  "current_code_commit": "a3cdf47",
+  "current_profile_commit": "ab4c2c0",
+  "evidence": {
+    "current_residual_jacobian_audit": {
+      "source": "docs/validation/bv_edge_residual_consistent_base_flux_2026-08-10.json",
+      "relative_error": 0.00003877331661396,
+      "acceptance_limit": 0.0005,
+      "pass": true
+    },
+    "rejected_double_forward_ad": {
+      "source": "docs/validation/bv_jacobian_transport_ad_rejected_2026-08-09.json",
+      "scope": "four-variable Fermi-Dirac edge transport flux derivatives",
+      "high_field_transition_converged": false,
+      "high_field_transition_newton_updates": 220,
+      "worst_sample_relative_derivative_difference": 0.998571,
+      "failure_mode": "double-precision forward propagation loses significant digits when derivatives of very large Fermi-Dirac flux factors cancel"
+    },
+    "latest_profile": {
+      "source": "docs/validation/bv_performance_gprof_ab4c2c0_2026-08-10.json",
+      "edge_physics_wall_fraction": [
+        0.38085,
+        0.39900,
+        0.39914
+      ],
+      "fermi_dirac_half_gprof_self_percent": [
+        4.38,
+        4.83,
+        4.50
+      ],
+      "cached_edge_mobility_gprof_self_percent": [
+        1.97,
+        1.89,
+        1.78
+      ],
+      "edge_avalanche_source_gprof_self_percent": [
+        1.18,
+        1.36,
+        1.20
+      ],
+      "source_evaluations": [
+        10266208,
+        10928544,
+        26327856
+      ]
+    }
+  },
+  "strategy_comparison": {
+    "full_local_forward_ad": {
+      "decision": "do not implement in the production path now",
+      "reasons": [
+        "the prior double-precision implementation failed derivative and convergence gates",
+        "a dense local derivative dimension can reach the complete avalanche stencil rather than only four carrier-edge variables",
+        "every scalar operation would propagate the full local derivative vector through branch-heavy mobility, Fermi-Dirac, SG, current-reconstruction, norm, absolute-value, and limiting expressions",
+        "automatic differentiation alone does not repair cancellation in an unstable primal or derivative representation"
+      ]
+    },
+    "stable_analytic_derivatives": {
+      "decision": "promising but gated; do not replace the accepted finite-difference path yet",
+      "preferred_scope": "stable electron and hole generalized-SG transport primitives first, not the complete branch topology or reconstructed avalanche source",
+      "reasons": [
+        "FermiDiracHalf is a repeated self-time hotspot and edge physics remains approximately 38 to 40 percent of production wall time",
+        "analytic primitives can avoid propagating dense derivative vectors through unrelated local variables",
+        "the implementation must preserve the current residual/Jacobian consistency and all BV, boundary, continuity, and field gates"
+      ]
+    },
+    "hybrid": {
+      "decision": "preferred next experiment",
+      "scope": "stable analytic or narrowly scoped AD derivatives for smooth log-domain carrier-flux primitives, with the existing locally invalidated finite differences retained for non-smooth reconstruction and branch-dependent terms"
+    }
+  },
+  "required_experimental_gates": [
+    "capture representative edge states from all three controlled BV benchmarks, including high-cancellation Fermi-Dirac cases",
+    "build multiprecision directional-derivative references for every affected local column",
+    "derive a stable logarithmic or scaled generalized-SG primal and derivative formulation, including generalized Einstein and Bernoulli terms",
+    "compare analytic or AD columns with multiprecision references using absolute, relative, and scale-aware error metrics before any BV solve",
+    "retain the residual-versus-Jacobian relative-error limit of 5e-4 and target no regression from the current 3.877331661396e-5 result",
+    "place the candidate behind a strict configuration guard and rerun the high-field transition before the two longer benchmarks",
+    "accept only if all three BV, boundary residual, global continuity, field-comparison, state-provenance, and performance gates pass"
+  ],
+  "residual_fingerprint_decision": {
+    "optimize_now": false,
+    "reason": "measured active-branch fingerprint and the external process probe together remain below 0.15 percent of production wall time"
+  },
+  "final_decision": {
+    "production_derivative_change_in_this_series": false,
+    "next_candidate": "multiprecision-validated stable generalized-SG carrier-flux derivative primitive",
+    "fallback": "retain the accepted central-difference implementation with residual-consistent base flux caching and local invalidation",
+    "physics_parameters_changed": false
+  }
+}
