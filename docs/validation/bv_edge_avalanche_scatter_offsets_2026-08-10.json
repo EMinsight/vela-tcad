@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "optimization": "C6 precompute avalanche stencil scatter offsets",
+  "baseline_commit": "4507cab",
+  "candidate_commit": "7703567",
+  "raw_roots": {
+    "baseline": "build-bv-performance/edge-c5b-4507cab",
+    "candidate": "build-bv-performance/edge-c6-7703567"
+  },
+  "implementation": {
+    "pattern_phase": "resolve four endpoint carrier rows by all psi and QF stencil columns to Eigen valuePtr offsets",
+    "newton_phase": "scatter derivatives directly through precomputed offsets",
+    "value_order": "unchanged",
+    "accumulation_order": "unchanged"
+  },
+  "scenarios": {
+    "high_field_transition": {
+      "baseline_wall_seconds": 61.6577619,
+      "candidate_wall_seconds": 59.5315398,
+      "wall_change_fraction": -0.03448425687991119,
+      "baseline_edge_physics_seconds": 24.0743744,
+      "candidate_edge_physics_seconds": 22.7511229,
+      "edge_physics_change_fraction": -0.05496514584403911,
+      "precomputed_scatter_adds": 6890542,
+      "full_dd_evaluations": 1,
+      "newton_updates": 62,
+      "profile_sha256": "f6f5536fbdbdf39f788f36a713ce91755b20aa351ff97f41b1c9bd23695c4b32",
+      "state_sha256": "906fca04d55608d13700256de4e3a7596dc17e270fdc49a7e1982567ef52ff8a"
+    },
+    "voltage_to_current_final": {
+      "baseline_wall_seconds": 61.1446428,
+      "candidate_wall_seconds": 61.0815842,
+      "wall_change_fraction": -0.0010313021241494802,
+      "baseline_edge_physics_seconds": 24.8430689,
+      "candidate_edge_physics_seconds": 24.5933862,
+      "edge_physics_change_fraction": -0.010050396792966154,
+      "precomputed_scatter_adds": 7466872,
+      "full_dd_evaluations": 2,
+      "newton_updates": 66,
+      "vela_bv_V": 6.395904148131495,
+      "boundary_residual_A_per_um": -9.824013198528499e-12,
+      "profile_sha256": "6f09936ce9d2678c00b211ec839eb18f3e096c03b27b353490108a7dc2349a25",
+      "state_sha256": "c03a6f4e8df3535505e49a9ec83334f08bd3cce2cc8e93ea2af06adbe66d9433"
+    },
+    "external_resistor_1206": {
+      "baseline_wall_seconds": 148.8899861,
+      "candidate_wall_seconds": 150.3310308,
+      "wall_change_fraction": 0.009678587108149506,
+      "baseline_edge_physics_seconds": 60.3228019,
+      "candidate_edge_physics_seconds": 60.4976832,
+      "edge_physics_change_fraction": 0.002899091131242537,
+      "precomputed_scatter_adds": 18009080,
+      "full_dd_evaluations": 3,
+      "newton_updates": 158,
+      "vela_bv_V": 6.39588786553429,
+      "boundary_residual_V": -0.000030927941679692594,
+      "boundary_residual_tolerance_V": 0.0001,
+      "profile_sha256": "703b5252b58389b43e6f30203d8acc4659bbce4595d01b8b7eac4506760c25ab",
+      "state_sha256": "9df5a87eff788adce23017a7f9c88f5f66841760e26f69da8f0b8baab31b2032"
+    }
+  },
+  "verification": {
+    "test_newton_solver": "pass: 1103 assertions in 79 test cases",
+    "all_candidate_states_byte_identical_to_baseline": true,
+    "bv_boundary_and_continuity_outputs_unchanged": true,
+    "field_gate_reused_from_byte_identical_C5b_state": true,
+    "mobility_avalanche_btbt_parameters_unchanged": true
+  },
+  "acceptance": {
+    "all_three_controlled_benchmarks_pass": true,
+    "performance_decision": "retain: two scenarios improve, external-resistor delta is below one percent and treated as single-run noise while 18,009,080 hash-path scatter lookups are deterministically removed",
+    "timing_caveat": "single-run wall and stage timing is workload-sensitive"
+  }
+}
