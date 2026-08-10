@@ -2622,6 +2622,10 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
     struct EdgeAvalancheNodeSources {
         Real node0 = 0.0;
         Real node1 = 0.0;
+        Real electronNode0 = 0.0;
+        Real electronNode1 = 0.0;
+        Real holeNode0 = 0.0;
+        Real holeNode1 = 0.0;
     };
     const Index noPerturbedNode = mesh_.numNodes();
     struct EdgeAvalanchePerturbation {
@@ -2647,6 +2651,8 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
     std::uint64_t avalancheDirectFluxSkips = 0;
     std::uint64_t avalancheBaseFluxReuses = 0;
     std::uint64_t avalanchePerturbedFluxRecomputations = 0;
+    std::uint64_t avalancheCarrierSideEvaluations = 0;
+    std::uint64_t avalancheCarrierSideReuses = 0;
 
     const auto edgeStencilContainsNode = [&](Index edgeId, Index node) {
         if (node >= mesh_.numNodes())
@@ -2813,10 +2819,34 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
             Real psi_i, Real psi_j,
             auto&& phinAt,
             auto&& phipAt,
-            EdgeAvalanchePerturbation perturbation)
+            EdgeAvalanchePerturbation perturbation,
+            const EdgeAvalancheNodeSources* baseSources)
             -> EdgeAvalancheNodeSources {
         EdgeAvalancheNodeSources sources;
         ++avalancheSourceEvaluations;
+        const bool carrierSideDecoupling =
+            baseSources != nullptr && !conservedTotalCurrent &&
+            perturbation.psiNode >= mesh_.numNodes();
+        const bool evaluateElectronCarrier =
+            !carrierSideDecoupling ||
+            perturbation.electronQfNode < mesh_.numNodes();
+        const bool evaluateHoleCarrier =
+            !carrierSideDecoupling ||
+            perturbation.holeQfNode < mesh_.numNodes();
+        avalancheCarrierSideEvaluations +=
+            static_cast<std::uint64_t>(evaluateElectronCarrier) +
+            static_cast<std::uint64_t>(evaluateHoleCarrier);
+        avalancheCarrierSideReuses +=
+            static_cast<std::uint64_t>(!evaluateElectronCarrier) +
+            static_cast<std::uint64_t>(!evaluateHoleCarrier);
+        if (!evaluateElectronCarrier) {
+            sources.electronNode0 = baseSources->electronNode0;
+            sources.electronNode1 = baseSources->electronNode1;
+        }
+        if (!evaluateHoleCarrier) {
+            sources.holeNode0 = baseSources->holeNode0;
+            sources.holeNode1 = baseSources->holeNode1;
+        }
         ++avalancheFluxGeneration;
         if (avalancheFluxGeneration == 0) {
             std::fill(avalancheElectronFluxStamp.begin(),
@@ -2833,18 +2863,22 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
         const Index idxJ = static_cast<Index>(j);
         const Real niI = ni_[idxI];
         const Real niJ = ni_[idxJ];
-        const Real phin_i = phinAt(idxI);
-        const Real phin_j = phinAt(idxJ);
-        const Real phip_i = phipAt(idxI);
-        const Real phip_j = phipAt(idxJ);
-        const Real n_i = vela::electronDensity(
-            niI, Nc_[idxI], psi_i, phin_i, Vt_, carrierStatistics_);
-        const Real n_j = vela::electronDensity(
-            niJ, Nc_[idxJ], psi_j, phin_j, Vt_, carrierStatistics_);
-        const Real p_i = vela::holeDensity(
-            niI, Nv_[idxI], psi_i, phip_i, Vt_, carrierStatistics_);
-        const Real p_j = vela::holeDensity(
-            niJ, Nv_[idxJ], psi_j, phip_j, Vt_, carrierStatistics_);
+        const Real phin_i = evaluateElectronCarrier ? phinAt(idxI) : 0.0;
+        const Real phin_j = evaluateElectronCarrier ? phinAt(idxJ) : 0.0;
+        const Real phip_i = evaluateHoleCarrier ? phipAt(idxI) : 0.0;
+        const Real phip_j = evaluateHoleCarrier ? phipAt(idxJ) : 0.0;
+        const Real n_i = evaluateElectronCarrier ? vela::electronDensity(
+            niI, Nc_[idxI], psi_i, phin_i, Vt_, carrierStatistics_)
+            : 0.0;
+        const Real n_j = evaluateElectronCarrier ? vela::electronDensity(
+            niJ, Nc_[idxJ], psi_j, phin_j, Vt_, carrierStatistics_)
+            : 0.0;
+        const Real p_i = evaluateHoleCarrier ? vela::holeDensity(
+            niI, Nv_[idxI], psi_i, phip_i, Vt_, carrierStatistics_)
+            : 0.0;
+        const Real p_j = evaluateHoleCarrier ? vela::holeDensity(
+            niJ, Nv_[idxJ], psi_j, phip_j, Vt_, carrierStatistics_)
+            : 0.0;
         auto psiAt = [&](Index node) {
             const int nodeIndex = static_cast<int>(node);
             return node == idxI ? psi_i : (node == idxJ ? psi_j : psi(nodeIndex));
@@ -2867,10 +2901,10 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
             return detail::holeQfForAvalancheGradient(
                 psiNode, phipNode, pNode, ni_[node], Vt_, impactIonizationConfig_);
         };
-        const Real electronQf_i = electronQfAt(idxI);
-        const Real electronQf_j = electronQfAt(idxJ);
-        const Real holeQf_i = holeQfAt(idxI);
-        const Real holeQf_j = holeQfAt(idxJ);
+        const Real electronQf_i = evaluateElectronCarrier ? electronQfAt(idxI) : 0.0;
+        const Real electronQf_j = evaluateElectronCarrier ? electronQfAt(idxJ) : 0.0;
+        const Real holeQf_i = evaluateHoleCarrier ? holeQfAt(idxI) : 0.0;
+        const Real holeQf_j = evaluateHoleCarrier ? holeQfAt(idxJ) : 0.0;
         const Real electricField = std::abs((psi_j - psi_i) / h) * fieldFactor;
         const Real electronQfField = std::abs((electronQf_j - electronQf_i) / h) * fieldFactor;
         const Real holeQfField = std::abs((holeQf_j - holeQf_i) / h) * fieldFactor;
@@ -2888,8 +2922,10 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
             return detail::edgeHighFieldDrivingField(
                 qfImpact, edgeQfField, electricField, edgeCells_, mesh_, e, contactNodes);
         };
-        const Real electronCoefficientField = coefficientField(electronQfField, electronQfAt);
-        const Real holeCoefficientField = coefficientField(holeQfField, holeQfAt);
+        const Real electronCoefficientField = evaluateElectronCarrier
+            ? coefficientField(electronQfField, electronQfAt) : 0.0;
+        const Real holeCoefficientField = evaluateHoleCarrier
+            ? coefficientField(holeQfField, holeQfAt) : 0.0;
         const bool electronVectorMobilityFieldAffected =
             vectorQfMobility &&
             perturbation.electronQfNode < mesh_.numNodes() &&
@@ -2898,16 +2934,18 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
             vectorQfMobility &&
             perturbation.holeQfNode < mesh_.numNodes() &&
             edgeStencilContainsNode(e, perturbation.holeQfNode);
-        const Real electronMobilityField = vectorQfMobility
+        const Real electronMobilityField = evaluateElectronCarrier && vectorQfMobility
             ? (electronVectorMobilityFieldAffected
                 ? transportVectorMobilityField(e, phinAt)
                 : electronVectorMobilityFields[e])
-            : (qfMobility ? electronQfField : electricField);
-        const Real holeMobilityField = vectorQfMobility
+            : (evaluateElectronCarrier
+                ? (qfMobility ? electronQfField : electricField) : 0.0);
+        const Real holeMobilityField = evaluateHoleCarrier && vectorQfMobility
             ? (holeVectorMobilityFieldAffected
                 ? transportVectorMobilityField(e, phipAt)
                 : holeVectorMobilityFields[e])
-            : (qfMobility ? holeQfField : electricField);
+            : (evaluateHoleCarrier
+                ? (qfMobility ? holeQfField : electricField) : 0.0);
         const Real nAvg = 0.5 * (n_i + n_j);
         const Real pAvg = 0.5 * (p_i + p_j);
         const Real nMid = detail::cellReconstructedAvalancheMidpointDensity(
@@ -3173,12 +3211,12 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
                     (node1.y - node0.y) / h};
             }
         }
-        const Real mun = cachedEdgeMobility(
+        const Real mun = evaluateElectronCarrier ? cachedEdgeMobility(
             e, CarrierType::Electron, electronMobilityField,
-            psiForAvalancheMobility);
-        const Real mup = cachedEdgeMobility(
+            psiForAvalancheMobility) : 0.0;
+        const Real mup = evaluateHoleCarrier ? cachedEdgeMobility(
             e, CarrierType::Hole, holeMobilityField,
-            psiForAvalancheMobility);
+            psiForAvalancheMobility) : 0.0;
         const bool evaluateDirectElectronFlux =
             mun > 0.0 && directEdgeFluxRequired;
         const bool evaluateDirectHoleFlux =
@@ -3271,33 +3309,33 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
 
         detail::EdgeAvalancheDirectionalWeights weights;
         if (directionalEdgePartition) {
-            weights = detail::edgeAvalancheDirectionalWeights(
-                edgeCells_,
-                mesh_,
-                e,
-                [&](Index node) {
-                    const int nodeIndex = static_cast<int>(node);
-                    const Real psiNode = node == idxI ? psi_i : (node == idxJ ? psi_j : psi(nodeIndex));
-                    const Real phinNode = phinAt(node);
-                    const Real nNode = vela::electronDensity(
-                        ni_[node], Nc_[node], psiNode, phinNode, Vt_,
-                        carrierStatistics_);
-                    return detail::electronQfForAvalancheGradient(
-                        psiNode, phinNode, nNode, ni_[node], Vt_, impactIonizationConfig_);
-                },
-                [&](Index node) {
-                    const int nodeIndex = static_cast<int>(node);
-                    const Real psiNode = node == idxI ? psi_i : (node == idxJ ? psi_j : psi(nodeIndex));
-                    const Real phipNode = phipAt(node);
-                    const Real pNode = vela::holeDensity(
-                        ni_[node], Nv_[node], psiNode, phipNode, Vt_,
-                        carrierStatistics_);
-                    return detail::holeQfForAvalancheGradient(
-                        psiNode, phipNode, pNode, ni_[node], Vt_, impactIonizationConfig_);
-                });
+            if (evaluateElectronCarrier && evaluateHoleCarrier) {
+                weights = detail::edgeAvalancheDirectionalWeights(
+                    edgeCells_, mesh_, e, electronQfAt, holeQfAt);
+            } else if (evaluateElectronCarrier) {
+                const Real electronDot = detail::edgeMinusGradientUnitDot(
+                    edgeCells_, mesh_, e, electronQfAt);
+                weights.electronNode0 =
+                    std::clamp(0.5 + 0.5 * electronDot, 0.0, 1.0);
+                weights.electronNode1 = 1.0 - weights.electronNode0;
+            } else if (evaluateHoleCarrier) {
+                const Real holeDot = detail::edgeMinusGradientUnitDot(
+                    edgeCells_, mesh_, e, holeQfAt);
+                weights.holeNode1 =
+                    std::clamp(0.5 + 0.5 * holeDot, 0.0, 1.0);
+                weights.holeNode0 = 1.0 - weights.holeNode1;
+            }
         }
-        sources.node0 = weights.electronNode0 * electronSource + weights.holeNode0 * holeSource;
-        sources.node1 = weights.electronNode1 * electronSource + weights.holeNode1 * holeSource;
+        if (evaluateElectronCarrier) {
+            sources.electronNode0 = weights.electronNode0 * electronSource;
+            sources.electronNode1 = weights.electronNode1 * electronSource;
+        }
+        if (evaluateHoleCarrier) {
+            sources.holeNode0 = weights.holeNode0 * holeSource;
+            sources.holeNode1 = weights.holeNode1 * holeSource;
+        }
+        sources.node0 = sources.electronNode0 + sources.holeNode0;
+        sources.node1 = sources.electronNode1 + sources.holeNode1;
         return sources;
     };
 
@@ -3611,7 +3649,7 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
             ++avalancheBaseEvaluations;
             const EdgeAvalancheNodeSources base = edgeAvalancheNodeSources(
                 e, i, j, h, psi_i, psi_j, phinAt, phipAt,
-                {noPerturbedNode, noPerturbedNode, noPerturbedNode});
+                {noPerturbedNode, noPerturbedNode, noPerturbedNode}, nullptr);
             const auto& qfStencilNodes = edgeKernel.avalancheStencilNodes;
             const std::size_t qfStencilNodeCount =
                 edgeKernel.avalancheStencilNodeCount;
@@ -3653,10 +3691,10 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
                 avalanchePerturbedEvaluations += 2;
                 const EdgeAvalancheNodeSources sp = edgeAvalancheNodeSources(
                     e, i, j, h, psiP[0], psiP[1], phinAt, phipAt,
-                    perturbation);
+                    perturbation, &base);
                 const EdgeAvalancheNodeSources sm = edgeAvalancheNodeSources(
                     e, i, j, h, psiM[0], psiM[1], phinAt, phipAt,
-                    perturbation);
+                    perturbation, &base);
                 appendDerivative(psiCols[k], sp, sm, step);
             }
 
@@ -3679,10 +3717,10 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
                 avalanchePerturbedEvaluations += 2;
                 const EdgeAvalancheNodeSources sp = edgeAvalancheNodeSources(
                     e, i, j, h, psi_i, psi_j, phinPlusAt, phipAt,
-                    perturbation);
+                    perturbation, &base);
                 const EdgeAvalancheNodeSources sm = edgeAvalancheNodeSources(
                     e, i, j, h, psi_i, psi_j, phinMinusAt, phipAt,
-                    perturbation);
+                    perturbation, &base);
                 appendDerivative(phinOffset() + nodeIndex, sp, sm, step);
             }
 
@@ -3705,10 +3743,10 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
                 avalanchePerturbedEvaluations += 2;
                 const EdgeAvalancheNodeSources sp = edgeAvalancheNodeSources(
                     e, i, j, h, psi_i, psi_j, phinAt, phipPlusAt,
-                    perturbation);
+                    perturbation, &base);
                 const EdgeAvalancheNodeSources sm = edgeAvalancheNodeSources(
                     e, i, j, h, psi_i, psi_j, phinAt, phipMinusAt,
-                    perturbation);
+                    perturbation, &base);
                 appendDerivative(phipOffset() + nodeIndex, sp, sm, step);
             }
 
@@ -3761,6 +3799,12 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
     incrementPerformanceCounter(
         "jacobian.edge_avalanche_perturbed_flux_recomputations",
         avalanchePerturbedFluxRecomputations);
+    incrementPerformanceCounter(
+        "jacobian.edge_avalanche_carrier_side_evaluations",
+        avalancheCarrierSideEvaluations);
+    incrementPerformanceCounter(
+        "jacobian.edge_avalanche_carrier_side_reuses",
+        avalancheCarrierSideReuses);
 
     {
         ScopedPerformanceTimer cellPhysicsTimer("jacobian.cell_physics");

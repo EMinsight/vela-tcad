@@ -760,12 +760,18 @@ TEST_CASE("CoupledDDAssembler: edge avalanche profiling counters preserve exact 
         counters.at("jacobian.edge_avalanche_base_flux_reuses");
     const std::uint64_t perturbedFluxRecomputations =
         counters.at("jacobian.edge_avalanche_perturbed_flux_recomputations");
+    const std::uint64_t carrierSideEvaluations =
+        counters.at("jacobian.edge_avalanche_carrier_side_evaluations");
+    const std::uint64_t carrierSideReuses =
+        counters.at("jacobian.edge_avalanche_carrier_side_reuses");
 
     REQUIRE(baseEvaluations > 0);
     REQUIRE(perturbedEvaluations > baseEvaluations);
     REQUIRE(evaluations == baseEvaluations + perturbedEvaluations);
     REQUIRE(fluxRequests == fluxHits + fluxMisses + baseFluxReuses);
     REQUIRE(perturbedFluxRecomputations == fluxMisses);
+    REQUIRE(carrierSideEvaluations + carrierSideReuses == 2 * evaluations);
+    REQUIRE(carrierSideReuses > 0);
     REQUIRE(counters.at("jacobian.edge_avalanche_nodal_reconstruction_calls") > 0);
     REQUIRE(counters.at("jacobian.edge_avalanche_direct_flux_evaluations") == 0);
     REQUIRE(counters.at("jacobian.edge_avalanche_direct_flux_skips") > 0);
@@ -2027,14 +2033,20 @@ TEST_CASE("NewtonSolver: conserved-total-current SG avalanche Jacobian matches r
     state.phip = VectorXd::LinSpaced(N, -0.2, -0.9);
 
     NewtonSolver solver(mesh, matdb, doping, biases, cfg);
-    const auto rows = solver.evaluateJacobianBlockAudit(
-        state, 1.0e-7, std::vector<std::string>{"sg_avalanche"});
+    PerformanceProfiler profiler({true, "unused.json"});
+    const auto rows = [&] {
+        ActivePerformanceProfilerScope active(&profiler);
+        return solver.evaluateJacobianBlockAudit(
+            state, 1.0e-7, std::vector<std::string>{"sg_avalanche"});
+    }();
 
     REQUIRE(rows.size() == 1);
     REQUIRE(rows.front().block == "sg_avalanche");
     REQUIRE(rows.front().fdNorm > 0.0);
     REQUIRE(rows.front().analyticNorm > 0.0);
     REQUIRE(rows.front().relDiff < 5.0e-3);
+    REQUIRE(profiler.toJson().at("counters").at(
+        "jacobian.edge_avalanche_carrier_side_reuses") == 0);
 }
 
 TEST_CASE("NewtonSolver: evaluateBlockStep freezes complementary unknown blocks",
