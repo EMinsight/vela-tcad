@@ -1,0 +1,91 @@
+{
+  "schema_version": 1,
+  "optimization": "C4 guarded carrier-side avalanche source decoupling",
+  "baseline_commit": "6079f9a",
+  "candidate_commit": "cc2d1f2",
+  "raw_roots": {
+    "baseline": "build-bv-performance/edge-c3-6079f9a",
+    "candidate": "build-bv-performance/edge-c4-cc2d1f2"
+  },
+  "guard": {
+    "enabled_when": "QF-only perturbation and conserved-total-current proxy is disabled",
+    "electron_qf_perturbation": "evaluate electron contribution and reuse base hole nodal contribution",
+    "hole_qf_perturbation": "evaluate hole contribution and reuse base electron nodal contribution",
+    "psi_perturbation": "evaluate both carrier contributions",
+    "conserved_total_current": "evaluate both carrier contributions",
+    "guard_unit_test": "conserved-total-current carrier-side reuse counter remains zero"
+  },
+  "scenarios": {
+    "high_field_transition": {
+      "baseline_wall_seconds": 70.2093078,
+      "candidate_wall_seconds": 63.0765204,
+      "wall_change_fraction": -0.10159318790492344,
+      "baseline_edge_physics_seconds": 29.51849,
+      "candidate_edge_physics_seconds": 24.7083596,
+      "edge_physics_change_fraction": -0.16295313208771856,
+      "source_evaluations": 10266208,
+      "carrier_side_evaluations": 12723888,
+      "carrier_side_reuses": 7808528,
+      "baseline_neighbor_flux_requests": 87562104,
+      "candidate_neighbor_flux_requests": 54234872,
+      "neighbor_flux_request_change_fraction": -0.3806125078949679,
+      "full_dd_evaluations": 1,
+      "newton_updates": 62,
+      "profile_sha256": "6d7af33ace16dec5d8d3e1ff03ffe50e26d0b6a89bf67af0415df09341926c33",
+      "state_sha256": "906fca04d55608d13700256de4e3a7596dc17e270fdc49a7e1982567ef52ff8a"
+    },
+    "voltage_to_current_final": {
+      "baseline_wall_seconds": 66.3984024,
+      "candidate_wall_seconds": 63.6746502,
+      "wall_change_fraction": -0.0410213514414316,
+      "baseline_edge_physics_seconds": 28.9962163,
+      "candidate_edge_physics_seconds": 26.1680817,
+      "edge_physics_change_fraction": -0.09753460833439853,
+      "source_evaluations": 10928544,
+      "carrier_side_evaluations": 13544784,
+      "carrier_side_reuses": 8312304,
+      "baseline_neighbor_flux_requests": 93211272,
+      "candidate_neighbor_flux_requests": 57733896,
+      "neighbor_flux_request_change_fraction": -0.3806125078949679,
+      "full_dd_evaluations": 2,
+      "newton_updates": 66,
+      "vela_bv_V": 6.395904148131495,
+      "boundary_residual_A_per_um": -9.824013198528499e-12,
+      "profile_sha256": "b01cd990f6ddf48e36836db1218a48202c14330ad6b063ed8601bae320406616",
+      "state_sha256": "c03a6f4e8df3535505e49a9ec83334f08bd3cce2cc8e93ea2af06adbe66d9433"
+    },
+    "external_resistor_1206": {
+      "baseline_wall_seconds": 170.7106898,
+      "candidate_wall_seconds": 161.0556627,
+      "wall_change_fraction": -0.05655783543087767,
+      "baseline_edge_physics_seconds": 74.8395773,
+      "candidate_edge_physics_seconds": 65.8699609,
+      "edge_physics_change_fraction": -0.11985124346767262,
+      "source_evaluations": 26327856,
+      "carrier_side_evaluations": 32630616,
+      "carrier_side_reuses": 20025096,
+      "baseline_neighbor_flux_requests": 224554428,
+      "candidate_neighbor_flux_requests": 139086204,
+      "neighbor_flux_request_change_fraction": -0.3806125078949679,
+      "full_dd_evaluations": 3,
+      "newton_updates": 158,
+      "vela_bv_V": 6.39588786553429,
+      "boundary_residual_V": -0.000030927941679692594,
+      "boundary_residual_tolerance_V": 0.0001,
+      "profile_sha256": "775e08fd531b41d84754bed3e2074b13cedf0b6148b84a08dfc8940a073fd35b",
+      "state_sha256": "9df5a87eff788adce23017a7f9c88f5f66841760e26f69da8f0b8baab31b2032"
+    }
+  },
+  "verification": {
+    "test_newton_solver": "pass: 1099 assertions in 79 test cases",
+    "all_candidate_states_byte_identical_to_baseline": true,
+    "bv_boundary_and_continuity_outputs_unchanged": true,
+    "field_gate_reused_from_byte_identical_C3_state": true,
+    "mobility_avalanche_btbt_parameters_unchanged": true
+  },
+  "acceptance": {
+    "strict_guard_pass": true,
+    "all_three_controlled_benchmarks_pass": true,
+    "timing_caveat": "single-run wall timing is workload-sensitive; exact reuse counters, request reduction, and byte-identical states are the primary attribution evidence"
+  }
+}
