@@ -1,0 +1,130 @@
+{
+  "schema_version": 1,
+  "optimization": "C1 merge nodal current vector and magnitude reconstruction",
+  "baseline_commit": "60ffcd4",
+  "candidate_commit": "2601fd7",
+  "build": {
+    "type": "Release",
+    "compiler": "MSYS2 UCRT64 GCC 16.1.0",
+    "profiling": "internal steady_clock stages; gprof disabled",
+    "threads": 1,
+    "lto": false,
+    "sparselu_ordering": "COLAMD"
+  },
+  "physics_config_sha256": "dc28b33f2a95e9664c8d93c7c54b3cb4cac22941175b43f8b36d955a25a2a7a2",
+  "raw_roots": {
+    "baseline": "build-bv-performance/edge-c1-baseline-60ffcd4",
+    "candidate": "build-bv-performance/edge-c1-2601fd7"
+  },
+  "scenarios": {
+    "high_field_transition": {
+      "baseline_profile_sha256": "bc59739726c3801ff45666157f2e547afed8fbffd53c70862afe9111dd3a5bab",
+      "candidate_profile_sha256": "4d8467295d6c0b7a903a12c35616a2565d1f724d7efc1b71056fd184314ac4d7",
+      "baseline_wall_seconds": 288.942857,
+      "candidate_wall_seconds": 229.3716151,
+      "wall_change_fraction": -0.2061696299,
+      "baseline_edge_physics_seconds": 146.2410481,
+      "candidate_edge_physics_seconds": 112.2627754,
+      "edge_physics_change_fraction": -0.2323442914,
+      "full_dd_evaluations": 1,
+      "newton_updates": 191,
+      "inner_voltage_V": 6.099590877047813,
+      "global_electron_continuity_ratio": 9.154294013563705e-10,
+      "global_hole_continuity_ratio": 1.0764411116579334e-9,
+      "state_sha256": "61f65b5f0fdb379b5039169542f067a2092df6a4c011722485c140b4a5bc96b8",
+      "counters": {
+        "source_evaluations": 31792128,
+        "baseline_nodal_reconstruction_calls": 127552512,
+        "candidate_nodal_reconstruction_calls": 63776256,
+        "baseline_neighbor_flux_requests": 542320128,
+        "candidate_neighbor_flux_requests": 271160064,
+        "baseline_flux_cache_hits": 303048192,
+        "candidate_flux_cache_hits": 31888128,
+        "baseline_flux_cache_misses": 239271936,
+        "candidate_flux_cache_misses": 239271936
+      }
+    },
+    "voltage_to_current_final": {
+      "baseline_profile_sha256": "c9f47bd580057eb8a1e85dfc75c6513ef372990bfa938769270ee8cff86a18bb",
+      "candidate_profile_sha256": "8d7333353dde76779f3df21f2c1dafbe84499165dfdbede0d9433155ab2622ec",
+      "baseline_wall_seconds": 610.3113334,
+      "candidate_wall_seconds": 337.9229482,
+      "wall_change_fraction": -0.4463105472,
+      "baseline_edge_physics_seconds": 326.6649729,
+      "candidate_edge_physics_seconds": 174.3242518,
+      "edge_physics_change_fraction": -0.4663515643,
+      "full_dd_evaluations": 2,
+      "newton_updates": 279,
+      "vela_bv_V": 6.395904174606575,
+      "boundary_residual_A_per_um": 6.169747113378421e-12,
+      "global_electron_continuity_ratio": 1.2165595928167767e-9,
+      "global_hole_continuity_ratio": 1.3083049498570184e-9,
+      "state_sha256": "c9d2cc7ab24ad99ec82b91c79a794b7e91e517aebfdd58a5140565893c0eda81",
+      "counters": {
+        "source_evaluations": 46363520,
+        "baseline_nodal_reconstruction_calls": 186014080,
+        "candidate_nodal_reconstruction_calls": 93007040,
+        "baseline_neighbor_flux_requests": 790883520,
+        "candidate_neighbor_flux_requests": 395441760,
+        "baseline_flux_cache_hits": 441945280,
+        "candidate_flux_cache_hits": 46503520,
+        "baseline_flux_cache_misses": 348938240,
+        "candidate_flux_cache_misses": 348938240
+      }
+    },
+    "external_resistor_1206": {
+      "baseline_profile_sha256": "010eb72e6dc24f9061d7d1b2b825d975e72e07bef38b41d486e590006df80314",
+      "candidate_profile_sha256": "9d9d45c7857f508bd54a2f91e7861b96c14b89b2f15cfecc479efeb4bacab340",
+      "baseline_wall_seconds": 986.0068292,
+      "candidate_wall_seconds": 765.6520265,
+      "wall_change_fraction": -0.2234820248,
+      "baseline_edge_physics_seconds": 527.3487232,
+      "candidate_edge_physics_seconds": 396.5792594,
+      "edge_physics_change_fraction": -0.2479753113,
+      "full_dd_evaluations": 4,
+      "newton_updates": 662,
+      "vela_bv_V": 6.395887865540998,
+      "boundary_residual_V": 9.136147127719596e-8,
+      "global_electron_continuity_ratio": 3.1158509473598274e-10,
+      "global_hole_continuity_ratio": 3.2378678561858275e-10,
+      "state_sha256": "d14b44b8bee4eeefa1ffc59f2b43fcdfc820bb0dd41acd834f219255c4197355",
+      "counters": {
+        "source_evaluations": 109782192,
+        "baseline_nodal_reconstruction_calls": 440454768,
+        "candidate_nodal_reconstruction_calls": 220227384,
+        "baseline_neighbor_flux_requests": 1872699192,
+        "candidate_neighbor_flux_requests": 936349596,
+        "baseline_flux_cache_hits": 1046463288,
+        "candidate_flux_cache_hits": 110113692,
+        "baseline_flux_cache_misses": 826235904,
+        "candidate_flux_cache_misses": 826235904
+      }
+    }
+  },
+  "field_validation": {
+    "raw_json": "build-bv-performance/edge-c1-2601fd7/voltage_to_current_final/rep_01/vela_sentaurus_field_comparison.json",
+    "potential_absolute_error_p95_V": 0.015810851652886784,
+    "potential_correlation": 0.9999957375517389,
+    "electron_populated_density_error_p95_dex": 0.07862803484028108,
+    "electron_populated_qf_error_p95_V": 0.016476548470367412,
+    "hole_populated_density_error_p95_dex": 0.32550039629419897,
+    "hole_populated_qf_error_p95_V": 0.026275336908214368,
+    "high_field_relative_error_p95": 0.1728600367732048,
+    "high_field_correlation": 0.9928350791819129,
+    "matches_existing_validation": true
+  },
+  "verification": {
+    "test_newton_solver": "pass: 1092 assertions in 78 test cases",
+    "all_candidate_states_byte_identical_to_baseline": true,
+    "mobility_avalanche_btbt_parameters_unchanged": true
+  },
+  "acceptance": {
+    "nodal_reconstruction_calls_reduced_fraction": -0.5,
+    "neighbor_flux_requests_reduced_fraction": -0.5,
+    "neighbor_flux_misses_unchanged": true,
+    "bv_and_boundary_residual_unchanged": true,
+    "global_continuity_unchanged": true,
+    "field_gate_pass": true,
+    "timing_caveat": "single-run wall timing is workload-sensitive; the Voltage-to-Current baseline overlapped a local build/test, so exact counters and byte-identical states are the primary attribution evidence"
+  }
+}
