@@ -1,0 +1,123 @@
+{
+  "schema_version": 1,
+  "optimization": "C3 residual-consistent base edge flux arrays with local perturbation invalidation",
+  "baseline_commit": "abcabb0",
+  "candidate_commit": "6079f9a",
+  "build": {
+    "type": "Release",
+    "compiler": "MSYS2 UCRT64 GCC 16.1.0",
+    "profiling": "internal steady_clock stages; gprof disabled",
+    "threads": 1,
+    "lto": false,
+    "sparselu_ordering": "COLAMD"
+  },
+  "physics_config_sha256": "dc28b33f2a95e9664c8d93c7c54b3cb4cac22941175b43f8b36d955a25a2a7a2",
+  "raw_roots": {
+    "baseline": "build-bv-performance/edge-c5a-abcabb0",
+    "candidate": "build-bv-performance/edge-c3-6079f9a"
+  },
+  "audit": {
+    "source": "docs/validation/bv_edge_residual_jacobian_flux_audit_2026-08-10.json",
+    "baseline_relative_error": 0.759189277930971,
+    "candidate_relative_error": 0.00003877331661396,
+    "acceptance_limit": 0.0005,
+    "pass": true
+  },
+  "scenarios": {
+    "high_field_transition": {
+      "baseline_wall_seconds": 188.6041708,
+      "candidate_wall_seconds": 70.2093078,
+      "wall_change_fraction": -0.6277425493710238,
+      "baseline_edge_physics_seconds": 86.8692711,
+      "candidate_edge_physics_seconds": 29.51849,
+      "edge_physics_change_fraction": -0.6601964120774118,
+      "baseline_newton_updates": 191,
+      "candidate_newton_updates": 62,
+      "full_dd_evaluations": 1,
+      "source_evaluations": 10266208,
+      "base_flux_reuses": 56192088,
+      "perturbed_flux_recomputations": 25482992,
+      "flux_cache_hits": 5887024,
+      "flux_cache_misses": 25482992,
+      "profile_sha256": "b50b4ddc1516d9462e80b8144ae39b3787716b0df296d61dca40270e8b221f1c",
+      "inner_voltage_V": 6.099590877047813,
+      "global_electron_continuity_ratio": 6.453024514586753e-11,
+      "global_hole_continuity_ratio": 2.1446926568150348e-10,
+      "state_sha256": "906fca04d55608d13700256de4e3a7596dc17e270fdc49a7e1982567ef52ff8a"
+    },
+    "voltage_to_current_final": {
+      "baseline_wall_seconds": 251.1013779,
+      "candidate_wall_seconds": 66.3984024,
+      "wall_change_fraction": -0.735571333955631,
+      "baseline_edge_physics_seconds": 122.003348,
+      "candidate_edge_physics_seconds": 28.9962163,
+      "edge_physics_change_fraction": -0.762332618117988,
+      "baseline_newton_updates": 279,
+      "candidate_newton_updates": 66,
+      "full_dd_evaluations": 2,
+      "source_evaluations": 10928544,
+      "base_flux_reuses": 59817384,
+      "perturbed_flux_recomputations": 27127056,
+      "flux_cache_hits": 6266832,
+      "flux_cache_misses": 27127056,
+      "profile_sha256": "da5b28670ef4944fe30b0b463cda8ccf3c141220afea91981c597fbbe0399a02",
+      "vela_bv_V": 6.395904148131495,
+      "baseline_vela_bv_V": 6.395904174606575,
+      "boundary_residual_A_per_um": -9.824013198528499e-12,
+      "global_electron_continuity_ratio": 2.907608588340255e-10,
+      "global_hole_continuity_ratio": 2.2351284371404937e-10,
+      "state_sha256": "c03a6f4e8df3535505e49a9ec83334f08bd3cce2cc8e93ea2af06adbe66d9433"
+    },
+    "external_resistor_1206": {
+      "baseline_wall_seconds": 606.2814719,
+      "candidate_wall_seconds": 170.7106898,
+      "wall_change_fraction": -0.7184299740102283,
+      "baseline_edge_physics_seconds": 296.5638946,
+      "candidate_edge_physics_seconds": 74.8395773,
+      "edge_physics_change_fraction": -0.7476443401819286,
+      "baseline_newton_updates": 662,
+      "candidate_newton_updates": 158,
+      "baseline_full_dd_evaluations": 4,
+      "candidate_full_dd_evaluations": 3,
+      "source_evaluations": 26327856,
+      "base_flux_reuses": 144105516,
+      "perturbed_flux_recomputations": 65351544,
+      "flux_cache_hits": 15097368,
+      "flux_cache_misses": 65351544,
+      "profile_sha256": "2a561e351a87285b9de94125aa69a57dbb60653ecf9f0214c4955f0c8b605538",
+      "vela_bv_V": 6.39588786553429,
+      "baseline_vela_bv_V": 6.395887865540998,
+      "boundary_residual_V": -0.000030927941679692594,
+      "boundary_residual_tolerance_V": 0.0001,
+      "global_electron_continuity_ratio": 4.13806197820157e-11,
+      "global_hole_continuity_ratio": 2.260470153816864e-12,
+      "state_sha256": "9df5a87eff788adce23017a7f9c88f5f66841760e26f69da8f0b8baab31b2032"
+    }
+  },
+  "field_validation": {
+    "source": "build-bv-performance/edge-c3-6079f9a/voltage_to_current_final/rep_01/vela_sentaurus_field_comparison.json",
+    "voltage_relative_error": 0.0018471616488938058,
+    "potential_absolute_error_p95_V": 0.015810832830059754,
+    "electron_density_populated_absolute_error_p95_dex": 0.07862807456956157,
+    "electron_qf_populated_absolute_error_p95_V": 0.016476543487851193,
+    "hole_density_populated_absolute_error_p95_dex": 0.3255004940953125,
+    "hole_qf_populated_absolute_error_p95_V": 0.02627533244172479,
+    "high_field_relative_error_p95": 0.172860035875826,
+    "high_field_correlation": 0.9928350792241813,
+    "pass": true
+  },
+  "verification": {
+    "test_newton_solver": "pass: 1096 assertions in 79 test cases",
+    "benchmark_parser_tests": "pass: 9 tests",
+    "bv_boundary_continuity_and_field_gates": true,
+    "mobility_avalanche_btbt_parameters_unchanged": true
+  },
+  "acceptance": {
+    "residual_jacobian_flux_audit_pass": true,
+    "high_field_gate_pass": true,
+    "voltage_to_current_gate_pass": true,
+    "external_resistor_gate_pass": true,
+    "timing_caveat": "single-run wall timing is workload-sensitive; Newton-count reduction, audit error, and boundary and field gates are the primary attribution evidence",
+    "state_hash_note": "C3 intentionally changes Newton trajectories because it corrects the Jacobian flux path; hashes are provenance records and are not baseline equality claims"
+  }
+}
