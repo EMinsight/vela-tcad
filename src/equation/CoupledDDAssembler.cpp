@@ -2423,6 +2423,27 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
             impactIonizationConfig_);
     const bool dualFaceVectorCurrentMagnitude =
         impactIonizationConfig_.currentMagnitudeMode == "dual_face_vector_mag";
+    const bool reconstructedAvalancheCurrent =
+        dualFaceVectorCurrentMagnitude || cellCurrentReconstructedCurrent ||
+        cellVectorCurrentReconstructedCurrent ||
+        nodalVectorCurrentReconstructedCurrent;
+    const bool psiGradientProxyCurrent =
+        detail::usesPsiGradientProxyAvalancheCurrent(impactIonizationConfig_);
+    const bool cellReconstructedProxyCurrent =
+        detail::usesCellReconstructedAvalancheCurrent(impactIonizationConfig_);
+    const bool conservedTotalCurrent =
+        detail::usesConservedTotalCurrentAvalancheCurrent(
+            impactIonizationConfig_);
+    const bool rawAvalancheCurrent =
+        !reconstructedAvalancheCurrent && !psiGradientProxyCurrent &&
+        !cellReconstructedProxyCurrent && !conservedTotalCurrent;
+    const bool scalarCurrentAlignedImpact =
+        currentAlignedImpact &&
+        !(sentaurusEparallelImpact &&
+          nodalVectorCurrentReconstructedCurrent);
+    const bool directEdgeFluxRequired =
+        scalarCurrentAlignedImpact || conservedTotalCurrent ||
+        rawAvalancheCurrent;
     const std::vector<Real> nodeElectronDrivingFields = (impactIonizationCoupled_ && qfImpact)
         ? detail::computeElectronAvalancheNodeQuasiFermiDrivingFields(
             impactIonizationConfig_, mesh_, nodeCells_, psi, phinState, n, ni_, Vt_, fieldFactor)
@@ -2614,6 +2635,8 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
     std::uint64_t avalanchePerturbedEvaluations = 0;
     std::uint64_t avalancheNodalReconstructionCalls = 0;
     std::uint64_t avalancheNeighborFluxRequests = 0;
+    std::uint64_t avalancheDirectFluxEvaluations = 0;
+    std::uint64_t avalancheDirectFluxSkips = 0;
 
     // Scharfetter-Gummel edge-current avalanche source for one edge, evaluated
     // directly from the endpoint potentials. This mirrors
@@ -2939,16 +2962,27 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
             e, CarrierType::Electron, electronMobilityField, &psi);
         const Real mup = cachedEdgeMobility(
             e, CarrierType::Hole, holeMobilityField, &psi);
-        const Real signedFluxN = mun > 0.0
+        const bool evaluateDirectElectronFlux =
+            mun > 0.0 && directEdgeFluxRequired;
+        const bool evaluateDirectHoleFlux =
+            mup > 0.0 && directEdgeFluxRequired;
+        avalancheDirectFluxEvaluations +=
+            static_cast<std::uint64_t>(evaluateDirectElectronFlux) +
+            static_cast<std::uint64_t>(evaluateDirectHoleFlux);
+        avalancheDirectFluxSkips +=
+            static_cast<std::uint64_t>(mun > 0.0 && !evaluateDirectElectronFlux) +
+            static_cast<std::uint64_t>(mup > 0.0 && !evaluateDirectHoleFlux);
+        const Real signedFluxN = evaluateDirectElectronFlux
             ? sgElectronContinuityFluxFromQuasiFermiVariableNi(
                 niI, niJ, psi_i, psi_j, phin_i, phin_j, Vt_, mun * Vt_ / h, bgnEnabled_)
             : 0.0;
-        const Real signedFluxP = mup > 0.0
+        const Real signedFluxP = evaluateDirectHoleFlux
             ? sgHoleContinuityFluxFromQuasiFermiVariableNi(
                 niI, niJ, psi_i, psi_j, phip_i, phip_j, Vt_, mup * Vt_ / h, bgnEnabled_)
             : 0.0;
-        const Real conservedTotalFluxMagnitude =
-            detail::conservedTotalCurrentFluxMagnitude(signedFluxN, signedFluxP);
+        const Real conservedTotalFluxMagnitude = conservedTotalCurrent
+            ? detail::conservedTotalCurrentFluxMagnitude(signedFluxN, signedFluxP)
+            : 0.0;
 
         Real electronSource = 0.0;
         if (mun > 0.0) {
@@ -3481,6 +3515,12 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
     incrementPerformanceCounter(
         "jacobian.edge_avalanche_neighbor_flux_requests",
         avalancheNeighborFluxRequests);
+    incrementPerformanceCounter(
+        "jacobian.edge_avalanche_direct_flux_evaluations",
+        avalancheDirectFluxEvaluations);
+    incrementPerformanceCounter(
+        "jacobian.edge_avalanche_direct_flux_skips",
+        avalancheDirectFluxSkips);
 
     {
         ScopedPerformanceTimer cellPhysicsTimer("jacobian.cell_physics");

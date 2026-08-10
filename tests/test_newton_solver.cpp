@@ -762,6 +762,8 @@ TEST_CASE("CoupledDDAssembler: edge avalanche profiling counters preserve exact 
     REQUIRE(evaluations == baseEvaluations + perturbedEvaluations);
     REQUIRE(fluxRequests == fluxHits + fluxMisses);
     REQUIRE(counters.at("jacobian.edge_avalanche_nodal_reconstruction_calls") > 0);
+    REQUIRE(counters.at("jacobian.edge_avalanche_direct_flux_evaluations") == 0);
+    REQUIRE(counters.at("jacobian.edge_avalanche_direct_flux_skips") > 0);
 }
 
 TEST_CASE("CoupledDDAssembler: contact-referenced quasi-Fermi coordinates preserve physical state",
