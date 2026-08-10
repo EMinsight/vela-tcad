@@ -90,6 +90,39 @@ class BVPerformanceBenchmarksTest(unittest.TestCase):
                 )
             self.assertAlmostEqual(BENCHMARKS.extract_bv(path), 6.4)
 
+    def test_extract_bv_accepts_nearest_point_within_existing_tolerance(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sweep.csv"
+            with path.open("w", newline="", encoding="utf-8") as handle:
+                writer = csv.DictWriter(
+                    handle,
+                    fieldnames=[
+                        "converged",
+                        "inner_voltage_V",
+                        "current_total_A_per_um",
+                    ],
+                )
+                writer.writeheader()
+                writer.writerows(
+                    [
+                        {
+                            "converged": "1",
+                            "inner_voltage_V": "6.2",
+                            "current_total_A_per_um": "6e-5",
+                        },
+                        {
+                            "converged": "1",
+                            "inner_voltage_V": "6.395904148",
+                            "current_total_A_per_um": "9.9999990176e-5",
+                        },
+                    ]
+                )
+            self.assertIsNone(BENCHMARKS.extract_bv(path))
+            self.assertAlmostEqual(
+                BENCHMARKS.extract_bv(path, 1.0e-4, 1.0e-10),
+                6.395904148,
+            )
+
     def test_parse_gprof_flat_writes_machine_readable_rows(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

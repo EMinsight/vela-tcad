@@ -314,7 +314,11 @@ def last_csv_row(path: Path) -> dict[str, str] | None:
     return rows[-1] if rows else None
 
 
-def extract_bv(sweep_csv: Path) -> float | None:
+def extract_bv(
+    sweep_csv: Path,
+    threshold: float = 1.0e-4,
+    current_tolerance: float = 0.0,
+) -> float | None:
     if not sweep_csv.exists():
         return None
     with sweep_csv.open(newline="", encoding="utf-8-sig") as handle:
@@ -324,13 +328,18 @@ def extract_bv(sweep_csv: Path) -> float | None:
         for row in rows
         if row.get("inner_voltage_V") and row.get("current_total_A_per_um")
     ]
-    threshold = 1.0e-4
     for (voltage0, current0), (voltage1, current1) in zip(pairs, pairs[1:]):
         if current0 <= threshold <= current1:
             if current1 == current0:
                 return voltage1
             fraction = (threshold - current0) / (current1 - current0)
             return voltage0 + fraction * (voltage1 - voltage0)
+    if current_tolerance > 0.0 and pairs:
+        voltage, current = min(
+            pairs, key=lambda pair: abs(pair[1] - threshold)
+        )
+        if abs(current - threshold) <= current_tolerance:
+            return voltage
     return None
 
 
@@ -360,6 +369,13 @@ def parse_result(output: Path, manifest: dict[str, Any]) -> dict[str, Any]:
     )
     fresh = [row for row in appended if row.get("resumed") == "0"]
     sweep_row = last_csv_row(output / "sweep.csv")
+    config = json.loads((output / "simulation.json").read_text(encoding="utf-8"))
+    validation = config.get("_validation_case", {})
+    voltage_to_current = config.get("sweep", {}).get("voltage_to_current", {})
+    bv_threshold = float(validation.get("current_threshold_A_per_um", 1.0e-4))
+    current_tolerance = float(
+        voltage_to_current.get("current_tolerance_A_per_um", 0.0)
+    )
     result: dict[str, Any] = {
         "full_dd_evaluations": len(fresh),
         "newton_iterations": sum(int(row["newton_iterations"]) for row in fresh),
@@ -379,7 +395,9 @@ def parse_result(output: Path, manifest: dict[str, Any]) -> dict[str, Any]:
             if sweep_row and sweep_row["global_hole_continuity_closure_ratio"]
             else None
         ),
-        "vela_bv_V": extract_bv(output / "sweep.csv"),
+        "vela_bv_V": extract_bv(
+            output / "sweep.csv", bv_threshold, current_tolerance
+        ),
     }
     if sweep_row:
         if scenario == "voltage_to_current_final":
