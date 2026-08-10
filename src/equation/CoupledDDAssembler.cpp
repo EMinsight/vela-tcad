@@ -352,6 +352,7 @@ CoupledDDAssembler::CoupledDDAssembler(
             MobilityDopingBasis::CellReconstructedTotalImpurity;
     }
     buildEdgeAssemblyKernels();
+    buildNodalCurrentReconstructionKernels();
 }
 
 void CoupledDDAssembler::buildEdgeAssemblyKernels()
@@ -365,6 +366,16 @@ void CoupledDDAssembler::buildEdgeAssemblyKernels()
         kernel.n1 = edge.n1;
         kernel.length = edge.length;
         kernel.coupling = couple_[edgeId];
+        if (edge.length > 1.0e-30) {
+            const Node& node0 = mesh_.getNode(edge.n0);
+            const Node& node1 = mesh_.getNode(edge.n1);
+            kernel.tangent = Point2{
+                (node1.x - node0.x) / edge.length,
+                (node1.y - node0.y) / edge.length};
+        }
+        kernel.avalancheSourceArea = detail::avalancheSourceEdgeArea(
+            impactIonizationConfig_, edgeCells_, mesh_, edgeId,
+            &cellMaterials_);
         if (usesFermiDirac(carrierStatistics_)) {
             kernel.electronLogNiNc0 =
                 std::log(ni_[edge.n0] / Nc_[edge.n0]);
@@ -437,6 +448,42 @@ void CoupledDDAssembler::buildEdgeAssemblyKernels()
                     kernel.holeLowFieldMobilities.push_back(lowField);
             }
         }
+    }
+}
+
+void CoupledDDAssembler::buildNodalCurrentReconstructionKernels()
+{
+    nodalCurrentReconstructionKernels_.resize(mesh_.numNodes());
+    for (Index node = 0; node < mesh_.numNodes(); ++node) {
+        NodalCurrentReconstructionKernel& reconstruction =
+            nodalCurrentReconstructionKernels_[node];
+        reconstruction.terms.reserve(nodeEdges_[node].size());
+        for (Index edgeId : nodeEdges_[node]) {
+            const EdgeAssemblyKernel& edge = edgeAssemblyKernels_[edgeId];
+            if (edge.coupling <= 0.0 || !edge.activeTransport ||
+                edge.length <= 1.0e-30) {
+                continue;
+            }
+            reconstruction.terms.push_back(
+                NodalCurrentReconstructionTerm{edgeId, edge.tangent, edge.length});
+            reconstruction.a00 +=
+                edge.length * edge.tangent.x() * edge.tangent.x();
+            reconstruction.a01 +=
+                edge.length * edge.tangent.x() * edge.tangent.y();
+            reconstruction.a11 +=
+                edge.length * edge.tangent.y() * edge.tangent.y();
+            reconstruction.fallbackWeight += edge.length;
+        }
+        reconstruction.determinant =
+            reconstruction.a00 * reconstruction.a11 -
+            reconstruction.a01 * reconstruction.a01;
+        const Real scale = std::max({
+            std::abs(reconstruction.a00 * reconstruction.a11),
+            std::abs(reconstruction.a01 * reconstruction.a01),
+            Real{1.0e-300}});
+        reconstruction.useLeastSquares =
+            reconstruction.terms.size() >= 2 &&
+            std::abs(reconstruction.determinant) > 1.0e-24 * scale;
     }
 }
 
@@ -2655,8 +2702,7 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
         const Real pMid = detail::cellReconstructedAvalancheMidpointDensity(
             impactIonizationConfig_, p_i, p_j, psi_j, psi_i, Vt_);
         const Real signedElectricField01 = -(psi_j - psi_i) / h * fieldFactor;
-        const Real edgeArea = detail::avalancheSourceEdgeArea(
-            impactIonizationConfig_, edgeCells_, mesh_, e, &cellMaterials_);
+        const Real edgeArea = edgeAssemblyKernels_[e].avalancheSourceArea;
 
         auto signedElectronFluxForEdge = [&](Index queryEdge) -> Real {
             ++avalancheNeighborFluxRequests;
@@ -2810,10 +2856,32 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
             return detail::medianDualFaceVectorReconstructedEdgeFluxMagnitude(
                 e, signedFlux, edgeCells_, cellEdges, mesh_);
         };
-        const auto activeTransportEdge = [&](Index queryEdge) {
-            return queryEdge < edgeAssemblyKernels_.size() &&
-                edgeAssemblyKernels_[queryEdge].coupling > 0.0 &&
-                edgeAssemblyKernels_[queryEdge].activeTransport;
+        const auto nodalCurrentVector = [&](Index node, auto&& signedFluxForEdge)
+            -> Point2 {
+            if (node >= nodalCurrentReconstructionKernels_.size())
+                return Point2::Zero();
+            const NodalCurrentReconstructionKernel& reconstruction =
+                nodalCurrentReconstructionKernels_[node];
+            Real b0 = 0.0;
+            Real b1 = 0.0;
+            Point2 fallback = Point2::Zero();
+            for (const NodalCurrentReconstructionTerm& term :
+                 reconstruction.terms) {
+                const Real flux = signedFluxForEdge(term.edgeId);
+                b0 += term.weight * term.tangent.x() * flux;
+                b1 += term.weight * term.tangent.y() * flux;
+                fallback += term.weight * flux * term.tangent;
+            }
+            if (reconstruction.useLeastSquares) {
+                return Point2{
+                    (b0 * reconstruction.a11 - b1 * reconstruction.a01) /
+                        reconstruction.determinant,
+                    (reconstruction.a00 * b1 - reconstruction.a01 * b0) /
+                        reconstruction.determinant};
+            }
+            if (reconstruction.fallbackWeight > 0.0)
+                return Point2(fallback / reconstruction.fallbackWeight);
+            return Point2::Zero();
         };
         detail::EdgeAveragedNodalCurrent electronNodalReconstruction;
         detail::EdgeAveragedNodalCurrent holeNodalReconstruction;
@@ -2824,9 +2892,14 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
             if (hasElectronNodalReconstruction)
                 return electronNodalReconstruction;
             avalancheNodalReconstructionCalls += 2;
-            electronNodalReconstruction = detail::edgeAveragedNodalCurrent(
-                e, nodeEdges, mesh_, signedElectronFluxForEdge,
-                activeTransportEdge);
+            const EdgeAssemblyKernel& edge = edgeAssemblyKernels_[e];
+            const Point2 current0 = nodalCurrentVector(
+                edge.n0, signedElectronFluxForEdge);
+            const Point2 current1 = nodalCurrentVector(
+                edge.n1, signedElectronFluxForEdge);
+            electronNodalReconstruction = {
+                0.5 * (current0 + current1),
+                0.5 * (current0.norm() + current1.norm())};
             hasElectronNodalReconstruction = true;
             return electronNodalReconstruction;
         };
@@ -2835,9 +2908,14 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
             if (hasHoleNodalReconstruction)
                 return holeNodalReconstruction;
             avalancheNodalReconstructionCalls += 2;
-            holeNodalReconstruction = detail::edgeAveragedNodalCurrent(
-                e, nodeEdges, mesh_, signedHoleFluxForEdge,
-                activeTransportEdge);
+            const EdgeAssemblyKernel& edge = edgeAssemblyKernels_[e];
+            const Point2 current0 = nodalCurrentVector(
+                edge.n0, signedHoleFluxForEdge);
+            const Point2 current1 = nodalCurrentVector(
+                edge.n1, signedHoleFluxForEdge);
+            holeNodalReconstruction = {
+                0.5 * (current0 + current1),
+                0.5 * (current0.norm() + current1.norm())};
             hasHoleNodalReconstruction = true;
             return holeNodalReconstruction;
         };

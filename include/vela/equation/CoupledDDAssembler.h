@@ -309,6 +309,8 @@ private:
         Real length = 0.0;
         Real coupling = 0.0;
         Real poissonCoupling = 0.0;
+        Point2 tangent = Point2::Zero();
+        Real avalancheSourceArea = 0.0;
         Real electronLogNiNc0 = 0.0;
         Real electronLogNiNc1 = 0.0;
         Real electronDriftOffset = 0.0;
@@ -321,8 +323,23 @@ private:
         std::vector<Real> electronLowFieldMobilities;
         std::vector<Real> holeLowFieldMobilities;
     };
+    struct NodalCurrentReconstructionTerm {
+        Index edgeId = 0;
+        Point2 tangent = Point2::Zero();
+        Real weight = 0.0;
+    };
+    struct NodalCurrentReconstructionKernel {
+        std::vector<NodalCurrentReconstructionTerm> terms;
+        Real a00 = 0.0;
+        Real a01 = 0.0;
+        Real a11 = 0.0;
+        Real determinant = 0.0;
+        Real fallbackWeight = 0.0;
+        bool useLeastSquares = false;
+    };
 
     void buildEdgeAssemblyKernels();
+    void buildNodalCurrentReconstructionKernels();
     Real cachedEdgeMobility(
         Index edgeId,
         CarrierType carrier,
@@ -361,6 +378,8 @@ private:
     std::vector<std::vector<Index>> nodeEdges_;
     std::vector<bool> contactNodes_;
     std::vector<EdgeAssemblyKernel> edgeAssemblyKernels_;
+    std::vector<NodalCurrentReconstructionKernel>
+        nodalCurrentReconstructionKernels_;
     std::vector<Real> vol_;
     std::vector<Real> couple_;
     VectorXd fixedInterfaceChargeRhs_;
