@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "optimization": "C5b reuse psi-derived electric vectors during QF perturbations",
+  "baseline_commit": "cc2d1f2",
+  "candidate_commit": "4507cab",
+  "raw_roots": {
+    "baseline": "build-bv-performance/edge-c4-cc2d1f2",
+    "candidate": "build-bv-performance/edge-c5b-4507cab"
+  },
+  "guard": {
+    "reuse_when": "Sentaurus Eparallel with nodal reconstructed current and no psi perturbation",
+    "recompute_when": "psi perturbation is active",
+    "cached_quantity": "edge-averaged electric-field vector including the original fallback branch"
+  },
+  "scenarios": {
+    "high_field_transition": {
+      "baseline_wall_seconds": 63.0765204,
+      "candidate_wall_seconds": 61.6577619,
+      "wall_change_fraction": -0.022492656395802113,
+      "baseline_edge_physics_seconds": 24.7083596,
+      "candidate_edge_physics_seconds": 24.0743744,
+      "edge_physics_change_fraction": -0.02565873292535381,
+      "electric_vector_reuses": 5892728,
+      "electric_vector_recomputations": 1399712,
+      "full_dd_evaluations": 1,
+      "newton_updates": 62,
+      "profile_sha256": "fdacfbbeefdd251e9b46356df33548572b055e30aa455a69e0f9cebf93747143",
+      "state_sha256": "906fca04d55608d13700256de4e3a7596dc17e270fdc49a7e1982567ef52ff8a"
+    },
+    "voltage_to_current_final": {
+      "baseline_wall_seconds": 63.6746502,
+      "candidate_wall_seconds": 61.1446428,
+      "wall_change_fraction": -0.03973335372951925,
+      "baseline_edge_physics_seconds": 26.1680817,
+      "candidate_edge_physics_seconds": 24.8430689,
+      "edge_physics_change_fraction": -0.050634693639006745,
+      "electric_vector_reuses": 6272904,
+      "electric_vector_recomputations": 1490016,
+      "full_dd_evaluations": 2,
+      "newton_updates": 66,
+      "vela_bv_V": 6.395904148131495,
+      "boundary_residual_A_per_um": -9.824013198528499e-12,
+      "profile_sha256": "2bbc1e81cff959b7309d4e1067b9f97d4f33e1b055ca4cec0406c6fca7eaa93e",
+      "state_sha256": "c03a6f4e8df3535505e49a9ec83334f08bd3cce2cc8e93ea2af06adbe66d9433"
+    },
+    "external_resistor_1206": {
+      "baseline_wall_seconds": 161.0556627,
+      "candidate_wall_seconds": 148.8899861,
+      "wall_change_fraction": -0.07553709317666857,
+      "baseline_edge_physics_seconds": 65.8699609,
+      "candidate_edge_physics_seconds": 60.3228019,
+      "edge_physics_change_fraction": -0.08421378917199252,
+      "electric_vector_reuses": 15111996,
+      "electric_vector_recomputations": 3589584,
+      "full_dd_evaluations": 3,
+      "newton_updates": 158,
+      "vela_bv_V": 6.39588786553429,
+      "boundary_residual_V": -0.000030927941679692594,
+      "boundary_residual_tolerance_V": 0.0001,
+      "profile_sha256": "a7a41a2d5c343643508d6e41f1e5d3777bbd64847bc930655429677a06a6a1da",
+      "state_sha256": "9df5a87eff788adce23017a7f9c88f5f66841760e26f69da8f0b8baab31b2032"
+    }
+  },
+  "verification": {
+    "test_newton_solver": "pass: 1102 assertions in 79 test cases",
+    "all_candidate_states_byte_identical_to_baseline": true,
+    "bv_boundary_and_continuity_outputs_unchanged": true,
+    "field_gate_reused_from_byte_identical_C4_state": true,
+    "mobility_avalanche_btbt_parameters_unchanged": true
+  },
+  "acceptance": {
+    "all_three_controlled_benchmarks_pass": true,
+    "timing_caveat": "single-run wall timing is workload-sensitive; exact reuse counts and byte-identical states are the primary attribution evidence"
+  }
+}
