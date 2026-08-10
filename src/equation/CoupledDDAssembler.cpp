@@ -2815,16 +2815,31 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
                 edgeAssemblyKernels_[queryEdge].coupling > 0.0 &&
                 edgeAssemblyKernels_[queryEdge].activeTransport;
         };
-        auto nodalVectorCurrent = [&](auto&& signedFluxForEdge) -> Point2 {
+        detail::EdgeAveragedNodalCurrent electronNodalReconstruction;
+        detail::EdgeAveragedNodalCurrent holeNodalReconstruction;
+        bool hasElectronNodalReconstruction = false;
+        bool hasHoleNodalReconstruction = false;
+        auto reconstructedElectronNodalCurrent = [&]()
+            -> const detail::EdgeAveragedNodalCurrent& {
+            if (hasElectronNodalReconstruction)
+                return electronNodalReconstruction;
             avalancheNodalReconstructionCalls += 2;
-            return detail::edgeAveragedNodalCurrentVector(
-                e, nodeEdges, mesh_, signedFluxForEdge, activeTransportEdge);
+            electronNodalReconstruction = detail::edgeAveragedNodalCurrent(
+                e, nodeEdges, mesh_, signedElectronFluxForEdge,
+                activeTransportEdge);
+            hasElectronNodalReconstruction = true;
+            return electronNodalReconstruction;
         };
-        auto nodalVectorCurrentReconstructedFlux =
-            [&](auto&& signedFluxForEdge) -> Real {
+        auto reconstructedHoleNodalCurrent = [&]()
+            -> const detail::EdgeAveragedNodalCurrent& {
+            if (hasHoleNodalReconstruction)
+                return holeNodalReconstruction;
             avalancheNodalReconstructionCalls += 2;
-            return detail::edgeAveragedNodalCurrentMagnitude(
-                e, nodeEdges, mesh_, signedFluxForEdge, activeTransportEdge);
+            holeNodalReconstruction = detail::edgeAveragedNodalCurrent(
+                e, nodeEdges, mesh_, signedHoleFluxForEdge,
+                activeTransportEdge);
+            hasHoleNodalReconstruction = true;
+            return holeNodalReconstruction;
         };
         Point2 edgeElectricVector = Point2::Zero();
         if (sentaurusEparallelImpact &&
@@ -2864,7 +2879,7 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
                 nodalVectorCurrentReconstructedCurrent
                 ? detail::sentaurusEparallelAvalancheDrivingField(
                     edgeElectricVector,
-                    -nodalVectorCurrent(signedElectronFluxForEdge))
+                    -reconstructedElectronNodalCurrent().vector)
                 : (currentAlignedImpact
                 ? detail::parallelCurrentAvalancheDrivingField(signedElectricField01, signedFluxN)
                 : detail::electronAvalancheDrivingField(
@@ -2873,8 +2888,7 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
             const Real reconstructedFluxN = dualFaceVectorCurrentMagnitude
                 ? dualFaceVectorCurrentReconstructedFlux(signedElectronFluxForEdge)
                 : (nodalVectorCurrentReconstructedCurrent
-                    ? nodalVectorCurrentReconstructedFlux(
-                        signedElectronFluxForEdge)
+                    ? reconstructedElectronNodalCurrent().magnitude
                     : (cellVectorCurrentReconstructedCurrent
                     ? cellVectorCurrentReconstructedFlux(signedElectronFluxForEdge)
                     : (cellCurrentReconstructedCurrent
@@ -2900,7 +2914,7 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
                 nodalVectorCurrentReconstructedCurrent
                 ? detail::sentaurusEparallelAvalancheDrivingField(
                     edgeElectricVector,
-                    nodalVectorCurrent(signedHoleFluxForEdge))
+                    reconstructedHoleNodalCurrent().vector)
                 : (currentAlignedImpact
                 ? detail::parallelCurrentAvalancheDrivingField(signedElectricField01, signedFluxP)
                 : detail::holeAvalancheDrivingField(
@@ -2909,8 +2923,7 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
             const Real reconstructedFluxP = dualFaceVectorCurrentMagnitude
                 ? dualFaceVectorCurrentReconstructedFlux(signedHoleFluxForEdge)
                 : (nodalVectorCurrentReconstructedCurrent
-                    ? nodalVectorCurrentReconstructedFlux(
-                        signedHoleFluxForEdge)
+                    ? reconstructedHoleNodalCurrent().magnitude
                     : (cellVectorCurrentReconstructedCurrent
                     ? cellVectorCurrentReconstructedFlux(signedHoleFluxForEdge)
                     : (cellCurrentReconstructedCurrent

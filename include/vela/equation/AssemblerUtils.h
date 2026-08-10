@@ -475,6 +475,31 @@ inline Point2 nodalLeastSquaresCurrentVector(
     return Point2::Zero();
 }
 
+struct EdgeAveragedNodalCurrent {
+    Point2 vector = Point2::Zero();
+    Real magnitude = 0.0;
+};
+
+template <typename FluxAccessor, typename ActiveAccessor>
+inline EdgeAveragedNodalCurrent edgeAveragedNodalCurrent(
+    Index                                  edgeId,
+    const std::vector<std::vector<Index>>& nodeEdges,
+    const DeviceMesh&                      mesh,
+    FluxAccessor&&                         signedFlux,
+    ActiveAccessor&&                       activeEdge)
+{
+    if (edgeId >= mesh.numEdges())
+        return {};
+    const Edge& edge = mesh.getEdge(edgeId);
+    const Point2 current0 = nodalLeastSquaresCurrentVector(
+        edge.n0, nodeEdges, mesh, signedFlux, activeEdge);
+    const Point2 current1 = nodalLeastSquaresCurrentVector(
+        edge.n1, nodeEdges, mesh, signedFlux, activeEdge);
+    return {
+        0.5 * (current0 + current1),
+        0.5 * (current0.norm() + current1.norm())};
+}
+
 template <typename FluxAccessor, typename ActiveAccessor>
 inline Point2 edgeAveragedNodalCurrentVector(
     Index                                  edgeId,
@@ -483,14 +508,10 @@ inline Point2 edgeAveragedNodalCurrentVector(
     FluxAccessor&&                         signedFlux,
     ActiveAccessor&&                       activeEdge)
 {
-    if (edgeId >= mesh.numEdges())
-        return Point2::Zero();
-    const Edge& edge = mesh.getEdge(edgeId);
-    return 0.5 * (
-        nodalLeastSquaresCurrentVector(
-            edge.n0, nodeEdges, mesh, signedFlux, activeEdge) +
-        nodalLeastSquaresCurrentVector(
-            edge.n1, nodeEdges, mesh, signedFlux, activeEdge));
+    return edgeAveragedNodalCurrent(
+        edgeId, nodeEdges, mesh,
+        std::forward<FluxAccessor>(signedFlux),
+        std::forward<ActiveAccessor>(activeEdge)).vector;
 }
 
 template <typename FluxAccessor, typename ActiveAccessor>
@@ -501,14 +522,10 @@ inline Real edgeAveragedNodalCurrentMagnitude(
     FluxAccessor&&                         signedFlux,
     ActiveAccessor&&                       activeEdge)
 {
-    if (edgeId >= mesh.numEdges())
-        return 0.0;
-    const Edge& edge = mesh.getEdge(edgeId);
-    const Point2 current0 = nodalLeastSquaresCurrentVector(
-        edge.n0, nodeEdges, mesh, signedFlux, activeEdge);
-    const Point2 current1 = nodalLeastSquaresCurrentVector(
-        edge.n1, nodeEdges, mesh, signedFlux, activeEdge);
-    return 0.5 * (current0.norm() + current1.norm());
+    return edgeAveragedNodalCurrent(
+        edgeId, nodeEdges, mesh,
+        std::forward<FluxAccessor>(signedFlux),
+        std::forward<ActiveAccessor>(activeEdge)).magnitude;
 }
 
 
