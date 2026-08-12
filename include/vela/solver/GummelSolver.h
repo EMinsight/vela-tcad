@@ -66,6 +66,7 @@ struct GummelConfig {
     double carrierFloor = 1.0; ///< Minimum solved carrier concentration [m^-3] for quasi-Fermi consistency.
     MobilityModelConfig mobility{}; ///< Mobility model configuration
     std::vector<std::string> recombination = {"srh"}; ///< e.g. {"srh", "auger"}
+    SRHDopingDependenceConfig srhDopingDependence{}; ///< Sentaurus SRH(DopingDep).
     BandToBandTunnelingConfig bandToBand{}; ///< Local pair generation, including Sentaurus E2.
     ImpactIonizationModelConfig impactIonization; ///< Avalanche generation model.
     BandgapNarrowingConfig bandgapNarrowing; ///< Effective ni model for high doping.

@@ -1,4 +1,5 @@
 #include "vela/physics/RecombinationModel.h"
+#include <nlohmann/json.hpp>
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
@@ -28,6 +29,31 @@ Real limitedExcessValue(Real value)
     return std::clamp(value, -limit, limit);
 }
 
+Real dopingDependentLifetime(Real concentration,
+                             const SRHLifetimeParameters& parameters)
+{
+    const Real doping = std::abs(concentration);
+    const Real ratio = doping / parameters.referenceDoping;
+    return parameters.tauMin +
+        (parameters.tauMax - parameters.tauMin) /
+            (1.0 + std::pow(ratio, parameters.gamma));
+}
+
+void validateLifetimeParameters(const SRHLifetimeParameters& parameters,
+                                const char* carrier)
+{
+    if (!std::isfinite(parameters.tauMin) || parameters.tauMin < 0.0 ||
+        !std::isfinite(parameters.tauMax) || parameters.tauMax <= 0.0 ||
+        parameters.tauMin > parameters.tauMax ||
+        !std::isfinite(parameters.referenceDoping) ||
+        parameters.referenceDoping <= 0.0 ||
+        !std::isfinite(parameters.gamma) || parameters.gamma <= 0.0) {
+        throw std::invalid_argument(
+            std::string("RecombinationModel: invalid ") + carrier +
+            " SRH doping-dependent lifetime parameters.");
+    }
+}
+
 } // namespace
 
 RecombinationModel::RecombinationModel(RecombinationModelConfig config)
@@ -49,28 +75,67 @@ RecombinationModel::RecombinationModel(RecombinationModelConfig config)
 
     if (srhEnabled_ && (config_.taun <= 0.0 || config_.taup <= 0.0))
         throw std::invalid_argument("RecombinationModel: SRH lifetimes must be positive.");
+    if (config_.srhDopingDependence.enabled) {
+        if (config_.srhDopingDependence.concentrationBasis != "total_impurity" &&
+            config_.srhDopingDependence.concentrationBasis != "net_doping") {
+            throw std::invalid_argument(
+                "RecombinationModel: SRH doping concentration_basis must be "
+                "'total_impurity' or 'net_doping'.");
+        }
+        validateLifetimeParameters(config_.srhDopingDependence.electron, "electron");
+        validateLifetimeParameters(config_.srhDopingDependence.hole, "hole");
+    }
     if (augerEnabled_ && (config_.augerCn < 0.0 || config_.augerCp < 0.0))
         throw std::invalid_argument("RecombinationModel: Auger coefficients cannot be negative.");
 }
 
-Real RecombinationModel::srhDenominator(Real n, Real p, Real ni) const
+Real RecombinationModel::electronLifetime(Real dopingConcentration) const
 {
-    return config_.taup * (n + ni) + config_.taun * (p + ni);
+    if (!config_.srhDopingDependence.enabled)
+        return config_.taun;
+    return dopingDependentLifetime(
+        dopingConcentration, config_.srhDopingDependence.electron);
 }
 
-Real RecombinationModel::srhRate(Real n, Real p, Real ni) const
+Real RecombinationModel::holeLifetime(Real dopingConcentration) const
 {
-    return srhRateFromExcessProduct(n * p - ni * ni, n, p, ni);
+    if (!config_.srhDopingDependence.enabled)
+        return config_.taup;
+    return dopingDependentLifetime(
+        dopingConcentration, config_.srhDopingDependence.hole);
+}
+
+Real RecombinationModel::srhDopingConcentration(
+    Real donors, Real acceptors) const
+{
+    if (config_.srhDopingDependence.concentrationBasis == "net_doping")
+        return std::abs(donors - acceptors);
+    return std::abs(donors) + std::abs(acceptors);
+}
+
+Real RecombinationModel::srhDenominator(
+    Real n, Real p, Real ni, Real dopingConcentration) const
+{
+    return holeLifetime(dopingConcentration) * (n + ni) +
+           electronLifetime(dopingConcentration) * (p + ni);
+}
+
+Real RecombinationModel::srhRate(
+    Real n, Real p, Real ni, Real dopingConcentration) const
+{
+    return srhRateFromExcessProduct(
+        n * p - ni * ni, n, p, ni, dopingConcentration);
 }
 
 Real RecombinationModel::srhRateFromExcessProduct(Real excessProduct,
                                                   Real n,
                                                   Real p,
-                                                  Real ni) const
+                                                  Real ni,
+                                                  Real dopingConcentration) const
 {
     if (!srhEnabled_)
         return 0.0;
-    const Real den = srhDenominator(n, p, ni);
+    const Real den = srhDenominator(n, p, ni, dopingConcentration);
     if (std::abs(den) < 1.0e-100)
         return 0.0;
     return limitedExcessValue(excessProduct) / den;
@@ -93,18 +158,22 @@ Real RecombinationModel::augerRateFromExcessProduct(Real excessProduct,
            limitedExcessValue(excessProduct);
 }
 
-Real RecombinationModel::totalRate(Real n, Real p, Real ni) const
+Real RecombinationModel::totalRate(
+    Real n, Real p, Real ni, Real dopingConcentration) const
 {
     const Real excessProduct = limitedExcessProduct(n, p, ni);
-    return totalRateFromExcessProduct(excessProduct, n, p, ni);
+    return totalRateFromExcessProduct(
+        excessProduct, n, p, ni, dopingConcentration);
 }
 
 Real RecombinationModel::totalRateFromExcessProduct(Real excessProduct,
                                                     Real n,
                                                     Real p,
-                                                    Real ni) const
+                                                    Real ni,
+                                                    Real dopingConcentration) const
 {
-    return srhRateFromExcessProduct(excessProduct, n, p, ni)
+    return srhRateFromExcessProduct(
+               excessProduct, n, p, ni, dopingConcentration)
          + augerRateFromExcessProduct(excessProduct, n, p);
 }
 
@@ -112,18 +181,21 @@ RecombinationRateDerivatives RecombinationModel::totalRateDerivativesFromExcessP
     Real excessProduct,
     Real n,
     Real p,
-    Real ni) const
+    Real ni,
+    Real dopingConcentration) const
 {
     RecombinationRateDerivatives derivatives;
 
     if (srhEnabled_) {
-        const Real den = srhDenominator(n, p, ni);
+        const Real den = srhDenominator(n, p, ni, dopingConcentration);
         if (std::abs(den) >= 1.0e-100) {
             derivatives.dRateDExcess += 1.0 / den;
             const Real invDen2 = 1.0 / (den * den);
             const Real limitedExcess = limitedExcessValue(excessProduct);
-            derivatives.dRateDn -= limitedExcess * config_.taup * invDen2;
-            derivatives.dRateDp -= limitedExcess * config_.taun * invDen2;
+            derivatives.dRateDn -= limitedExcess *
+                holeLifetime(dopingConcentration) * invDen2;
+            derivatives.dRateDp -= limitedExcess *
+                electronLifetime(dopingConcentration) * invDen2;
         }
     }
 
@@ -143,12 +215,13 @@ RecombinationRateDerivatives RecombinationModel::totalRateDerivativesFromExcessP
 RecombinationLinearization RecombinationModel::electronLinearization(
     Real n,
     Real p,
-    Real ni) const
+    Real ni,
+    Real dopingConcentration) const
 {
     RecombinationLinearization linearization;
 
     if (srhEnabled_) {
-        const Real den = srhDenominator(n, p, ni);
+        const Real den = srhDenominator(n, p, ni, dopingConcentration);
         if (den > 1.0e-100) {
             linearization.diagonal += p / den;
             linearization.rhs += ni * ni / den;
@@ -173,12 +246,13 @@ RecombinationLinearization RecombinationModel::electronLinearization(
 RecombinationLinearization RecombinationModel::holeLinearization(
     Real n,
     Real p,
-    Real ni) const
+    Real ni,
+    Real dopingConcentration) const
 {
     RecombinationLinearization linearization;
 
     if (srhEnabled_) {
-        const Real den = srhDenominator(n, p, ni);
+        const Real den = srhDenominator(n, p, ni, dopingConcentration);
         if (den > 1.0e-100) {
             linearization.diagonal += n / den;
             linearization.rhs += ni * ni / den;
@@ -203,12 +277,53 @@ RecombinationLinearization RecombinationModel::holeLinearization(
 RecombinationModelConfig recombinationModelConfig(
     std::vector<std::string> mechanisms,
     Real taun,
-    Real taup)
+    Real taup,
+    SRHDopingDependenceConfig srhDopingDependence)
 {
     RecombinationModelConfig config;
     config.mechanisms = std::move(mechanisms);
     config.taun = taun;
     config.taup = taup;
+    config.srhDopingDependence = std::move(srhDopingDependence);
+    return config;
+}
+
+SRHDopingDependenceConfig srhDopingDependenceConfigFromJson(
+    const nlohmann::json& value,
+    UnitScalingConfig scaling)
+{
+    if (!value.is_object())
+        throw std::invalid_argument(
+            "srh_doping_dependence must be an object.");
+
+    SRHDopingDependenceConfig config;
+    config.enabled = value.value("enabled", true);
+    config.concentrationBasis = value.value(
+        "concentration_basis", config.concentrationBasis);
+
+    auto parseCarrier = [&](const char* name, SRHLifetimeParameters& parameters) {
+        if (!value.contains(name))
+            return;
+        const auto& carrier = value.at(name);
+        if (!carrier.is_object())
+            throw std::invalid_argument(
+                std::string("srh_doping_dependence.") + name +
+                " must be an object.");
+        parameters.tauMin = carrier.value("tau_min_s", parameters.tauMin);
+        parameters.tauMax = carrier.value("tau_max_s", parameters.tauMax);
+        if (carrier.contains("reference_doping_m3")) {
+            parameters.referenceDoping = scaling.concentrationToInternal(
+                carrier.at("reference_doping_m3").get<Real>());
+        }
+        parameters.gamma = carrier.value("gamma", parameters.gamma);
+    };
+    parseCarrier("electron", config.electron);
+    parseCarrier("hole", config.hole);
+
+    RecombinationModelConfig validation;
+    validation.mechanisms = {"srh"};
+    validation.srhDopingDependence = config;
+    (void)RecombinationModel(validation);
     return config;
 }
 

@@ -56,7 +56,9 @@ bool usesHighFieldMobility(const MobilityModelConfig& config)
 {
     return config.model == "caughey_thomas_field" ||
            config.model == "masetti_field" ||
-           config.model == "caughey_thomas_field_surface";
+           config.model == "caughey_thomas_field_surface" ||
+           config.model == "masetti_field_surface" ||
+           config.model == "masetti_field_lombardi";
 }
 
 Real applyFieldMobilityLimit(
@@ -906,6 +908,11 @@ VectorXd CoupledDDAssembler::residualImpl(
     const Real potentialScale = scaling_.enabled ? scaling_.V0 : 1.0;
     const Real fieldFactor = scaling_.enabled ? scaling_.fieldFromCoordinateDeltaFactor : 1.0;
     const VectorXd psi = x.segment(psiOffset(), N) * potentialScale;
+    if (surfaceMobilityEnabled_) {
+        detail::updateSurfaceMobilityCellGeometry(
+            mobilityConfig_, mesh_, edgeCells_, psi,
+            mobilityConfig_.surface.coordinateFieldFactor);
+    }
 
     const std::vector<Real> nodeElectricFields =
         impactIonizationCoupled_
@@ -1209,7 +1216,9 @@ VectorXd CoupledDDAssembler::residualImpl(
                 excessProduct = ni * ni * std::expm1(dPhi / Vt_);
             }
             const Real R = recombination_.totalRateFromExcessProduct(
-                excessProduct, n(ii), p(ii), recombinationNi);
+                excessProduct, n(ii), p(ii), recombinationNi,
+                recombination_.srhDopingConcentration(
+                    doping_.donors(i), doping_.acceptors(i)));
             if (R != 0.0) {
                 r(phinOffset() + ii) += R * vol[i] * sourceIntegralFactor;
                 r(phipOffset() + ii) += R * vol[i] * sourceIntegralFactor;
@@ -1604,7 +1613,9 @@ CoupledDDAssembler::carrierContinuityTermDiagnosticsImpl(
                 excessProduct = ni * ni * std::expm1(dPhi / Vt_);
             }
             const Real R = recombination_.totalRateFromExcessProduct(
-                excessProduct, n(ii), p(ii), recombinationNi);
+                excessProduct, n(ii), p(ii), recombinationNi,
+                recombination_.srhDopingConcentration(
+                    doping_.donors(i), doping_.acceptors(i)));
             if (R != 0.0) {
                 const Real contribution = R * vol_[i] * sourceIntegralFactor;
                 terms[i].electronRecombination += contribution;
@@ -2430,6 +2441,11 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
     const Real potentialScale = scaling_.enabled ? scaling_.V0 : 1.0;
     const Real fieldFactor = scaling_.enabled ? scaling_.fieldFromCoordinateDeltaFactor : 1.0;
     const VectorXd psi = x.segment(psiOffset(), N) * potentialScale;
+    if (surfaceMobilityEnabled_) {
+        detail::updateSurfaceMobilityCellGeometry(
+            mobilityConfig_, mesh_, edgeCells_, psi,
+            mobilityConfig_.surface.coordinateFieldFactor);
+    }
     const VectorXd phinState =
         (x.segment(phinOffset(), N) * potentialScale).array()
         + electronQfReference_V_;
@@ -4017,11 +4033,7 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
     {
         ScopedPerformanceTimer cellPhysicsTimer("jacobian.cell_physics");
         if (cellLocalAvalanche) {
-        if (surfaceMobilityEnabled_) {
-            throw std::invalid_argument(
-                "cell-local avalanche source does not support surface mobility");
-        }
-        if (elementEdgeGssLauxAvalanche) {
+        if (elementEdgeGssLauxAvalanche && !surfaceMobilityEnabled_) {
             for (Index cellId = 0; cellId < mesh_.numCells(); ++cellId) {
                 activeCell = cellId;
                 const Cell& cell = mesh_.getCell(cellId);
@@ -4257,7 +4269,9 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
                     return recombination_.totalRateFromExcessProduct(
                         nValue * pValue - equilibriumProduct,
                         nValue, pValue,
-                        std::sqrt(std::max<Real>(equilibriumProduct, 0.0)));
+                        std::sqrt(std::max<Real>(equilibriumProduct, 0.0)),
+                        recombination_.srhDopingConcentration(
+                            doping_.donors(i), doping_.acceptors(i)));
                 };
                 const Real values[3] = {psi(ii), phinState(ii), phipState(ii)};
                 const int columns[3] = {
@@ -4285,10 +4299,14 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
                 const Real np = ni * ni * std::exp(dPhi / Vt_);
                 const Real excessProduct = ni * ni * std::expm1(dPhi / Vt_);
                 const Real R = recombination_.totalRateFromExcessProduct(
-                    excessProduct, n(ii), p(ii), ni);
+                    excessProduct, n(ii), p(ii), ni,
+                    recombination_.srhDopingConcentration(
+                        doping_.donors(i), doping_.acceptors(i)));
                 if (R != 0.0) {
                 const auto deriv = recombination_.totalRateDerivativesFromExcessProduct(
-                    excessProduct, n(ii), p(ii), ni);
+                    excessProduct, n(ii), p(ii), ni,
+                    recombination_.srhDopingConcentration(
+                        doping_.donors(i), doping_.acceptors(i)));
 
                 const Real dExcess_dphin = -np / Vt_;
                 const Real dExcess_dphip =  np / Vt_;

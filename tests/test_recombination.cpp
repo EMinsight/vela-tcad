@@ -151,6 +151,122 @@ TEST_CASE("SRH recombination is near zero when n*p equals ni squared", "[recombi
     REQUIRE(model.totalRate(n, p, ni) == Catch::Approx(0.0).margin(1.0e6));
 }
 
+TEST_CASE("Sentaurus Scharfetter doping-dependent SRH lifetime follows limits",
+          "[recombination][srh][doping]")
+{
+    RecombinationModelConfig config = recombinationModelConfig({"srh"});
+    config.srhDopingDependence.enabled = true;
+    config.srhDopingDependence.electron = {0.0, 1.0e-7, 1.0e22, 1.0};
+    config.srhDopingDependence.hole = {0.0, 2.0e-7, 1.0e22, 1.0};
+    const RecombinationModel model(config);
+
+    REQUIRE(model.electronLifetime(0.0) == Catch::Approx(1.0e-7));
+    REQUIRE(model.electronLifetime(1.0e22) == Catch::Approx(5.0e-8));
+    REQUIRE(model.holeLifetime(1.0e22) == Catch::Approx(1.0e-7));
+    REQUIRE(model.electronLifetime(1.0e30) == Catch::Approx(1.0e-15));
+}
+
+TEST_CASE("Doping-dependent SRH rate uses local electron and hole lifetimes",
+          "[recombination][srh][doping]")
+{
+    RecombinationModelConfig config = recombinationModelConfig({"srh"});
+    config.srhDopingDependence.enabled = true;
+    config.srhDopingDependence.electron = {1.0e-9, 1.01e-7, 1.0e22, 1.0};
+    config.srhDopingDependence.hole = {2.0e-9, 2.02e-7, 1.0e22, 1.0};
+    const RecombinationModel model(config);
+    const Real n = 4.0e20;
+    const Real p = 3.0e20;
+    const Real ni = 1.0e16;
+    const Real doping = 1.0e22;
+    const Real taun = 5.1e-8;
+    const Real taup = 1.02e-7;
+    const Real expected = (n * p - ni * ni) /
+        (taup * (n + ni) + taun * (p + ni));
+
+    REQUIRE(model.srhRate(n, p, ni, doping) ==
+            Catch::Approx(expected).epsilon(1.0e-13));
+}
+
+TEST_CASE("Doping-dependent SRH selects total or net impurity concentration",
+          "[recombination][srh][doping-basis]")
+{
+    RecombinationModelConfig totalConfig = recombinationModelConfig({"srh"});
+    totalConfig.srhDopingDependence.enabled = true;
+    totalConfig.srhDopingDependence.concentrationBasis = "total_impurity";
+    const RecombinationModel totalModel(totalConfig);
+    REQUIRE(totalModel.srhDopingConcentration(8.0e22, 3.0e22) ==
+            Catch::Approx(1.1e23));
+
+    RecombinationModelConfig netConfig = totalConfig;
+    netConfig.srhDopingDependence.concentrationBasis = "net_doping";
+    const RecombinationModel netModel(netConfig);
+    REQUIRE(netModel.srhDopingConcentration(8.0e22, 3.0e22) ==
+            Catch::Approx(5.0e22));
+}
+
+TEST_CASE("Doping-dependent SRH carrier derivatives match central differences",
+          "[recombination][srh][doping][jacobian]")
+{
+    RecombinationModelConfig config = recombinationModelConfig({"srh"});
+    config.srhDopingDependence.enabled = true;
+    config.srhDopingDependence.electron = {1.0e-9, 1.01e-7, 1.0e22, 1.0};
+    config.srhDopingDependence.hole = {2.0e-9, 2.02e-7, 2.0e22, 1.5};
+    const RecombinationModel model(config);
+    const Real excess = 7.0e40;
+    const Real n = 4.0e20;
+    const Real p = 3.0e20;
+    const Real ni = 1.0e16;
+    const Real doping = 1.4e22;
+    const Real stepN = 1.0e14;
+    const Real stepP = 1.0e14;
+    const auto derivative = model.totalRateDerivativesFromExcessProduct(
+        excess, n, p, ni, doping);
+    const Real fdN = (
+        model.totalRateFromExcessProduct(excess, n + stepN, p, ni, doping) -
+        model.totalRateFromExcessProduct(excess, n - stepN, p, ni, doping)) /
+        (2.0 * stepN);
+    const Real fdP = (
+        model.totalRateFromExcessProduct(excess, n, p + stepP, ni, doping) -
+        model.totalRateFromExcessProduct(excess, n, p - stepP, ni, doping)) /
+        (2.0 * stepP);
+
+    REQUIRE(derivative.dRateDn == Catch::Approx(fdN).epsilon(2.0e-9));
+    REQUIRE(derivative.dRateDp == Catch::Approx(fdP).epsilon(2.0e-9));
+}
+
+TEST_CASE("SRH doping-dependence JSON respects unit scaling concentration units",
+          "[recombination][srh][doping][json][scaling]")
+{
+    const UnitScalingConfig scaling{UnitScalingMode::UnitScaling};
+    const auto config = srhDopingDependenceConfigFromJson(
+        nlohmann::json{
+            {"enabled", true},
+            {"concentration_basis", "total_impurity"},
+            {"electron", {
+                {"tau_min_s", 0.0}, {"tau_max_s", 1.0e-7},
+                {"reference_doping_m3", 1.0e16}, {"gamma", 1.0}}},
+            {"hole", {
+                {"tau_min_s", 0.0}, {"tau_max_s", 1.0e-7},
+                {"reference_doping_m3", 1.0e16}, {"gamma", 1.0}}},
+        },
+        scaling);
+
+    REQUIRE(config.enabled);
+    REQUIRE(config.concentrationBasis == "total_impurity");
+    REQUIRE(config.electron.referenceDoping == Catch::Approx(1.0e16));
+    REQUIRE(config.hole.referenceDoping == Catch::Approx(1.0e16));
+}
+
+TEST_CASE("Disabled doping-dependent SRH preserves constant lifetimes",
+          "[recombination][srh][compatibility]")
+{
+    RecombinationModel model(recombinationModelConfig({"srh"}, 3.0e-7, 4.0e-7));
+    REQUIRE(model.electronLifetime(1.0e30) == Catch::Approx(3.0e-7));
+    REQUIRE(model.holeLifetime(1.0e30) == Catch::Approx(4.0e-7));
+    REQUIRE(model.srhRate(2.0e20, 3.0e20, 1.0e16, 1.0e30) ==
+            Catch::Approx(model.srhRate(2.0e20, 3.0e20, 1.0e16)));
+}
+
 TEST_CASE("Auger recombination increases at high carrier concentration", "[recombination]")
 {
     RecombinationModel model(recombinationModelConfig({"auger"}));

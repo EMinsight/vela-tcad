@@ -61,7 +61,9 @@ bool isMasettiModel(const std::string& model)
 {
     return model == "masetti" || model == "masetti_field" ||
            model == "masetti_surface" ||
-           model == "masetti_field_surface";
+           model == "masetti_field_surface" ||
+           model == "masetti_lombardi" ||
+           model == "masetti_field_lombardi";
 }
 
 bool isFieldMobilityModel(const std::string& model)
@@ -69,7 +71,14 @@ bool isFieldMobilityModel(const std::string& model)
     return model == "caughey_thomas_field" ||
            model == "caughey_thomas_field_surface" ||
            model == "masetti_field" ||
-           model == "masetti_field_surface";
+           model == "masetti_field_surface" ||
+           model == "masetti_field_lombardi";
+}
+
+bool isLombardiModel(const std::string& model)
+{
+    return model == "masetti_lombardi" ||
+           model == "masetti_field_lombardi";
 }
 
 void parseField(const nlohmann::json& json,
@@ -115,12 +124,16 @@ void validateDopingConcentrationBasis(const std::string& value)
 void convertMobilityDefaultsToInternal(MobilityModelConfig& config,
                                        UnitScalingConfig scaling)
 {
+    const PhysicalUnitSystem& units = scaling.unitSystem();
+    config.internalFieldToVPerM = units.electricFieldVPerMPerInternal();
+    config.internalConcentrationToM3 = units.concentrationM3PerInternal();
+    config.internalMobilityToM2PerVS = units.mobilityM2PerVSPerInternal();
+    config.internalLengthToM = units.lengthMPerInternal();
     config.surface.coordinateFieldFactor =
         scaling.unitSystem().fieldFromCoordinateDeltaFactor();
     if (!scaling.isUnitScaling())
         return;
 
-    const PhysicalUnitSystem& units = scaling.unitSystem();
     auto convertCT = [&](CaugheyThomasParameters& params) {
         params.muMin = units.m2PerVSToInternalMobility(params.muMin);
         params.nRef = units.m3ToInternalConcentration(params.nRef);
@@ -160,12 +173,14 @@ Real ConstantMobility::electronMobility(const Material& material,
                                         Real,
                                         Real,
                                         Real,
+                                        Real,
                                         Real) const
 {
     return material.mun;
 }
 
 Real ConstantMobility::holeMobility(const Material& material,
+                                    Real,
                                     Real,
                                     Real,
                                     Real,
@@ -181,10 +196,11 @@ DopingDependentMobility::DopingDependentMobility(MobilityModelConfig config)
 
 Real DopingDependentMobility::electronMobility(const Material& material,
                                                Real netDoping,
-                                               Real,
-                                               Real,
+                                               Real n,
+                                               Real p,
                                                Real electricField,
-                                               Real surfaceNormalField) const
+                                               Real surfaceNormalField,
+                                               Real surfaceDistance) const
 {
     Real mobility = isMasettiModel(config_.model)
         ? masetti(netDoping, config_.electronMasetti)
@@ -192,17 +208,22 @@ Real DopingDependentMobility::electronMobility(const Material& material,
     if (isFieldMobilityModel(config_.model))
         mobility = fieldLimit(mobility, electricField, config_.electronField);
     if (isSurfaceMobilityModel(config_))
-        mobility = surfaceLimit(
-            mobility, surfaceNormalField, config_.surface.thetaElectron, config_.surface);
+        mobility = isLombardiModel(config_.model)
+            ? lombardiLimit(mobility, netDoping, n, p, surfaceNormalField,
+                            surfaceDistance, CarrierType::Electron,
+                            config_.electronLombardi)
+            : surfaceLimit(mobility, surfaceNormalField,
+                           config_.surface.thetaElectron, config_.surface);
     return mobility;
 }
 
 Real DopingDependentMobility::holeMobility(const Material& material,
                                            Real netDoping,
-                                           Real,
-                                           Real,
+                                           Real n,
+                                           Real p,
                                            Real electricField,
-                                           Real surfaceNormalField) const
+                                           Real surfaceNormalField,
+                                           Real surfaceDistance) const
 {
     Real mobility = isMasettiModel(config_.model)
         ? masetti(netDoping, config_.holeMasetti)
@@ -210,8 +231,12 @@ Real DopingDependentMobility::holeMobility(const Material& material,
     if (isFieldMobilityModel(config_.model))
         mobility = fieldLimit(mobility, electricField, config_.holeField);
     if (isSurfaceMobilityModel(config_))
-        mobility = surfaceLimit(
-            mobility, surfaceNormalField, config_.surface.thetaHole, config_.surface);
+        mobility = isLombardiModel(config_.model)
+            ? lombardiLimit(mobility, netDoping, n, p, surfaceNormalField,
+                            surfaceDistance, CarrierType::Hole,
+                            config_.holeLombardi)
+            : surfaceLimit(mobility, surfaceNormalField,
+                           config_.surface.thetaHole, config_.surface);
     return mobility;
 }
 
@@ -296,6 +321,68 @@ Real DopingDependentMobility::surfaceLimit(Real bulkMobility,
     Real factor = 1.0 / std::pow(1.0 + std::pow(thetaField, params.beta), 1.0 / params.beta);
     factor = std::clamp(factor, params.minFactor, params.maxFactor);
     return bulkMobility * factor;
+}
+
+Real DopingDependentMobility::lombardiLimit(
+    Real bulkMobility,
+    Real netDoping,
+    Real n,
+    Real p,
+    Real surfaceNormalField,
+    Real surfaceDistance,
+    CarrierType carrier,
+    const LombardiParameters& params) const
+{
+    if (bulkMobility <= 0.0 || !std::isfinite(surfaceNormalField) ||
+        !std::isfinite(surfaceDistance))
+        return bulkMobility;
+    if (params.B <= 0.0 || params.C < 0.0 || params.N0 <= 0.0 ||
+        params.N1 <= 0.0 || params.N2 < 0.0 || params.delta <= 0.0 ||
+        params.eta <= 0.0 || params.criticalLength <= 0.0 ||
+        params.nu <= 0.0 || params.acousticFactor < 0.0 ||
+        params.roughnessFactor < 0.0) {
+        throw std::invalid_argument(
+            "DopingDependentMobility: invalid Enhanced Lombardi parameters.");
+    }
+
+    const Real field = std::abs(surfaceNormalField) * config_.internalFieldToVPerM;
+    if (field <= 0.0)
+        return bulkMobility;
+    const Real distance = std::max<Real>(0.0, surfaceDistance) *
+        config_.internalLengthToM;
+    const Real damping = std::exp(-distance / params.criticalLength);
+    if (damping <= std::numeric_limits<Real>::min())
+        return bulkMobility;
+
+    const Real doping = std::abs(netDoping) *
+        config_.internalConcentrationToM3;
+    const Real electronDensity = std::max<Real>(0.0, n) *
+        config_.internalConcentrationToM3;
+    const Real holeDensity = std::max<Real>(0.0, p) *
+        config_.internalConcentrationToM3;
+    const Real acousticMobility = params.B / field +
+        params.C * std::pow((doping + params.N2) / params.N0, params.lambda) /
+        std::cbrt(field); // T=300 K for the reference BVmethods deck.
+
+    const Real sameCarrier = carrier == CarrierType::Electron
+        ? electronDensity : holeDensity;
+    const Real otherCarrier = carrier == CarrierType::Electron
+        ? holeDensity : electronDensity;
+    const Real exponent = params.A +
+        params.alpha * (sameCarrier + params.aOther * otherCarrier) /
+        std::pow(doping + params.N1, params.nu);
+    const Real referenceField = 100.0; // 1 V/cm in V/m.
+    const Real inverseRoughness =
+        std::pow(field / referenceField, exponent) / params.delta +
+        std::pow(field, 3.0) / params.eta;
+    if (!(acousticMobility > 0.0) || !(inverseRoughness > 0.0))
+        return bulkMobility;
+
+    const Real bulkSI = bulkMobility * config_.internalMobilityToM2PerVS;
+    const Real inverseTotal = 1.0 / bulkSI +
+        damping * params.acousticFactor / acousticMobility +
+        damping * params.roughnessFactor * inverseRoughness;
+    return (1.0 / inverseTotal) / config_.internalMobilityToM2PerVS;
 }
 
 MobilityModelConfig mobilityModelConfig(std::string modelName)
@@ -392,7 +479,8 @@ bool isSurfaceMobilityModel(const MobilityModelConfig& config)
     return config.model == "caughey_thomas_surface" ||
            config.model == "caughey_thomas_field_surface" ||
            config.model == "masetti_surface" ||
-           config.model == "masetti_field_surface";
+           config.model == "masetti_field_surface" ||
+           isLombardiModel(config.model);
 }
 
 bool surfaceMobilityAppliesToRegionPair(const MobilityModelConfig& config,

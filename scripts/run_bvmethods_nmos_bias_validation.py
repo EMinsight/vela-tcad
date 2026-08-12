@@ -387,7 +387,8 @@ def main() -> int:
     parser.add_argument(
         "--mobility-model",
         choices=(
-            "masetti_field", "masetti_surface", "masetti_field_surface"
+            "masetti_field", "masetti_surface", "masetti_field_surface",
+            "masetti_lombardi", "masetti_field_lombardi",
         ),
         default="masetti_field",
     )
@@ -400,6 +401,14 @@ def main() -> int:
         "--surface-interface",
         default="R.Substrate,R.Gateox",
         help="Comma-separated semiconductor and insulator region names",
+    )
+    parser.add_argument(
+        "--srh-doping-dependence",
+        action="store_true",
+        help=(
+            "Enable the Sentaurus Scharfetter SRH(DopingDep) lifetime law "
+            "with the BVmethods pp6 defaults"
+        ),
     )
     parser.add_argument(
         "--continuity-row-scaling",
@@ -635,7 +644,10 @@ def main() -> int:
             }
             write_json(config, runtime)
         if args.mobility_model != "masetti_field":
-            if (
+            lombardi = args.mobility_model in {
+                "masetti_lombardi", "masetti_field_lombardi"
+            }
+            if not lombardi and (
                 args.surface_theta_electron_m_per_v is None
                 or args.surface_theta_hole_m_per_v is None
             ):
@@ -646,17 +658,39 @@ def main() -> int:
             mobility = runtime.setdefault("solver", {}).setdefault("mobility", {})
             mobility["model"] = args.mobility_model
             mobility["surface"] = {
-                "theta_electron_m_per_V": args.surface_theta_electron_m_per_v,
-                "theta_hole_m_per_V": args.surface_theta_hole_m_per_v,
-                "beta": args.surface_beta,
-                "min_factor": args.surface_min_factor,
-                "max_factor": 1.0,
                 "surface_region": args.surface_region,
                 "surface_interface": [
                     value.strip()
                     for value in args.surface_interface.split(",")
                     if value.strip()
                 ],
+            }
+            if not lombardi:
+                mobility["surface"].update({
+                    "theta_electron_m_per_V": args.surface_theta_electron_m_per_v,
+                    "theta_hole_m_per_V": args.surface_theta_hole_m_per_v,
+                    "beta": args.surface_beta,
+                    "min_factor": args.surface_min_factor,
+                    "max_factor": 1.0,
+                })
+            write_json(config, runtime)
+        if args.srh_doping_dependence:
+            runtime = read_json(config)
+            runtime["solver"]["srh_doping_dependence"] = {
+                "enabled": True,
+                "concentration_basis": "total_impurity",
+                "electron": {
+                    "tau_min_s": 0.0,
+                    "tau_max_s": 1.0e-7,
+                    "reference_doping_m3": 1.0e16,
+                    "gamma": 1.0,
+                },
+                "hole": {
+                    "tau_min_s": 0.0,
+                    "tau_max_s": 1.0e-7,
+                    "reference_doping_m3": 1.0e16,
+                    "gamma": 1.0,
+                },
             }
             write_json(config, runtime)
         if args.path_ionization_tracing_vector != "electric_field":

@@ -111,6 +111,18 @@
             "doping_concentration_basis"
           ],
           "type": "object"
+        },
+        "srh_doping_dependence": {
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "concentration_basis": {
+              "enum": ["total_impurity", "net_doping"]
+            },
+            "electron": {"$ref": "#/$defs/srhLifetime"},
+            "hole": {"$ref": "#/$defs/srhLifetime"}
+          },
+          "type": "object"
         }
       },
       "required": [
@@ -291,5 +303,17 @@
     "sweep"
   ],
   "title": "Vela simulation configuration",
-  "type": "object"
+  "type": "object",
+  "$defs": {
+    "srhLifetime": {
+      "additionalProperties": false,
+      "properties": {
+        "tau_min_s": {"minimum": 0.0, "type": "number"},
+        "tau_max_s": {"exclusiveMinimum": 0.0, "type": "number"},
+        "reference_doping_m3": {"exclusiveMinimum": 0.0, "type": "number"},
+        "gamma": {"exclusiveMinimum": 0.0, "type": "number"}
+      },
+      "type": "object"
+    }
+  }
 }

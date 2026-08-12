@@ -48,6 +48,32 @@ struct SurfaceMobilityParameters {
     std::string surfaceRegion; ///< Optional semiconductor region where degradation is active.
     std::vector<std::string> surfaceInterface; ///< Optional two-region interface selector.
     Real coordinateFieldFactor = 1.0; ///< Internal coordinate-gradient to internal electric-field units.
+    /// Per-cell nearest-interface field and distance, populated by assemblers
+    /// for interface-distance-aware models such as Enhanced Lombardi.
+    std::vector<Real> cellNormalFields;
+    std::vector<Real> cellDistances;
+    std::vector<Real> cellNormalX;
+    std::vector<Real> cellNormalY;
+};
+
+/** Sentaurus O-2018.06 Enhanced Lombardi coefficients, stored in SI units. */
+struct LombardiParameters {
+    Real B = 0.0;       ///< Acoustic-phonon coefficient [m/s].
+    Real C = 0.0;       ///< Acoustic-phonon coefficient [m^(5/3)/(V^(2/3)s)].
+    Real N0 = 1.0e6;   ///< Reference concentration [m^-3].
+    Real N2 = 1.0e6;   ///< Concentration offset [m^-3].
+    Real lambda = 0.0;
+    Real k = 1.0;
+    Real delta = 0.0;  ///< Surface-roughness mobility coefficient [m^2/(V s)].
+    Real A = 2.0;
+    Real alpha = 0.0;  ///< Carrier-dependent exponent coefficient [m^3].
+    Real aOther = 0.0;
+    Real N1 = 1.0e6;   ///< Carrier exponent concentration offset [m^-3].
+    Real nu = 1.0;
+    Real eta = 0.0;    ///< Cubic-field coefficient [V^2/(m s)].
+    Real criticalLength = 1.0e-8; ///< Interface damping length [m].
+    Real acousticFactor = 1.0;
+    Real roughnessFactor = 1.0;
 };
 
 struct MobilityModelConfig {
@@ -76,6 +102,21 @@ struct MobilityModelConfig {
     FieldMobilityParameters electronField{1.07e5, 1.109};
     FieldMobilityParameters holeField{8.37e4, 1.213};
     SurfaceMobilityParameters surface{};
+    // Sentaurus O-2018.06 Silicon EnormalDependence defaults.  C is
+    // converted from cm^(5/3)/(V^(2/3)s), delta from cm^2/(V s), and eta
+    // from V^2/(cm s).
+    LombardiParameters electronLombardi{
+        4.7500e5, 5.8000e2 * 4.641588833612778e-4,
+        1.0e6, 1.0e6, 0.125, 1.0, 5.8200e10, 2.0,
+        0.0, 0.0, 1.0e6, 1.0, 5.8200e32, 1.0e-8, 1.0, 1.0};
+    LombardiParameters holeLombardi{
+        9.9250e4, 2.9470e3 * 4.641588833612778e-4,
+        1.0e6, 1.0e6, 0.0317, 1.0, 2.0546e10, 2.0,
+        0.0, 0.0, 1.0e6, 1.0, 2.0546e32, 1.0e-8, 1.0, 1.0};
+    Real internalFieldToVPerM = 1.0;
+    Real internalConcentrationToM3 = 1.0;
+    Real internalMobilityToM2PerVS = 1.0;
+    Real internalLengthToM = 1.0;
 };
 
 class MobilityModel {
@@ -87,14 +128,16 @@ public:
                                   Real n,
                                   Real p,
                                   Real electricField = 0.0,
-                                  Real surfaceNormalField = 0.0) const = 0;
+                                  Real surfaceNormalField = 0.0,
+                                  Real surfaceDistance = 0.0) const = 0;
 
     virtual Real holeMobility(const Material& material,
                               Real netDoping,
                               Real n,
                               Real p,
                               Real electricField = 0.0,
-                              Real surfaceNormalField = 0.0) const = 0;
+                              Real surfaceNormalField = 0.0,
+                              Real surfaceDistance = 0.0) const = 0;
 };
 
 class ConstantMobility final : public MobilityModel {
@@ -104,14 +147,16 @@ public:
                           Real n,
                           Real p,
                           Real electricField = 0.0,
-                          Real surfaceNormalField = 0.0) const override;
+                          Real surfaceNormalField = 0.0,
+                          Real surfaceDistance = 0.0) const override;
 
     Real holeMobility(const Material& material,
                       Real netDoping,
                       Real n,
                       Real p,
                       Real electricField = 0.0,
-                      Real surfaceNormalField = 0.0) const override;
+                      Real surfaceNormalField = 0.0,
+                      Real surfaceDistance = 0.0) const override;
 };
 
 class DopingDependentMobility final : public MobilityModel {
@@ -123,14 +168,16 @@ public:
                           Real n,
                           Real p,
                           Real electricField = 0.0,
-                          Real surfaceNormalField = 0.0) const override;
+                          Real surfaceNormalField = 0.0,
+                          Real surfaceDistance = 0.0) const override;
 
     Real holeMobility(const Material& material,
                       Real netDoping,
                       Real n,
                       Real p,
                       Real electricField = 0.0,
-                      Real surfaceNormalField = 0.0) const override;
+                      Real surfaceNormalField = 0.0,
+                      Real surfaceDistance = 0.0) const override;
 
 private:
     static Real caugheyThomas(Real muMax,
@@ -145,6 +192,14 @@ private:
                              Real surfaceNormalField,
                              Real theta,
                              const SurfaceMobilityParameters& params);
+    Real lombardiLimit(Real bulkMobility,
+                       Real netDoping,
+                       Real n,
+                       Real p,
+                       Real surfaceNormalField,
+                       Real surfaceDistance,
+                       CarrierType carrier,
+                       const LombardiParameters& params) const;
 
     MobilityModelConfig config_;
 };

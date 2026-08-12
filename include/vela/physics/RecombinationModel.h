@@ -1,7 +1,9 @@
 #pragma once
 
 #include "vela/core/Types.h"
+#include "vela/core/UnitScaling.h"
 #include "vela/physics/BandToBandTunnelingModel.h"
+#include <nlohmann/json_fwd.hpp>
 #include <string>
 #include <vector>
 
@@ -18,6 +20,21 @@ struct RecombinationLinearization {
     Real rhs = 0.0;      ///< Source contribution moved to the RHS [m^-3 s^-1]
 };
 
+struct SRHLifetimeParameters {
+    Real tauMin = 0.0;  ///< High-doping lifetime limit [s]
+    Real tauMax = 1.0e-7; ///< Low-doping lifetime limit [s]
+    Real referenceDoping = 1.0e22; ///< Reference concentration [m^-3]
+    Real gamma = 1.0; ///< Doping roll-off exponent [-]
+};
+
+struct SRHDopingDependenceConfig {
+    bool enabled = false;
+    /// ``total_impurity`` uses Nd+Na; ``net_doping`` uses |Nd-Na|.
+    std::string concentrationBasis = "total_impurity";
+    SRHLifetimeParameters electron{};
+    SRHLifetimeParameters hole{};
+};
+
 struct RecombinationModelConfig {
     std::vector<std::string> mechanisms = {"srh"};
     Real taun = 1.0e-5; ///< Electron SRH lifetime [s]
@@ -27,6 +44,7 @@ struct RecombinationModelConfig {
     // Cn = A + B + C in cm^6/s and Cp = A + B + C in cm^6/s.
     Real augerCn = 2.90e-43;
     Real augerCp = 1.028e-43;
+    SRHDopingDependenceConfig srhDopingDependence{};
     BandToBandTunnelingConfig bandToBand{};
 };
 
@@ -39,31 +57,42 @@ public:
     bool bandToBandEnabled() const { return bandToBand_.enabled(); }
     const BandToBandTunnelingModel& bandToBand() const { return bandToBand_; }
 
-    Real srhRate(Real n, Real p, Real ni) const;
+    Real electronLifetime(Real dopingConcentration) const;
+    Real holeLifetime(Real dopingConcentration) const;
+    Real srhDopingConcentration(Real donors, Real acceptors) const;
+    Real srhRate(Real n, Real p, Real ni,
+                 Real dopingConcentration = 0.0) const;
     Real srhRateFromExcessProduct(Real excessProduct,
                                   Real n,
                                   Real p,
-                                  Real ni) const;
+                                  Real ni,
+                                  Real dopingConcentration = 0.0) const;
     Real augerRate(Real n, Real p, Real ni) const;
     Real augerRateFromExcessProduct(Real excessProduct,
                                     Real n,
                                     Real p) const;
-    Real totalRate(Real n, Real p, Real ni) const;
+    Real totalRate(Real n, Real p, Real ni,
+                   Real dopingConcentration = 0.0) const;
     Real totalRateFromExcessProduct(Real excessProduct,
                                     Real n,
                                     Real p,
-                                    Real ni) const;
+                                    Real ni,
+                                    Real dopingConcentration = 0.0) const;
     RecombinationRateDerivatives totalRateDerivativesFromExcessProduct(
         Real excessProduct,
         Real n,
         Real p,
-        Real ni) const;
+        Real ni,
+        Real dopingConcentration = 0.0) const;
 
-    RecombinationLinearization electronLinearization(Real n, Real p, Real ni) const;
-    RecombinationLinearization holeLinearization(Real n, Real p, Real ni) const;
+    RecombinationLinearization electronLinearization(
+        Real n, Real p, Real ni, Real dopingConcentration = 0.0) const;
+    RecombinationLinearization holeLinearization(
+        Real n, Real p, Real ni, Real dopingConcentration = 0.0) const;
 
 private:
-    Real srhDenominator(Real n, Real p, Real ni) const;
+    Real srhDenominator(Real n, Real p, Real ni,
+                        Real dopingConcentration) const;
 
     RecombinationModelConfig config_;
     BandToBandTunnelingModel bandToBand_;
@@ -74,6 +103,11 @@ private:
 RecombinationModelConfig recombinationModelConfig(
     std::vector<std::string> mechanisms,
     Real taun = 1.0e-5,
-    Real taup = 3.0e-6);
+    Real taup = 3.0e-6,
+    SRHDopingDependenceConfig srhDopingDependence = {});
+
+SRHDopingDependenceConfig srhDopingDependenceConfigFromJson(
+    const nlohmann::json& value,
+    UnitScalingConfig scaling = {});
 
 } // namespace vela

@@ -159,6 +159,7 @@ struct NewtonConfig {
     Real augerCp = 1.028e-43; ///< Hole Auger coefficient [m^6/s]
     MobilityModelConfig mobility{}; ///< Mobility model configuration
     std::vector<std::string> recombination = {"srh"}; ///< e.g. {"srh", "auger"}
+    SRHDopingDependenceConfig srhDopingDependence{}; ///< Sentaurus SRH(DopingDep).
     BandToBandTunnelingConfig bandToBand{}; ///< Local pair generation, including Sentaurus E2.
     ImpactIonizationModelConfig impactIonization; ///< Avalanche generation model.
     BandgapNarrowingConfig bandgapNarrowing; ///< Effective ni model for high doping.
@@ -589,6 +590,11 @@ public:
     NewtonResult solve() const;
     NewtonPoissonBlockInitialization buildPoissonBlockInitialization() const;
     NewtonResult solve(const DDSolution& initial) const;
+    /// Solve only the nonlinear Poisson block. Interior quasi-Fermi fields are
+    /// reconstructed from the nearest majority-carrier contact basin before
+    /// each bias step. This is Vela's explicit approximation of the contact-
+    /// potential extrapolation observed in Sentaurus ABA after equilibrium.
+    NewtonResult solvePoissonOnly(const DDSolution& initial) const;
     NewtonResidualEvaluation evaluateResidual(const DDSolution& state) const;
     Real maxContactMajorityQuasiFermiDrop(const DDSolution& state) const;
     NewtonStepEvaluation evaluateStep(const DDSolution& state) const;
@@ -725,5 +731,16 @@ NewtonResult runNewton(const DeviceMesh& mesh,
                        std::vector<RegionFixedChargeSpec> fixedCharges,
                        std::vector<InterfaceSheetChargeSpec> sheetCharges,
                        ContactSpecsMap contactSpecs = {});
+
+NewtonResult runNewtonPoissonOnly(
+    const DeviceMesh& mesh,
+    const MaterialDatabase& matdb,
+    const DopingModel& doping,
+    const std::unordered_map<std::string, Real>& contactBiases,
+    const DDSolution& initial,
+    const NewtonConfig& cfg,
+    std::vector<RegionFixedChargeSpec> fixedCharges = {},
+    std::vector<InterfaceSheetChargeSpec> sheetCharges = {},
+    ContactSpecsMap contactSpecs = {});
 
 } // namespace vela

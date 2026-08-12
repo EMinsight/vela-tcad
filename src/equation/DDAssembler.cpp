@@ -450,7 +450,10 @@ void DDAssembler::assembleElectronContinuity(const VectorXd& psi,
             recombinationNi = std::sqrt(std::max<Real>(product, 0.0));
         }
         const RecombinationLinearization linearization =
-            recombination_.electronLinearization(n_v, p_v, recombinationNi);
+            recombination_.electronLinearization(
+                n_v, p_v, recombinationNi,
+                recombination_.srhDopingConcentration(
+                    doping_.donors(i), doping_.acceptors(i)));
         if (scaling_.enabled) {
             A_.coeffRef(ii, ii) +=
                 linearization.diagonal * vol_i * sourceIntegralFactor / scaling_.D0;
@@ -674,7 +677,10 @@ void DDAssembler::assembleHoleContinuity(const VectorXd& psi,
             recombinationNi = std::sqrt(std::max<Real>(product, 0.0));
         }
         const RecombinationLinearization linearization =
-            recombination_.holeLinearization(n_v, p_v, recombinationNi);
+            recombination_.holeLinearization(
+                n_v, p_v, recombinationNi,
+                recombination_.srhDopingConcentration(
+                    doping_.donors(i), doping_.acceptors(i)));
         if (scaling_.enabled) {
             A_.coeffRef(ii, ii) +=
                 linearization.diagonal * vol_i * sourceIntegralFactor / scaling_.D0;

@@ -793,6 +793,192 @@ inline Real estimateSurfaceNormalField(const std::vector<Index>& cells,
     return std::abs((cellPhi - edgePhi) / normalDistance);
 }
 
+inline Real estimateSurfaceDistance(const DeviceMesh& mesh,
+                                    Index edgeId,
+                                    Index cellId)
+{
+    const Edge& edge = mesh.getEdge(edgeId);
+    if (edge.length <= 1.0e-30)
+        return std::numeric_limits<Real>::quiet_NaN();
+    const Node& n0 = mesh.getNode(edge.n0);
+    const Node& n1 = mesh.getNode(edge.n1);
+    const Real normalX = -(n1.y - n0.y) / edge.length;
+    const Real normalY =  (n1.x - n0.x) / edge.length;
+    const auto [cx, cy] = cellCentroid(mesh, cellId);
+    const Real mx = 0.5 * (n0.x + n1.x);
+    const Real my = 0.5 * (n0.y + n1.y);
+    return std::abs((cx - mx) * normalX + (cy - my) * normalY);
+}
+
+inline std::pair<Real, Real> nearestSurfaceFieldAndDistanceForCell(
+    const DeviceMesh& mesh,
+    const std::vector<std::vector<Index>>& edgeCells,
+    const VectorXd& psi,
+    Index cellId,
+    const MobilityModelConfig& mobilityConfig,
+    Real fieldFactor)
+{
+    const Cell& cell = mesh.getCell(cellId);
+    const Region& region = mesh.getRegion(cell.region_id);
+    if (cell.type != CellType::Tri3 || cell.node_ids.size() != 3)
+        return {std::numeric_limits<Real>::quiet_NaN(),
+                std::numeric_limits<Real>::quiet_NaN()};
+    const Node& p0 = mesh.getNode(cell.node_ids[0]);
+    const Node& p1 = mesh.getNode(cell.node_ids[1]);
+    const Node& p2 = mesh.getNode(cell.node_ids[2]);
+    const Real dx10 = p1.x - p0.x;
+    const Real dy10 = p1.y - p0.y;
+    const Real dx20 = p2.x - p0.x;
+    const Real dy20 = p2.y - p0.y;
+    const Real det = dx10 * dy20 - dy10 * dx20;
+    if (std::abs(det) <= 1.0e-300)
+        return {std::numeric_limits<Real>::quiet_NaN(),
+                std::numeric_limits<Real>::quiet_NaN()};
+    const Real dv10 = psi(static_cast<int>(cell.node_ids[1])) -
+        psi(static_cast<int>(cell.node_ids[0]));
+    const Real dv20 = psi(static_cast<int>(cell.node_ids[2])) -
+        psi(static_cast<int>(cell.node_ids[0]));
+    const Point2 gradient{
+        (dv10 * dy20 - dv20 * dy10) / det,
+        (dx10 * dv20 - dx20 * dv10) / det};
+
+    Real nearestDistance = std::numeric_limits<Real>::infinity();
+    Real nearestField = std::numeric_limits<Real>::quiet_NaN();
+    for (Index edgeId = 0; edgeId < mesh.numEdges(); ++edgeId) {
+        const Edge& edge = mesh.getEdge(edgeId);
+        std::vector<std::string> adjacentRegions;
+        for (Index candidateCell : edgeCells.at(edgeId))
+            adjacentRegions.push_back(
+                mesh.getRegion(mesh.getCell(candidateCell).region_id).name);
+        if (!surfaceMobilityAppliesToRegionPair(
+                mobilityConfig, region.name, adjacentRegions))
+            continue;
+        const Node& a = mesh.getNode(edge.n0);
+        const Node& b = mesh.getNode(edge.n1);
+        if (edge.length <= 1.0e-30)
+            continue;
+        const Point2 normal{-(b.y - a.y) / edge.length,
+                             (b.x - a.x) / edge.length};
+        const auto [cx, cy] = cellCentroid(mesh, cellId);
+        const Real abx = b.x - a.x;
+        const Real aby = b.y - a.y;
+        const Real projection = std::clamp(
+            ((cx - a.x) * abx + (cy - a.y) * aby) /
+                (edge.length * edge.length),
+            0.0, 1.0);
+        const Real nearestX = a.x + projection * abx;
+        const Real nearestY = a.y + projection * aby;
+        const Real distance = std::hypot(cx - nearestX, cy - nearestY);
+        if (distance < nearestDistance) {
+            nearestDistance = distance;
+            nearestField = std::abs(gradient.dot(normal)) * fieldFactor;
+        }
+    }
+    return {nearestField, nearestDistance};
+}
+
+inline void updateSurfaceMobilityCellGeometry(
+    MobilityModelConfig& config,
+    const DeviceMesh& mesh,
+    const std::vector<std::vector<Index>>& edgeCells,
+    const VectorXd& psi,
+    Real fieldFactor)
+{
+    if (!isSurfaceMobilityModel(config))
+        return;
+    if (config.surface.cellNormalX.size() != mesh.numCells() ||
+        config.surface.cellNormalY.size() != mesh.numCells() ||
+        config.surface.cellDistances.size() != mesh.numCells()) {
+        config.surface.cellNormalX.assign(
+            mesh.numCells(), std::numeric_limits<Real>::quiet_NaN());
+        config.surface.cellNormalY.assign(
+            mesh.numCells(), std::numeric_limits<Real>::quiet_NaN());
+        config.surface.cellDistances.assign(
+            mesh.numCells(), std::numeric_limits<Real>::quiet_NaN());
+        struct InterfaceSegment {
+            Real ax;
+            Real ay;
+            Real bx;
+            Real by;
+            Real nx;
+            Real ny;
+            std::vector<std::string> regions;
+        };
+        std::vector<InterfaceSegment> interfaces;
+        for (Index edgeId = 0; edgeId < mesh.numEdges(); ++edgeId) {
+            const Edge& edge = mesh.getEdge(edgeId);
+            std::vector<std::string> regions;
+            for (Index adjacentCell : edgeCells.at(edgeId))
+                regions.push_back(mesh.getRegion(
+                    mesh.getCell(adjacentCell).region_id).name);
+            if (regions.size() < 2 || edge.length <= 1.0e-30)
+                continue;
+            const Node& a = mesh.getNode(edge.n0);
+            const Node& b = mesh.getNode(edge.n1);
+            interfaces.push_back({
+                a.x, a.y, b.x, b.y,
+                -(b.y - a.y) / edge.length,
+                 (b.x - a.x) / edge.length,
+                std::move(regions)});
+        }
+        for (Index cellId = 0; cellId < mesh.numCells(); ++cellId) {
+            const Region& region = mesh.getRegion(mesh.getCell(cellId).region_id);
+            const auto [cx, cy] = cellCentroid(mesh, cellId);
+            Real nearest = std::numeric_limits<Real>::infinity();
+            for (const InterfaceSegment& segment : interfaces) {
+                if (!surfaceMobilityAppliesToRegionPair(
+                        config, region.name, segment.regions))
+                    continue;
+                const Real abx = segment.bx - segment.ax;
+                const Real aby = segment.by - segment.ay;
+                const Real length2 = abx * abx + aby * aby;
+                const Real projection = std::clamp(
+                    ((cx - segment.ax) * abx + (cy - segment.ay) * aby) /
+                        length2,
+                    0.0, 1.0);
+                const Real nearestX = segment.ax + projection * abx;
+                const Real nearestY = segment.ay + projection * aby;
+                const Real distance = std::hypot(cx - nearestX, cy - nearestY);
+                if (distance < nearest) {
+                    nearest = distance;
+                    config.surface.cellNormalX[cellId] = segment.nx;
+                    config.surface.cellNormalY[cellId] = segment.ny;
+                    config.surface.cellDistances[cellId] = distance;
+                }
+            }
+        }
+    }
+    config.surface.cellNormalFields.assign(
+        mesh.numCells(), std::numeric_limits<Real>::quiet_NaN());
+    for (Index cellId = 0; cellId < mesh.numCells(); ++cellId) {
+        if (!std::isfinite(config.surface.cellNormalX[cellId]) ||
+            !std::isfinite(config.surface.cellNormalY[cellId]))
+            continue;
+        const Cell& cell = mesh.getCell(cellId);
+        if (cell.type != CellType::Tri3 || cell.node_ids.size() != 3)
+            continue;
+        const Node& p0 = mesh.getNode(cell.node_ids[0]);
+        const Node& p1 = mesh.getNode(cell.node_ids[1]);
+        const Node& p2 = mesh.getNode(cell.node_ids[2]);
+        const Real dx10 = p1.x - p0.x;
+        const Real dy10 = p1.y - p0.y;
+        const Real dx20 = p2.x - p0.x;
+        const Real dy20 = p2.y - p0.y;
+        const Real det = dx10 * dy20 - dy10 * dx20;
+        if (std::abs(det) <= 1.0e-300)
+            continue;
+        const Real dv10 = psi(static_cast<int>(cell.node_ids[1])) -
+            psi(static_cast<int>(cell.node_ids[0]));
+        const Real dv20 = psi(static_cast<int>(cell.node_ids[2])) -
+            psi(static_cast<int>(cell.node_ids[0]));
+        const Real gradientX = (dv10 * dy20 - dv20 * dy10) / det;
+        const Real gradientY = (dx10 * dv20 - dx20 * dv10) / det;
+        config.surface.cellNormalFields[cellId] = std::abs(
+            gradientX * config.surface.cellNormalX[cellId] +
+            gradientY * config.surface.cellNormalY[cellId]) * fieldFactor;
+    }
+}
+
 inline Real cellAverageTotalImpurity(const DeviceMesh& mesh,
                                      const DopingModel& doping,
                                      Index cellId)
@@ -882,19 +1068,35 @@ inline Real edgeMobility(const std::vector<std::vector<Index>>& edgeCells,
         // normal-field estimate is available the NaN field disables the surface
         // factor while preserving any high-field velocity saturation.
         const Region& region = mesh.getRegion(mesh.getCell(c).region_id);
+        const bool lombardi = mobilityConfig != nullptr &&
+            (mobilityConfig->model == "masetti_lombardi" ||
+             mobilityConfig->model == "masetti_field_lombardi");
         const bool surfaceApplies = surfaceEnabled &&
-            surfaceMobilityAppliesToRegionPair(*mobilityConfig, region.name, adjacentRegionNames);
+            (lombardi
+                ? (mobilityConfig->surface.surfaceRegion.empty() ||
+                   mobilityConfig->surface.surfaceRegion == region.name)
+                : surfaceMobilityAppliesToRegionPair(
+                    *mobilityConfig, region.name, adjacentRegionNames));
         const Real surfaceNormalField = (surfaceApplies && psi != nullptr)
-            ? estimateSurfaceNormalField(cells, mesh, *psi, edgeId, c) *
-                  mobilityConfig->surface.coordinateFieldFactor
+            ? (c < mobilityConfig->surface.cellNormalFields.size()
+                ? mobilityConfig->surface.cellNormalFields[c]
+                : estimateSurfaceNormalField(cells, mesh, *psi, edgeId, c) *
+                    mobilityConfig->surface.coordinateFieldFactor)
+            : std::numeric_limits<Real>::quiet_NaN();
+        const Real surfaceDistance = surfaceApplies
+            ? (c < mobilityConfig->surface.cellDistances.size()
+                ? mobilityConfig->surface.cellDistances[c]
+                : estimateSurfaceDistance(mesh, edgeId, c))
             : std::numeric_limits<Real>::quiet_NaN();
         const Real mobilityDoping = edgeMobilityDopingConcentration(
             mesh, doping, edge, c, mobilityConfig);
         const Real modelMobility = (carrier == CarrierType::Electron)
             ? mobility.electronMobility(
-                material, mobilityDoping, 0.0, 0.0, electricField, surfaceNormalField)
+                material, mobilityDoping, 0.0, 0.0, electricField,
+                surfaceNormalField, surfaceDistance)
             : mobility.holeMobility(
-                material, mobilityDoping, 0.0, 0.0, electricField, surfaceNormalField);
+                material, mobilityDoping, 0.0, 0.0, electricField,
+                surfaceNormalField, surfaceDistance);
         if (modelMobility <= 0.0)
             continue;
 
@@ -2895,19 +3097,36 @@ inline Real triangleGssEndpointAveragedMobility(
     Index                         node0,
     Index                         node1,
     CarrierType                   carrier,
-    Real                          drivingField)
+    Real                          drivingField,
+    const VectorXd*               psi = nullptr,
+    const std::vector<Index>*     cellEdgeIds = nullptr,
+    Real                          fieldFactor = 1.0)
 {
     const Material& material = cellMaterials.at(static_cast<std::size_t>(cellId));
+    const auto [surfaceField, surfaceDistance] =
+        isSurfaceMobilityModel(mobilityConfig) &&
+            cellId < mobilityConfig.surface.cellNormalFields.size() &&
+            cellId < mobilityConfig.surface.cellDistances.size()
+        ? std::pair<Real, Real>{
+              mobilityConfig.surface.cellNormalFields[cellId],
+              mobilityConfig.surface.cellDistances[cellId]}
+        : isSurfaceMobilityModel(mobilityConfig) && psi != nullptr && cellEdgeIds != nullptr
+        ? nearestSurfaceFieldAndDistanceForCell(
+              mesh, buildEdgeCellMap(mesh), *psi, cellId, mobilityConfig,
+              fieldFactor)
+        : std::pair<Real, Real>{0.0, 0.0};
     const auto atNode = [&](Index node) {
         const Real mobilityDoping = nodeMobilityDopingConcentration(
             mesh, doping, node, cellId, &mobilityConfig);
         return carrier == CarrierType::Electron
             ? mobility.electronMobility(
                 material, mobilityDoping, n(static_cast<int>(node)),
-                p(static_cast<int>(node)), drivingField, 0.0)
+                p(static_cast<int>(node)), drivingField,
+                surfaceField, surfaceDistance)
             : mobility.holeMobility(
                 material, mobilityDoping, n(static_cast<int>(node)),
-                p(static_cast<int>(node)), drivingField, 0.0);
+                p(static_cast<int>(node)), drivingField,
+                surfaceField, surfaceDistance);
     };
     return 0.5 * (atNode(node0) + atNode(node1));
 }
@@ -3030,16 +3249,18 @@ triangleGssAvalancheSourceRecordsForCell(
         record.holeMobilityDrivingField = record.holeEdgeQfField;
         record.electronLowFieldMobility = triangleGssEndpointAveragedMobility(
             mobilityConfig, mobility, mesh, doping, cellMaterials, n, p, cellId, node0, node1,
-            CarrierType::Electron, 0.0);
+            CarrierType::Electron, 0.0, &psi, &cellEdgeIds, fieldFactor);
         record.holeLowFieldMobility = triangleGssEndpointAveragedMobility(
             mobilityConfig, mobility, mesh, doping, cellMaterials, n, p, cellId, node0, node1,
-            CarrierType::Hole, 0.0);
+            CarrierType::Hole, 0.0, &psi, &cellEdgeIds, fieldFactor);
         record.electronMobility = triangleGssEndpointAveragedMobility(
             mobilityConfig, mobility, mesh, doping, cellMaterials, n, p, cellId, node0, node1,
-            CarrierType::Electron, record.electronEdgeQfField);
+            CarrierType::Electron, record.electronEdgeQfField,
+            &psi, &cellEdgeIds, fieldFactor);
         record.holeMobility = triangleGssEndpointAveragedMobility(
             mobilityConfig, mobility, mesh, doping, cellMaterials, n, p, cellId, node0, node1,
-            CarrierType::Hole, record.holeEdgeQfField);
+            CarrierType::Hole, record.holeEdgeQfField,
+            &psi, &cellEdgeIds, fieldFactor);
         record.electronAlpha = electronAlpha;
         record.holeAlpha = holeAlpha;
         record.electronFluxProxy = record.electronMobility *
@@ -3078,10 +3299,6 @@ triangleGssAvalancheSourceRecords(
     Real                               Vt,
     Real                               fieldFactor = 1.0)
 {
-    if (isSurfaceMobilityModel(mobilityConfig)) {
-        throw std::invalid_argument(
-            "triangle GSS avalanche source does not support surface mobility");
-    }
     std::vector<TriangleGssAvalancheSourceRecord> records;
     const auto cellEdges = buildCellEdgeMap(edgeCells, mesh);
     records.reserve(static_cast<std::size_t>(mesh.numCells()) * 3);
@@ -3262,21 +3479,23 @@ elementEdgeGssLauxAvalancheSourceRecordForCell(
         const Real electronLowFieldMobility =
             triangleGssEndpointAveragedMobility(
                 mobilityConfig, mobility, mesh, doping, cellMaterials, n, p, cellId,
-                node0, node1, CarrierType::Electron, 0.0);
+                node0, node1, CarrierType::Electron, 0.0,
+                &psi, &cellEdgeIds, fieldFactor);
         const Real holeLowFieldMobility =
             triangleGssEndpointAveragedMobility(
                 mobilityConfig, mobility, mesh, doping, cellMaterials, n, p, cellId,
-                node0, node1, CarrierType::Hole, 0.0);
+                node0, node1, CarrierType::Hole, 0.0,
+                &psi, &cellEdgeIds, fieldFactor);
         const Real electronMobility =
             triangleGssEndpointAveragedMobility(
                 mobilityConfig, mobility, mesh, doping, cellMaterials, n, p, cellId,
                 node0, node1, CarrierType::Electron,
-                electronMobilityDrive);
+                electronMobilityDrive, &psi, &cellEdgeIds, fieldFactor);
         const Real holeMobility =
             triangleGssEndpointAveragedMobility(
                 mobilityConfig, mobility, mesh, doping, cellMaterials, n, p, cellId,
                 node0, node1, CarrierType::Hole,
-                holeMobilityDrive);
+                holeMobilityDrive, &psi, &cellEdgeIds, fieldFactor);
         record.electronLowFieldMobilities[local] = electronLowFieldMobility;
         record.holeLowFieldMobilities[local] = holeLowFieldMobility;
         record.electronMobilityDrivingFields[local] = electronMobilityDrive;
@@ -3320,19 +3539,38 @@ elementEdgeGssLauxAvalancheSourceRecordForCell(
         localHoleDensity[localNode] = p(static_cast<int>(node));
         localIntrinsicDensity[localNode] = ni.at(node);
     }
-    const auto sharedSourceIntegrals =
-        elementEdgeGssLauxAvalancheSourceIntegralsLocal<Real>(
-            config, mobilityConfig, mobility, cellEdgeIds, mesh, doping,
-            cellMaterials, cellId, localPsi, localPhin, localPhip,
-            localElectronDensity, localHoleDensity, localIntrinsicDensity,
-            Vt, fieldFactor);
-    for (std::size_t localNode = 0; localNode < 3; ++localNode) {
-        record.electronSourceIntegrals[localNode] =
-            sharedSourceIntegrals.electron[localNode];
-        record.holeSourceIntegrals[localNode] =
-            sharedSourceIntegrals.hole[localNode];
-        record.combinedSourceIntegrals[localNode] =
-            sharedSourceIntegrals.combined[localNode];
+    if (isSurfaceMobilityModel(mobilityConfig)) {
+        const Real electronGeneration = record.electronAlpha *
+            record.electronCurrentVector.norm();
+        const Real holeGeneration = record.holeAlpha *
+            record.holeCurrentVector.norm();
+        const auto vertexMeasures = tri3ElementVertexBoxMeasures(mesh, cell);
+        for (std::size_t localNode = 0; localNode < 3; ++localNode) {
+            const Real measure = vertexMeasures[localNode] *
+                config.sourceGeometryScale;
+            record.electronSourceIntegrals[localNode] =
+                electronGeneration * measure;
+            record.holeSourceIntegrals[localNode] =
+                holeGeneration * measure;
+            record.combinedSourceIntegrals[localNode] =
+                record.electronSourceIntegrals[localNode] +
+                record.holeSourceIntegrals[localNode];
+        }
+    } else {
+        const auto sharedSourceIntegrals =
+            elementEdgeGssLauxAvalancheSourceIntegralsLocal<Real>(
+                config, mobilityConfig, mobility, cellEdgeIds, mesh, doping,
+                cellMaterials, cellId, localPsi, localPhin, localPhip,
+                localElectronDensity, localHoleDensity, localIntrinsicDensity,
+                Vt, fieldFactor);
+        for (std::size_t localNode = 0; localNode < 3; ++localNode) {
+            record.electronSourceIntegrals[localNode] =
+                sharedSourceIntegrals.electron[localNode];
+            record.holeSourceIntegrals[localNode] =
+                sharedSourceIntegrals.hole[localNode];
+            record.combinedSourceIntegrals[localNode] =
+                sharedSourceIntegrals.combined[localNode];
+        }
     }
     return record;
 }
@@ -3356,10 +3594,6 @@ elementEdgeGssLauxAvalancheSourceRecords(
     Real                               Vt,
     Real                               fieldFactor = 1.0)
 {
-    if (isSurfaceMobilityModel(mobilityConfig)) {
-        throw std::invalid_argument(
-            "element-edge GSS/Laux avalanche source does not support surface mobility");
-    }
     const auto cellEdges = buildCellEdgeMap(edgeCells, mesh);
     std::vector<ElementEdgeGssLauxAvalancheSourceRecord> records;
     records.reserve(static_cast<std::size_t>(mesh.numCells()));

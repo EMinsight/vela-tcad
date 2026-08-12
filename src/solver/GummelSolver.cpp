@@ -127,6 +127,10 @@ GummelConfig gummelConfigFromJson(const nlohmann::json& json, UnitScalingConfig 
     cfg.dampingPsi = json.value("damping_psi", cfg.dampingPsi);
     cfg.taun = json.value("taun", cfg.taun);
     cfg.taup = json.value("taup", cfg.taup);
+    if (json.contains("srh_doping_dependence")) {
+        cfg.srhDopingDependence = srhDopingDependenceConfigFromJson(
+            json.at("srh_doping_dependence"), scaling);
+    }
     cfg.augerCn = json.value("auger_cn_m6_per_s", cfg.augerCn);
     cfg.augerCp = json.value("auger_cp_m6_per_s", cfg.augerCp);
     cfg.carrierFloor = json.value("carrier_floor_m3", cfg.carrierFloor);
@@ -517,7 +521,8 @@ DDSolution runGummelImpl(const DeviceMesh&                          mesh,
     // ------------------------------------------------------------------
     const MobilityModelConfig mobilityConfig = cfg.mobility;
     RecombinationModelConfig recombinationConfig =
-        recombinationModelConfig(cfg.recombination, cfg.taun, cfg.taup);
+        recombinationModelConfig(
+            cfg.recombination, cfg.taun, cfg.taup, cfg.srhDopingDependence);
     recombinationConfig.augerCn = cfg.augerCn;
     recombinationConfig.augerCp = cfg.augerCp;
     recombinationConfig.bandToBand = cfg.bandToBand;
@@ -1182,7 +1187,9 @@ void writeDDSolutionVTK(const std::string& filename,
         const Real excessProduct = ni * ni *
             std::expm1((holeQf - electronQf) / Vt);
         srh[i] = recombination.srhRateFromExcessProduct(
-            excessProduct, n, p, ni);
+            excessProduct, n, p, ni,
+            recombination.srhDopingConcentration(
+                doping.donors(i), doping.acceptors(i)));
         bandToBandGeneration[i] = transportNodeAreas[i] > 0.0
             ? bandToBandSourceIntegrals[i] / transportNodeAreas[i]
             : 0.0;

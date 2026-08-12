@@ -51,6 +51,8 @@ namespace {
 enum class SolverMethod {
     Gummel,
     Newton,
+    PoissonOnly,
+    FrozenState,
     GummelNewton,
 };
 
@@ -61,6 +63,10 @@ std::string solverMethodName(SolverMethod method)
             return "gummel";
         case SolverMethod::Newton:
             return "newton";
+        case SolverMethod::PoissonOnly:
+            return "poisson_only";
+        case SolverMethod::FrozenState:
+            return "frozen_state";
         case SolverMethod::GummelNewton:
             return "gummel_newton";
     }
@@ -528,6 +534,7 @@ Real terminalCurrentConsistencyRatio(const ContactCurrentResult& current)
 SweepRecombinationDiagnostics computeSweepRecombinationDiagnostics(
     const DDSolution& sol,
     const std::vector<Real>& effectiveNi,
+    const DopingModel& doping,
     const RecombinationModelConfig& recombinationCfg)
 {
     SweepRecombinationDiagnostics diagnostics;
@@ -542,7 +549,10 @@ SweepRecombinationDiagnostics computeSweepRecombinationDiagnostics(
         const Real n = sol.n(row);
         const Real p = sol.p(row);
         const Real ni = effectiveNi[i];
-        const Real rate = recombination.totalRate(n, p, ni);
+        const Real rate = recombination.totalRate(
+            n, p, ni,
+            recombination.srhDopingConcentration(
+                doping.donors(i), doping.acceptors(i)));
         const Real absRate = std::abs(rate);
         if (std::isfinite(absRate)) {
             diagnostics.maxAbsRate_m3_per_s = std::max(diagnostics.maxAbsRate_m3_per_s, absRate);
@@ -833,10 +843,15 @@ std::vector<ContinuityBalanceDiagnosticRow> computeContinuityBalanceDiagnostics(
             return recombination.totalRateFromExcessProduct(
                 sol.n(row) * sol.p(row) - equilibriumProduct,
                 sol.n(row), sol.p(row),
-                std::sqrt(std::max<Real>(equilibriumProduct, 0.0)))
+                std::sqrt(std::max<Real>(equilibriumProduct, 0.0)),
+                recombination.srhDopingConcentration(
+                    doping.donors(node), doping.acceptors(node)))
                 * mesh.getNode(node).volume;
         }
-        return recombination.totalRate(sol.n(row), sol.p(row), ni)
+        return recombination.totalRate(
+                   sol.n(row), sol.p(row), ni,
+                   recombination.srhDopingConcentration(
+                       doping.donors(node), doping.acceptors(node)))
             * mesh.getNode(node).volume;
     };
 
@@ -1067,10 +1082,15 @@ SolverMethod solverMethodFromJson(const nlohmann::json& cfg)
         return SolverMethod::Gummel;
     if (method == "newton")
         return SolverMethod::Newton;
+    if (method == "poisson_only" || method == "aba_poisson")
+        return SolverMethod::PoissonOnly;
+    if (method == "frozen_state" || method == "diagnostic_state_replay")
+        return SolverMethod::FrozenState;
     if (method == "gummel_newton" || method == "hybrid")
         return SolverMethod::GummelNewton;
     throw std::invalid_argument(
-        "DCSweep: solver.method/type must be 'gummel', 'newton', or 'gummel_newton'.");
+        "DCSweep: solver.method/type must be 'gummel', 'newton', "
+        "'poisson_only', 'frozen_state', or 'gummel_newton'.");
 }
 
 HybridHandoffConfig hybridHandoffConfigFromJson(const nlohmann::json& solverJson)
@@ -2619,6 +2639,10 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
 
     const nlohmann::json solverCfg = cfg.value("solver", nlohmann::json::object());
     const SolverMethod solverMethod = solverMethodFromJson(cfg);
+    if (solverMethod == SolverMethod::FrozenState && sweep.initialStateFile.empty()) {
+        throw std::invalid_argument(
+            "DCSweep: solver.method='frozen_state' requires sweep.initial_state_file.");
+    }
     const HybridHandoffConfig hybrid = solverMethod == SolverMethod::GummelNewton
         ? hybridHandoffConfigFromJson(solverCfg)
         : HybridHandoffConfig{};
@@ -2627,7 +2651,8 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
     NewtonConfig newton;
     std::optional<NewtonConfig> initializationNewton;
     MobilityModelConfig mobilityConfig;
-    if (solverMethod == SolverMethod::Newton) {
+    if (solverMethod == SolverMethod::Newton ||
+        solverMethod == SolverMethod::PoissonOnly) {
         newton = newtonConfigFromJson(solverCfg, scaling);
         newton.unitScalingRefs = scalingRefs;
         newton.diagnostics =
@@ -2647,11 +2672,14 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
         mobilityConfig = gummel.mobility;
     }
     const Real temperature_K = (solverMethod == SolverMethod::Newton ||
+                                solverMethod == SolverMethod::PoissonOnly ||
                                 solverMethod == SolverMethod::GummelNewton)
         ? newton.temperature_K
         : gummel.temperature_K;
     const CarrierStatisticsConfig sweepCarrierStatistics =
-        (solverMethod == SolverMethod::Newton || solverMethod == SolverMethod::GummelNewton)
+        (solverMethod == SolverMethod::Newton ||
+         solverMethod == SolverMethod::PoissonOnly ||
+         solverMethod == SolverMethod::GummelNewton)
         ? newton.carrierStatistics
         : gummel.carrierStatistics;
     if (sweep.initialization.mode == "poisson_block") {
@@ -2659,7 +2687,9 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
         initializationNewton->unitScalingRefs = scalingRefs;
     }
     const bool recombinationDiagnosticsEnabled =
-        (solverMethod == SolverMethod::Newton || solverMethod == SolverMethod::GummelNewton) &&
+        (solverMethod == SolverMethod::Newton ||
+         solverMethod == SolverMethod::PoissonOnly ||
+         solverMethod == SolverMethod::GummelNewton) &&
         newton.diagnostics;
 
     if (runtimeLog.active()) {
@@ -2697,15 +2727,21 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
     RecombinationModelConfig sweepRecombinationConfig;
     BandgapNarrowingConfig sweepBgnConfig;
     ImpactIonizationModelConfig sweepImpactIonizationConfig;
-    if (solverMethod == SolverMethod::Newton || solverMethod == SolverMethod::GummelNewton) {
-        sweepRecombinationConfig = recombinationModelConfig(newton.recombination, newton.taun, newton.taup);
+    if (solverMethod == SolverMethod::Newton ||
+        solverMethod == SolverMethod::PoissonOnly ||
+        solverMethod == SolverMethod::GummelNewton) {
+        sweepRecombinationConfig = recombinationModelConfig(
+            newton.recombination, newton.taun, newton.taup,
+            newton.srhDopingDependence);
         sweepRecombinationConfig.augerCn = newton.augerCn;
         sweepRecombinationConfig.augerCp = newton.augerCp;
         sweepRecombinationConfig.bandToBand = newton.bandToBand;
         sweepBgnConfig = newton.bandgapNarrowing;
         sweepImpactIonizationConfig = newton.impactIonization;
     } else {
-        sweepRecombinationConfig = recombinationModelConfig(gummel.recombination, gummel.taun, gummel.taup);
+        sweepRecombinationConfig = recombinationModelConfig(
+            gummel.recombination, gummel.taun, gummel.taup,
+            gummel.srhDopingDependence);
         sweepRecombinationConfig.augerCn = gummel.augerCn;
         sweepRecombinationConfig.augerCp = gummel.augerCp;
         sweepRecombinationConfig.bandToBand = gummel.bandToBand;
@@ -3741,6 +3777,7 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
     }
 
     if ((solverMethod == SolverMethod::Newton ||
+         solverMethod == SolverMethod::PoissonOnly ||
          solverMethod == SolverMethod::GummelNewton) &&
         !contactSpecs.empty()) {
         // The Newton coupled-DD path supports electrostatic-only metal gates,
@@ -3755,7 +3792,7 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
         }
         if (!firstSchottky.empty()) {
             throw std::runtime_error(
-                "DCSweep: solver.method='newton' or 'gummel_newton' does not yet support "
+                "DCSweep: Newton-family solver methods do not yet support "
                 "Schottky contacts (contact '" + firstSchottky + "'). Use solver.method='gummel' for the "
                 "Schottky prototype, or switch the contact to type='ohmic'.");
         }
@@ -3788,7 +3825,21 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                 attempt.contactCurrentOverrides = buildContactCurrentQfFloorOverrides(
                     mesh, *initial, contactCurrentQfFloorContacts);
             }
-            if (solverMethod == SolverMethod::Newton) {
+            if (solverMethod == SolverMethod::FrozenState) {
+                if (initial == nullptr) {
+                    throw std::invalid_argument(
+                        "DCSweep: frozen_state replay requires an initial state at every point.");
+                }
+                sol = *initial;
+                sol.converged = true;
+                sol.iters = 0;
+                solverConverged = true;
+                attempt.solverMethod = "frozen_state";
+                attempt.gummelIterations = 0;
+                attempt.newtonIterations = 0;
+                attempt.handoffStage = "diagnostic_state_replay";
+                attempt.newtonConvergenceReason = "frozen_state_no_solve";
+            } else if (solverMethod == SolverMethod::Newton) {
                 NewtonResult result = initial != nullptr
                     ? runNewton(mesh, matdb, doping, biases, *initial, newton,
                                 fixedChargeSpecs, sheetChargeSpecs, contactSpecs)
@@ -3820,6 +3871,36 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                 if (!solverConverged) {
                     attempt.failureReason = result.failureDiagnostics.failureReason.empty()
                         ? "newton_non_convergence"
+                        : result.failureDiagnostics.failureReason;
+                }
+                sol = std::move(result.solution);
+            } else if (solverMethod == SolverMethod::PoissonOnly) {
+                // Sentaurus ABA initializes with a coupled equilibrium solve,
+                // then advances bias with only the nonlinear Poisson equation.
+                NewtonResult result = initial != nullptr
+                    ? runNewtonPoissonOnly(
+                          mesh, matdb, doping, biases, *initial, newton,
+                          fixedChargeSpecs, sheetChargeSpecs, contactSpecs)
+                    : runNewton(
+                          mesh, matdb, doping, biases, newton,
+                          fixedChargeSpecs, sheetChargeSpecs, contactSpecs);
+                solverConverged = result.converged;
+                attempt.solverMethod = "poisson_only";
+                attempt.gummelIterations = 0;
+                attempt.newtonIterations = result.iters;
+                attempt.handoffStage = initial == nullptr
+                    ? (solverConverged ? "poisson_only_initial_coupled"
+                                       : "poisson_only_initial_coupled_failed")
+                    : (solverConverged ? "poisson_only" : "poisson_only_failed");
+                attempt.newtonFailureDiagnostics = result.failureDiagnostics;
+                attempt.newtonHistory = result.history;
+                attempt.newtonTrace = result.trace;
+                attempt.initialResidualNorm = result.initialResidualNorm;
+                attempt.finalResidualNorm = result.finalResidualNorm;
+                attempt.newtonConvergenceReason = result.convergenceReason;
+                if (!solverConverged) {
+                    attempt.failureReason = result.failureDiagnostics.failureReason.empty()
+                        ? "poisson_only_non_convergence"
                         : result.failureDiagnostics.failureReason;
                 }
                 sol = std::move(result.solution);
@@ -4399,7 +4480,8 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
             }
             return it->second;
         };
-        if (converged) {
+        if (converged && solverMethod != SolverMethod::PoissonOnly &&
+            solverMethod != SolverMethod::FrozenState) {
             if (sweep.diagnostics.contactEdge.enabled ||
                 sweep.diagnostics.terminalBalance.enabled) {
                 currentDetailed = detailedForContact(sweep.currentContact);
@@ -4632,11 +4714,14 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                 : std::max(pathCfg.maxPaths, pathCfg.breakRank);
             PathIonizationAnalysis analysis;
             if (pathCfg.tracingMode == "continuous_cell") {
-                if (!detail::usesSentaurusEparallelAvalancheDrivingForce(
-                        pathImpactConfig)) {
+                const bool continuousUsesEparallel =
+                    detail::usesSentaurusEparallelAvalancheDrivingForce(
+                        pathImpactConfig);
+                if (!continuousUsesEparallel &&
+                    pathImpactConfig.drivingForce != "electric_field") {
                     throw std::invalid_argument(
                         "DCSweep: continuous_cell path tracing currently "
-                        "requires driving_force='eparallel'.");
+                        "supports driving_force='electric_field' or 'eparallel'.");
                 }
                 std::vector<Point2> nodeElectricVector(mesh.numNodes(), Point2::Zero());
                 std::vector<Point2> nodeElectronCurrent(mesh.numNodes(), Point2::Zero());
@@ -4786,12 +4871,14 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                         holeCurrent = recoveredNodeHoleDirection[node];
                     }
                     nodeElectricField[node] = electric;
-                    nodeElectronDrive[node] =
-                        detail::sentaurusEparallelAvalancheDrivingField(
-                            electric, electronCurrent);
-                    nodeHoleDrive[node] =
-                        detail::sentaurusEparallelAvalancheDrivingField(
-                            electric, holeCurrent);
+                    nodeElectronDrive[node] = continuousUsesEparallel
+                        ? detail::sentaurusEparallelAvalancheDrivingField(
+                              electric, electronCurrent)
+                        : electric.norm();
+                    nodeHoleDrive[node] = continuousUsesEparallel
+                        ? detail::sentaurusEparallelAvalancheDrivingField(
+                              electric, holeCurrent)
+                        : electric.norm();
                     nodeElectronAlpha[node] =
                         pathImpact->electronCoefficient(nodeElectronDrive[node]);
                     nodeHoleAlpha[node] =
@@ -5208,7 +5295,8 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
         }
         if (converged && recombinationDiagnosticsEnabled) {
             const SweepRecombinationDiagnostics diagnostics =
-                computeSweepRecombinationDiagnostics(sol, effectiveNi, sweepRecombinationConfig);
+                computeSweepRecombinationDiagnostics(
+                    sol, effectiveNi, doping, sweepRecombinationConfig);
             point.extraFields.emplace_back(
                 "recombination_max_abs_rate_m3_per_s", diagnostics.maxAbsRate_m3_per_s);
             point.extraFields.emplace_back(

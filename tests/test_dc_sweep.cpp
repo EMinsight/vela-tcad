@@ -371,6 +371,124 @@ TEST_CASE("DCSweep: default runtime log file is generated", "[dc_sweep][runtime_
     REQUIRE_THAT(logText, Catch::Matchers::ContainsSubstring("solve_trace"));
 }
 
+TEST_CASE("DCSweep ABA Poisson mode runs coupled equilibrium then Poisson-only bias",
+          "[dc_sweep][poisson_only][aba]")
+{
+    const std::filesystem::path dir = makeUniqueSweepDir();
+    std::filesystem::create_directories(dir);
+    const ScopedDirectoryCleanup cleanup{dir};
+
+    const std::filesystem::path meshPath = writePNMeshWithInterior(dir);
+    const std::filesystem::path csvPath = dir / "aba_poisson.csv";
+    const std::filesystem::path cfgPath = writeUnitScalingSweepConfig(
+        dir,
+        meshPath,
+        csvPath,
+        {
+            {"mode", "bv_reverse"},
+            {"start", 0.0},
+            {"stop", -0.05},
+            {"step", -0.05},
+            {"max_step", 0.05},
+            {"write_vtk", false},
+            {"breakdown", {
+                {"max_electric_field_V_per_m", 1.0e30},
+                {"current_jump_ratio", 1.0e30},
+                {"non_convergence", false}
+            }}
+        },
+        {
+            {"method", "poisson_only"},
+            {"max_iter", 100},
+            {"reltol", 1.0e-8},
+            {"abstol", 1.0e-8},
+            {"recombination", nlohmann::json::array()},
+            {"impact_ionization", "none"}
+        });
+
+    DCSweep sweep;
+    const DCSweepResult result = sweep.runWithResult(cfgPath.string());
+    REQUIRE(result.points.size() == 2);
+    REQUIRE(result.points.at(0).converged);
+    REQUIRE(result.points.at(1).converged);
+    REQUIRE(result.points.at(0).solverMethod == "poisson_only");
+    REQUIRE(result.points.at(1).solverMethod == "poisson_only");
+    REQUIRE(result.points.at(0).totalCurrent == Catch::Approx(0.0));
+    REQUIRE(result.points.at(1).totalCurrent == Catch::Approx(0.0));
+}
+
+TEST_CASE("DCSweep frozen-state mode preserves the supplied diagnostic state",
+          "[dc_sweep][frozen_state]")
+{
+    const std::filesystem::path dir = makeUniqueSweepDir();
+    std::filesystem::create_directories(dir);
+    const ScopedDirectoryCleanup cleanup{dir};
+
+    const std::filesystem::path meshPath = writePNMesh(dir);
+    const std::filesystem::path csvPath = dir / "frozen_state.csv";
+    const std::filesystem::path initialStatePath = dir / "frozen_state_initial.csv";
+    const std::filesystem::path outputStatePath = dir / "frozen_state_output.csv";
+    {
+        std::ofstream state(initialStatePath);
+        state << "node_id,psi,phin,phip,electrons_m3,holes_m3\n";
+        state << "0,0.11,0,0,1e10,1e10\n";
+        state << "1,0.22,0,0,1e10,1e10\n";
+        state << "2,0.33,0,0,1e10,1e10\n";
+        state << "3,0.44,0,0,1e10,1e10\n";
+    }
+    const std::filesystem::path cfgPath = writeSweepConfig(
+        dir,
+        meshPath,
+        csvPath,
+        {
+            {"start", 0.0},
+            {"stop", 0.0},
+            {"step", 0.25},
+            {"write_vtk", false},
+            {"initial_state_file", initialStatePath.string()},
+            {"write_state_file", outputStatePath.string()},
+        },
+        {
+            {"method", "frozen_state"},
+            {"impact_ionization", "none"},
+        });
+
+    DCSweep sweep;
+    const DCSweepResult result = sweep.runWithResult(cfgPath.string());
+
+    REQUIRE(result.points.size() == 1);
+    REQUIRE(result.points.front().converged);
+    REQUIRE(result.points.front().solverMethod == "frozen_state");
+    REQUIRE(result.points.front().handoffStage == "diagnostic_state_replay");
+    REQUIRE(result.points.front().iterations == 0);
+    REQUIRE(result.points.front().totalCurrent == Catch::Approx(0.0));
+    const DDSolution replayed = readDDSolutionStateCsv(outputStatePath, 4);
+    REQUIRE(replayed.psi(0) == Catch::Approx(0.11));
+    REQUIRE(replayed.psi(1) == Catch::Approx(0.22));
+    REQUIRE(replayed.psi(2) == Catch::Approx(0.33));
+    REQUIRE(replayed.psi(3) == Catch::Approx(0.44));
+}
+
+TEST_CASE("DCSweep frozen-state mode requires an explicit state file",
+          "[dc_sweep][frozen_state]")
+{
+    const std::filesystem::path dir = makeUniqueSweepDir();
+    std::filesystem::create_directories(dir);
+    const ScopedDirectoryCleanup cleanup{dir};
+    const std::filesystem::path meshPath = writePNMesh(dir);
+    const std::filesystem::path cfgPath = writeSweepConfig(
+        dir,
+        meshPath,
+        dir / "missing_frozen_state.csv",
+        {{"start", 0.0}, {"stop", 0.0}, {"step", 0.25}, {"write_vtk", false}},
+        {{"method", "frozen_state"}});
+
+    DCSweep sweep;
+    REQUIRE_THROWS_WITH(
+        sweep.runWithResult(cfgPath.string()),
+        Catch::Matchers::ContainsSubstring("requires sweep.initial_state_file"));
+}
+
 std::vector<std::vector<std::string>> readCsvRows(const std::filesystem::path& csvPath)
 {
     std::ifstream input(csvPath);

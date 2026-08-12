@@ -528,6 +528,90 @@ TEST_CASE("Masetti field and surface mobility compose", "[mobility][surface][mas
     REQUIRE(surfaceHole < bulkHole);
 }
 
+TEST_CASE("Enhanced Lombardi matches the Sentaurus 2018 silicon formula",
+          "[mobility][surface][lombardi]")
+{
+    const Material silicon = MaterialDatabase{}.getMaterial("Si");
+    MobilityModelConfig config = mobilityModelConfig("masetti_lombardi");
+    const auto bulk = makeMobilityModel(mobilityModelConfig("masetti"));
+    const auto lombardi = makeMobilityModel(config);
+
+    const Real doping = 1.0e23;
+    const Real normalField = 1.0e7;
+    const Real distance = 0.0;
+    const Real bulkMobility = bulk->electronMobility(
+        silicon, doping, 2.0e21, 1.0e15);
+    const auto& lp = config.electronLombardi;
+    const Real muAc = lp.B / normalField +
+        lp.C * std::pow((doping + lp.N2) / lp.N0, lp.lambda) /
+            std::cbrt(normalField);
+    const Real exponent = lp.A + lp.alpha * 2.0e21 /
+        std::pow(doping + lp.N1, lp.nu);
+    const Real inverseMuSr =
+        std::pow(normalField / 100.0, exponent) / lp.delta +
+        std::pow(normalField, 3.0) / lp.eta;
+    const Real expected = 1.0 /
+        (1.0 / bulkMobility + 1.0 / muAc + inverseMuSr);
+
+    REQUIRE(lombardi->electronMobility(
+                silicon, doping, 2.0e21, 1.0e15, 0.0,
+                normalField, distance) == Catch::Approx(expected).epsilon(1.0e-12));
+}
+
+TEST_CASE("Enhanced Lombardi interface damping recovers bulk mobility",
+          "[mobility][surface][lombardi]")
+{
+    const Material silicon = MaterialDatabase{}.getMaterial("Si");
+    MobilityModelConfig config = mobilityModelConfig("masetti_field_lombardi");
+    const auto lombardi = makeMobilityModel(config);
+    MobilityModelConfig bulkConfig = config;
+    bulkConfig.model = "masetti_field";
+    const auto bulk = makeMobilityModel(bulkConfig);
+
+    const Real doping = 5.0e22;
+    const Real parallelField = 2.0e6;
+    const Real normalField = 2.0e7;
+    const Real bulkValue = bulk->electronMobility(
+        silicon, doping, 1.0e21, 1.0e14, parallelField);
+    const Real atInterface = lombardi->electronMobility(
+        silicon, doping, 1.0e21, 1.0e14, parallelField, normalField, 0.0);
+    const Real farAway = lombardi->electronMobility(
+        silicon, doping, 1.0e21, 1.0e14, parallelField, normalField, 50.0e-8);
+
+    REQUIRE(atInterface < bulkValue);
+    REQUIRE(farAway == Catch::Approx(bulkValue).epsilon(1.0e-12));
+}
+
+TEST_CASE("Enhanced Lombardi preserves physical results under TCAD unit scaling",
+          "[mobility][surface][lombardi][units]")
+{
+    const Material silicon = MaterialDatabase{}.getMaterial("Si");
+    MobilityModelConfig siConfig = mobilityModelConfig("masetti_field_lombardi");
+    MobilityModelConfig tcadConfig = mobilityModelConfigFromJson(
+        nlohmann::json("masetti_field_lombardi"),
+        UnitScalingConfig{UnitScalingMode::UnitScaling});
+    const auto siMobility = makeMobilityModel(siConfig);
+    const auto tcadMobility = makeMobilityModel(tcadConfig);
+
+    const Real siValue = siMobility->electronMobility(
+        silicon, 1.0e23, 2.0e21, 1.0e15, 3.0e6, 2.0e7, 2.0e-9);
+    Material tcadSilicon = silicon;
+    const auto units = PhysicalUnitSystem::tcadInternal();
+    tcadSilicon.mun = units.m2PerVSToInternalMobility(silicon.mun);
+    tcadSilicon.mup = units.m2PerVSToInternalMobility(silicon.mup);
+    const Real tcadValue = tcadMobility->electronMobility(
+        tcadSilicon,
+        units.m3ToInternalConcentration(1.0e23),
+        units.m3ToInternalConcentration(2.0e21),
+        units.m3ToInternalConcentration(1.0e15),
+        units.vPerMToInternalElectricField(3.0e6),
+        units.vPerMToInternalElectricField(2.0e7),
+        units.metersToInternalLength(2.0e-9));
+
+    REQUIRE(units.internalMobilityToM2PerVS(tcadValue) ==
+            Catch::Approx(siValue).epsilon(1.0e-12));
+}
+
 TEST_CASE("surface mobility rejects invalid parameters", "[mobility][surface]")
 {
     MaterialDatabase matdb;

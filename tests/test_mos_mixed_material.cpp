@@ -276,6 +276,42 @@ TEST_CASE("surface normal field respects TCAD coordinate and field units",
     REQUIRE(withNormalField < withoutNormalField * 0.01);
 }
 
+TEST_CASE("Enhanced Lombardi geometry reaches cells beyond the interface row",
+          "[mos_mixed][mobility][surface][lombardi][distance]")
+{
+    DeviceMesh mesh = makeHorizontalInterfaceMesh();
+    MaterialDatabase matdb;
+    const DopingModel doping = DopingModel::fromMeshAndRegions(
+        mesh, {{"channel", 1.0e21, 0.0}, {"gate_oxide", 0.0, 0.0}});
+    const auto edgeCells = detail::buildEdgeCellMap(mesh);
+    const auto materials = detail::buildCellMaterials(mesh, matdb, constants::T0);
+    MobilityModelConfig config = mobilityModelConfig("masetti_lombardi");
+    config.surface.surfaceRegion = "channel";
+    config.surface.surfaceInterface = {"channel", "gate_oxide"};
+    VectorXd psi(4);
+    psi << 0.0, 0.0, -1.0, 1.0;
+
+    detail::updateSurfaceMobilityCellGeometry(
+        config, mesh, edgeCells, psi, 1.0);
+    REQUIRE(config.surface.cellNormalFields.size() == mesh.numCells());
+    REQUIRE(config.surface.cellDistances.size() == mesh.numCells());
+    REQUIRE(std::isfinite(config.surface.cellNormalFields.at(0)));
+    REQUIRE(std::isfinite(config.surface.cellDistances.at(0)));
+    REQUIRE(config.surface.cellDistances.at(0) > 0.0);
+
+    const auto mobility = makeMobilityModel(config);
+    const Index interfaceEdge = findEdgeByNodes(mesh, 0, 1);
+    const Real limited = detail::edgeMobility(
+        edgeCells, mesh, doping, *mobility, materials, interfaceEdge,
+        CarrierType::Electron, 0.0, &config, &psi);
+    MobilityModelConfig bulkConfig = mobilityModelConfig("masetti");
+    const auto bulk = makeMobilityModel(bulkConfig);
+    const Real baseline = detail::edgeMobility(
+        edgeCells, mesh, doping, *bulk, materials, interfaceEdge,
+        CarrierType::Electron, 0.0, &bulkConfig, &psi);
+    REQUIRE(limited < baseline);
+}
+
 TEST_CASE("mixed Si/SiO2 MOS edge mobility preserves semiconductor interface transport",
           "[mos_mixed][dd]")
 {

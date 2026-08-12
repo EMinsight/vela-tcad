@@ -2139,6 +2139,44 @@ TEST_CASE("NewtonSolver: builds a Poisson-block initialized cold state",
             Catch::Approx(coldResidual.blockNorms.phip));
 }
 
+TEST_CASE("NewtonSolver: ABA Poisson solve reconstructs contact-basin QFs",
+          "[newton][poisson_only][aba]")
+{
+    DeviceMesh mesh = makePNMesh();
+    MaterialDatabase matdb;
+    DopingModel doping = makePNDoping(mesh);
+
+    NewtonConfig cfg;
+    cfg.inputScaling.mode = UnitScalingMode::UnitScaling;
+    cfg.recombination = {"none"};
+    cfg.warmStart = true;
+    cfg.maxIter = 100;
+    cfg.reltol = 1.0e-8;
+    cfg.abstol = 1.0e-8;
+
+    const std::unordered_map<std::string, Real> equilibriumBiases = {
+        {"anode", 0.0}, {"cathode", 0.0}};
+    const NewtonResult equilibrium = runNewton(
+        mesh, matdb, doping, equilibriumBiases, cfg);
+    REQUIRE(equilibrium.converged);
+
+    const std::unordered_map<std::string, Real> biasedContacts = {
+        {"anode", -0.05}, {"cathode", 0.0}};
+    const NewtonResult aba = runNewtonPoissonOnly(
+        mesh, matdb, doping, biasedContacts, equilibrium.solution, cfg);
+    REQUIRE(aba.converged);
+    REQUIRE(aba.convergenceReason.find("poisson_only") != std::string::npos);
+
+    // Node 4 is the sole interior node. Its carrier state is recomputed from
+    // the nearest majority-carrier contact basins, while both contact QFs are
+    // still projected exactly.
+    REQUIRE(aba.solution.n(4) > 0.0);
+    REQUIRE(aba.solution.p(4) > 0.0);
+    REQUIRE(aba.solution.phin(0) == Catch::Approx(-0.05));
+    REQUIRE(aba.solution.phip(0) == Catch::Approx(-0.05));
+    REQUIRE((aba.solution.psi - equilibrium.solution.psi).norm() > 0.0);
+}
+
 TEST_CASE("NewtonSolver: evaluateRegularizedCarrierStep damps carrier-only correction",
           "[newton][diagnostics]")
 {

@@ -614,6 +614,67 @@ TEST_CASE("Element-edge GSS Laux records use exact SG currents and box measures"
             Catch::Approx(qfMobilityRecord.holeSignedEdgeFlux[0]));
 }
 
+TEST_CASE("Element-edge avalanche composes with Enhanced Lombardi mobility",
+          "[impact][element_edge_gss_laux][lombardi]")
+{
+    DeviceMesh mesh = makeSingleRightTriangle();
+    const auto edgeCells = detail::buildEdgeCellMap(mesh);
+    const auto cellEdges = detail::buildCellEdgeMap(edgeCells, mesh);
+    MaterialDatabase matdb;
+    const auto doping = DopingModel::fromMeshAndRegions(
+        mesh, {RegionDopingSpec{"si", 1.0e21, 0.0}});
+    const auto materials =
+        detail::buildCellMaterials(mesh, matdb, constants::T0);
+
+    ImpactIonizationModelConfig impactConfig;
+    impactConfig.model = "selberherr";
+    impactConfig.electronA = 1.0;
+    impactConfig.electronB = 1.0e-30;
+    impactConfig.holeA = 1.0;
+    impactConfig.holeB = 1.0e-30;
+    impactConfig.drivingForce = "quasi_fermi_gradient";
+    impactConfig.generation = "current_density";
+    impactConfig.currentApproximation = "element_edge_sg_gss_laux";
+    impactConfig.quasiFermiGradientDiscretization = "cell_gradient";
+    impactConfig.sourceMappingMode = "element_vertex_box_measure";
+    const auto impact = makeImpactIonizationModel(impactConfig);
+
+    MobilityModelConfig bulkConfig = mobilityModelConfig("masetti_field");
+    bulkConfig.highFieldDrivingForce = "quasi_fermi_gradient";
+    MobilityModelConfig lombardiConfig = bulkConfig;
+    lombardiConfig.model = "masetti_field_lombardi";
+    lombardiConfig.surface.surfaceRegion = "si";
+    const auto bulkMobility = makeMobilityModel(bulkConfig);
+    const auto lombardiMobility = makeMobilityModel(lombardiConfig);
+
+    VectorXd psi(3), phin(3), phip(3), n(3), p(3);
+    psi << 0.0, -0.20, 0.08;
+    phin << 0.0, -0.40, 0.10;
+    phip << 0.0, 0.30, -0.12;
+    n << 1.0e20, 3.0e20, 1.5e20;
+    p << 2.0e20, 6.0e20, 2.5e20;
+    const std::vector<Real> ni(3, 1.0e16);
+    const Real Vt = constants::kb * constants::T0 / constants::q;
+
+    const auto bulkRecord =
+        detail::elementEdgeGssLauxAvalancheSourceRecordForCell(
+            impactConfig, *impact, bulkConfig, *bulkMobility, cellEdges.at(0),
+            mesh, doping, materials, 0, psi, phin, phip, n, p, ni, Vt);
+    const auto lombardiRecord =
+        detail::elementEdgeGssLauxAvalancheSourceRecordForCell(
+            impactConfig, *impact, lombardiConfig, *lombardiMobility,
+            cellEdges.at(0), mesh, doping, materials, 0, psi, phin, phip,
+            n, p, ni, Vt);
+
+    REQUIRE(lombardiRecord.electronMobilities[0] <
+            bulkRecord.electronMobilities[0]);
+    REQUIRE(lombardiRecord.holeMobilities[0] <
+            bulkRecord.holeMobilities[0]);
+    REQUIRE(lombardiRecord.combinedSourceIntegrals[0] > 0.0);
+    REQUIRE(lombardiRecord.combinedSourceIntegrals[0] <
+            bulkRecord.combinedSourceIntegrals[0]);
+}
+
 TEST_CASE("Contact-face fallback driver modes have consistent local AD derivatives",
           "[impact][element_edge_gss_laux][ad][contact_face]")
 {

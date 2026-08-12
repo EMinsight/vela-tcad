@@ -60,7 +60,10 @@ Scope and conventions:
 
 For `dc_sweep`, omitting `solver.method` keeps the default Gummel path. Set
 `solver.method` (or legacy alias `solver.type`) to `newton` to use the coupled
-Newton sweep path where supported.
+Newton sweep path where supported. Use `poisson_only` (alias `aba_poisson`) for
+Sentaurus-style ABA: the first point is a coupled equilibrium solve; later
+points solve only nonlinear Poisson after reconstructing electron and hole
+quasi-Fermi fields with Vela's nearest-majority-contact-basin approximation.
 
 Runtime log CLI override:
 - `--log auto`: keep config/default behavior.
@@ -121,7 +124,8 @@ external TCAD display units, such as `current_total_A_per_um`,
 `capacitance_F_per_um`, and `max_electric_field_V_per_cm`.
 
 DC sweep CSVs include solver provenance columns:
-- `solver_method`: selected nonlinear path, such as `gummel`, `newton`, or `gummel_newton`
+- `solver_method`: selected path, such as `gummel`, `newton`, `poisson_only`,
+  `frozen_state`, or `gummel_newton`
 - `gummel_iterations`: iterations used by the Gummel stage for this bias point
 - `newton_iterations`: iterations used by the coupled Newton stage for this bias point
 - `handoff_stage`: final accepted stage or failure stage, such as `newton`, `gummel_failed`, `newton_failed`, or `gummel_fallback`
@@ -318,8 +322,11 @@ Fields:
 The solver object is used by DD sweep and Newton solve paths.
 
 Method selection:
-- method: `gummel`, `newton`, or `gummel_newton`
+- method: `gummel`, `newton`, `poisson_only`, `frozen_state`, or `gummel_newton`
 - type: alias for method (legacy compatibility)
+- `frozen_state` (alias `diagnostic_state_replay`) is diagnostic-only. It
+  requires `sweep.initial_state_file`, performs no nonlinear solve, preserves
+  all supplied state fields, and reports zero terminal current.
 
 Commonly used controls:
 - max_iter
@@ -431,7 +438,8 @@ Notes:
 - `carrier_floor_m3` is an optional non-negative Gummel carrier floor used to
   keep reconstructed quasi-Fermi potentials consistent with solved carrier
   densities.
-- In `dc_sweep`, when `solver.method` is `newton` or `gummel_newton` and
+- In `dc_sweep`, when `solver.method` is `newton`, `poisson_only`, or
+  `gummel_newton` and
   `solver.diagnostics: true`, the CSV appends opt-in recombination diagnostics:
   `recombination_max_abs_rate_m3_per_s`,
   `recombination_mean_abs_rate_m3_per_s`, and
@@ -922,6 +930,52 @@ reference_field, 0))^beta)^(1/beta)`, optionally clamped by
 
 The first implementation estimates `E_normal` with the local edge electric-field magnitude on edges that match `surface_region` and/or the two-name `surface_interface`; this is sufficient for trend regressions but should not be interpreted as a calibrated normal-field extraction. If no matching surface edge is found for a mobility evaluation, surface degradation is disabled and the existing low-field or velocity-saturation behavior is used.
 
+For the BVmethods full-physics comparison, `masetti_lombardi` and
+`masetti_field_lombardi` select the Sentaurus O-2018.06 default Enhanced
+Lombardi `Enormal` coefficients for silicon. The implementation evaluates the
+acoustic-phonon and surface-roughness contributions from Eqs. 278--281 of the
+Sentaurus Device User Guide, applies the `exp(-distance/l_crit)` interface
+damping, and combines them with the bulk mobility using Matthiessen's rule.
+`surface.surface_interface` should identify the semiconductor/insulator pair;
+the normal field is the electric-field projection along that interface normal.
+
+### SRH doping-dependent lifetime
+
+`solver.srh_doping_dependence` enables the Sentaurus
+`SRH(DopingDep)` Scharfetter lifetime law independently for electrons and
+holes:
+
+```text
+tau(N) = tau_min + (tau_max - tau_min) / (1 + (N / Nref)^gamma)
+```
+
+Example matching the BVmethods `models.par` values at 300 K:
+
+```json
+"srh_doping_dependence": {
+  "enabled": true,
+  "concentration_basis": "total_impurity",
+  "electron": {
+    "tau_min_s": 0.0,
+    "tau_max_s": 1.0e-7,
+    "reference_doping_m3": 1.0e16,
+    "gamma": 1.0
+  },
+  "hole": {
+    "tau_min_s": 0.0,
+    "tau_max_s": 1.0e-7,
+    "reference_doping_m3": 1.0e16,
+    "gamma": 1.0
+  }
+}
+```
+
+`concentration_basis` accepts `total_impurity` (`Nd + Na`) or `net_doping`
+(`abs(Nd - Na)`). With `scaling.mode: "unit_scaling"`, numeric
+`reference_doping_m3` values are read in the active TCAD concentration unit,
+`cm^-3`, consistently with the existing mobility inputs. Omitting this block
+preserves the legacy uniform `taun` and `taup` behavior.
+
 With `scaling.mode: "unit_scaling"`, Caughey-Thomas and Masetti mobility
 values are read as `cm^2/(V s)`, reference dopings as `cm^-3`, saturation
 velocities as `cm/s`, surface reference fields as `V/cm`, and surface theta
@@ -1153,7 +1207,8 @@ Diagnostics fields:
   `tracing_direction` is `bidirectional` by default; carrier-current path
   searches may select `along_vector` or `opposite_vector` for one-way carrier
   injection trajectories.
-  Continuous-cell tracing currently requires `driving_force: "eparallel"`.
+  Continuous-cell tracing supports `driving_force: "electric_field"` and
+  `driving_force: "eparallel"`.
   Optional
   `csv_file` overrides
   `<sweep csv stem>_path_ionization_integrals.csv`.

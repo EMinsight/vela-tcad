@@ -1122,7 +1122,8 @@ NewtonCarrierRowRecoveryResult recoverCarrierRowsWithGummelDensity(
     const double Vt = thermalVoltage(cfg.temperature_K);
     MobilityModelConfig mobilityConfig = cfg.mobility;
     RecombinationModelConfig recombinationConfig =
-        recombinationModelConfig(cfg.recombination, cfg.taun, cfg.taup);
+        recombinationModelConfig(
+            cfg.recombination, cfg.taun, cfg.taup, cfg.srhDopingDependence);
     recombinationConfig.augerCn = cfg.augerCn;
     recombinationConfig.augerCp = cfg.augerCp;
     recombinationConfig.bandToBand = cfg.bandToBand;
@@ -1546,6 +1547,10 @@ NewtonConfig newtonConfigFromJson(const nlohmann::json& json, UnitScalingConfig 
         cfg.contactBoundaryMinorityElectronRelaxationStrength);
     cfg.taun = json.value("taun", cfg.taun);
     cfg.taup = json.value("taup", cfg.taup);
+    if (json.contains("srh_doping_dependence")) {
+        cfg.srhDopingDependence = srhDopingDependenceConfigFromJson(
+            json.at("srh_doping_dependence"), scaling);
+    }
     cfg.augerCn = json.value("auger_cn_m6_per_s", cfg.augerCn);
     cfg.augerCp = json.value("auger_cp_m6_per_s", cfg.augerCp);
     if (json.contains("mobility"))
@@ -2120,7 +2125,8 @@ std::shared_ptr<CoupledDDAssembler> NewtonSolver::makeArclengthAssembler() const
     const double Vt = thermalVoltage(cfg_.temperature_K);
     const MobilityModelConfig mobilityConfig = cfg_.mobility;
     RecombinationModelConfig recombinationConfig =
-        recombinationModelConfig(cfg_.recombination, cfg_.taun, cfg_.taup);
+        recombinationModelConfig(
+            cfg_.recombination, cfg_.taun, cfg_.taup, cfg_.srhDopingDependence);
     recombinationConfig.augerCn = cfg_.augerCn;
     recombinationConfig.augerCp = cfg_.augerCp;
     recombinationConfig.bandToBand = cfg_.bandToBand;
@@ -2291,7 +2297,8 @@ NewtonResidualEvaluation NewtonSolver::evaluateResidual(const DDSolution& state)
     const double Vt = thermalVoltage(cfg_.temperature_K);
     const MobilityModelConfig mobilityConfig = cfg_.mobility;
     RecombinationModelConfig recombinationConfig =
-        recombinationModelConfig(cfg_.recombination, cfg_.taun, cfg_.taup);
+        recombinationModelConfig(
+            cfg_.recombination, cfg_.taun, cfg_.taup, cfg_.srhDopingDependence);
     recombinationConfig.augerCn = cfg_.augerCn;
     recombinationConfig.augerCp = cfg_.augerCp;
     recombinationConfig.bandToBand = cfg_.bandToBand;
@@ -2335,7 +2342,8 @@ NewtonStepEvaluation NewtonSolver::evaluateStep(const DDSolution& state) const
     const double Vt = thermalVoltage(cfg_.temperature_K);
     const MobilityModelConfig mobilityConfig = cfg_.mobility;
     RecombinationModelConfig recombinationConfig =
-        recombinationModelConfig(cfg_.recombination, cfg_.taun, cfg_.taup);
+        recombinationModelConfig(
+            cfg_.recombination, cfg_.taun, cfg_.taup, cfg_.srhDopingDependence);
     recombinationConfig.augerCn = cfg_.augerCn;
     recombinationConfig.augerCp = cfg_.augerCp;
     recombinationConfig.bandToBand = cfg_.bandToBand;
@@ -2422,7 +2430,8 @@ NewtonSolver::evaluateFeedbackSubstitutions(
     const double Vt = thermalVoltage(cfg_.temperature_K);
     const MobilityModelConfig mobilityConfig = cfg_.mobility;
     RecombinationModelConfig recombinationConfig =
-        recombinationModelConfig(cfg_.recombination, cfg_.taun, cfg_.taup);
+        recombinationModelConfig(
+            cfg_.recombination, cfg_.taun, cfg_.taup, cfg_.srhDopingDependence);
     recombinationConfig.augerCn = cfg_.augerCn;
     recombinationConfig.augerCp = cfg_.augerCp;
     recombinationConfig.bandToBand = cfg_.bandToBand;
@@ -2595,7 +2604,8 @@ NewtonSolver::evaluatePoissonQfpCrossBlockDecomposition(
     const double Vt = thermalVoltage(cfg_.temperature_K);
     const MobilityModelConfig mobilityConfig = cfg_.mobility;
     RecombinationModelConfig recombinationConfig =
-        recombinationModelConfig(cfg_.recombination, cfg_.taun, cfg_.taup);
+        recombinationModelConfig(
+            cfg_.recombination, cfg_.taun, cfg_.taup, cfg_.srhDopingDependence);
     recombinationConfig.augerCn = cfg_.augerCn;
     recombinationConfig.augerCp = cfg_.augerCp;
     recombinationConfig.bandToBand = cfg_.bandToBand;
@@ -2925,7 +2935,8 @@ NewtonDirectionalDerivativeEvaluation NewtonSolver::evaluateDirectionalDerivativ
     const double Vt = thermalVoltage(cfg_.temperature_K);
     const MobilityModelConfig mobilityConfig = cfg_.mobility;
     RecombinationModelConfig recombinationConfig =
-        recombinationModelConfig(cfg_.recombination, cfg_.taun, cfg_.taup);
+        recombinationModelConfig(
+            cfg_.recombination, cfg_.taun, cfg_.taup, cfg_.srhDopingDependence);
     recombinationConfig.augerCn = cfg_.augerCn;
     recombinationConfig.augerCp = cfg_.augerCp;
     recombinationConfig.bandToBand = cfg_.bandToBand;
@@ -2997,7 +3008,8 @@ NewtonBlockStepEvaluation NewtonSolver::evaluateBlockStep(
     const double Vt = thermalVoltage(cfg_.temperature_K);
     const MobilityModelConfig mobilityConfig = cfg_.mobility;
     RecombinationModelConfig recombinationConfig =
-        recombinationModelConfig(cfg_.recombination, cfg_.taun, cfg_.taup);
+        recombinationModelConfig(
+            cfg_.recombination, cfg_.taun, cfg_.taup, cfg_.srhDopingDependence);
     recombinationConfig.augerCn = cfg_.augerCn;
     recombinationConfig.augerCp = cfg_.augerCp;
     recombinationConfig.bandToBand = cfg_.bandToBand;
@@ -3083,7 +3095,8 @@ NewtonRegularizedCarrierStepEvaluation NewtonSolver::evaluateRegularizedCarrierS
     const double Vt = thermalVoltage(cfg_.temperature_K);
     const MobilityModelConfig mobilityConfig = cfg_.mobility;
     RecombinationModelConfig recombinationConfig =
-        recombinationModelConfig(cfg_.recombination, cfg_.taun, cfg_.taup);
+        recombinationModelConfig(
+            cfg_.recombination, cfg_.taun, cfg_.taup, cfg_.srhDopingDependence);
     recombinationConfig.augerCn = cfg_.augerCn;
     recombinationConfig.augerCp = cfg_.augerCp;
     recombinationConfig.bandToBand = cfg_.bandToBand;
@@ -3174,7 +3187,8 @@ NewtonCarrierRowDiagnosticsEvaluation NewtonSolver::evaluateCarrierRowDiagnostic
     const double Vt = thermalVoltage(cfg_.temperature_K);
     const MobilityModelConfig mobilityConfig = cfg_.mobility;
     RecombinationModelConfig recombinationConfig =
-        recombinationModelConfig(cfg_.recombination, cfg_.taun, cfg_.taup);
+        recombinationModelConfig(
+            cfg_.recombination, cfg_.taun, cfg_.taup, cfg_.srhDopingDependence);
     recombinationConfig.augerCn = cfg_.augerCn;
     recombinationConfig.augerCp = cfg_.augerCp;
     recombinationConfig.bandToBand = cfg_.bandToBand;
@@ -3289,7 +3303,8 @@ NewtonSolver::evaluateCarrierBlockDecomposition(const DDSolution& state) const
     const auto makeRecombinationConfig =
         [&](const std::vector<std::string>& models) {
             RecombinationModelConfig config =
-                recombinationModelConfig(models, cfg_.taun, cfg_.taup);
+                recombinationModelConfig(
+                    models, cfg_.taun, cfg_.taup, cfg_.srhDopingDependence);
             config.augerCn = cfg_.augerCn;
             config.augerCp = cfg_.augerCp;
             if (models.size() != 1 || models.front() != "none")
@@ -3674,7 +3689,8 @@ NewtonCarrierTermDiagnosticsEvaluation NewtonSolver::evaluateCarrierTermDiagnost
     const double Vt = thermalVoltage(cfg_.temperature_K);
     const MobilityModelConfig mobilityConfig = cfg_.mobility;
     RecombinationModelConfig recombinationConfig =
-        recombinationModelConfig(cfg_.recombination, cfg_.taun, cfg_.taup);
+        recombinationModelConfig(
+            cfg_.recombination, cfg_.taun, cfg_.taup, cfg_.srhDopingDependence);
     recombinationConfig.augerCn = cfg_.augerCn;
     recombinationConfig.augerCp = cfg_.augerCp;
     recombinationConfig.bandToBand = cfg_.bandToBand;
@@ -3742,7 +3758,8 @@ std::vector<NewtonJacobianBlockAuditRow> NewtonSolver::evaluateJacobianBlockAudi
     const auto makeRecombinationConfig =
         [&](const std::vector<std::string>& models) {
             RecombinationModelConfig config =
-                recombinationModelConfig(models, cfg_.taun, cfg_.taup);
+                recombinationModelConfig(
+                    models, cfg_.taun, cfg_.taup, cfg_.srhDopingDependence);
             config.augerCn = cfg_.augerCn;
             config.augerCp = cfg_.augerCp;
             if (models.size() != 1 || models.front() != "none")
@@ -3971,7 +3988,8 @@ std::vector<CoupledDDEdgeFluxDiagnostic> NewtonSolver::evaluateSgEdgeFluxDiagnos
     const double Vt = thermalVoltage(cfg_.temperature_K);
     const MobilityModelConfig mobilityConfig = cfg_.mobility;
     RecombinationModelConfig recombinationConfig =
-        recombinationModelConfig(cfg_.recombination, cfg_.taun, cfg_.taup);
+        recombinationModelConfig(
+            cfg_.recombination, cfg_.taun, cfg_.taup, cfg_.srhDopingDependence);
     recombinationConfig.augerCn = cfg_.augerCn;
     recombinationConfig.augerCp = cfg_.augerCp;
     recombinationConfig.bandToBand = cfg_.bandToBand;
@@ -4008,7 +4026,8 @@ NewtonSolver::evaluateTransportEdgeJacobianDiagnostics(
 {
     const double Vt = thermalVoltage(cfg_.temperature_K);
     RecombinationModelConfig recombinationConfig =
-        recombinationModelConfig(cfg_.recombination, cfg_.taun, cfg_.taup);
+        recombinationModelConfig(
+            cfg_.recombination, cfg_.taun, cfg_.taup, cfg_.srhDopingDependence);
     recombinationConfig.augerCn = cfg_.augerCn;
     recombinationConfig.augerCp = cfg_.augerCp;
     recombinationConfig.bandToBand = cfg_.bandToBand;
@@ -4049,7 +4068,8 @@ NewtonResult NewtonSolver::solve() const
     const double Vt = thermalVoltage(cfg_.temperature_K);
     const MobilityModelConfig mobilityConfig = cfg_.mobility;
     RecombinationModelConfig recombinationConfig =
-        recombinationModelConfig(cfg_.recombination, cfg_.taun, cfg_.taup);
+        recombinationModelConfig(
+            cfg_.recombination, cfg_.taun, cfg_.taup, cfg_.srhDopingDependence);
     recombinationConfig.augerCn = cfg_.augerCn;
     recombinationConfig.augerCp = cfg_.augerCp;
     recombinationConfig.bandToBand = cfg_.bandToBand;
@@ -4078,7 +4098,8 @@ NewtonPoissonBlockInitialization NewtonSolver::buildPoissonBlockInitialization()
     const double Vt = thermalVoltage(cfg_.temperature_K);
     const MobilityModelConfig mobilityConfig = cfg_.mobility;
     RecombinationModelConfig recombinationConfig =
-        recombinationModelConfig(cfg_.recombination, cfg_.taun, cfg_.taup);
+        recombinationModelConfig(
+            cfg_.recombination, cfg_.taun, cfg_.taup, cfg_.srhDopingDependence);
     recombinationConfig.augerCn = cfg_.augerCn;
     recombinationConfig.augerCp = cfg_.augerCp;
     recombinationConfig.bandToBand = cfg_.bandToBand;
@@ -4112,12 +4133,203 @@ NewtonPoissonBlockInitialization NewtonSolver::buildPoissonBlockInitialization()
     return out;
 }
 
+NewtonResult NewtonSolver::solvePoissonOnly(const DDSolution& initial) const
+{
+    const double Vt = thermalVoltage(cfg_.temperature_K);
+    RecombinationModelConfig recombinationConfig =
+        recombinationModelConfig(
+            cfg_.recombination, cfg_.taun, cfg_.taup, cfg_.srhDopingDependence);
+    recombinationConfig.augerCn = cfg_.augerCn;
+    recombinationConfig.augerCp = cfg_.augerCp;
+    recombinationConfig.bandToBand = cfg_.bandToBand;
+    CoupledDDAssembler assembler(
+        mesh_, matdb_, doping_, Vt, cfg_.mobility, recombinationConfig,
+        cfg_.bandgapNarrowing, cfg_.impactIonization, fixedCharges_,
+        sheetCharges_, buildScalingSpec(), cfg_.carrierDiagonalFloor,
+        cfg_.carrierStatistics);
+    configureQuasiFermiReferences(assembler);
+    const CoupledDDBoundaryConditions bcs = buildBoundaryConditions(assembler);
+    const int N = static_cast<int>(mesh_.numNodes());
+    if (initial.psi.size() != N || initial.phin.size() != N ||
+        initial.phip.size() != N || initial.n.size() != N ||
+        initial.p.size() != N) {
+        throw std::invalid_argument(
+            "NewtonSolver::solvePoissonOnly: initial state size does not match mesh.");
+    }
+
+    const Real potentialScale =
+        assembler.usesScaledState() ? assembler.potentialScale() : 1.0;
+    struct ContactAnchor {
+        Real x = 0.0;
+        Real y = 0.0;
+        Real bias = 0.0;
+        Real meanNetDoping = 0.0;
+    };
+    std::vector<ContactAnchor> electronAnchors;
+    std::vector<ContactAnchor> holeAnchors;
+    for (const Contact& contact : mesh_.contacts()) {
+        const auto biasIt = contactBiases_.find(contact.name);
+        if (biasIt == contactBiases_.end() || contact.node_ids.empty())
+            continue;
+        const auto specIt = contactSpecs_.find(contact.name);
+        if (specIt != contactSpecs_.end() &&
+            specIt->second.type == ContactType::MetalGate) {
+            continue;
+        }
+        ContactAnchor anchor;
+        for (Index node : contact.node_ids) {
+            const Node& geometry = mesh_.getNode(node);
+            anchor.x += geometry.x;
+            anchor.y += geometry.y;
+            anchor.meanNetDoping += doping_.netDoping(node);
+        }
+        const Real inverseCount = 1.0 / static_cast<Real>(contact.node_ids.size());
+        anchor.x *= inverseCount;
+        anchor.y *= inverseCount;
+        anchor.meanNetDoping *= inverseCount;
+        anchor.bias = biasIt->second;
+        if (anchor.meanNetDoping > 0.0)
+            electronAnchors.push_back(anchor);
+        if (anchor.meanNetDoping < 0.0)
+            holeAnchors.push_back(anchor);
+    }
+    const auto nearestBias = [&](Index node,
+                                 const std::vector<ContactAnchor>& anchors,
+                                 Real fallback) {
+        if (anchors.empty())
+            return fallback;
+        const Node& geometry = mesh_.getNode(node);
+        Real bestDistance = std::numeric_limits<Real>::infinity();
+        Real bestBias = fallback;
+        for (const ContactAnchor& anchor : anchors) {
+            const Real dx = geometry.x - anchor.x;
+            const Real dy = geometry.y - anchor.y;
+            const Real distance = dx * dx + dy * dy;
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                bestBias = anchor.bias;
+            }
+        }
+        return bestBias;
+    };
+
+    VectorXd psi = initial.psi;
+    VectorXd phin = initial.phin;
+    VectorXd phip = initial.phip;
+    for (int i = 0; i < N; ++i) {
+        const Index node = static_cast<Index>(i);
+        phin(i) = nearestBias(node, electronAnchors, initial.phin(i));
+        phip(i) = nearestBias(node, holeAnchors, initial.phip(i));
+    }
+    for (const auto& [node, value] : bcs.psi)
+        psi(static_cast<int>(node)) = value * potentialScale;
+    for (const auto& [node, value] : bcs.phin)
+        phin(static_cast<int>(node)) = value * potentialScale;
+    for (const auto& [node, value] : bcs.phip)
+        phip(static_cast<int>(node)) = value * potentialScale;
+
+    VectorXd x = assembler.pack({
+        psi / potentialScale,
+        phin / potentialScale,
+        phip / potentialScale});
+    VectorXd residual = assembler.residual(x, bcs);
+    const auto poissonNorm = [N](const VectorXd& value) {
+        return value.head(N).norm();
+    };
+    const Real initialNorm = poissonNorm(residual);
+
+    NewtonResult result;
+    result.initialResidualNorm = initialNorm;
+    auto finish = [&](bool converged,
+                      const std::string& reason,
+                      int iterations,
+                      const VectorXd& state,
+                      const VectorXd& finalResidual) {
+        result.converged = converged;
+        result.iters = iterations;
+        result.finalResidualNorm = poissonNorm(finalResidual);
+        result.finalBlockNorms = blockResidualInfo(finalResidual, mesh_.numNodes());
+        result.solution = makeSolution(assembler, state, iterations);
+        if (converged) {
+            result.convergenceReason = reason;
+        } else {
+            result.failureDiagnostics.failureReason = reason;
+            result.failureDiagnostics.failedIteration = iterations;
+            result.failureDiagnostics.residualNorm = result.finalResidualNorm;
+            result.failureDiagnostics.blockResiduals = result.finalBlockNorms;
+        }
+    };
+
+    if (initialNorm <= cfg_.abstol) {
+        finish(true, "poisson_only_contact_basin_initial_abstol", 0, x, residual);
+        return result;
+    }
+
+    LineSearchConfig lineSearchConfig;
+    lineSearchConfig.enabled = cfg_.lineSearch;
+    lineSearchConfig.initialDamping = cfg_.dampingFactor;
+    lineSearchConfig.recordHistory = cfg_.diagnostics;
+    BacktrackingLineSearch lineSearch(lineSearchConfig);
+    LinearSolver linearSolver;
+    for (int iter = 1; iter <= cfg_.maxIter; ++iter) {
+        const SparseMatrixd jacobian = cfg_.jacobian == "finite_difference"
+            ? assembler.finiteDifferenceJacobian(x, bcs, cfg_.finiteDifferenceStep)
+            : assembler.assembleJacobian(x, bcs);
+        const SparseMatrixd poissonBlock = sparseBlock(jacobian, 0, 0, N, N);
+        VectorXd step = VectorXd::Zero(3 * N);
+        try {
+            step.head(N) = linearSolver.solve(poissonBlock, -residual.head(N));
+        } catch (const std::runtime_error&) {
+            finish(false, "poisson_only_linear_solve_failed", iter - 1, x, residual);
+            return result;
+        }
+        applyConfiguredStepCaps(step, cfg_, N, potentialScale, doping_);
+        const Real rawStepNorm = step.norm();
+        auto searched = lineSearch.search(
+            x, step, residual,
+            [&](const VectorXd& candidate) { return assembler.residual(candidate, bcs); },
+            [&](const VectorXd& candidate, const VectorXd&) {
+                return assembler.hasPositiveFiniteCarriers(candidate);
+            },
+            poissonNorm);
+        if (!searched.accepted) {
+            finish(false, "poisson_only_line_search_rejected", iter - 1, x, residual);
+            result.failureDiagnostics.stepNorm = rawStepNorm;
+            return result;
+        }
+        x = std::move(searched.x);
+        residual = std::move(searched.residual);
+        const Real norm = poissonNorm(residual);
+        NewtonIterationInfo info;
+        info.iter = iter;
+        info.residualNorm = norm;
+        info.relativeResidualNorm = ResidualNorm::relative(norm, initialNorm);
+        info.rawStepNorm = rawStepNorm;
+        info.stepNorm = searched.damping * rawStepNorm;
+        info.dampingFactor = searched.damping;
+        info.lineSearchAttempts = searched.attempts;
+        info.lineSearchAccepted = true;
+        info.event = "poisson_only_contact_basin_iteration";
+        info.blockResiduals = blockResidualInfo(residual, mesh_.numNodes());
+        result.history.push_back(info);
+        result.trace.push_back(std::move(info));
+        if (norm <= cfg_.abstol ||
+            ResidualNorm::relative(norm, initialNorm) <= cfg_.reltol) {
+            finish(true, "poisson_only_contact_basin_converged", iter, x, residual);
+            return result;
+        }
+    }
+    finish(false, "poisson_only_max_iterations", cfg_.maxIter, x, residual);
+    return result;
+}
+
 NewtonResult NewtonSolver::solve(const DDSolution& initial) const
 {
     const double Vt = thermalVoltage(cfg_.temperature_K);
     const MobilityModelConfig mobilityConfig = cfg_.mobility;
     RecombinationModelConfig recombinationConfig =
-        recombinationModelConfig(cfg_.recombination, cfg_.taun, cfg_.taup);
+        recombinationModelConfig(
+            cfg_.recombination, cfg_.taun, cfg_.taup, cfg_.srhDopingDependence);
     recombinationConfig.augerCn = cfg_.augerCn;
     recombinationConfig.augerCp = cfg_.augerCp;
     recombinationConfig.bandToBand = cfg_.bandToBand;
@@ -4922,6 +5134,41 @@ NewtonResult runNewton(const DeviceMesh& mesh,
     if (PerformanceProfiler* profiler = activePerformanceProfiler()) {
         profiler->recordNewtonSolve(
             result.converged, result.iters, result.initialResidualNorm,
+            result.finalResidualNorm,
+            result.converged ? result.convergenceReason
+                             : result.failureDiagnostics.failureReason,
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - started));
+    }
+    return result;
+}
+
+NewtonResult runNewtonPoissonOnly(
+    const DeviceMesh& mesh,
+    const MaterialDatabase& matdb,
+    const DopingModel& doping,
+    const std::unordered_map<std::string, Real>& contactBiases,
+    const DDSolution& initial,
+    const NewtonConfig& cfg,
+    std::vector<RegionFixedChargeSpec> fixedCharges,
+    std::vector<InterfaceSheetChargeSpec> sheetCharges,
+    ContactSpecsMap contactSpecs)
+{
+    const auto started = std::chrono::steady_clock::now();
+    NewtonResult result = NewtonSolver(
+        mesh,
+        matdb,
+        doping,
+        contactBiases,
+        cfg,
+        std::move(fixedCharges),
+        std::move(sheetCharges),
+        std::move(contactSpecs)).solvePoissonOnly(initial);
+    if (PerformanceProfiler* profiler = activePerformanceProfiler()) {
+        profiler->recordNewtonSolve(
+            result.converged,
+            result.iters,
+            result.initialResidualNorm,
             result.finalResidualNorm,
             result.converged ? result.convergenceReason
                              : result.failureDiagnostics.failureReason,

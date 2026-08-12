@@ -355,7 +355,7 @@ private:
     const MaterialDatabase& matdb_;
     const DopingModel& doping_;
     double Vt_;
-    MobilityModelConfig mobilityConfig_;
+    mutable MobilityModelConfig mobilityConfig_;
     std::unique_ptr<MobilityModel> mobility_;
     RecombinationModelConfig recombinationConfig_;
     RecombinationModel recombination_;
