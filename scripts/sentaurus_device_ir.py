@@ -58,8 +58,10 @@ ACCEPTOR_SPECIES = {
 # SDE material names mapped to the Vela material database.
 MATERIAL_ALIASES = {
     "Silicon": "Si",
+    "PolySilicon": "PolySilicon",
     "SiO2": "SiO2",
     "Oxide": "SiO2",
+    "Nitride": "Nitride",
 }
 
 

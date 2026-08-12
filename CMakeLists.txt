@@ -98,6 +98,7 @@ add_library(vela_core STATIC
     src/io/DDSolutionCsv.cpp
     src/physics/DopingModel.cpp
     src/physics/CarrierStatistics.cpp
+    src/physics/DensityGradientQuantumPotential.cpp
     src/physics/BandToBandTunnelingModel.cpp
     src/physics/SRHRecombination.cpp
     src/physics/MobilityModel.cpp
@@ -395,6 +396,9 @@ target_link_libraries(test_bv_process_probe PRIVATE vela_core Catch2::Catch2With
 add_executable(test_recombination tests/test_recombination.cpp)
 target_link_libraries(test_recombination PRIVATE vela_core Catch2::Catch2WithMain)
 
+add_executable(test_density_gradient_quantum_potential tests/test_density_gradient_quantum_potential.cpp)
+target_link_libraries(test_density_gradient_quantum_potential PRIVATE vela_core Catch2::Catch2WithMain)
+
 add_executable(test_line_search_backtrack_failure tests/test_line_search_backtrack_failure.cpp)
 target_link_libraries(test_line_search_backtrack_failure PRIVATE vela_core Catch2::Catch2WithMain)
 
@@ -473,6 +477,7 @@ vela_catch_discover_tests(test_element_edge_gss_laux_avalanche)
 vela_catch_discover_tests(test_fixed_state_operator_audit)
 vela_catch_discover_tests(test_bv_process_probe)
 vela_catch_discover_tests(test_recombination)
+vela_catch_discover_tests(test_density_gradient_quantum_potential)
 vela_catch_discover_tests(test_line_search_backtrack_failure)
 vela_catch_discover_tests(test_dc_sweep)
 add_test(NAME dc_sweep COMMAND test_dc_sweep [dc_sweep])

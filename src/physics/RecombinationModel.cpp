@@ -84,6 +84,16 @@ RecombinationModel::RecombinationModel(RecombinationModelConfig config)
         }
         validateLifetimeParameters(config_.srhDopingDependence.electron, "electron");
         validateLifetimeParameters(config_.srhDopingDependence.hole, "hole");
+        if (config_.srhDopingDependence.temperatureDependence &&
+            (!std::isfinite(config_.srhDopingDependence.temperature_K) ||
+             config_.srhDopingDependence.temperature_K <= 0.0 ||
+             !std::isfinite(config_.srhDopingDependence.referenceTemperature_K) ||
+             config_.srhDopingDependence.referenceTemperature_K <= 0.0 ||
+             !std::isfinite(config_.srhDopingDependence.electronTemperatureExponent) ||
+             !std::isfinite(config_.srhDopingDependence.holeTemperatureExponent))) {
+            throw std::invalid_argument(
+                "RecombinationModel: invalid SRH temperature-dependence parameters.");
+        }
     }
     if (augerEnabled_ && (config_.augerCn < 0.0 || config_.augerCp < 0.0))
         throw std::invalid_argument("RecombinationModel: Auger coefficients cannot be negative.");
@@ -91,18 +101,30 @@ RecombinationModel::RecombinationModel(RecombinationModelConfig config)
 
 Real RecombinationModel::electronLifetime(Real dopingConcentration) const
 {
-    if (!config_.srhDopingDependence.enabled)
-        return config_.taun;
-    return dopingDependentLifetime(
-        dopingConcentration, config_.srhDopingDependence.electron);
+    const Real base = config_.srhDopingDependence.enabled
+        ? dopingDependentLifetime(
+            dopingConcentration, config_.srhDopingDependence.electron)
+        : config_.taun;
+    if (!config_.srhDopingDependence.temperatureDependence)
+        return base;
+    return base * std::pow(
+        config_.srhDopingDependence.temperature_K /
+            config_.srhDopingDependence.referenceTemperature_K,
+        config_.srhDopingDependence.electronTemperatureExponent);
 }
 
 Real RecombinationModel::holeLifetime(Real dopingConcentration) const
 {
-    if (!config_.srhDopingDependence.enabled)
-        return config_.taup;
-    return dopingDependentLifetime(
-        dopingConcentration, config_.srhDopingDependence.hole);
+    const Real base = config_.srhDopingDependence.enabled
+        ? dopingDependentLifetime(
+            dopingConcentration, config_.srhDopingDependence.hole)
+        : config_.taup;
+    if (!config_.srhDopingDependence.temperatureDependence)
+        return base;
+    return base * std::pow(
+        config_.srhDopingDependence.temperature_K /
+            config_.srhDopingDependence.referenceTemperature_K,
+        config_.srhDopingDependence.holeTemperatureExponent);
 }
 
 Real RecombinationModel::srhDopingConcentration(
@@ -300,6 +322,15 @@ SRHDopingDependenceConfig srhDopingDependenceConfigFromJson(
     config.enabled = value.value("enabled", true);
     config.concentrationBasis = value.value(
         "concentration_basis", config.concentrationBasis);
+    config.temperatureDependence = value.value(
+        "temperature_dependence", config.temperatureDependence);
+    config.temperature_K = value.value("temperature_K", config.temperature_K);
+    config.referenceTemperature_K = value.value(
+        "reference_temperature_K", config.referenceTemperature_K);
+    config.electronTemperatureExponent = value.value(
+        "electron_temperature_exponent", config.electronTemperatureExponent);
+    config.holeTemperatureExponent = value.value(
+        "hole_temperature_exponent", config.holeTemperatureExponent);
 
     auto parseCarrier = [&](const char* name, SRHLifetimeParameters& parameters) {
         if (!value.contains(name))

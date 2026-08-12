@@ -133,6 +133,7 @@ class SentaurusImportToolsTest(unittest.TestCase):
             self.assertEqual(deck["sweep"]["mode"], "bv_reverse")
             self.assertEqual(deck["sweep"]["stop"], -0.05)
             self.assertEqual(deck["sweep"]["step"], -0.05)
+
             self.assertEqual(deck["sweep"]["max_step"], 0.05)
             self.assertEqual(deck["sweep"]["min_step"], 1.0e-10)
 
@@ -160,6 +161,36 @@ class SentaurusImportToolsTest(unittest.TestCase):
             deck = json.loads(deck_path.read_text())
             self.assertEqual(deck["sweep"]["stop"], -20.0)
             self.assertEqual(deck["sweep"]["step"], -0.05)
+
+    def test_reference_patch_accepts_explicit_nonzero_sweep_start(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="vela_nonzero_start_patch_") as tmp:
+            deck_path = Path(tmp) / "simulation_iv.json"
+            deck_path.write_text(json.dumps({
+                "contacts": [{"name": "gate", "bias": -0.5}],
+                "solver": {"method": "newton"},
+                "sweep": {},
+            }) + "\n")
+            sentaurus_import.patch_reference_deck(
+                deck_path,
+                {"physics": [], "sweeps": [{
+                    "contact": "gate",
+                    "stop": 2.2,
+                    "step_control": {"MaxStep": 0.1},
+                }]},
+                {
+                    "name": "idvg",
+                    "kind": "iv",
+                    "vela_start": -0.5,
+                    "vela_stop": 2.2,
+                    "vela_step": 0.135,
+                },
+                "idvg.csv",
+            )
+            deck = json.loads(deck_path.read_text())
+            self.assertEqual(deck["sweep"]["start"], -0.5)
+            self.assertEqual(deck["sweep"]["stop"], 2.2)
+            self.assertEqual(deck["sweep"]["step"], 0.135)
+            self.assertEqual(deck["sweep"]["max_step"], 0.135)
 
     def test_reference_patch_copies_simulation_sweep_diagnostics(self) -> None:
         with tempfile.TemporaryDirectory(prefix="vela_sweep_diagnostics_patch_") as tmp:
@@ -405,6 +436,17 @@ Solve {
             self.assertEqual(deck_data["sweep"]["shrink_factor"], 0.5)
             self.assertGreaterEqual(deck_data["sweep"]["max_retries"], 37)
             self.assertEqual(deck_data["sentaurus_import"]["sweeps"][0]["contact"], "gate")
+
+    def test_plot_carrier_temperature_fields_do_not_enable_transport_model(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="vela_plot_only_temperature_") as tmp:
+            cmd = Path(tmp) / "plot_only_des.cmd"
+            cmd.write_text("""
+Physics { Mobility(DopingDep) }
+Plot { eTemperature hTemperature Temperature }
+Solve { Coupled { Poisson Electron Hole } }
+""".strip() + "\n")
+            summary = sentaurus_import.parse_cmd(cmd)
+            self.assertEqual(summary["unsupported_physics"], [])
 
     def test_cmd_parser_expands_template_variables(self) -> None:
         with tempfile.TemporaryDirectory(prefix="vela_sentaurus_cmd_template_") as tmp:

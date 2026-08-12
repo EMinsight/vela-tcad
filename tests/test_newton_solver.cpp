@@ -29,6 +29,76 @@
 
 using namespace vela;
 
+static DeviceMesh makePNMesh();
+
+TEST_CASE("Newton JSON parses Sentaurus electron density-gradient controls",
+          "[newton][density_gradient]")
+{
+    const NewtonConfig cfg = newtonConfigFromJson(nlohmann::json{
+        {"electron_quantum_potential", {
+            {"enabled", true},
+            {"coupling_mode", "frozen"},
+            {"gamma", 3.6},
+            {"effective_mass_ratio", 1.0618016171622988},
+            {"max_iterations", 12},
+            {"outer_max_iterations", 9},
+            {"relative_tolerance", 2.0e-7},
+            {"absolute_tolerance_V", 3.0e-10},
+            {"damping", 0.4},
+            {"max_update_V", 0.08},
+        }},
+    });
+    REQUIRE(cfg.electronQuantumPotential.enabled);
+    REQUIRE(cfg.electronQuantumPotential.couplingMode == "frozen");
+    REQUIRE(cfg.electronQuantumPotential.gamma == Catch::Approx(3.6));
+    REQUIRE(cfg.electronQuantumPotential.effectiveMassRatio ==
+            Catch::Approx(1.0618016171622988));
+    REQUIRE(cfg.electronQuantumPotential.maxIterations == 12);
+    REQUIRE(cfg.electronQuantumPotential.outerMaxIterations == 9);
+    REQUIRE(cfg.electronQuantumPotential.relativeTolerance == Catch::Approx(2.0e-7));
+    REQUIRE(cfg.electronQuantumPotential.absoluteTolerance_V == Catch::Approx(3.0e-10));
+    REQUIRE(cfg.electronQuantumPotential.damping == Catch::Approx(0.4));
+    REQUIRE(cfg.electronQuantumPotential.maxUpdate_V == Catch::Approx(0.08));
+}
+
+TEST_CASE("Frozen electron quantum potential shifts density and preserves flat-QF flux",
+          "[newton][density_gradient][jacobian]")
+{
+    const DeviceMesh mesh = makePNMesh();
+    MaterialDatabase materials;
+    DopingModel doping(mesh.numNodes());
+    const Real thermalVoltage = constants::Vt_300;
+    const MobilityModelConfig mobility;
+    const RecombinationModelConfig recombination =
+        recombinationModelConfig({"none"});
+    DensityGradientQuantumPotentialConfig quantumConfig;
+    quantumConfig.enabled = true;
+    CoupledDDAssembler assembler(
+        mesh, materials, doping, thermalVoltage, mobility, recombination,
+        {}, {}, {}, {}, {}, {}, {}, quantumConfig);
+    VectorXd quantum = VectorXd::Constant(static_cast<int>(mesh.numNodes()), 0.04);
+    assembler.setElectronQuantumPotential(quantum);
+    CoupledDDState state;
+    state.psi = VectorXd::Zero(static_cast<int>(mesh.numNodes()));
+    state.phin = VectorXd::Zero(static_cast<int>(mesh.numNodes()));
+    state.phip = VectorXd::Zero(static_cast<int>(mesh.numNodes()));
+    const VectorXd x = assembler.pack(state);
+    const VectorXd density = assembler.electronDensity(x);
+    REQUIRE(density(0) / assembler.intrinsicDensity().at(0) ==
+            Catch::Approx(std::exp(-0.04 / thermalVoltage)).epsilon(1.0e-12));
+
+    CoupledDDBoundaryConditions boundaries;
+    const auto diagnostics = assembler.sgEdgeFluxDiagnostics(x, boundaries);
+    for (const auto& edge : diagnostics)
+        REQUIRE(std::abs(edge.electronFlux) < 1.0e-12);
+
+    const SparseMatrixd analytic = assembler.assembleJacobian(x, boundaries);
+    const SparseMatrixd finiteDifference =
+        assembler.finiteDifferenceJacobian(x, boundaries, 1.0e-7);
+    const Real denominator = std::max<Real>(finiteDifference.norm(), 1.0e-30);
+    REQUIRE((analytic - finiteDifference).norm() / denominator < 5.0e-5);
+}
+
 static DeviceMesh makePNMesh()
 {
     DeviceMesh mesh;

@@ -250,7 +250,8 @@ CoupledDDAssembler::CoupledDDAssembler(
     std::vector<InterfaceSheetChargeSpec> sheetCharges,
     DDScalingSpec scaling,
     CarrierDiagonalFloorRegularizationConfig carrierDiagonalFloor,
-    CarrierStatisticsConfig carrierStatistics)
+    CarrierStatisticsConfig carrierStatistics,
+    DensityGradientQuantumPotentialConfig electronQuantumPotential)
     : mesh_(mesh)
     , matdb_(matdb)
     , doping_(doping)
@@ -268,6 +269,8 @@ CoupledDDAssembler::CoupledDDAssembler(
           impactIonizationConfig.couplingMode == "self_consistent")
     , bgnEnabled_(bandgapNarrowingConfig.model != "none")
     , carrierStatistics_(std::move(carrierStatistics))
+    , electronQuantumPotentialConfig_(electronQuantumPotential)
+    , electronQuantumPotential_V_(VectorXd::Zero(static_cast<int>(mesh.numNodes())))
     , ni_(detail::buildValidatedEffectiveNodeNi(
           "CoupledDDAssembler",
           mesh,
@@ -796,6 +799,20 @@ void CoupledDDAssembler::setQuasiFermiReferences(
     holeQfReference_V_ = holeReference_V;
 }
 
+void CoupledDDAssembler::setElectronQuantumPotential(const VectorXd& potential_V)
+{
+    const int nodeCount = static_cast<int>(mesh_.numNodes());
+    if (potential_V.size() != nodeCount)
+        throw std::invalid_argument(
+            "CoupledDDAssembler::setElectronQuantumPotential: size mismatch.");
+    for (int i = 0; i < nodeCount; ++i) {
+        if (!std::isfinite(potential_V(i)))
+            throw std::invalid_argument(
+                "CoupledDDAssembler::setElectronQuantumPotential: values must be finite.");
+    }
+    electronQuantumPotential_V_ = potential_V;
+}
+
 VectorXd CoupledDDAssembler::electronDensity(const VectorXd& x) const
 {
     const int N = static_cast<int>(mesh_.numNodes());
@@ -803,7 +820,8 @@ VectorXd CoupledDDAssembler::electronDensity(const VectorXd& x) const
     const Real potentialScale = scaling_.enabled ? scaling_.V0 : 1.0;
     for (int i = 0; i < N; ++i) {
         const Real psiRelative =
-            x(psiOffset() + i) * potentialScale - electronQfReference_V_;
+            x(psiOffset() + i) * potentialScale - electronQfReference_V_
+            - electronQuantumPotential_V_(i);
         const Real phinIncrement = x(phinOffset() + i) * potentialScale;
         const Index node = static_cast<Index>(i);
         n(i) = vela::electronDensity(
@@ -1068,11 +1086,14 @@ VectorXd CoupledDDAssembler::residualImpl(
         const int j = static_cast<int>(edge.n1);
         const Real psi_i = x(psiOffset() + i) * potentialScale;
         const Real psi_j = x(psiOffset() + j) * potentialScale;
+        const Real electronPsi_i = psi_i - electronQuantumPotential_V_(i);
+        const Real electronPsi_j = psi_j - electronQuantumPotential_V_(j);
         const Real phin_i = phinIncrement(i);
         const Real phin_j = phinIncrement(j);
         const Real phip_i = phipIncrement(i);
         const Real phip_j = phipIncrement(j);
         const Real dpsi = psi_j - psi_i;
+        const Real electronDpsi = electronPsi_j - electronPsi_i;
         const Real electricField = std::abs(dpsi / h) * fieldFactor;
         const Real electronMobilityField =
             vectorQfMobility ? electronVectorMobilityFields[e] :
@@ -1107,11 +1128,11 @@ VectorXd CoupledDDAssembler::residualImpl(
             // SG flux on material-interface edges where ni differs.
             Real nFlux;
             if (usesFermiDirac_) {
-                const Real etaI = (psi_i - electronQfReference_V_ - phin_i) / Vt_
+                const Real etaI = (electronPsi_i - electronQfReference_V_ - phin_i) / Vt_
                     + std::log(ni_[idxI] / Nc_[idxI]);
-                const Real etaJ = (psi_j - electronQfReference_V_ - phin_j) / Vt_
+                const Real etaJ = (electronPsi_j - electronQfReference_V_ - phin_j) / Vt_
                     + std::log(ni_[idxJ] / Nc_[idxJ]);
-                const Real driftPotential = dpsi + Vt_ * std::log(
+                const Real driftPotential = electronDpsi + Vt_ * std::log(
                     (ni_[idxJ] / Nc_[idxJ]) / (ni_[idxI] / Nc_[idxI]));
                 nFlux = sgElectronFermiDiracContinuityFlux(
                     n(i), n(j), etaI, etaJ, driftPotential,
@@ -1119,17 +1140,18 @@ VectorXd CoupledDDAssembler::residualImpl(
             } else if (bgnEnabled_) {
                 nFlux = sgElectronContinuityFluxFromQuasiFermiVariableNi(
                     ni_[idxI], ni_[idxJ],
-                    psi_i - electronQfReference_V_,
-                    psi_j - electronQfReference_V_,
+                    electronPsi_i - electronQfReference_V_,
+                    electronPsi_j - electronQfReference_V_,
                     phin_i, phin_j, Vt_, coef);
             } else if (ni_[idxI] == ni_[idxJ]) {
                 nFlux = sgElectronContinuityFluxFromQuasiFermiStable(
                     ni_[idxI],
-                    psi_i - electronQfReference_V_,
-                    psi_j - electronQfReference_V_,
+                    electronPsi_i - electronQfReference_V_,
+                    electronPsi_j - electronQfReference_V_,
                     phin_i, phin_j, Vt_, coef);
             } else {
-                nFlux = sgElectronContinuityFlux(n(i), n(j), dpsi, Vt_, coef);
+                nFlux = sgElectronContinuityFlux(
+                    n(i), n(j), electronDpsi, Vt_, coef);
             }
             r(phinOffset() + i) += nFlux;
             r(phinOffset() + j) -= nFlux;
@@ -1502,6 +1524,8 @@ CoupledDDAssembler::carrierContinuityTermDiagnosticsImpl(
         const int j = static_cast<int>(edge.n1);
         const Real psi_i = x(psiOffset() + i) * potentialScale;
         const Real psi_j = x(psiOffset() + j) * potentialScale;
+        const Real electronPsi_i = psi_i - electronQuantumPotential_V_(i);
+        const Real electronPsi_j = psi_j - electronQuantumPotential_V_(j);
         const Real phin_i = phinIncrement(i);
         const Real phin_j = phinIncrement(j);
         const Real phip_i = phipIncrement(i);
@@ -1528,19 +1552,19 @@ CoupledDDAssembler::carrierContinuityTermDiagnosticsImpl(
             const Index idxI = static_cast<Index>(i);
             const Index idxJ = static_cast<Index>(j);
             if (usesFermiDirac_) {
-                const Real etaI = (psi_i - electronQfReference_V_ - phin_i) / Vt_
+                const Real etaI = (electronPsi_i - electronQfReference_V_ - phin_i) / Vt_
                     + std::log(ni_[idxI] / Nc_[idxI]);
-                const Real etaJ = (psi_j - electronQfReference_V_ - phin_j) / Vt_
+                const Real etaJ = (electronPsi_j - electronQfReference_V_ - phin_j) / Vt_
                     + std::log(ni_[idxJ] / Nc_[idxJ]);
-                const Real drift = dpsi + Vt_ * std::log(
+                const Real drift = (electronPsi_j - electronPsi_i) + Vt_ * std::log(
                     (ni_[idxJ] / Nc_[idxJ]) / (ni_[idxI] / Nc_[idxI]));
                 nFlux = sgElectronFermiDiracContinuityFlux(
                     n(i), n(j), etaI, etaJ, drift, phin_i, phin_j, Vt_, coef);
             } else {
                 nFlux = sgElectronContinuityFluxFromQuasiFermiVariableNi(
                     ni_[idxI], ni_[idxJ],
-                    psi_i - electronQfReference_V_,
-                    psi_j - electronQfReference_V_,
+                    electronPsi_i - electronQfReference_V_,
+                    electronPsi_j - electronQfReference_V_,
                     phin_i, phin_j, Vt_, coef, bgnEnabled_);
             }
             terms[static_cast<Index>(i)].electronFlux += nFlux;
@@ -1800,6 +1824,8 @@ CoupledDDAssembler::sgEdgeFluxDiagnostics(
         const Index idxJ = static_cast<Index>(j);
         const Real psi_i = x(psiOffset() + i) * potentialScale;
         const Real psi_j = x(psiOffset() + j) * potentialScale;
+        const Real electronPsi_i = psi_i - electronQuantumPotential_V_(i);
+        const Real electronPsi_j = psi_j - electronQuantumPotential_V_(j);
         const Real phin_i = x(phinOffset() + i) * potentialScale;
         const Real phin_j = x(phinOffset() + j) * potentialScale;
         const Real phip_i = x(phipOffset() + i) * potentialScale;
@@ -1824,11 +1850,11 @@ CoupledDDAssembler::sgEdgeFluxDiagnostics(
         if (mun > 0.0) {
             const Real coef = mun * Vt_ * fieldFactor * couple_[e] / h;
             if (usesFermiDirac_) {
-                const Real etaI = (psi_i - electronQfReference_V_ - phin_i) / Vt_
+                const Real etaI = (electronPsi_i - electronQfReference_V_ - phin_i) / Vt_
                     + std::log(ni_[idxI] / Nc_[idxI]);
-                const Real etaJ = (psi_j - electronQfReference_V_ - phin_j) / Vt_
+                const Real etaJ = (electronPsi_j - electronQfReference_V_ - phin_j) / Vt_
                     + std::log(ni_[idxJ] / Nc_[idxJ]);
-                const Real drift = dpsi + Vt_ * std::log(
+                const Real drift = (electronPsi_j - electronPsi_i) + Vt_ * std::log(
                     (ni_[idxJ] / Nc_[idxJ]) / (ni_[idxI] / Nc_[idxI]));
                 nFlux = sgElectronFermiDiracContinuityFlux(
                     n(i), n(j), etaI, etaJ, drift,
@@ -1836,8 +1862,8 @@ CoupledDDAssembler::sgEdgeFluxDiagnostics(
             } else {
                 nFlux = sgElectronContinuityFluxFromQuasiFermiVariableNi(
                     ni_[idxI], ni_[idxJ],
-                    psi_i - electronQfReference_V_,
-                    psi_j - electronQfReference_V_,
+                    electronPsi_i - electronQfReference_V_,
+                    electronPsi_j - electronQfReference_V_,
                     phin_i, phin_j, Vt_, coef, bgnEnabled_);
             }
         }
@@ -3556,6 +3582,8 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
         const Index idxI = static_cast<Index>(i);
         const Index idxJ = static_cast<Index>(j);
         const Real dpsi = psi_j - psi_i;
+        const Real lambda_i = electronQuantumPotential_V_(i);
+        const Real lambda_j = electronQuantumPotential_V_(j);
         const Real electricField = std::abs(dpsi / h) * fieldFactor;
         const Real electronMobilityField = vectorQfMobility
             ? electronVectorMobilityFields[e]
@@ -3579,8 +3607,8 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
             return 0.0;
         const Real coef = mun * Vt_ * fieldFactor * couple_e / h;
         if (usesFermiDirac_) {
-            const Real psiRelativeI = psi_i - electronQfReference_V_;
-            const Real psiRelativeJ = psi_j - electronQfReference_V_;
+            const Real psiRelativeI = psi_i - lambda_i - electronQfReference_V_;
+            const Real psiRelativeJ = psi_j - lambda_j - electronQfReference_V_;
             const Real etaI = (psiRelativeI - phin_i) / Vt_
                 + edgeKernel.electronLogNiNc0;
             const Real etaJ = (psiRelativeJ - phin_j) / Vt_
@@ -3588,7 +3616,7 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
             const Real n_i = Nc_[idxI] * fermiDiracHalf(etaI);
             const Real n_j = Nc_[idxJ] * fermiDiracHalf(etaJ);
             const Real driftPotential =
-                dpsi + edgeKernel.electronDriftOffset;
+                dpsi - (lambda_j - lambda_i) + edgeKernel.electronDriftOffset;
             return sgElectronFermiDiracContinuityFlux(
                 n_i, n_j, etaI, etaJ, driftPotential,
                 phin_i, phin_j, Vt_, coef);
@@ -3596,22 +3624,23 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
         if (bgnEnabled_) {
             return sgElectronContinuityFluxFromQuasiFermiVariableNi(
                 ni_[idxI], ni_[idxJ],
-                psi_i - electronQfReference_V_,
-                psi_j - electronQfReference_V_,
+                psi_i - lambda_i - electronQfReference_V_,
+                psi_j - lambda_j - electronQfReference_V_,
                 phin_i, phin_j, Vt_, coef);
         }
         if (ni_[idxI] == ni_[idxJ]) {
             return sgElectronContinuityFluxFromQuasiFermiStable(
                 ni_[idxI],
-                psi_i - electronQfReference_V_,
-                psi_j - electronQfReference_V_,
+                psi_i - lambda_i - electronQfReference_V_,
+                psi_j - lambda_j - electronQfReference_V_,
                 phin_i, phin_j, Vt_, coef);
         }
         const Real n_i = ni_[idxI] * limitedExp(
-            (psi_i - electronQfReference_V_ - phin_i) / Vt_);
+            (psi_i - lambda_i - electronQfReference_V_ - phin_i) / Vt_);
         const Real n_j = ni_[idxJ] * limitedExp(
-            (psi_j - electronQfReference_V_ - phin_j) / Vt_);
-        return sgElectronContinuityFlux(n_i, n_j, dpsi, Vt_, coef);
+            (psi_j - lambda_j - electronQfReference_V_ - phin_j) / Vt_);
+        return sgElectronContinuityFlux(
+            n_i, n_j, dpsi - (lambda_j - lambda_i), Vt_, coef);
     };
 
     auto edgeHoleTransportFlux =
@@ -3754,7 +3783,10 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
                 Real dF_dphin_j = 0.0;
                 const Index idxI = static_cast<Index>(i);
                 const Index idxJ = static_cast<Index>(j);
-                const Real eta = u + std::log(ni_[idxJ] / ni_[idxI]);
+                const Real electronU =
+                    (dpsi - (electronQuantumPotential_V_(j)
+                             - electronQuantumPotential_V_(i))) / Vt_;
+                const Real eta = electronU + std::log(ni_[idxJ] / ni_[idxI]);
                 const Real Bplus = bernoulli(eta);
                 const Real Bminus = bernoulli(-eta);
                 const Real dBplus = bernoulliDerivative(eta);
@@ -3762,9 +3794,11 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
                 const Real niI = ni_[idxI];
                 const Real niJ = ni_[idxJ];
                 const Real nI = niI * limitedExp(
-                    (psi_i - electronQfReference_V_ - phin_i) / Vt_);
+                    (psi_i - electronQuantumPotential_V_(i)
+                     - electronQfReference_V_ - phin_i) / Vt_);
                 const Real nJ = niJ * limitedExp(
-                    (psi_j - electronQfReference_V_ - phin_j) / Vt_);
+                    (psi_j - electronQuantumPotential_V_(j)
+                     - electronQfReference_V_ - phin_j) / Vt_);
                 dF_dpsi_i = coef / Vt_ * ((dBminusArg + Bminus) * nI + dBplus * nJ);
                 dF_dpsi_j = coef / Vt_ * (-dBminusArg * nI - (dBplus + Bplus) * nJ);
                 dF_dphin_i = coef * Bminus * (-nI / Vt_);
@@ -4231,7 +4265,8 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
         for (Index i = 0; i < Nidx; ++i) {
         activeNode = i;
         const int ii = static_cast<int>(i);
-        const Real psiRelativeN = psi(ii) - electronQfReference_V_;
+        const Real psiRelativeN = psi(ii) - electronQuantumPotential_V_(ii)
+            - electronQfReference_V_;
         const Real psiRelativeP = psi(ii) - holeQfReference_V_;
         const Real dnDeta = electronDensityDerivativeEta(
             ni_[i], Nc_[i], psiRelativeN, phinState(ii), Vt_, carrierStatisticsModel_);
@@ -4257,7 +4292,8 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
             if (usesFermiDirac_) {
                 auto localRate = [&](Real psiValue, Real phinValue, Real phipValue) {
                     const Real nValue = vela::electronDensity(
-                        ni, Nc_[i], psiValue - electronQfReference_V_,
+                        ni, Nc_[i], psiValue - electronQuantumPotential_V_(ii)
+                            - electronQfReference_V_,
                         phinValue - electronQfReference_V_, Vt_, carrierStatisticsModel_);
                     const Real pValue = vela::holeDensity(
                         ni, Nv_[i], psiValue - holeQfReference_V_,

@@ -9,6 +9,7 @@
 #include "vela/physics/BandgapNarrowing.h"
 #include "vela/physics/CarrierStatistics.h"
 #include "vela/physics/DopingModel.h"
+#include "vela/physics/DensityGradientQuantumPotential.h"
 #include "vela/physics/ImpactIonizationModel.h"
 #include "vela/physics/MobilityModel.h"
 #include "vela/physics/RecombinationModel.h"
@@ -180,7 +181,8 @@ public:
                        std::vector<InterfaceSheetChargeSpec> sheetCharges = {},
                        DDScalingSpec scaling = {},
                        CarrierDiagonalFloorRegularizationConfig carrierDiagonalFloor = {},
-                       CarrierStatisticsConfig carrierStatistics = {});
+                       CarrierStatisticsConfig carrierStatistics = {},
+                       DensityGradientQuantumPotentialConfig electronQuantumPotential = {});
 
     VectorXd pack(const CoupledDDState& state) const;
     CoupledDDState unpack(const VectorXd& x) const;
@@ -192,6 +194,18 @@ public:
                                  Real holeReference_V);
     Real electronQuasiFermiReference() const { return electronQfReference_V_; }
     Real holeQuasiFermiReference() const { return holeQfReference_V_; }
+
+    /// Set a frozen electron quantum correction [V] for one outer
+    /// density-gradient iteration.  The coupled unknown count remains 3*N.
+    void setElectronQuantumPotential(const VectorXd& potential_V);
+    const VectorXd& electronQuantumPotential() const
+    {
+        return electronQuantumPotential_V_;
+    }
+    bool electronQuantumPotentialEnabled() const
+    {
+        return electronQuantumPotentialConfig_.enabled;
+    }
 
     VectorXd residual(const VectorXd& x,
                       const CoupledDDBoundaryConditions& bcs) const;
@@ -366,6 +380,8 @@ private:
     bool impactIonizationCoupled_ = false;
     bool bgnEnabled_ = false;
     CarrierStatisticsConfig carrierStatistics_;
+    DensityGradientQuantumPotentialConfig electronQuantumPotentialConfig_;
+    VectorXd electronQuantumPotential_V_;
     /// Resolved once in the constructor; hot loops use this instead of the
     /// string-valued configuration. Numerically identical: only the model lookup is hoisted.
     CarrierStatisticsModel carrierStatisticsModel_ = CarrierStatisticsModel::Boltzmann;

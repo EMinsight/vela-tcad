@@ -118,7 +118,7 @@
       "additionalProperties": true,
       "properties": {
         "index": {"type": "integer", "minimum": 0},
-        "phase": {"enum": ["initial", "sweep"]},
+        "phase": {"enum": ["initial", "sweep", "save", "load"]},
         "type": {"type": "string"},
         "equations": {
           "type": "array",
@@ -128,6 +128,9 @@
         "step_control": {"type": "object"},
         "contact": {"type": "string"},
         "goal_voltage": {"type": ["number", "null"]},
+        "file_prefix": {"type": ["string", "null"]},
+        "current_prefix": {"type": "string"},
+        "current_plot": {"type": "object"},
         "depends_on": {
           "type": "array",
           "description": "Indices of stages that must complete first.",

@@ -32,6 +32,10 @@ SUPPORTED_MODELS: dict[str, str] = {
     "DopingDep": "doping-dependent low-field mobility",
     "HighFieldSaturation": "high-field mobility saturation",
     "HighFieldsaturation": "high-field mobility saturation",
+    "eHighFieldSaturation": "electron high-field mobility saturation",
+    "eHighFieldsaturation": "electron high-field mobility saturation",
+    "hHighFieldSaturation": "hole high-field mobility saturation",
+    "hHighFieldsaturation": "hole high-field mobility saturation",
     "Eparallel": "high-field saturation driving force (parallel field)",
     "GradQuasiFermi": "high-field saturation driving force (quasi-Fermi gradient)",
     "E2": "high-field saturation driving force variant",
@@ -44,6 +48,9 @@ SUPPORTED_MODELS: dict[str, str] = {
     "Band2Band": "band-to-band tunneling generation",
     "EffectiveIntrinsicDensity": "effective intrinsic density container",
     "OldSlotboom": "Slotboom bandgap narrowing",
+    "Enormal": "normal-field surface mobility degradation",
+    "TempDependence": "power-law SRH lifetime temperature dependence",
+    "eQuantumPotential": "electron density-gradient quantum correction",
     "Fermi": "Fermi-Dirac carrier statistics",
 }
 
@@ -60,8 +67,7 @@ KNOWN_UNSUPPORTED_MODELS: dict[str, str] = {
     "eTemperature": "carrier temperature transport is not implemented",
     "hTemperature": "carrier temperature transport is not implemented",
     "IALMob": "IALMob surface-orientation mobility is not implemented",
-    "Enormal": "normal-field surface mobility degradation is not calibrated "
-               "against the Sentaurus Enormal model",
+    "hQuantumPotential": "hole density-gradient quantum correction is not implemented",
 }
 
 ANALYSIS_KINDS = ("equilibrium", "iv", "bv", "cv")
@@ -175,6 +181,41 @@ def derive_analysis(cmd_summary: dict[str, Any],
 
 
 def _stage_entries(cmd_summary: dict[str, Any]) -> list[dict[str, Any]]:
+    solve_events = cmd_summary.get("solve", {}).get("events", [])
+    if solve_events:
+        stages: list[dict[str, Any]] = []
+        saved_states: dict[str, int] = {}
+        previous: int | None = None
+        for event in solve_events:
+            stage_index = len(stages)
+            event_type = str(event.get("type", "Coupled"))
+            phase = str(event.get("phase", "initial"))
+            dependency = [] if previous is None else [previous]
+            file_prefix = event.get("file_prefix")
+            if phase == "load":
+                if not file_prefix or file_prefix not in saved_states:
+                    raise ExecutionIrError(
+                        "Load references a state that was not saved earlier: "
+                        f"{file_prefix!r}")
+                dependency = [saved_states[str(file_prefix)]]
+            stage: dict[str, Any] = {
+                "index": stage_index,
+                "phase": phase,
+                "type": event_type,
+                "equations": list(event.get("equations", [])),
+                "depends_on": dependency,
+            }
+            for key in (
+                    "parameters", "contact", "goal_voltage", "step_control",
+                    "file_prefix", "current_prefix", "current_plot"):
+                if key in event:
+                    stage[key] = event[key]
+            stages.append(stage)
+            if phase == "save" and file_prefix:
+                saved_states[str(file_prefix)] = stage_index
+            previous = stage_index
+        return stages
+
     stages: list[dict[str, Any]] = []
     for index, step in enumerate(cmd_summary.get("solve", {}).get("initial_steps", [])):
         stages.append({

@@ -131,6 +131,7 @@ GummelConfig gummelConfigFromJson(const nlohmann::json& json, UnitScalingConfig 
         cfg.srhDopingDependence = srhDopingDependenceConfigFromJson(
             json.at("srh_doping_dependence"), scaling);
     }
+    cfg.srhDopingDependence.temperature_K = cfg.temperature_K;
     cfg.augerCn = json.value("auger_cn_m6_per_s", cfg.augerCn);
     cfg.augerCp = json.value("auger_cp_m6_per_s", cfg.augerCp);
     cfg.carrierFloor = json.value("carrier_floor_m3", cfg.carrierFloor);

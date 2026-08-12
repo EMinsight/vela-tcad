@@ -1,4 +1,5 @@
 #include "vela/simulation/DCSweep.h"
+// CoupledDDAssembler configuration is intentionally constructed in this unit.
 #include "vela/simulation/BoundaryControl.h"
 #include "vela/boundary/BoundaryCondition.h"
 #include "vela/core/RuntimeLog.h"
@@ -1395,6 +1396,8 @@ DCSweepConfig dcSweepConfigFromJson(const nlohmann::json& cfg,
     sweep.vtkPrefix = j.value("vtk_prefix", cfg.value("output_vtk_prefix", std::string("dc_sweep")));
     sweep.initialStateFile = j.value("initial_state_file", std::string{});
     sweep.writeStateFile = j.value("write_state_file", std::string{});
+    sweep.frozenStateComputeCurrent =
+        j.value("frozen_state_compute_current", sweep.frozenStateComputeCurrent);
     if (j.contains("initialization")) {
         const auto& init = j.at("initialization");
         if (!init.is_object())
@@ -4481,7 +4484,8 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
             return it->second;
         };
         if (converged && solverMethod != SolverMethod::PoissonOnly &&
-            solverMethod != SolverMethod::FrozenState) {
+            (solverMethod != SolverMethod::FrozenState ||
+             sweep.frozenStateComputeCurrent)) {
             if (sweep.diagnostics.contactEdge.enabled ||
                 sweep.diagnostics.terminalBalance.enabled) {
                 currentDetailed = detailedForContact(sweep.currentContact);

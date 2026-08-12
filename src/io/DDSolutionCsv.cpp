@@ -72,15 +72,20 @@ DDSolution readDDSolutionStateCsv(const std::filesystem::path& path,
     if (!std::getline(input, line))
         throw std::runtime_error("DCSweep: initial_state_file is empty: " + path.string());
 
-    const std::vector<std::string> expectedHeader = {
+    const std::vector<std::string> legacyHeader = {
         "node_id", "psi", "phin", "phip", "electrons_m3", "holes_m3"};
+    const std::vector<std::string> quantumHeader = {
+        "node_id", "psi", "phin", "phip", "electrons_m3", "holes_m3",
+        "electron_quantum_potential_V"};
     const std::vector<std::string> header = splitCsvLine(
         line,
         "DCSweep: initial_state_file does not support quoted fields.");
-    if (header != expectedHeader)
+    const bool hasQuantumPotential = header == quantumHeader;
+    if (header != legacyHeader && !hasQuantumPotential)
         throw std::runtime_error(
             "DCSweep: initial_state_file header must be "
-            "node_id,psi,phin,phip,electrons_m3,holes_m3");
+            "node_id,psi,phin,phip,electrons_m3,holes_m3 with optional "
+            "electron_quantum_potential_V");
 
     DDSolution solution;
     solution.psi = VectorXd::Zero(static_cast<int>(expectedNodeCount));
@@ -90,6 +95,8 @@ DDSolution readDDSolutionStateCsv(const std::filesystem::path& path,
     solution.phip = VectorXd::Zero(static_cast<int>(expectedNodeCount));
     solution.n = VectorXd::Zero(static_cast<int>(expectedNodeCount));
     solution.p = VectorXd::Zero(static_cast<int>(expectedNodeCount));
+    solution.electronQuantumPotential =
+        VectorXd::Zero(static_cast<int>(expectedNodeCount));
     solution.iters = 0;
     solution.converged = true;
 
@@ -100,9 +107,9 @@ DDSolution readDDSolutionStateCsv(const std::filesystem::path& path,
         const std::vector<std::string> row = splitCsvLine(
             line,
             "DCSweep: initial_state_file does not support quoted fields.");
-        if (row.size() != expectedHeader.size())
+        if (row.size() != header.size())
             throw std::runtime_error(
-                "DCSweep: initial_state_file rows must have 6 columns.");
+                "DCSweep: initial_state_file rows do not match the header.");
         const long long parsedNodeId = parseRestartStateNodeId(row.at(0));
         if (parsedNodeId < 0 ||
             parsedNodeId >= static_cast<long long>(expectedNodeCount)) {
@@ -125,6 +132,10 @@ DDSolution readDDSolutionStateCsv(const std::filesystem::path& path,
             parseRestartStateReal(row.at(4), "electrons_m3", nodeId));
         solution.p(rowIndex) = units.m3ToInternalConcentration(
             parseRestartStateReal(row.at(5), "holes_m3", nodeId));
+        if (hasQuantumPotential) {
+            solution.electronQuantumPotential(rowIndex) = parseRestartStateReal(
+                row.at(6), "electron_quantum_potential_V", nodeId);
+        }
     }
 
     for (Index nodeId = 0; nodeId < expectedNodeCount; ++nodeId) {
@@ -156,14 +167,22 @@ void writeDDSolutionStateCsv(const std::filesystem::path& path,
     if (!output.is_open())
         throw std::runtime_error("DCSweep: cannot open write_state_file: " + path.string());
 
-    output << "node_id,psi,phin,phip,electrons_m3,holes_m3\n";
+    const bool hasQuantumPotential =
+        solution.electronQuantumPotential.size() == fieldSize;
+    output << "node_id,psi,phin,phip,electrons_m3,holes_m3";
+    if (hasQuantumPotential)
+        output << ",electron_quantum_potential_V";
+    output << '\n';
     for (int i = 0; i < fieldSize; ++i) {
         output << i << ','
                << formatRestartReal(solution.psi(i)) << ','
                << formatRestartReal(solution.phin(i)) << ','
                << formatRestartReal(solution.phip(i)) << ','
                << formatRestartReal(units.internalConcentrationToM3(solution.n(i))) << ','
-               << formatRestartReal(units.internalConcentrationToM3(solution.p(i))) << '\n';
+               << formatRestartReal(units.internalConcentrationToM3(solution.p(i)));
+        if (hasQuantumPotential)
+            output << ',' << formatRestartReal(solution.electronQuantumPotential(i));
+        output << '\n';
     }
 }
 

@@ -1,0 +1,87 @@
+{
+  "case": "singledevice_sentaurus2018",
+  "device": "nmos2d",
+  "mesh_tdr": "n2_msh.tdr",
+  "sde_cmd": "singledevice_sde.cmd",
+  "tdr_doping": {
+    "compensated_node_policy": "reported"
+  },
+  "vela_solver": {
+    "method": "newton",
+    "max_iter": 100,
+    "reltol": 1e-7,
+    "abstol": 1e-12,
+    "warm_start": true,
+    "verbose": false,
+    "electron_quantum_potential": {
+      "enabled": true,
+      "gamma": 3.6,
+      "effective_mass_ratio": 1.0618016171622988,
+      "outer_max_iterations": 20,
+      "max_iterations": 30,
+      "damping": 0.5
+    }
+  },
+  "simulations": [
+    {
+      "name": "idvg_lin",
+      "kind": "iv",
+      "tdr": "n2_Lin_des.tdr",
+      "cmd": "singledevice_sdevice.cmd",
+      "plt": "IdVgsLin_singledevice.plt",
+      "bias_column": "gate OuterVoltage",
+      "current_column": "drain TotalCurrent",
+      "vela_current_contact": "drain",
+      "vela_start": -0.5,
+      "vela_stop": 2.2,
+      "vela_step": 0.135,
+      "vela_materials_file": "materials_sentaurus2018.json",
+      "vela_contact_overrides": [
+        {"name": "source", "bias": 0.0},
+        {"name": "drain", "bias": 0.1},
+        {"name": "gate", "bias": -0.5},
+        {"name": "substrate", "bias": 0.0}
+      ],
+      "comparison": {
+        "candidate_column": "current_total_A_per_um",
+        "interpolation": "log_current",
+        "bias_min": -0.5,
+        "bias_max": 2.2,
+        "max_orders_of_magnitude": 0.2,
+        "max_relative_error": 0.1,
+        "require_trend_match": true,
+        "min_points": 21
+      }
+    },
+    {
+      "name": "idvg_sat",
+      "kind": "iv",
+      "tdr": "n2_Sat_des.tdr",
+      "cmd": "singledevice_sdevice.cmd",
+      "plt": "IdVgsSat_singledevice.plt",
+      "bias_column": "gate OuterVoltage",
+      "current_column": "drain TotalCurrent",
+      "vela_current_contact": "drain",
+      "vela_start": -0.5,
+      "vela_stop": 2.2,
+      "vela_step": 0.135,
+      "vela_materials_file": "materials_sentaurus2018.json",
+      "vela_contact_overrides": [
+        {"name": "source", "bias": 0.0},
+        {"name": "drain", "bias": 1.1},
+        {"name": "gate", "bias": -0.5},
+        {"name": "substrate", "bias": 0.0}
+      ],
+      "comparison": {
+        "candidate_column": "current_total_A_per_um",
+        "interpolation": "log_current",
+        "bias_min": -0.5,
+        "bias_max": 2.2,
+        "max_orders_of_magnitude": 0.2,
+        "max_relative_error": 0.1,
+        "require_trend_match": true,
+        "min_points": 21
+      }
+    }
+  ]
+}

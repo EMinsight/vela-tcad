@@ -42,6 +42,7 @@ struct DDSolution {
     VectorXd phip;  ///< Hole quasi-Fermi potential [V]
     VectorXd phinIncrement; ///< Optional cancellation-free electron QF increment [V].
     VectorXd phipIncrement; ///< Optional cancellation-free hole QF increment [V].
+    VectorXd electronQuantumPotential; ///< Electron density-gradient correction [V].
     Real electronQfReference_V = 0.0; ///< Reference for phinIncrement.
     Real holeQfReference_V = 0.0; ///< Reference for phipIncrement.
     VectorXd n;     ///< Electron concentration [m^-3]

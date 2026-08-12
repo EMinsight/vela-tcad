@@ -1,0 +1,67 @@
+{
+  "case": "singledevice_sentaurus2018",
+  "device": "nmos_50nm",
+  "source": "Sentaurus Applications Library GettingStarted/sdevice/SingleDevice",
+  "sentaurus_version": "O-2018.06-SP2",
+  "mesh_tdr": "n2_msh.tdr",
+  "sde_cmd": "singledevice_sde.cmd",
+  "sdevice_cmd": "singledevice_sdevice.cmd",
+  "parameter_file": "sdevice.par",
+  "mesh_inventory": {
+    "vertices": 3584,
+    "triangles": 6972,
+    "material_regions": 7,
+    "contacts": ["gate", "substrate", "drain", "source"]
+  },
+  "physics": [
+    "eQuantumPotential",
+    "EffectiveIntrinsicDensity(OldSlotboom)",
+    "Mobility(DopingDep,eHighFieldsaturation(GradQuasiFermi),hHighFieldsaturation(GradQuasiFermi),Enormal)",
+    "SRH(DopingDep,TempDependence)"
+  ],
+  "simulations": [
+    {
+      "name": "idvg_lin",
+      "drain_voltage_V": 0.1,
+      "gate_start_V": -0.5,
+      "gate_stop_V": 2.2,
+      "reference_csv": "singledevice_idvg_lin_reference.csv",
+      "bias_column": "gate OuterVoltage",
+      "current_column": "drain TotalCurrent",
+      "point_count": 21
+    },
+    {
+      "name": "idvg_sat",
+      "drain_voltage_V": 1.1,
+      "gate_start_V": -0.5,
+      "gate_stop_V": 2.2,
+      "reference_csv": "singledevice_idvg_sat_reference.csv",
+      "bias_column": "gate OuterVoltage",
+      "current_column": "drain TotalCurrent",
+      "point_count": 21,
+      "initial_state": "same saved equilibrium state as idvg_lin"
+    }
+  ],
+  "acceptance": {
+    "median_log10_current_error_max_dex": 0.1,
+    "p95_log10_current_error_max_dex": 0.2,
+    "ion_relative_error_max": 0.1,
+    "threshold_voltage_error_max_V": 0.05,
+    "dibl_error_max_V_per_V": 0.02,
+    "subthreshold_swing_relative_error_max": 0.1
+  },
+  "baseline_run": {
+    "run_id": "singledevice_baseline_20260812",
+    "status": "complete",
+    "wallclock_s": 296.17,
+    "large_artifact_root": "build-release/reference_tcad/singledevice_sentaurus2018/sentaurus_vm_runs/singledevice_baseline_20260812"
+  },
+  "sha256": {
+    "source/singledevice_sde.cmd": "4dd6d4e2ee76651a59c349e7b05da823366230b20815efe0f08c442677451c83",
+    "source/singledevice_sdevice.cmd": "138da5df58a044caefc6cbacc5536a22ea0f4176f0585faacf440218bddfd1ab",
+    "source/Silicon.par": "96a4be1f68fcc92c4e9c71db17b66772df027563cf2d22b1fe19447de319a2b1",
+    "source/sdevice.par": "30be7b9b1534ec79365747f508071e516062880f788e0ec198ad72c879f750c0",
+    "singledevice_idvg_lin_reference.csv": "44de03fdd056df616c9795f1b888aba981dac8ac17db814940c4a4b1c07627f9",
+    "singledevice_idvg_sat_reference.csv": "e3a4c5b7f6fc9c5f36c7d8bcd75d2a0b3ed2ebaa524ce38d079a8ef33bc10b97"
+  }
+}

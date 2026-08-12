@@ -33,6 +33,11 @@ struct SRHDopingDependenceConfig {
     std::string concentrationBasis = "total_impurity";
     SRHLifetimeParameters electron{};
     SRHLifetimeParameters hole{};
+    bool temperatureDependence = false;
+    Real temperature_K = 300.0;
+    Real referenceTemperature_K = 300.0;
+    Real electronTemperatureExponent = 0.0;
+    Real holeTemperatureExponent = 0.0;
 };
 
 struct RecombinationModelConfig {

@@ -489,6 +489,58 @@ TEST_CASE("DCSweep frozen-state mode requires an explicit state file",
         Catch::Matchers::ContainsSubstring("requires sweep.initial_state_file"));
 }
 
+TEST_CASE("DDSolution restart CSV preserves electron quantum potential",
+          "[dc_sweep][restart][quantum]")
+{
+    const std::filesystem::path dir = makeUniqueSweepDir();
+    std::filesystem::create_directories(dir);
+    const ScopedDirectoryCleanup cleanup{dir};
+    const std::filesystem::path statePath = dir / "quantum_state.csv";
+    DDSolution state;
+    state.psi = VectorXd::LinSpaced(4, 0.0, 0.3);
+    state.phin = VectorXd::Zero(4);
+    state.phip = VectorXd::Zero(4);
+    state.n = VectorXd::Constant(4, 1.0e20);
+    state.p = VectorXd::Constant(4, 2.0e20);
+    state.electronQuantumPotential = VectorXd::LinSpaced(4, 0.0, 0.03);
+
+    writeDDSolutionStateCsv(statePath, state);
+    const DDSolution restored = readDDSolutionStateCsv(statePath, 4);
+    REQUIRE(restored.electronQuantumPotential.size() == 4);
+    REQUIRE(restored.electronQuantumPotential(3) == Catch::Approx(0.03));
+}
+
+TEST_CASE("DCSweep frozen-state replay can explicitly compute terminal current",
+          "[dc_sweep][frozen_state][current]")
+{
+    const std::filesystem::path dir = makeUniqueSweepDir();
+    std::filesystem::create_directories(dir);
+    const ScopedDirectoryCleanup cleanup{dir};
+    const std::filesystem::path meshPath = writePNMesh(dir);
+    const std::filesystem::path statePath = dir / "current_state.csv";
+    const std::filesystem::path csvPath = dir / "current.csv";
+    {
+        std::ofstream state(statePath);
+        state << "node_id,psi,phin,phip,electrons_m3,holes_m3\n";
+        state << "0,0.0,0.0,0.0,1e20,1e16\n";
+        state << "1,0.1,0.0,0.0,1e20,1e16\n";
+        state << "2,0.0,0.0,0.0,1e16,1e20\n";
+        state << "3,0.0,0.0,0.0,1e16,1e20\n";
+    }
+    const std::filesystem::path cfgPath = writeSweepConfig(
+        dir, meshPath, csvPath,
+        {{"start", 0.0}, {"stop", 0.0}, {"step", 0.1},
+         {"write_vtk", false}, {"initial_state_file", statePath.string()},
+         {"frozen_state_compute_current", true}},
+        {{"method", "frozen_state"}});
+
+    DCSweep sweep;
+    const DCSweepResult result = sweep.runWithResult(cfgPath.string());
+    REQUIRE(result.points.size() == 1);
+    REQUIRE(result.points.front().converged);
+    REQUIRE(std::isfinite(result.points.front().totalCurrent));
+}
+
 std::vector<std::vector<std::string>> readCsvRows(const std::filesystem::path& csvPath)
 {
     std::ifstream input(csvPath);

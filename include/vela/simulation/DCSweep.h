@@ -251,6 +251,7 @@ struct DCSweepConfig {
     std::string csvFile = "dc_sweep.csv";
     std::string initialStateFile;
     std::string writeStateFile;
+    bool frozenStateComputeCurrent = false;
     SweepInitializationConfig initialization;
     ExternalResistorControlConfig externalResistor;
     VoltageToCurrentControlConfig voltageToCurrent;

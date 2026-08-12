@@ -164,6 +164,8 @@ struct NewtonConfig {
     ImpactIonizationModelConfig impactIonization; ///< Avalanche generation model.
     BandgapNarrowingConfig bandgapNarrowing; ///< Effective ni model for high doping.
     CarrierStatisticsConfig carrierStatistics{}; ///< Boltzmann or Fermi-Dirac density/contact/transport statistics.
+    DensityGradientQuantumPotentialConfig electronQuantumPotential{};
+    ///< Optional Sentaurus eQuantumPotential outer iteration.
 };
 
 struct NewtonBlockResidualInfo {
@@ -663,6 +665,9 @@ private:
     DDSolution makeSolution(const CoupledDDAssembler& assembler,
                             const VectorXd& x,
                             int iters) const;
+    NewtonResult solveClassicalWithFrozenElectronQuantumPotential(
+        const DDSolution& initial,
+        const VectorXd& electronQuantumPotential_V) const;
 
     const DeviceMesh& mesh_;
     const MaterialDatabase& matdb_;

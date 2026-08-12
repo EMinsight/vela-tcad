@@ -187,6 +187,35 @@ TEST_CASE("Doping-dependent SRH rate uses local electron and hole lifetimes",
             Catch::Approx(expected).epsilon(1.0e-13));
 }
 
+TEST_CASE("Sentaurus TempDependence applies the Scharfetter lifetime power law",
+          "[recombination][srh][temperature]")
+{
+    RecombinationModelConfig config = recombinationModelConfig({"srh"});
+    config.srhDopingDependence.enabled = true;
+    config.srhDopingDependence.electron = {0.0, 3.0e-8, 1.0e22, 1.0};
+    config.srhDopingDependence.hole = {0.0, 3.0e-6, 1.0e22, 1.0};
+    config.srhDopingDependence.temperatureDependence = true;
+    config.srhDopingDependence.temperature_K = 600.0;
+    config.srhDopingDependence.referenceTemperature_K = 300.0;
+    config.srhDopingDependence.electronTemperatureExponent = -1.5;
+    config.srhDopingDependence.holeTemperatureExponent = -1.5;
+    const RecombinationModel model(config);
+
+    const Real scale = std::pow(2.0, -1.5);
+    REQUIRE(model.electronLifetime(0.0) == Catch::Approx(3.0e-8 * scale));
+    REQUIRE(model.holeLifetime(1.0e22) == Catch::Approx(1.5e-6 * scale));
+}
+
+TEST_CASE("SRH temperature dependence rejects nonphysical temperatures",
+          "[recombination][srh][temperature]")
+{
+    RecombinationModelConfig config = recombinationModelConfig({"srh"});
+    config.srhDopingDependence.enabled = true;
+    config.srhDopingDependence.temperatureDependence = true;
+    config.srhDopingDependence.temperature_K = 0.0;
+    REQUIRE_THROWS_AS(RecombinationModel(config), std::invalid_argument);
+}
+
 TEST_CASE("Doping-dependent SRH selects total or net impurity concentration",
           "[recombination][srh][doping-basis]")
 {

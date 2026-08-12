@@ -183,9 +183,13 @@ ContactCurrentDetailedResult ContactCurrent::computeDetailed(
         const Real phip_j = hasReferencedHoleQf
             ? solution.phipIncrement(j) : solution.phip(j);
         const Real electronPsi_i = psi_i -
-            (hasReferencedElectronQf ? solution.electronQfReference_V : 0.0);
+            (hasReferencedElectronQf ? solution.electronQfReference_V : 0.0)
+            - (solution.electronQuantumPotential.size() == solution.psi.size()
+                ? solution.electronQuantumPotential(i) : 0.0);
         const Real electronPsi_j = psi_j -
-            (hasReferencedElectronQf ? solution.electronQfReference_V : 0.0);
+            (hasReferencedElectronQf ? solution.electronQfReference_V : 0.0)
+            - (solution.electronQuantumPotential.size() == solution.psi.size()
+                ? solution.electronQuantumPotential(j) : 0.0);
         const Real holePsi_i = psi_i -
             (hasReferencedHoleQf ? solution.holeQfReference_V : 0.0);
         const Real holePsi_j = psi_j -

@@ -398,7 +398,8 @@ def parse_solve_block(text: str) -> dict[str, Any]:
     sweep_blocks = iter_quasistationary(body)
     new_current_files = [
         match.group(1)
-        for match in re.finditer(r"NewCurrentFile\s*=\s*\"([^\"]+)\"", body, re.IGNORECASE)
+        for match in re.finditer(
+            r"NewCurrent(?:File|Prefix)\s*=\s*\"([^\"]*)\"", body, re.IGNORECASE)
     ]
     sweeps = []
     for index, sweep in enumerate(sweep_blocks):
@@ -417,7 +418,11 @@ def parse_solve_block(text: str) -> dict[str, Any]:
         equations = parse_coupled(action)
         current_file = None
         preceding = body[:sweep["start"]]
-        current_matches = list(re.finditer(r"NewCurrentFile\s*=\s*\"([^\"]+)\"", preceding, re.IGNORECASE))
+        current_matches = list(re.finditer(
+            r"NewCurrent(?:File|Prefix)\s*=\s*\"([^\"]*)\"",
+            preceding,
+            re.IGNORECASE,
+        ))
         if current_matches:
             current_file = current_matches[-1].group(1)
         entry: dict[str, Any] = {
@@ -434,10 +439,56 @@ def parse_solve_block(text: str) -> dict[str, Any]:
             entry["current_file_prefix"] = current_file
         sweeps.append(entry)
 
+    events: list[tuple[int, dict[str, Any]]] = []
+    for step in parse_initial_steps(
+            body, [(item["start"], item["end"]) for item in sweep_blocks]):
+        # Recover source order below by matching the same coupled/Poisson forms.
+        # Initial solve steps always precede the first sweep in supported decks.
+        events.append((len(events), {
+            "phase": "initial",
+            "type": step.get("type", "Coupled"),
+            "parameters": step.get("parameters", {}),
+            "equations": step.get("equations", []),
+        }))
+    position_offset = len(events)
+    sweep_entries_by_start = {
+        sweep["start"]: entry for sweep, entry in zip(sweep_blocks, sweeps)
+    }
+    branch_events: list[tuple[int, dict[str, Any]]] = []
+    for sweep in sweep_blocks:
+        entry = sweep_entries_by_start.get(sweep["start"])
+        if entry is None:
+            continue
+        branch_events.append((sweep["start"], {
+            "phase": "sweep",
+            "type": "Quasistationary",
+            "contact": entry.get("contact"),
+            "goal_voltage": numeric_or_none(entry.get("stop")),
+            "step_control": entry.get("step_control", {}),
+            "equations": entry.get("equations", []),
+            **({"current_prefix": entry["current_file_prefix"]}
+               if "current_file_prefix" in entry else {}),
+            **({"current_plot": entry["current_plot"]}
+               if "current_plot" in entry else {}),
+        }))
+    for match in re.finditer(r"\b(Save|Load)\s*\(([^)]*)\)", body, re.IGNORECASE | re.DOTALL):
+        assignments = parse_assignments(match.group(2))
+        file_prefix = assignments.get("FilePrefix")
+        branch_events.append((match.start(), {
+            "phase": match.group(1).lower(),
+            "type": match.group(1).capitalize(),
+            "equations": [],
+            "file_prefix": file_prefix,
+        }))
+    for _, event in sorted(branch_events, key=lambda pair: pair[0]):
+        events.append((position_offset, event))
+        position_offset += 1
+
     return {
         "initial_steps": parse_initial_steps(body, [(item["start"], item["end"]) for item in sweep_blocks]),
         "new_current_files": new_current_files,
         "sweeps": sweeps,
+        "events": [event for _, event in events],
     }
 
 
@@ -445,12 +496,17 @@ def parse_sweeps(text: str) -> list[dict[str, Any]]:
     return parse_solve_block(text).get("sweeps", [])
 
 
-def parse_unsupported_physics(text: str) -> list[str]:
-    found = []
-    for token in UNSUPPORTED_PHYSICS:
-        if re.search(rf"\b{re.escape(token)}\b", text):
-            found.append(token)
-    return found
+def parse_unsupported_physics(physics: list[dict[str, Any]],
+                              solve: dict[str, Any]) -> list[str]:
+    """Report unsupported *enabled* models, excluding names used only in Plot."""
+    enabled: set[str] = set()
+    for block in physics:
+        enabled.update(str(model) for model in block.get("models", []))
+    for step in solve.get("initial_steps", []):
+        enabled.update(str(equation) for equation in step.get("equations", []))
+    for sweep in solve.get("sweeps", []):
+        enabled.update(str(equation) for equation in sweep.get("equations", []))
+    return [token for token in UNSUPPORTED_PHYSICS if token in enabled]
 
 
 def unsupported_report(tokens: list[str]) -> list[dict[str, str]]:
@@ -470,14 +526,15 @@ def parse_cmd(input_path: Path, template_vars: dict[str, str] | None = None) -> 
     raw_text = remove_comments(input_path.read_text(errors="ignore"))
     text = apply_template_variables(raw_text, variables)
     solve = parse_solve_block(text)
-    unsupported = parse_unsupported_physics(text)
+    physics = parse_physics_blocks(text)
+    unsupported = parse_unsupported_physics(physics, solve)
     return {
         "template_variables": variables,
         "unresolved_placeholders": sorted(dict.fromkeys(PLACEHOLDER_RE.findall(text))),
         "files": parse_file_block(text),
         "electrodes": parse_electrodes(text),
         "thermodes": parse_thermodes(text),
-        "physics": parse_physics_blocks(text),
+        "physics": physics,
         "plot_fields": parse_plot_fields(text),
         "math": parse_math_block(text),
         "solve": solve,
@@ -506,9 +563,20 @@ def apply_solver_physics(deck: dict[str, Any],
     has_doping_dependence = bool({"DopingDep", "DopingDependence"} & models)
     if has_doping_dependence:
         solver["mobility"] = {"model": "masetti"}
-    if has_doping_dependence and {"Mobility", "HighFieldSaturation"} <= models:
+    high_field_models = {
+        "HighFieldSaturation", "HighFieldsaturation",
+        "eHighFieldSaturation", "eHighFieldsaturation",
+        "hHighFieldSaturation", "hHighFieldsaturation",
+    }
+    has_high_field = bool(high_field_models & models)
+    has_enormal = "Enormal" in models
+    if has_doping_dependence and (has_high_field or has_enormal):
         solver["mobility"] = {
-            "model": "masetti_field",
+            "model": (
+                "masetti_field_lombardi" if has_high_field and has_enormal
+                else "masetti_lombardi" if has_enormal
+                else "masetti_field"
+            ),
             "high_field_driving_force": "quasi_fermi_gradient",
         }
 
@@ -519,6 +587,37 @@ def apply_solver_physics(deck: dict[str, Any],
         recombination.append("auger")
     if recombination:
         solver["recombination"] = recombination
+    if "SRH" in models and "DopingDep" in models:
+        solver["srh_doping_dependence"] = {
+            "enabled": True,
+            "concentration_basis": "total_impurity",
+            "temperature_dependence": "TempDependence" in models,
+            "reference_temperature_K": 300.0,
+            "electron_temperature_exponent": -1.5,
+            "hole_temperature_exponent": -1.5,
+            "electron": {
+                "tau_min_s": 0.0,
+                "tau_max_s": 3.0e-8,
+                "reference_doping_m3": 1.0e22,
+                "gamma": 1.0,
+            },
+            "hole": {
+                "tau_min_s": 0.0,
+                "tau_max_s": 3.0e-6,
+                "reference_doping_m3": 1.0e22,
+                "gamma": 1.0,
+            },
+        }
+
+    if "eQuantumPotential" in models:
+        solver["electron_quantum_potential"] = {
+            "enabled": True,
+            "gamma": 3.6,
+            "effective_mass_ratio": 1.0618016171622988,
+            "outer_max_iterations": 20,
+            "max_iterations": 30,
+            "damping": 0.5,
+        }
 
     if "OldSlotboom" in models:
         solver["bandgap_narrowing"] = "old_slotboom"
@@ -795,7 +894,7 @@ def patch_reference_deck(deck_path: Path,
     sweeps = cmd_summary.get("sweeps", [])
     sweep = sweeps[-1] if sweeps else {"contact": "Anode", "stop": 0.0, "step_control": {}}
     stop = numeric_or_none(sweep.get("stop")) or 0.0
-    start = 0.0
+    start = float(sim.get("vela_start", 0.0))
     step_control = sweep.get("step_control", {}) if isinstance(sweep.get("step_control"), dict) else {}
     max_step = numeric_or_none(step_control.get("MaxStep"))
     deck["output_csv"] = output_csv
@@ -844,6 +943,13 @@ def patch_reference_deck(deck_path: Path,
         deck["sweep"]["stop"] = float(sim["vela_stop"])
     if "vela_step" in sim:
         deck["sweep"]["step"] = float(sim["vela_step"])
+        # An explicit physical-voltage step is authoritative. Sentaurus
+        # Quasistationary MaxStep is normalized to sweep time [0, 1], whereas
+        # Vela's max_step is expressed in volts.
+        deck["sweep"]["max_step"] = max(
+            float(deck["sweep"].get("max_step", 0.0)),
+            abs(deck["sweep"]["step"]),
+        )
     deck["sweep"]["write_vtk"] = False
     sweep_diagnostics = sim.get("vela_sweep_diagnostics")
     if sweep_diagnostics is not None:

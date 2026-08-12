@@ -1,0 +1,47 @@
+{
+  "status": "in_progress",
+  "sentaurus_version": "O-2018.06-SP2",
+  "mesh": {
+    "nodes": 3584,
+    "triangles": 6972
+  },
+  "fixed_state_transport": {
+    "status": "pass",
+    "acceptance": {
+      "max_relative_error": 0.1,
+      "max_orders_of_magnitude": 0.2,
+      "require_trend_match": true,
+      "min_points": 21
+    },
+    "idvg_lin_vds_0p1_V": {
+      "points": 21,
+      "max_relative_error": 0.060855315268499105,
+      "max_orders_of_magnitude": 0.025656156695647907,
+      "trend_match": true
+    },
+    "idvg_sat_vds_1p1_V": {
+      "points": 21,
+      "max_relative_error": 0.08862807665014734,
+      "max_orders_of_magnitude": 0.040304354864882964,
+      "trend_match": true
+    }
+  },
+  "self_consistent_endpoint": {
+    "bias": {
+      "gate_V": 2.2,
+      "drain_V": 0.1
+    },
+    "frozen_sentaurus_quantum_potential": {
+      "status": "pass",
+      "newton_iterations": 5,
+      "vela_current_A_per_um": 0.00033967821816250553,
+      "sentaurus_current_A_per_um": 0.00033738239089,
+      "relative_error": 0.006804824
+    },
+    "vela_density_gradient_outer_coupling": {
+      "status": "in_progress",
+      "nonfinite_linear_system_fixed": true,
+      "current_limit": "outer quantum-potential convergence requires additional acceleration or convergence diagnostics"
+    }
+  }
+}
