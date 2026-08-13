@@ -1,5 +1,5 @@
 {
-  "status": "in_progress",
+  "status": "partial_pass",
   "sentaurus_version": "O-2018.06-SP2",
   "mesh": {
     "nodes": 3584,
@@ -39,9 +39,39 @@
       "relative_error": 0.006804824
     },
     "vela_density_gradient_outer_coupling": {
-      "status": "in_progress",
+      "status": "pass",
       "nonfinite_linear_system_fixed": true,
-      "current_limit": "outer quantum-potential convergence requires additional acceleration or convergence diagnostics"
+      "formulation": "potential_based",
+      "initial_quantum_potential": "zero",
+      "outer_iterations": 12,
+      "final_raw_change_V": 0.000082,
+      "vela_current_A_per_um": 0.00033655456293771286,
+      "sentaurus_current_A_per_um": 0.00033738239089,
+      "relative_error": 0.002453681
+    }
+  },
+  "self_consistent_curves": {
+    "idvg_lin_vds_0p1_V": {
+      "status": "curve_converged_acceptance_failed",
+      "target_points": 21,
+      "continuation_points": 30,
+      "all_points_converged": true,
+      "max_relative_error": 0.7561727089712247,
+      "max_orders_of_magnitude": 0.6129176864129812,
+      "trend_match": true,
+      "strong_inversion_max_relative_error": 0.08400524501113486,
+      "failure_region": "deep_subthreshold"
+    },
+    "idvg_sat_vds_1p1_V": {
+      "status": "blocked_equation_state_mismatch",
+      "sentaurus_quantum_oracle_probe": {
+        "inner_iterations": 80,
+        "inner_converged": false,
+        "raw_change_V": 1.460382,
+        "applied_change_V": 0.146038,
+        "relaxation": 0.1
+      },
+      "conclusion": "The saturation failure is not an outer-relaxation tuning issue; Vela's converged frozen-quantum DD state does not satisfy the Sentaurus potential-form DG equation proxy."
     }
   }
 }

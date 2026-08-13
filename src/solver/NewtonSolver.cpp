@@ -1300,6 +1300,8 @@ NewtonConfig newtonConfigFromJson(const nlohmann::json& json, UnitScalingConfig 
                 "enabled", cfg.electronQuantumPotential.enabled);
             cfg.electronQuantumPotential.couplingMode = value.value(
                 "coupling_mode", cfg.electronQuantumPotential.couplingMode);
+            cfg.electronQuantumPotential.formulation = value.value(
+                "formulation", cfg.electronQuantumPotential.formulation);
             cfg.electronQuantumPotential.gamma = value.value(
                 "gamma", cfg.electronQuantumPotential.gamma);
             cfg.electronQuantumPotential.effectiveMassRatio = value.value(
@@ -1316,6 +1318,14 @@ NewtonConfig newtonConfigFromJson(const nlohmann::json& json, UnitScalingConfig 
                 "damping", cfg.electronQuantumPotential.damping);
             cfg.electronQuantumPotential.maxUpdate_V = value.value(
                 "max_update_V", cfg.electronQuantumPotential.maxUpdate_V);
+            cfg.electronQuantumPotential.outerAcceleration = value.value(
+                "outer_acceleration", cfg.electronQuantumPotential.outerAcceleration);
+            cfg.electronQuantumPotential.outerRelaxation = value.value(
+                "outer_relaxation", cfg.electronQuantumPotential.outerRelaxation);
+            cfg.electronQuantumPotential.outerRelaxationMin = value.value(
+                "outer_relaxation_min", cfg.electronQuantumPotential.outerRelaxationMin);
+            cfg.electronQuantumPotential.outerRelaxationMax = value.value(
+                "outer_relaxation_max", cfg.electronQuantumPotential.outerRelaxationMax);
         } else {
             throw std::invalid_argument(
                 "newtonConfigFromJson: electron_quantum_potential must be a boolean or object.");
@@ -1854,11 +1864,39 @@ NewtonConfig newtonConfigFromJson(const nlohmann::json& json, UnitScalingConfig 
             "newtonConfigFromJson: electron_quantum_potential.coupling_mode "
             "must be 'outer' or 'frozen'.");
     }
+    if (cfg.electronQuantumPotential.formulation != "potential_based" &&
+        cfg.electronQuantumPotential.formulation != "density_based") {
+        throw std::invalid_argument(
+            "newtonConfigFromJson: electron_quantum_potential.formulation "
+            "must be 'potential_based' or 'density_based'.");
+    }
     if (!(cfg.electronQuantumPotential.maxUpdate_V >= 0.0) ||
         !std::isfinite(cfg.electronQuantumPotential.maxUpdate_V)) {
         throw std::invalid_argument(
             "newtonConfigFromJson: electron_quantum_potential.max_update_V "
             "must be finite and non-negative.");
+    }
+    if (cfg.electronQuantumPotential.outerAcceleration != "none" &&
+        cfg.electronQuantumPotential.outerAcceleration != "aitken") {
+        throw std::invalid_argument(
+            "newtonConfigFromJson: electron_quantum_potential.outer_acceleration "
+            "must be 'none' or 'aitken'.");
+    }
+    if (!(cfg.electronQuantumPotential.outerRelaxation > 0.0) ||
+        !std::isfinite(cfg.electronQuantumPotential.outerRelaxation) ||
+        !(cfg.electronQuantumPotential.outerRelaxationMin > 0.0) ||
+        !std::isfinite(cfg.electronQuantumPotential.outerRelaxationMin) ||
+        !(cfg.electronQuantumPotential.outerRelaxationMax >=
+          cfg.electronQuantumPotential.outerRelaxationMin) ||
+        !std::isfinite(cfg.electronQuantumPotential.outerRelaxationMax) ||
+        cfg.electronQuantumPotential.outerRelaxation <
+            cfg.electronQuantumPotential.outerRelaxationMin ||
+        cfg.electronQuantumPotential.outerRelaxation >
+            cfg.electronQuantumPotential.outerRelaxationMax) {
+        throw std::invalid_argument(
+            "newtonConfigFromJson: electron_quantum_potential outer relaxation "
+            "must be finite, positive, and within [outer_relaxation_min, "
+            "outer_relaxation_max].");
     }
     (void)usesFermiDirac(cfg.carrierStatistics);
 
@@ -4389,6 +4427,11 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
         }
         DDSolution outerState = initial;
         NewtonResult last;
+        std::vector<DensityGradientOuterIterationInfo> outerHistory;
+        VectorXd previousRawUpdate;
+        Real previousRelaxation = cfg_.electronQuantumPotential.outerRelaxation;
+        const bool potentialBased =
+            cfg_.electronQuantumPotential.formulation == "potential_based";
         std::vector<bool> activeNodes(static_cast<std::size_t>(nodeCount), false);
         std::unordered_map<Index, Real> quantumDirichlet;
         for (Index cellId = 0; cellId < mesh_.numCells(); ++cellId) {
@@ -4410,41 +4453,131 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
                     quantumDirichlet[node] = 0.0;
             }
         }
+        for (int i = 0; i < nodeCount; ++i) {
+            if (!activeNodes[static_cast<std::size_t>(i)])
+                quantumPotential(i) = 0.0;
+        }
 
         for (int outer = 1;
              outer <= cfg_.electronQuantumPotential.outerMaxIterations; ++outer) {
             last = solveClassicalWithFrozenElectronQuantumPotential(
                 outerState, quantumPotential);
-            if (!last.converged)
+            if (!last.converged) {
+                last.electronQuantumOuterHistory = std::move(outerHistory);
                 return last;
+            }
 
-            // Remove the frozen correction to recover n_cl from the converged
-            // density relation before solving the nonlinear DG equation.
             VectorXd classicalDensity(nodeCount);
-            for (int i = 0; i < nodeCount; ++i) {
-                classicalDensity(i) = last.solution.n(i) * std::exp(std::clamp(
-                    quantumPotential(i) / thermalVoltage(cfg_.temperature_K),
-                    Real{-700.0}, Real{700.0}));
+            const Real Vt = thermalVoltage(cfg_.temperature_K);
+            if (potentialBased) {
+                // For default xi=eta=1 and Boltzmann statistics, Sentaurus'
+                // potential formula has auxiliary variable proportional to
+                // exp((psi-phin-Lambda)/(2*Vt)).  The normalization constant
+                // drops out of the homogeneous DG equation.
+                VectorXd drivingPotential(nodeCount);
+                Real referencePotential = -std::numeric_limits<Real>::infinity();
+                for (int i = 0; i < nodeCount; ++i) {
+                    if (!activeNodes[static_cast<std::size_t>(i)]) {
+                        drivingPotential(i) = 0.0;
+                        continue;
+                    }
+                    drivingPotential(i) =
+                        last.solution.psi(i) - last.solution.phin(i);
+                    referencePotential = std::max(referencePotential, drivingPotential(i));
+                }
+                for (int i = 0; i < nodeCount; ++i) {
+                    classicalDensity(i) = activeNodes[static_cast<std::size_t>(i)]
+                        ? std::exp(std::clamp(
+                            (drivingPotential(i) - referencePotential) / Vt,
+                            Real{-700.0}, Real{0.0}))
+                        : 0.0;
+                }
+            } else {
+                // Density-based audit form: recover n_classical from the
+                // converged density relation before the nonlinear DG solve.
+                for (int i = 0; i < nodeCount; ++i) {
+                    classicalDensity(i) = last.solution.n(i) * std::exp(std::clamp(
+                        quantumPotential(i) / Vt, Real{-700.0}, Real{700.0}));
+                }
             }
             auto quantum = solveElectronDensityGradientPotential(
                 mesh_, classicalDensity, activeNodes, quantumDirichlet,
-                thermalVoltage(cfg_.temperature_K),
+                Vt,
                 cfg_.inputScaling.unitSystem(), cfg_.electronQuantumPotential,
                 quantumPotential);
-            const Real change =
-                (quantum.potential_V - quantumPotential).lpNorm<Eigen::Infinity>();
-            quantumPotential = std::move(quantum.potential_V);
+            VectorXd rawUpdate = quantum.potential_V - quantumPotential;
+            for (int i = 0; i < nodeCount; ++i) {
+                if (!activeNodes[static_cast<std::size_t>(i)])
+                    rawUpdate(i) = 0.0;
+            }
+            const Real change = rawUpdate.lpNorm<Eigen::Infinity>();
+            Real relaxation = cfg_.electronQuantumPotential.outerRelaxation;
+            if (cfg_.electronQuantumPotential.outerAcceleration == "aitken" &&
+                previousRawUpdate.size() == rawUpdate.size()) {
+                const VectorXd residualDelta = rawUpdate - previousRawUpdate;
+                const Real denominator = residualDelta.squaredNorm();
+                if (denominator > std::numeric_limits<Real>::min()) {
+                    relaxation = std::clamp(
+                        -previousRelaxation *
+                            previousRawUpdate.dot(residualDelta) / denominator,
+                        cfg_.electronQuantumPotential.outerRelaxationMin,
+                        cfg_.electronQuantumPotential.outerRelaxationMax);
+                }
+            }
+            const VectorXd appliedUpdate = relaxation * rawUpdate;
+            DensityGradientOuterIterationInfo outerInfo;
+            outerInfo.iteration = outer;
+            outerInfo.innerIterations = quantum.iterations;
+            outerInfo.innerConverged = quantum.converged;
+            outerInfo.innerResidualInfinityNorm = quantum.residualInfinityNorm;
+            outerInfo.innerLastUpdateInfinityNorm_V =
+                quantum.lastUpdateInfinityNorm_V;
+            outerInfo.innerMaxUpdateNode = quantum.maxUpdateNode;
+            outerInfo.innerMaxUpdateNodeValue_V = quantum.maxUpdateNodeValue_V;
+            outerInfo.rawChangeInfinityNorm_V = change;
+            outerInfo.appliedChangeInfinityNorm_V =
+                appliedUpdate.lpNorm<Eigen::Infinity>();
+            outerInfo.potentialInfinityNorm_V =
+                quantum.potential_V.lpNorm<Eigen::Infinity>();
+            outerInfo.relaxation = relaxation;
+            outerHistory.push_back(outerInfo);
+            if (cfg_.verbose || runtimeLogEnabled()) {
+                emitVerboseLine(
+                    "Density-gradient outer iter " + std::to_string(outer) +
+                    " inner_iters=" + std::to_string(quantum.iterations) +
+                    " inner_converged=" + std::to_string(quantum.converged ? 1 : 0) +
+                    " inner_residual=" + std::to_string(quantum.residualInfinityNorm) +
+                    " inner_last_update_V=" +
+                        std::to_string(quantum.lastUpdateInfinityNorm_V) +
+                    " inner_max_update_node=" +
+                        std::to_string(quantum.maxUpdateNode) +
+                    " inner_max_update_signed_V=" +
+                        std::to_string(quantum.maxUpdateNodeValue_V) +
+                    " raw_change_V=" + std::to_string(change) +
+                    " applied_change_V=" +
+                        std::to_string(outerInfo.appliedChangeInfinityNorm_V) +
+                    " relaxation=" + std::to_string(relaxation) +
+                    " potential_max_V=" +
+                        std::to_string(outerInfo.potentialInfinityNorm_V));
+            }
+            const Real scale = std::max<Real>(
+                quantum.potential_V.lpNorm<Eigen::Infinity>(), 1.0);
+            const bool outerConverged = quantum.converged &&
+                change <= cfg_.electronQuantumPotential.absoluteTolerance_V +
+                    cfg_.electronQuantumPotential.relativeTolerance * scale;
+            quantumPotential = outerConverged
+                ? std::move(quantum.potential_V)
+                : quantumPotential + appliedUpdate;
+            previousRawUpdate = rawUpdate;
+            previousRelaxation = relaxation;
             outerState = last.solution;
             outerState.electronQuantumPotential = quantumPotential;
-            const Real scale = std::max<Real>(
-                quantumPotential.lpNorm<Eigen::Infinity>(), 1.0);
-            if (quantum.converged &&
-                change <= cfg_.electronQuantumPotential.absoluteTolerance_V +
-                    cfg_.electronQuantumPotential.relativeTolerance * scale) {
+            if (outerConverged) {
                 // One final frozen solve makes the returned carrier state
                 // consistent with the converged quantum potential.
                 last = solveClassicalWithFrozenElectronQuantumPotential(
                     outerState, quantumPotential);
+                last.electronQuantumOuterHistory = std::move(outerHistory);
                 last.solution.electronQuantumPotential = quantumPotential;
                 if (last.converged)
                     last.convergenceReason += "+electron_density_gradient";
@@ -4452,6 +4585,7 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
             }
         }
         last.solution.electronQuantumPotential = quantumPotential;
+        last.electronQuantumOuterHistory = std::move(outerHistory);
         last.converged = false;
         last.failureDiagnostics.failureReason =
             "electron_density_gradient_max_iterations";

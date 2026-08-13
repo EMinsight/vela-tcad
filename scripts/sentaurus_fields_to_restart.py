@@ -93,7 +93,8 @@ def main() -> int:
                 columns["phip"][node] if has_carrier_support else 0.0,
                 columns["electrons_m3"].get(node, 0.0) * density_scale["electrons_m3"],
                 columns["holes_m3"].get(node, 0.0) * density_scale["holes_m3"],
-                columns["electron_quantum_potential_V"][node],
+                (columns["electron_quantum_potential_V"][node]
+                 if has_carrier_support else 0.0),
             ])
     return 0
 

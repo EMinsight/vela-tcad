@@ -163,6 +163,8 @@ DensityGradientQuantumPotentialResult solveElectronDensityGradientPotential(
         result.residualInfinityNorm = residual.lpNorm<Eigen::Infinity>();
         VectorXd update = solver.solve(jacobian, -residual);
         Real updateNorm = update.lpNorm<Eigen::Infinity>();
+        Eigen::Index maxUpdateIndex = 0;
+        update.cwiseAbs().maxCoeff(&maxUpdateIndex);
         if (config.maxUpdate_V > 0.0 && updateNorm > config.maxUpdate_V) {
             update *= config.maxUpdate_V / updateNorm;
             updateNorm = config.maxUpdate_V;
@@ -171,12 +173,16 @@ DensityGradientQuantumPotentialResult solveElectronDensityGradientPotential(
         for (const auto& [node, value] : dirichletPotential_V)
             potential(static_cast<int>(node)) = value;
         result.iterations = iteration;
+        result.lastUpdateInfinityNorm_V = config.damping * updateNorm;
+        result.maxUpdateNode = static_cast<Index>(maxUpdateIndex);
+        result.maxUpdateNodeValue_V = config.damping * update(maxUpdateIndex);
         const Real scale = std::max<Real>(potential.lpNorm<Eigen::Infinity>(), 1.0);
         if (updateNorm <= config.absoluteTolerance_V + config.relativeTolerance * scale) {
             result.converged = true;
             break;
         }
     }
+    result.potentialInfinityNorm_V = potential.lpNorm<Eigen::Infinity>();
     result.potential_V = std::move(potential);
     return result;
 }

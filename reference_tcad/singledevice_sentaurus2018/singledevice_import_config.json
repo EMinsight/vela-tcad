@@ -15,6 +15,7 @@
     "verbose": false,
     "electron_quantum_potential": {
       "enabled": true,
+      "formulation": "potential_based",
       "gamma": 3.6,
       "effective_mass_ratio": 1.0618016171622988,
       "outer_max_iterations": 20,

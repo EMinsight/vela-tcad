@@ -387,10 +387,15 @@ Notes:
 - `line_search` and `damping_factor` apply to Newton config.
 - `electron_quantum_potential` enables the electron density-gradient quantum
   correction.  The object accepts `coupling_mode` (`outer`, the default, or
-  `frozen` for an imported restart potential), `gamma`,
+  `frozen` for an imported restart potential), `formulation`
+  (`potential_based`, the Sentaurus default, or `density_based` for audit), `gamma`,
   `effective_mass_ratio`, `max_iterations`, `outer_max_iterations`,
   `relative_tolerance`, `absolute_tolerance_V`, `damping`, and
-  `max_update_V`.  `max_update_V` is the non-negative infinity-norm cap on an
+  `max_update_V`.  The outer fixed-point loop also accepts
+  `outer_acceleration` (`none` or vector `aitken`), `outer_relaxation`,
+  `outer_relaxation_min`, and `outer_relaxation_max`; every outer iteration is
+  written to the runtime log with its raw/applied potential change.  `max_update_V`
+  is the non-negative infinity-norm cap on an
   inner density-gradient Newton update; its default is `0.1 V`, and `0`
   disables the cap.
 - `contact_boundary_reconstruction` controls only Ohmic-contact boundary

@@ -41,6 +41,7 @@ class SentaurusFieldsToRestartTest(unittest.TestCase):
             self.assertEqual(float(rows[1]["electrons_m3"]), 0.0)
             self.assertEqual(float(rows[1]["phin"]), 0.0)
             self.assertEqual(float(rows[1]["phip"]), 0.0)
+            self.assertEqual(float(rows[1]["electron_quantum_potential_V"]), 0.0)
 
 
 if __name__ == "__main__":

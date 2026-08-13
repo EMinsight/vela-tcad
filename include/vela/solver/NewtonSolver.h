@@ -249,6 +249,20 @@ struct NewtonFailureDiagnostics {
     std::vector<NewtonTopCarrierResidualNode> topHoleResidualNodes;
 };
 
+struct DensityGradientOuterIterationInfo {
+    int iteration = 0;
+    int innerIterations = 0;
+    bool innerConverged = false;
+    Real innerResidualInfinityNorm = 0.0;
+    Real innerLastUpdateInfinityNorm_V = 0.0;
+    Index innerMaxUpdateNode = 0;
+    Real innerMaxUpdateNodeValue_V = 0.0;
+    Real rawChangeInfinityNorm_V = 0.0;
+    Real appliedChangeInfinityNorm_V = 0.0;
+    Real potentialInfinityNorm_V = 0.0;
+    Real relaxation = 1.0;
+};
+
 struct NewtonResult {
     DDSolution solution;
     bool converged = false;
@@ -262,6 +276,7 @@ struct NewtonResult {
     NewtonCarrierRowRecoveryResult carrierRowRecovery;
     std::vector<NewtonIterationInfo> history;
     std::vector<NewtonIterationInfo> trace;
+    std::vector<DensityGradientOuterIterationInfo> electronQuantumOuterHistory;
     NewtonFailureDiagnostics failureDiagnostics;
 };
 

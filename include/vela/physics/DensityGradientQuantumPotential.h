@@ -15,6 +15,7 @@ namespace vela {
 struct DensityGradientQuantumPotentialConfig {
     bool enabled = false;
     std::string couplingMode = "outer"; ///< "outer" or frozen imported potential.
+    std::string formulation = "potential_based"; ///< Sentaurus default or density-based audit.
     Real gamma = 3.6;
     Real effectiveMassRatio = 1.0618016171622988;
     int maxIterations = 30;
@@ -23,6 +24,10 @@ struct DensityGradientQuantumPotentialConfig {
     Real damping = 0.5;
     Real maxUpdate_V = 0.1;
     int outerMaxIterations = 20;
+    std::string outerAcceleration = "none"; ///< "none" or vector Aitken relaxation.
+    Real outerRelaxation = 1.0;
+    Real outerRelaxationMin = 0.1;
+    Real outerRelaxationMax = 1.5;
 };
 
 struct DensityGradientQuantumPotentialResult {
@@ -30,6 +35,10 @@ struct DensityGradientQuantumPotentialResult {
     int iterations = 0;
     Real residualInfinityNorm = 0.0;
     bool converged = false;
+    Real lastUpdateInfinityNorm_V = 0.0;
+    Real potentialInfinityNorm_V = 0.0;
+    Index maxUpdateNode = 0;
+    Real maxUpdateNodeValue_V = 0.0;
 };
 
 /// Return gamma*hbar^2/(6*m*q), in V*m^2.
