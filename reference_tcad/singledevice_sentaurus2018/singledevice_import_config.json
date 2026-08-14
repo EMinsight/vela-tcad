@@ -18,6 +18,12 @@
       "formulation": "potential_based",
       "gamma": 3.6,
       "effective_mass_ratio": 1.0618016171622988,
+      "include_insulators": false,
+      "insulator_gamma": 1.0,
+      "insulator_effective_mass_ratio": 0.42,
+      "interface_boundary": "homogeneous_neumann",
+      "theta": 0.5,
+      "conduction_band_narrowing_fraction": 0.5,
       "outer_max_iterations": 20,
       "max_iterations": 30,
       "damping": 0.5

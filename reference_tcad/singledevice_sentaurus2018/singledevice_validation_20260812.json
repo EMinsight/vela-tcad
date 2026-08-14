@@ -50,6 +50,70 @@
       "relative_error": 0.002453681
     }
   },
+  "saturation_eq231_followup_20260813": {
+    "bias": {
+      "gate_V": 2.2,
+      "drain_V": 1.1
+    },
+    "frozen_sentaurus_quantum_potential": {
+      "status": "pass",
+      "newton_iterations": 7,
+      "vela_current_A_per_um": 0.0017022433806895092,
+      "sentaurus_current_A_per_um": 0.0017069265949,
+      "relative_error": 0.002743637
+    },
+    "quasi_fermi_conclusion": "The saturation DD state is consistent at terminal-current level; local imported-to-relaxed phin differences are concentrated in depleted nodes and are not the quantum hotspot root cause.",
+    "sentaurus_o_2018_06_parameters": {
+      "silicon": {
+        "gamma": 3.6,
+        "theta": 0.5,
+        "xi": 1.0,
+        "eta": 1.0,
+        "electron_dos_mass_ratio": 1.0618016171622988,
+        "Bgn2Chi": 0.5
+      },
+      "sio2_and_si3n4": {
+        "gamma": 1.0,
+        "theta": 0.5,
+        "xi": 0.0,
+        "eta": 0.0,
+        "electron_dos_mass_ratio": 0.42
+      }
+    },
+    "implementation": {
+      "status": "implemented_with_experimental_interface_mode",
+      "features": [
+        "material-resolved gamma over DOS mass coefficient",
+        "conduction-band affinity drive",
+        "DOS mass drive",
+        "material-row gamma over DOS mass coefficient with unweighted normal interface flux",
+        "optional global insulator solve and preserved insulator restart quantum potential"
+      ],
+      "default_interface_mode": "semiconductor_homogeneous_neumann",
+      "experimental_global_insulator_probe": {
+        "status": "acceptance_failed",
+        "inner_converged": true,
+        "inner_iterations": 77,
+        "raw_change_V": 2.671009,
+        "conclusion": "A shared-node continuous Lambda representation is not equivalent to Sentaurus potential-like interface continuity; keep the global-insulator mode opt-in."
+      }
+    },
+    "saturation_semiconductor_side_oracle": {
+      "status": "acceptance_failed",
+      "inner_iterations": 500,
+      "inner_converged": false,
+      "raw_change_V": 24.803958,
+      "conclusion": "The material terms are implemented, but exact Sentaurus Eq. 233 semiconductor-to-unsolved-region boundary support remains required for saturation parity."
+    },
+    "linear_endpoint_regression": {
+      "status": "pass",
+      "outer_iterations": 3,
+      "final_raw_change_V": 0.000287,
+      "vela_current_A_per_um": 0.00033660978503812503,
+      "sentaurus_current_A_per_um": 0.00033738239089,
+      "relative_error": 0.002290001
+    }
+  },
   "self_consistent_curves": {
     "idvg_lin_vds_0p1_V": {
       "status": "curve_converged_acceptance_failed",
@@ -73,5 +137,23 @@
       },
       "conclusion": "The saturation failure is not an outer-relaxation tuning issue; Vela's converged frozen-quantum DD state does not satisfy the Sentaurus potential-form DG equation proxy."
     }
+  },
+  "eq233_and_global_interface_followup_20260813": {
+    "sentaurus_step_boundary": {
+      "status": "implemented_acceptance_failed",
+      "homogeneous_neumann_raw_change_V": 24.803958,
+      "best_step_raw_change_V": 3.193316,
+      "inner_iterations": 500,
+      "inner_converged": false,
+      "rejected_normal_reversal_raw_change_V": 6.358392,
+      "rejected_zero_drive_gradient_raw_change_V": 6.150184
+    },
+    "global_potential_like_formulation": {
+      "status": "prototype_requires_region_side_restart",
+      "single_material_equivalence_max_error_V": 1.7e-8,
+      "continuous_unknown": "Lambda-(psi+electron_affinity+DOS_mass_drive)",
+      "remaining_requirement": "region-side/discontinuous interface restart values or duplicated interface degrees of freedom"
+    },
+    "conclusion": "Eq. 233 is not the exact contract for the globally enabled original deck; exact SingleDevice saturation closure remains open."
   }
 }

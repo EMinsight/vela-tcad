@@ -398,6 +398,48 @@ Notes:
   is the non-negative infinity-norm cap on an
   inner density-gradient Newton update; its default is `0.1 V`, and `0`
   disables the cap.
+  The qualified semiconductor-side interface model may set
+  `interface_boundary: sentaurus_step` to apply the O-2018.06 Eq. 233
+  inhomogeneous step boundary at semiconductor-to-unsolved-nonmetal edges.
+  Its material controls are `theta` (default `0.5`),
+  `insulator_effective_mass_ratio` (the unsolved-side DOS mass, default
+  `0.42`), and `conduction_band_narrowing_fraction` (default `0.5`).  The
+  generic default remains `homogeneous_neumann`; imported Sentaurus decks
+  with `eQuantumPotential` select `sentaurus_step` explicitly.
+  Material-resolved global interface experiments may instead set
+  `include_insulators: true` together with
+  `insulator_gamma` (default `1`) and `insulator_effective_mass_ratio`
+  (default `0.42`).  This global mode is experimental because exact Sentaurus
+  internal-interface parity requires a discontinuous/region-side
+  potential-like unknown; the qualified default keeps semiconductor-side
+  homogeneous Neumann treatment unless `sentaurus_step` is selected.
+  For a fixed-reference audit of that experimental global mode,
+  `residual_diagnostic_prefix` writes `<prefix>_cells.csv`, `_nodes.csv`,
+  `_regions.csv`, and `_summary.txt` with the initial Eq. 231 stiffness,
+  gradient-square, reaction, and total residual contributions. Set
+  `residual_diagnostic_use_initial_state: true` to evaluate the drives from
+  the imported checkpoint rather than the preceding frozen-quantum DD solve.
+  Both diagnostic controls default to disabled and do not alter the nonlinear
+  equation when omitted.
+  `global_discretization` selects the all-material Eq. 231 spatial operator:
+  `p1_direct` (default) follows the expanded potential-based equation used by
+  the P1/box endpoint audit. `exponential_fitted` exactly preserves the
+  `theta=0.5` identity with `u=exp(w/2)` for manufactured-solution checks, but
+  is opt-in because steep imported oxide quantum-potential gradients produce
+  exponentially ill-conditioned element ratios.
+  `cvfem_full` is an experimental median-dual control-volume finite-element
+  integration of the complete expanded Laplacian and quadratic-field terms,
+  intended for comparison with Charon's density-gradient CVFEM architecture.
+  `oxide_boundary: devsim_wkb` adds the experimental DEVSIM/Garcia-Asenov
+  oxide interface closure. Its defaults follow the public DEVSIM MOSCAP
+  example: oxide quantum mass `oxide_quantum_mass_ratio=0.14`, WKB barrier
+  mass `oxide_barrier_mass_ratio=0.4`, and electron barrier
+  `oxide_barrier_height_V=3.15`. `oxide_boundary` defaults to `none`; these
+  controls are diagnostic and do not change the qualified SingleDevice path.
+  A material JSON entry may override the solver-level coefficient with
+  `electron_quantum_gamma` and `electron_quantum_dos_mass_ratio`. This is
+  required when one mesh contains semiconductor or insulator materials with
+  different Eq. 231 parameters; omitted fields retain the solver-level values.
 - `contact_boundary_reconstruction` controls only Ohmic-contact boundary
   quasi-Fermi/carrier reconstruction in the Newton path. Accepted values are
   `dominant_signed_contact_mean` (default, current behavior) and
@@ -1118,6 +1160,14 @@ Restart-state CSV files use this exact header:
 ```text
 node_id,psi,phin,phip,electrons_m3,holes_m3
 ```
+
+Density-gradient checkpoints may append
+`electron_quantum_potential_V`. All-material Eq. 231 checkpoints append both
+`electron_quantum_potential_V` and
+`electron_quantum_potential_like_V`; the latter is the continuous primary
+unknown used to reconstruct the material-side quantum correction after a
+restart. Readers remain compatible with the legacy six-column and
+Lambda-only seven-column forms.
 
 Rows must cover every mesh node exactly once by `node_id`. All state values are
 stored in active internal solver units: potentials in V and carrier densities in legacy `m^-3` or `unit_scaling` `cm^-3`.

@@ -44,6 +44,10 @@ Material materialFromJson(const nlohmann::json& j,
     setOptionalScaledReal(
         j, "Nv_m3", mat.Nv_m3, &UnitScalingConfig::concentrationToInternal, scaling);
     setOptionalReal(j, "temperature_K", mat.temperature_K);
+    setOptionalReal(j, "electron_quantum_gamma", mat.electron_quantum_gamma);
+    setOptionalReal(
+        j, "electron_quantum_dos_mass_ratio",
+        mat.electron_quantum_dos_mass_ratio);
     return mat;
 }
 

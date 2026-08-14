@@ -1306,6 +1306,20 @@ NewtonConfig newtonConfigFromJson(const nlohmann::json& json, UnitScalingConfig 
                 "gamma", cfg.electronQuantumPotential.gamma);
             cfg.electronQuantumPotential.effectiveMassRatio = value.value(
                 "effective_mass_ratio", cfg.electronQuantumPotential.effectiveMassRatio);
+            cfg.electronQuantumPotential.includeInsulators = value.value(
+                "include_insulators", cfg.electronQuantumPotential.includeInsulators);
+            cfg.electronQuantumPotential.insulatorGamma = value.value(
+                "insulator_gamma", cfg.electronQuantumPotential.insulatorGamma);
+            cfg.electronQuantumPotential.insulatorEffectiveMassRatio = value.value(
+                "insulator_effective_mass_ratio",
+                cfg.electronQuantumPotential.insulatorEffectiveMassRatio);
+            cfg.electronQuantumPotential.interfaceBoundary = value.value(
+                "interface_boundary", cfg.electronQuantumPotential.interfaceBoundary);
+            cfg.electronQuantumPotential.theta = value.value(
+                "theta", cfg.electronQuantumPotential.theta);
+            cfg.electronQuantumPotential.conductionBandNarrowingFraction = value.value(
+                "conduction_band_narrowing_fraction",
+                cfg.electronQuantumPotential.conductionBandNarrowingFraction);
             cfg.electronQuantumPotential.maxIterations = value.value(
                 "max_iterations", cfg.electronQuantumPotential.maxIterations);
             cfg.electronQuantumPotential.outerMaxIterations = value.value(
@@ -1326,6 +1340,26 @@ NewtonConfig newtonConfigFromJson(const nlohmann::json& json, UnitScalingConfig 
                 "outer_relaxation_min", cfg.electronQuantumPotential.outerRelaxationMin);
             cfg.electronQuantumPotential.outerRelaxationMax = value.value(
                 "outer_relaxation_max", cfg.electronQuantumPotential.outerRelaxationMax);
+            cfg.electronQuantumPotential.residualDiagnosticPrefix = value.value(
+                "residual_diagnostic_prefix",
+                cfg.electronQuantumPotential.residualDiagnosticPrefix);
+            cfg.electronQuantumPotential.residualDiagnosticUseInitialState = value.value(
+                "residual_diagnostic_use_initial_state",
+                cfg.electronQuantumPotential.residualDiagnosticUseInitialState);
+            cfg.electronQuantumPotential.globalDiscretization = value.value(
+                "global_discretization",
+                cfg.electronQuantumPotential.globalDiscretization);
+            cfg.electronQuantumPotential.oxideBoundary = value.value(
+                "oxide_boundary", cfg.electronQuantumPotential.oxideBoundary);
+            cfg.electronQuantumPotential.oxideQuantumMassRatio = value.value(
+                "oxide_quantum_mass_ratio",
+                cfg.electronQuantumPotential.oxideQuantumMassRatio);
+            cfg.electronQuantumPotential.oxideBarrierMassRatio = value.value(
+                "oxide_barrier_mass_ratio",
+                cfg.electronQuantumPotential.oxideBarrierMassRatio);
+            cfg.electronQuantumPotential.oxideBarrierHeight_V = value.value(
+                "oxide_barrier_height_V",
+                cfg.electronQuantumPotential.oxideBarrierHeight_V);
         } else {
             throw std::invalid_argument(
                 "newtonConfigFromJson: electron_quantum_potential must be a boolean or object.");
@@ -1875,6 +1909,51 @@ NewtonConfig newtonConfigFromJson(const nlohmann::json& json, UnitScalingConfig 
         throw std::invalid_argument(
             "newtonConfigFromJson: electron_quantum_potential.max_update_V "
             "must be finite and non-negative.");
+    }
+    (void)densityGradientCoefficientVm2(
+        cfg.electronQuantumPotential.insulatorGamma,
+        cfg.electronQuantumPotential.insulatorEffectiveMassRatio);
+    if (cfg.electronQuantumPotential.interfaceBoundary != "homogeneous_neumann" &&
+        cfg.electronQuantumPotential.interfaceBoundary != "sentaurus_step") {
+        throw std::invalid_argument(
+            "newtonConfigFromJson: electron_quantum_potential.interface_boundary "
+            "must be 'homogeneous_neumann' or 'sentaurus_step'.");
+    }
+    if (cfg.electronQuantumPotential.globalDiscretization !=
+            "exponential_fitted" &&
+        cfg.electronQuantumPotential.globalDiscretization != "p1_direct" &&
+        cfg.electronQuantumPotential.globalDiscretization != "cvfem_full") {
+        throw std::invalid_argument(
+            "newtonConfigFromJson: electron_quantum_potential."
+            "global_discretization must be 'exponential_fitted', "
+            "'p1_direct', or 'cvfem_full'.");
+    }
+    if (cfg.electronQuantumPotential.oxideBoundary != "none" &&
+        cfg.electronQuantumPotential.oxideBoundary != "devsim_wkb") {
+        throw std::invalid_argument(
+            "newtonConfigFromJson: electron_quantum_potential."
+            "oxide_boundary must be 'none' or 'devsim_wkb'.");
+    }
+    if (!(cfg.electronQuantumPotential.oxideQuantumMassRatio > 0.0) ||
+        !(cfg.electronQuantumPotential.oxideBarrierMassRatio > 0.0) ||
+        !(cfg.electronQuantumPotential.oxideBarrierHeight_V > 0.0)) {
+        throw std::invalid_argument(
+            "newtonConfigFromJson: electron_quantum_potential oxide WKB "
+            "masses and barrier height must be positive.");
+    }
+    if (!(cfg.electronQuantumPotential.theta > 0.0) ||
+        !std::isfinite(cfg.electronQuantumPotential.theta)) {
+        throw std::invalid_argument(
+            "newtonConfigFromJson: electron_quantum_potential.theta must be "
+            "finite and positive.");
+    }
+    if (cfg.electronQuantumPotential.conductionBandNarrowingFraction < 0.0 ||
+        cfg.electronQuantumPotential.conductionBandNarrowingFraction > 1.0 ||
+        !std::isfinite(
+            cfg.electronQuantumPotential.conductionBandNarrowingFraction)) {
+        throw std::invalid_argument(
+            "newtonConfigFromJson: electron_quantum_potential."
+            "conduction_band_narrowing_fraction must be finite in [0,1].");
     }
     if (cfg.electronQuantumPotential.outerAcceleration != "none" &&
         cfg.electronQuantumPotential.outerAcceleration != "aitken") {
@@ -4417,10 +4496,15 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
             initial.electronQuantumPotential.size() == nodeCount
             ? initial.electronQuantumPotential
             : VectorXd::Zero(nodeCount);
+        VectorXd quantumPotentialLike =
+            initial.electronQuantumPotentialLike.size() == nodeCount
+            ? initial.electronQuantumPotentialLike
+            : VectorXd{};
         if (cfg_.electronQuantumPotential.couplingMode == "frozen") {
             NewtonResult result = solveClassicalWithFrozenElectronQuantumPotential(
                 initial, quantumPotential);
             result.solution.electronQuantumPotential = quantumPotential;
+            result.solution.electronQuantumPotentialLike = quantumPotentialLike;
             if (result.converged)
                 result.convergenceReason += "+frozen_electron_density_gradient";
             return result;
@@ -4432,16 +4516,68 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
         Real previousRelaxation = cfg_.electronQuantumPotential.outerRelaxation;
         const bool potentialBased =
             cfg_.electronQuantumPotential.formulation == "potential_based";
+        const Real Vt = thermalVoltage(cfg_.temperature_K);
         std::vector<bool> activeNodes(static_cast<std::size_t>(nodeCount), false);
+        std::vector<bool> transportNodes(static_cast<std::size_t>(nodeCount), false);
+        std::vector<bool> nodeOwned(static_cast<std::size_t>(nodeCount), false);
+        std::vector<bool> nodeTransportOwned(
+            static_cast<std::size_t>(nodeCount), false);
+        std::vector<bool> cellTransport(
+            static_cast<std::size_t>(mesh_.numCells()), false);
+        std::vector<Real> cellElectronAffinity_eV(
+            static_cast<std::size_t>(mesh_.numCells()), 0.0);
+        std::vector<Real> cellQuantumGamma(
+            static_cast<std::size_t>(mesh_.numCells()), 0.0);
+        std::vector<Real> cellQuantumMassRatio(
+            static_cast<std::size_t>(mesh_.numCells()), 0.0);
+        VectorXd materialCoefficient = VectorXd::Zero(nodeCount);
+        VectorXd materialBandDrive = VectorXd::Zero(nodeCount);
+        std::vector<Real> cellDosMassDrive_V(
+            static_cast<std::size_t>(mesh_.numCells()), 0.0);
         std::unordered_map<Index, Real> quantumDirichlet;
         for (Index cellId = 0; cellId < mesh_.numCells(); ++cellId) {
             const Cell& cell = mesh_.getCell(cellId);
             const Region& region = mesh_.getRegion(cell.region_id);
             const Material material = matdb_.getMaterial(region.material);
-            if (!(material.ni > 0.0) || !(material.mun > 0.0))
+            const bool transport = material.ni > 0.0 && material.mun > 0.0;
+            cellTransport[cellId] = transport;
+            cellElectronAffinity_eV[cellId] =
+                material.electron_affinity_eV.value_or(0.0);
+            const bool active = transport ||
+                cfg_.electronQuantumPotential.includeInsulators;
+            if (!active)
                 continue;
-            for (Index node : cell.node_ids)
+            const Real gamma = material.electron_quantum_gamma.value_or(
+                transport ? cfg_.electronQuantumPotential.gamma
+                          : cfg_.electronQuantumPotential.insulatorGamma);
+            const Real massRatio =
+                material.electron_quantum_dos_mass_ratio.value_or(
+                    transport
+                        ? cfg_.electronQuantumPotential.effectiveMassRatio
+                        : cfg_.electronQuantumPotential.
+                            insulatorEffectiveMassRatio);
+            cellQuantumGamma[cellId] = gamma;
+            cellQuantumMassRatio[cellId] = massRatio;
+            const Real coefficient = densityGradientCoefficientVm2(gamma, massRatio);
+            // Ec/q = -psi-chi.  For xi=eta=1 (semiconductor), the
+            // Eq. 231 drive is psi-phin+chi.  In insulators xi=eta=0;
+            // the explicit (eta-1)q*grad(phi) term cancels Ec's
+            // electrostatic contribution, leaving chi plus the DOS term.
+            const Real dosMassDrive =
+                1.5 * Vt * std::log(massRatio);
+            cellDosMassDrive_V[cellId] = dosMassDrive;
+            for (Index node : cell.node_ids) {
                 activeNodes[node] = true;
+                transportNodes[node] = transportNodes[node] || transport;
+                if (!nodeOwned[node] || (transport && !nodeTransportOwned[node])) {
+                    materialCoefficient(static_cast<int>(node)) = coefficient;
+                    materialBandDrive(static_cast<int>(node)) =
+                        material.electron_affinity_eV.value_or(0.0) +
+                        dosMassDrive;
+                    nodeOwned[node] = true;
+                    nodeTransportOwned[node] = transport;
+                }
+            }
         }
         for (const Contact& contact : mesh_.contacts()) {
             const auto spec = contactSpecs_.find(contact.name);
@@ -4458,6 +4594,39 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
                 quantumPotential(i) = 0.0;
         }
 
+        struct QuantumStepInterfaceDescriptor {
+            Index edgeId = 0;
+            Index solvedCellId = 0;
+            Real solvedAffinity_eV = 0.0;
+            Real unsolvedAffinity_eV = 0.0;
+        };
+        std::vector<QuantumStepInterfaceDescriptor> stepInterfaceDescriptors;
+        if (cfg_.electronQuantumPotential.interfaceBoundary == "sentaurus_step") {
+            if (cfg_.electronQuantumPotential.includeInsulators) {
+                throw std::invalid_argument(
+                    "electron_quantum_potential sentaurus_step requires "
+                    "include_insulators=false.");
+            }
+            const auto edgeCells = detail::buildEdgeCellMap(mesh_);
+            for (Index edgeId = 0; edgeId < mesh_.numEdges(); ++edgeId) {
+                if (edgeCells[edgeId].size() != 2)
+                    continue;
+                const Index cell0 = edgeCells[edgeId][0];
+                const Index cell1 = edgeCells[edgeId][1];
+                if (cellTransport[cell0] == cellTransport[cell1])
+                    continue;
+                const Index solvedCell = cellTransport[cell0] ? cell0 : cell1;
+                const Index unsolvedCell = cellTransport[cell0] ? cell1 : cell0;
+                stepInterfaceDescriptors.push_back({
+                    edgeId,
+                    solvedCell,
+                    cellElectronAffinity_eV[solvedCell],
+                    cellElectronAffinity_eV[unsolvedCell],
+                });
+            }
+        }
+        const auto quantumBgn = makeBandgapNarrowingModel(cfg_.bandgapNarrowing);
+
         for (int outer = 1;
              outer <= cfg_.electronQuantumPotential.outerMaxIterations; ++outer) {
             last = solveClassicalWithFrozenElectronQuantumPotential(
@@ -4468,21 +4637,23 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
             }
 
             VectorXd classicalDensity(nodeCount);
-            const Real Vt = thermalVoltage(cfg_.temperature_K);
+            VectorXd drivingPotential = VectorXd::Zero(nodeCount);
             if (potentialBased) {
                 // For default xi=eta=1 and Boltzmann statistics, Sentaurus'
                 // potential formula has auxiliary variable proportional to
                 // exp((psi-phin-Lambda)/(2*Vt)).  The normalization constant
                 // drops out of the homogeneous DG equation.
-                VectorXd drivingPotential(nodeCount);
                 Real referencePotential = -std::numeric_limits<Real>::infinity();
                 for (int i = 0; i < nodeCount; ++i) {
                     if (!activeNodes[static_cast<std::size_t>(i)]) {
                         drivingPotential(i) = 0.0;
                         continue;
                     }
-                    drivingPotential(i) =
-                        last.solution.psi(i) - last.solution.phin(i);
+                    drivingPotential(i) = materialBandDrive(i);
+                    if (transportNodes[static_cast<std::size_t>(i)]) {
+                        drivingPotential(i) +=
+                            last.solution.psi(i) - last.solution.phin(i);
+                    }
                     referencePotential = std::max(referencePotential, drivingPotential(i));
                 }
                 for (int i = 0; i < nodeCount; ++i) {
@@ -4500,11 +4671,133 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
                         quantumPotential(i) / Vt, Real{-700.0}, Real{700.0}));
                 }
             }
-            auto quantum = solveElectronDensityGradientPotential(
-                mesh_, classicalDensity, activeNodes, quantumDirichlet,
-                Vt,
-                cfg_.inputScaling.unitSystem(), cfg_.electronQuantumPotential,
-                quantumPotential);
+            std::vector<DensityGradientStepBoundary> stepBoundaries;
+            stepBoundaries.reserve(stepInterfaceDescriptors.size());
+            for (const auto& descriptor : stepInterfaceDescriptors) {
+                const Edge& edge = mesh_.getEdge(descriptor.edgeId);
+                const Cell& solvedCell = mesh_.getCell(descriptor.solvedCellId);
+                bool gradientValid = false;
+                Real solvedCellArea = 0.0;
+                const Point2 drivingGradient = detail::cellScalarGradient(
+                    mesh_, solvedCell,
+                    [&](Index node) {
+                        return drivingPotential(static_cast<int>(node));
+                    },
+                    gradientValid, solvedCellArea);
+                const Node& p0 = mesh_.getNode(edge.n0);
+                const Node& p1 = mesh_.getNode(edge.n1);
+                Point2 centroid = Point2::Zero();
+                for (Index node : solvedCell.node_ids) {
+                    const Node& point = mesh_.getNode(node);
+                    centroid += Point2{point.x, point.y};
+                }
+                centroid /= static_cast<Real>(solvedCell.node_ids.size());
+                const Point2 midpoint{
+                    0.5 * (p0.x + p1.x), 0.5 * (p0.y + p1.y)};
+                const Point2 outwardDelta = midpoint - centroid;
+                Point2 outwardNormal = Point2::Zero();
+                if (outwardDelta.norm() > 0.0)
+                    outwardNormal = outwardDelta / outwardDelta.norm();
+                const Real normalDriveGradient = gradientValid
+                    ? drivingGradient.dot(outwardNormal) /
+                        cfg_.inputScaling.unitSystem().lengthMPerInternal()
+                    : 0.0;
+                const auto barrierAt = [&](Index node) {
+                    const int i = static_cast<int>(node);
+                    const Real narrowing = quantumBgn->deltaEg(
+                        doping_.totalImpurity(node),
+                        last.solution.n(i), last.solution.p(i));
+                    return descriptor.solvedAffinity_eV -
+                        descriptor.unsolvedAffinity_eV +
+                        cfg_.electronQuantumPotential.
+                            conductionBandNarrowingFraction * narrowing;
+                };
+                stepBoundaries.push_back({
+                    descriptor.edgeId,
+                    barrierAt(edge.n0),
+                    barrierAt(edge.n1),
+                    cfg_.electronQuantumPotential.insulatorEffectiveMassRatio,
+                    cfg_.electronQuantumPotential.gamma,
+                    cfg_.electronQuantumPotential.theta,
+                    1.0,
+                    normalDriveGradient,
+                });
+            }
+            DensityGradientQuantumPotentialResult quantum;
+            if (cfg_.electronQuantumPotential.includeInsulators) {
+                const DDSolution& densityGradientState =
+                    cfg_.electronQuantumPotential.residualDiagnosticUseInitialState
+                    ? initial : last.solution;
+                std::vector<DensityGradientCellMaterial> cellMaterials;
+                cellMaterials.reserve(mesh_.numCells());
+                VectorXd nodeOutputShift = VectorXd::Zero(nodeCount);
+                for (int i = 0; i < nodeCount; ++i) {
+                    const Real narrowing = transportNodes[
+                        static_cast<std::size_t>(i)]
+                        ? quantumBgn->deltaEg(
+                            doping_.totalImpurity(static_cast<Index>(i)),
+                            densityGradientState.n(i),
+                            densityGradientState.p(i))
+                        : 0.0;
+                    nodeOutputShift(i) =
+                        materialBandDrive(i) + densityGradientState.psi(i) +
+                        cfg_.electronQuantumPotential.
+                            conductionBandNarrowingFraction * narrowing;
+                }
+                if (quantumPotentialLike.size() != nodeCount)
+                    quantumPotentialLike = quantumPotential - nodeOutputShift;
+                for (Index cellId = 0; cellId < mesh_.numCells(); ++cellId) {
+                    const Cell& cell = mesh_.getCell(cellId);
+                    if (cell.node_ids.size() != 3)
+                        continue;
+                    const bool transport = cellTransport[cellId];
+                    DensityGradientCellMaterial data;
+                    data.cellId = cellId;
+                    data.isTransport = transport;
+                    data.coefficientVm2 = densityGradientCoefficientVm2(
+                        cellQuantumGamma[cellId],
+                        cellQuantumMassRatio[cellId]);
+                    for (int local = 0; local < 3; ++local) {
+                        const int node = static_cast<int>(cell.node_ids[local]);
+                        const Real narrowing = transport
+                            ? quantumBgn->deltaEg(
+                                doping_.totalImpurity(cell.node_ids[local]),
+                                densityGradientState.n(node),
+                                densityGradientState.p(node))
+                            : 0.0;
+                        // Phi/q is the continuous Eq. 231 primary unknown,
+                        // whereas Lambda = Phi/q - Ec/q - Phi_m/q is a
+                        // region-side quantity at a material interface.  The
+                        // merged nodeOutputShift is only the trace convention
+                        // used for restart/output Lambda; the reaction term
+                        // must reconstruct Lambda with this cell's affinity
+                        // and DOS mass.
+                        data.materialBandDrive_V[local] =
+                            densityGradientState.psi(node) +
+                            cellElectronAffinity_eV[cellId] +
+                            cellDosMassDrive_V[cellId] +
+                            cfg_.electronQuantumPotential.
+                                conductionBandNarrowingFraction * narrowing;
+                        data.dynamicDrivingPotential_V[local] = transport
+                            ? -densityGradientState.phin(node)
+                            : -densityGradientState.psi(node);
+                        data.initialLambda_V[local] = quantumPotential(node);
+                    }
+                    cellMaterials.push_back(data);
+                }
+                quantum = solveElectronDensityGradientPotentialLikeGlobal(
+                    mesh_, cellMaterials, nodeOutputShift, activeNodes,
+                    quantumDirichlet, Vt, cfg_.inputScaling.unitSystem(),
+                    cfg_.electronQuantumPotential, quantumPotential,
+                    quantumPotentialLike);
+            } else {
+                quantum = solveElectronDensityGradientPotential(
+                    mesh_, classicalDensity, materialCoefficient,
+                    activeNodes, quantumDirichlet, stepBoundaries,
+                    Vt,
+                    cfg_.inputScaling.unitSystem(), cfg_.electronQuantumPotential,
+                    quantumPotential);
+            }
             VectorXd rawUpdate = quantum.potential_V - quantumPotential;
             for (int i = 0; i < nodeCount; ++i) {
                 if (!activeNodes[static_cast<std::size_t>(i)])
@@ -4568,10 +4861,21 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
             quantumPotential = outerConverged
                 ? std::move(quantum.potential_V)
                 : quantumPotential + appliedUpdate;
+            if (quantum.potentialLike_V.size() == nodeCount) {
+                // The potential-like state is the primary global Eq. 231
+                // unknown. Apply the same outer relaxation used for Lambda so
+                // the restart remains consistent with the accepted iterate.
+                if (quantumPotentialLike.size() != nodeCount)
+                    quantumPotentialLike = quantum.potentialLike_V;
+                else
+                    quantumPotentialLike += relaxation *
+                        (quantum.potentialLike_V - quantumPotentialLike);
+            }
             previousRawUpdate = rawUpdate;
             previousRelaxation = relaxation;
             outerState = last.solution;
             outerState.electronQuantumPotential = quantumPotential;
+            outerState.electronQuantumPotentialLike = quantumPotentialLike;
             if (outerConverged) {
                 // One final frozen solve makes the returned carrier state
                 // consistent with the converged quantum potential.
@@ -4579,12 +4883,14 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
                     outerState, quantumPotential);
                 last.electronQuantumOuterHistory = std::move(outerHistory);
                 last.solution.electronQuantumPotential = quantumPotential;
+                last.solution.electronQuantumPotentialLike = quantumPotentialLike;
                 if (last.converged)
                     last.convergenceReason += "+electron_density_gradient";
                 return last;
             }
         }
         last.solution.electronQuantumPotential = quantumPotential;
+        last.solution.electronQuantumPotentialLike = quantumPotentialLike;
         last.electronQuantumOuterHistory = std::move(outerHistory);
         last.converged = false;
         last.failureDiagnostics.failureReason =

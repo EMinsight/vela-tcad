@@ -75,6 +75,14 @@ class SingleDeviceReferenceFixtureTest(unittest.TestCase):
             sim["name"] for sim in config["simulations"]])
         self.assertTrue(
             config["vela_solver"]["electron_quantum_potential"]["enabled"])
+        quantum = config["vela_solver"]["electron_quantum_potential"]
+        self.assertEqual(1.0618016171622988,
+                         quantum["effective_mass_ratio"])
+        self.assertFalse(quantum["include_insulators"])
+        self.assertEqual(0.42, quantum["insulator_effective_mass_ratio"])
+        self.assertEqual("homogeneous_neumann", quantum["interface_boundary"])
+        self.assertEqual(0.5, quantum["theta"])
+        self.assertEqual(0.5, quantum["conduction_band_narrowing_fraction"])
         drain_biases = []
         for sim in config["simulations"]:
             drain = next(
@@ -88,9 +96,12 @@ class SingleDeviceReferenceFixtureTest(unittest.TestCase):
             (FIXTURE / "vela" / "materials_sentaurus2018.json").read_text())
         poly = next(item for item in materials["materials"]
                     if item["name"] == "PolySilicon")
+        oxide = next(item for item in materials["materials"]
+                     if item["name"] == "SiO2")
         self.assertEqual(1.0e10, poly["ni"])
         self.assertEqual(1417.0, poly["mun"])
         self.assertEqual(2.8e19, poly["Nc_m3"])
+        self.assertEqual(0.9, oxide["electron_affinity_eV"])
 
     def test_sdevice_frontend_maps_complete_singledevice_physics(self) -> None:
         cmd = FIXTURE / "source" / "singledevice_sdevice.cmd"

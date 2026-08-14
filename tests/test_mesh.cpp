@@ -270,6 +270,18 @@ TEST_CASE("MaterialDatabase unit_scaling keeps TCAD material values internal",
     REQUIRE(*mat.Nv_m3 == Catch::Approx(1.04e19));
 }
 
+TEST_CASE("MaterialDatabase reads material-specific electron quantum parameters",
+          "[material][density_gradient]")
+{
+    const auto path = writeMeshReaderTestFile(
+        "material_quantum_parameters",
+        R"json({"materials":[{"name":"Si","electron_quantum_gamma":4.5,"electron_quantum_dos_mass_ratio":1.07}]})json");
+    MaterialDatabase db(path.path.string());
+    const Material& silicon = db.getMaterial("Si");
+    REQUIRE(silicon.electron_quantum_gamma == Catch::Approx(4.5));
+    REQUIRE(silicon.electron_quantum_dos_mass_ratio == Catch::Approx(1.07));
+}
+
 static void requireReadThrowsContaining(const std::filesystem::path& path,
                                         const std::string& expected)
 {

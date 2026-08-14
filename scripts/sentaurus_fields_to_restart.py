@@ -7,6 +7,7 @@ import argparse
 import csv
 import json
 import math
+import statistics
 from pathlib import Path
 
 
@@ -18,6 +19,11 @@ FIELDS = {
     "holes_m3": "hDensity",
     "electron_quantum_potential_V": "eQuantumPotential",
 }
+CONDUCTION_BAND_FIELD = "ConductionBandEnergy"
+AFFINITY_FIELD = "ElectronAffinity"
+ELECTROSTATIC_FIELD = "ElectrostaticPotential"
+THERMAL_VOLTAGE_300K_V = 0.025851999786
+SILICON_ELECTRON_DOS_MASS_RATIO = 1.0618016171622988
 
 
 def read_field(path: Path) -> dict[int, float]:
@@ -51,6 +57,12 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--export-dir", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--preserve-insulator-quantum-potential",
+        action="store_true",
+        help=("keep the global Sentaurus eQuantumPotential field on nodes "
+              "without carrier support (required by include_insulators)"),
+    )
     args = parser.parse_args()
 
     manifest = json.loads((args.export_dir / "field_manifest.json").read_text())
@@ -60,12 +72,48 @@ def main() -> int:
     for output_name, sentaurus_name in FIELDS.items():
         columns[output_name], units[output_name] = merge_field(
             args.export_dir, manifest, sentaurus_name)
+    conduction_band, conduction_band_unit = merge_field(
+        args.export_dir, manifest, CONDUCTION_BAND_FIELD)
+    affinity, affinity_unit = merge_field(
+        args.export_dir, manifest, AFFINITY_FIELD)
 
     required_all_nodes = ("psi", "phin", "phip", "electron_quantum_potential_V")
     for name in required_all_nodes:
         missing = set(range(node_count)) - columns[name].keys()
         if missing:
             raise ValueError(f"{name} is missing {len(missing)} nodes")
+    missing_conduction_band = set(range(node_count)) - conduction_band.keys()
+    if missing_conduction_band:
+        raise ValueError(
+            "ConductionBandEnergy is missing "
+            f"{len(missing_conduction_band)} nodes")
+    if conduction_band_unit not in {"", "eV", "V"}:
+        raise ValueError(
+            "unsupported ConductionBandEnergy unit: " + conduction_band_unit)
+    if affinity_unit not in {"", "eV", "V"}:
+        raise ValueError("unsupported ElectronAffinity unit: " + affinity_unit)
+
+    # Sentaurus band energies carry an arbitrary global energy origin. Recover
+    # and remove it before constructing Phi/q; otherwise the constant appears
+    # as a several-volt quantum correction in Vela's reaction term.
+    band_origins = [
+        conduction_band[node] + columns["psi"][node] + affinity[node]
+        for node in range(node_count)
+    ]
+    band_origin = statistics.median(band_origins)
+    if max(abs(value - band_origin) for value in band_origins) > 1.0e-8:
+        raise ValueError(
+            "ConductionBandEnergy + ElectrostaticPotential + "
+            "ElectronAffinity is not a single global energy origin")
+
+    transport_nodes: set[int] = set()
+    with (args.export_dir / "elements.csv").open(newline="") as stream:
+        for element in csv.DictReader(stream):
+            if element["material"] not in {"Silicon", "Si", "PolySilicon"}:
+                continue
+            transport_nodes.update(
+                int(element[f"node{local}"]) for local in range(3))
+
 
     # Densities exist only on carrier-supporting regions. Insulator values are
     # unused by the DD assembler and are written as zero.
@@ -76,7 +124,8 @@ def main() -> int:
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with args.output.open("w", newline="") as handle:
         writer = csv.writer(handle)
-        writer.writerow(["node_id", *FIELDS])
+        writer.writerow([
+            "node_id", *FIELDS, "electron_quantum_potential_like_V"])
         for node in range(node_count):
             # Sentaurus may carry arbitrary quasi-Fermi placeholders through
             # insulators.  Vela represents those non-transport rows as pinned
@@ -94,7 +143,21 @@ def main() -> int:
                 columns["electrons_m3"].get(node, 0.0) * density_scale["electrons_m3"],
                 columns["holes_m3"].get(node, 0.0) * density_scale["holes_m3"],
                 (columns["electron_quantum_potential_V"][node]
-                 if has_carrier_support else 0.0),
+                 if (has_carrier_support or
+                     args.preserve_insulator_quantum_potential) else 0.0),
+                # Phi/q = Ec/q + Phi_m/q + Lambda. Vela uses the transport
+                # trace at shared nodes.  Nc scales as m_DOS^(3/2), hence
+                # Phi_m/q = -1.5*Vt*ln(m_DOS/m0); the stored primary subtracts
+                # the corresponding +1.5*Vt*ln(m_DOS/m0) band-drive term.
+                # Ec+Lambda has a conforming node trace in the TDR. Vela's
+                # cell-side material drive supplies affinity, BGN, and the DOS
+                # mass term; only the arbitrary energy origin is removed here.
+                conduction_band[node] +
+                columns["electron_quantum_potential_V"][node] -
+                band_origin -
+                1.5 * THERMAL_VOLTAGE_300K_V * math.log(
+                    (SILICON_ELECTRON_DOS_MASS_RATIO
+                     if node in transport_nodes else 0.42)),
             ])
     return 0
 

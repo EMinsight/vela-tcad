@@ -489,7 +489,7 @@ TEST_CASE("DCSweep frozen-state mode requires an explicit state file",
         Catch::Matchers::ContainsSubstring("requires sweep.initial_state_file"));
 }
 
-TEST_CASE("DDSolution restart CSV preserves electron quantum potential",
+TEST_CASE("DDSolution restart CSV preserves density-gradient states",
           "[dc_sweep][restart][quantum]")
 {
     const std::filesystem::path dir = makeUniqueSweepDir();
@@ -503,11 +503,14 @@ TEST_CASE("DDSolution restart CSV preserves electron quantum potential",
     state.n = VectorXd::Constant(4, 1.0e20);
     state.p = VectorXd::Constant(4, 2.0e20);
     state.electronQuantumPotential = VectorXd::LinSpaced(4, 0.0, 0.03);
+    state.electronQuantumPotentialLike = VectorXd::LinSpaced(4, -4.1, -3.8);
 
     writeDDSolutionStateCsv(statePath, state);
     const DDSolution restored = readDDSolutionStateCsv(statePath, 4);
     REQUIRE(restored.electronQuantumPotential.size() == 4);
     REQUIRE(restored.electronQuantumPotential(3) == Catch::Approx(0.03));
+    REQUIRE(restored.electronQuantumPotentialLike.size() == 4);
+    REQUIRE(restored.electronQuantumPotentialLike(3) == Catch::Approx(-3.8));
 }
 
 TEST_CASE("DCSweep frozen-state replay can explicitly compute terminal current",

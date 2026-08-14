@@ -22,6 +22,10 @@ struct Material {
     std::optional<Real> Nc_m3;                ///< Effective conduction-band DOS [m^-3]
     std::optional<Real> Nv_m3;                ///< Effective valence-band DOS [m^-3]
     std::optional<Real> temperature_K;        ///< Material parameter temperature [K]
+    /// Optional Sentaurus potential-based density-gradient parameters. When
+    /// absent, solver-level controls provide the backward-compatible values.
+    std::optional<Real> electron_quantum_gamma;
+    std::optional<Real> electron_quantum_dos_mass_ratio;
 
     /// Return a copy with ni and low-field mobilities scaled to temperature_K.
     Material atTemperature(Real targetTemperature_K) const;

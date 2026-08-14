@@ -77,15 +77,22 @@ DDSolution readDDSolutionStateCsv(const std::filesystem::path& path,
     const std::vector<std::string> quantumHeader = {
         "node_id", "psi", "phin", "phip", "electrons_m3", "holes_m3",
         "electron_quantum_potential_V"};
+    const std::vector<std::string> quantumPotentialLikeHeader = {
+        "node_id", "psi", "phin", "phip", "electrons_m3", "holes_m3",
+        "electron_quantum_potential_V",
+        "electron_quantum_potential_like_V"};
     const std::vector<std::string> header = splitCsvLine(
         line,
         "DCSweep: initial_state_file does not support quoted fields.");
-    const bool hasQuantumPotential = header == quantumHeader;
+    const bool hasQuantumPotential =
+        header == quantumHeader || header == quantumPotentialLikeHeader;
+    const bool hasQuantumPotentialLike = header == quantumPotentialLikeHeader;
     if (header != legacyHeader && !hasQuantumPotential)
         throw std::runtime_error(
             "DCSweep: initial_state_file header must be "
             "node_id,psi,phin,phip,electrons_m3,holes_m3 with optional "
-            "electron_quantum_potential_V");
+            "electron_quantum_potential_V and optional "
+            "electron_quantum_potential_like_V");
 
     DDSolution solution;
     solution.psi = VectorXd::Zero(static_cast<int>(expectedNodeCount));
@@ -97,6 +104,10 @@ DDSolution readDDSolutionStateCsv(const std::filesystem::path& path,
     solution.p = VectorXd::Zero(static_cast<int>(expectedNodeCount));
     solution.electronQuantumPotential =
         VectorXd::Zero(static_cast<int>(expectedNodeCount));
+    if (hasQuantumPotentialLike) {
+        solution.electronQuantumPotentialLike =
+            VectorXd::Zero(static_cast<int>(expectedNodeCount));
+    }
     solution.iters = 0;
     solution.converged = true;
 
@@ -136,6 +147,10 @@ DDSolution readDDSolutionStateCsv(const std::filesystem::path& path,
             solution.electronQuantumPotential(rowIndex) = parseRestartStateReal(
                 row.at(6), "electron_quantum_potential_V", nodeId);
         }
+        if (hasQuantumPotentialLike) {
+            solution.electronQuantumPotentialLike(rowIndex) = parseRestartStateReal(
+                row.at(7), "electron_quantum_potential_like_V", nodeId);
+        }
     }
 
     for (Index nodeId = 0; nodeId < expectedNodeCount; ++nodeId) {
@@ -169,9 +184,14 @@ void writeDDSolutionStateCsv(const std::filesystem::path& path,
 
     const bool hasQuantumPotential =
         solution.electronQuantumPotential.size() == fieldSize;
+    const bool hasQuantumPotentialLike =
+        hasQuantumPotential &&
+        solution.electronQuantumPotentialLike.size() == fieldSize;
     output << "node_id,psi,phin,phip,electrons_m3,holes_m3";
     if (hasQuantumPotential)
         output << ",electron_quantum_potential_V";
+    if (hasQuantumPotentialLike)
+        output << ",electron_quantum_potential_like_V";
     output << '\n';
     for (int i = 0; i < fieldSize; ++i) {
         output << i << ','
@@ -182,6 +202,9 @@ void writeDDSolutionStateCsv(const std::filesystem::path& path,
                << formatRestartReal(units.internalConcentrationToM3(solution.p(i)));
         if (hasQuantumPotential)
             output << ',' << formatRestartReal(solution.electronQuantumPotential(i));
+        if (hasQuantumPotentialLike)
+            output << ',' << formatRestartReal(
+                solution.electronQuantumPotentialLike(i));
         output << '\n';
     }
 }

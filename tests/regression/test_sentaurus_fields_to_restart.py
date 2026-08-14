@@ -1,5 +1,6 @@
 import csv
 import json
+import math
 import subprocess
 import sys
 import tempfile
@@ -19,10 +20,20 @@ class SentaurusFieldsToRestartTest(unittest.TestCase):
             (root / "nodes.csv").write_text("node_id,x,y\n0,0,0\n1,1,0\n")
             entries = []
             for name in ("ElectrostaticPotential", "eQuasiFermiPotential",
-                         "hQuasiFermiPotential", "eQuantumPotential"):
+                         "hQuasiFermiPotential", "eQuantumPotential",
+                         "ConductionBandEnergy", "ElectronAffinity",
+                         "BandgapNarrowing"):
                 for region, node in enumerate((0, 1)):
                     filename = f"{name}_region{region}.csv"
-                    (fields / filename).write_text(f"node_id,component0\n{node},{node + 0.1}\n")
+                    value = (node + 0.1)
+                    if name == "ConductionBandEnergy":
+                        value = 4.6 - (node + 0.1) - 0.9
+                    elif name == "ElectronAffinity":
+                        value = 0.9
+                    elif name == "BandgapNarrowing":
+                        value = 0.0
+                    (fields / filename).write_text(
+                        f"node_id,component0\n{node},{value}\n")
                     entries.append({"name": name, "csv_file": filename,
                                     "unit": "V", "mapping_status": "complete"})
             for name in ("eDensity", "hDensity"):
@@ -31,6 +42,10 @@ class SentaurusFieldsToRestartTest(unittest.TestCase):
                 entries.append({"name": name, "csv_file": filename,
                                 "unit": "cm^-3", "mapping_status": "complete"})
             (root / "field_manifest.json").write_text(json.dumps({"fields": entries}))
+            (root / "elements.csv").write_text(
+                "id,node0,node1,node2,region,material\n"
+                "0,0,0,0,R.Silicon,Silicon\n"
+                "1,1,1,1,R.Oxide,SiO2\n")
             output = root / "state.csv"
             subprocess.run([sys.executable, str(REPO / "scripts" / "sentaurus_fields_to_restart.py"),
                             "--export-dir", str(root), "--output", str(output)], check=True)
@@ -42,6 +57,14 @@ class SentaurusFieldsToRestartTest(unittest.TestCase):
             self.assertEqual(float(rows[1]["phin"]), 0.0)
             self.assertEqual(float(rows[1]["phip"]), 0.0)
             self.assertEqual(float(rows[1]["electron_quantum_potential_V"]), 0.0)
+            self.assertAlmostEqual(
+                float(rows[0]["electron_quantum_potential_like_V"]),
+                -0.9 - 1.5 * 0.025851999786 * math.log(1.0618016171622988))
+            expected_insulator = (
+                -0.9 - 1.5 * 0.025851999786 * math.log(0.42))
+            self.assertAlmostEqual(
+                float(rows[1]["electron_quantum_potential_like_V"]),
+                expected_insulator)
 
 
 if __name__ == "__main__":

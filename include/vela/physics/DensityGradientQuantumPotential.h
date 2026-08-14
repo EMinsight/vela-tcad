@@ -7,6 +7,7 @@
 #include <unordered_map>
 #include <string>
 #include <vector>
+#include <array>
 
 namespace vela {
 
@@ -17,7 +18,21 @@ struct DensityGradientQuantumPotentialConfig {
     std::string couplingMode = "outer"; ///< "outer" or frozen imported potential.
     std::string formulation = "potential_based"; ///< Sentaurus default or density-based audit.
     Real gamma = 3.6;
+    /// Electron DOS mass divided by the free-electron mass. O-2018.06 Silicon
+    /// eDOSMass Formula1 evaluates to 1.0618016171622988 at 300 K.
     Real effectiveMassRatio = 1.0618016171622988;
+    /// Experimental complete global material domain.  Sentaurus solves the
+    /// global eQuantumPotential equation in insulators with xi=eta=0, but the
+    /// default remains the qualified semiconductor-side interface treatment
+    /// until discontinuous potential-like interface unknowns are represented.
+    bool includeInsulators = false;
+    Real insulatorGamma = 1.0;
+    Real insulatorEffectiveMassRatio = 0.42;
+    std::string interfaceBoundary = "homogeneous_neumann";
+    ///< "homogeneous_neumann" or Sentaurus Eq. 233 "sentaurus_step".
+    Real theta = 0.5;
+    /// Fraction of the positive BGN magnitude assigned to electron affinity.
+    Real conductionBandNarrowingFraction = 0.5;
     int maxIterations = 30;
     Real relativeTolerance = 1.0e-7;
     Real absoluteTolerance_V = 1.0e-10;
@@ -28,10 +43,33 @@ struct DensityGradientQuantumPotentialConfig {
     Real outerRelaxation = 1.0;
     Real outerRelaxationMin = 0.1;
     Real outerRelaxationMax = 1.5;
+    /// Optional output prefix for a decomposition of the initial global
+    /// Eq. 231 residual. Empty keeps the diagnostic disabled.
+    std::string residualDiagnosticPrefix;
+    /// Evaluate diagnostic drives from the input checkpoint instead of the
+    /// preceding frozen-quantum DD solve. Intended for fixed-reference audits.
+    bool residualDiagnosticUseInitialState = false;
+    /// Global Eq. 231 nonlinear spatial operator. The exponential-fitted
+    /// form exactly preserves div(grad(w))+|grad(w)|^2/2 = 2*laplace(u)/u
+    /// for u=exp(w/2); p1_direct retains the expanded audit form. The
+    /// cvfem_full option integrates the complete expanded operator over
+    /// median-dual sub-control volumes, following the Charon/DEVSIM CVFEM
+    /// architecture rather than the Galerkin P1 test functions.
+    std::string globalDiscretization = "p1_direct";
+    /// Experimental DEVSIM/Garcia-Asenov oxide interface closure.  The
+    /// oxide-side integrated Eq. 231 row receives the WKB penetration source
+    /// b_n,ox/x_n at every transport/insulator interface segment.
+    std::string oxideBoundary = "none"; ///< "none" or "devsim_wkb".
+    Real oxideQuantumMassRatio = 0.14;
+    Real oxideBarrierMassRatio = 0.4;
+    Real oxideBarrierHeight_V = 3.15;
 };
 
 struct DensityGradientQuantumPotentialResult {
     VectorXd potential_V;
+    /// Continuous potential-like unknown Phi/q used by the all-material
+    /// Eq. 231 formulation. Empty for the legacy Lambda-only formulations.
+    VectorXd potentialLike_V;
     int iterations = 0;
     Real residualInfinityNorm = 0.0;
     bool converged = false;
@@ -41,9 +79,52 @@ struct DensityGradientQuantumPotentialResult {
     Real maxUpdateNodeValue_V = 0.0;
 };
 
+/// One semiconductor-to-unsolved-nonmetal interface segment for the
+/// Sentaurus Eq. 233 analytic step boundary.  barrierHeight_V is
+/// Ec(unsolved)-Ec(solved), sampled at the two interface vertices.
+struct DensityGradientStepBoundary {
+    Index edgeId = 0;
+    Real barrierHeightN0_V = 0.0;
+    Real barrierHeightN1_V = 0.0;
+    Real barrierEffectiveMassRatio = 1.0;
+    Real solvedGamma = 1.0;
+    Real theta = 0.5;
+    Real alphaDeterminantCubeRoot = 1.0;
+    /// Outward normal derivative of Ec-related driving potential on the
+    /// solved side.  Eq. 233 supplies dn(Lambda); the transformed u equation
+    /// requires dn(drive-Lambda).
+    Real normalDrivingPotentialGradient_V_per_m = 0.0;
+};
+
+/// Tri3 material data for the global potential-like formulation.  The shared
+/// unknown is Phi/q = Lambda-(psi+affinity+DOS drive), while Lambda and the
+/// exponential auxiliary variable remain region-side quantities. In
+/// particular, materialBandDrive_V must use the cell-side material at shared
+/// interface vertices; it is not the ownership-selected output trace.
+struct DensityGradientCellMaterial {
+    Index cellId = 0;
+    bool isTransport = true;
+    Real coefficientVm2 = 0.0;
+    std::array<Real, 3> materialBandDrive_V{};
+    std::array<Real, 3> dynamicDrivingPotential_V{};
+    std::array<Real, 3> initialLambda_V{};
+};
+
+/// Stable Sentaurus Eq. 233 step function and its derivative.
+Real densityGradientStepFunction(Real x);
+Real densityGradientStepFunctionDerivative(Real x);
+
 /// Return gamma*hbar^2/(6*m*q), in V*m^2.
 Real densityGradientCoefficientVm2(
     const DensityGradientQuantumPotentialConfig& config);
+
+/// Return gamma*hbar^2/(6*m*q) for an explicit material parameter pair.
+Real densityGradientCoefficientVm2(Real gamma, Real effectiveMassRatio);
+
+/// WKB penetration length hbar/sqrt(2*m*q*barrier), in metres.
+Real densityGradientOxidePenetrationDepthM(
+    Real barrierEffectiveMassRatio,
+    Real barrierHeight_V);
 
 /// Solve Lambda*u + C*laplacian(u)=0 with
 /// u=sqrt(n/Nref) and n=classicalDensity*exp(-Lambda/Vt).
@@ -55,6 +136,49 @@ DensityGradientQuantumPotentialResult solveElectronDensityGradientPotential(
     const VectorXd& classicalDensity,
     const std::vector<bool>& activeNodes,
     const std::unordered_map<Index, Real>& dirichletPotential_V,
+    Real thermalVoltage_V,
+    PhysicalUnitSystem units = PhysicalUnitSystem::legacySI(),
+    DensityGradientQuantumPotentialConfig config = {},
+    const VectorXd& initialPotential_V = {});
+
+/// Global Eq. 231 solve using the continuous potential-like interface
+/// unknown. nodeOutputBandDrive_V selects the region-side Lambda returned at
+/// each shared mesh node (the semiconductor side at transport interfaces).
+DensityGradientQuantumPotentialResult
+solveElectronDensityGradientPotentialLikeGlobal(
+    const DeviceMesh& mesh,
+    const std::vector<DensityGradientCellMaterial>& cellMaterials,
+    const VectorXd& nodeOutputBandDrive_V,
+    const std::vector<bool>& activeNodes,
+    const std::unordered_map<Index, Real>& dirichletLambda_V,
+    Real thermalVoltage_V,
+    PhysicalUnitSystem units = PhysicalUnitSystem::legacySI(),
+    DensityGradientQuantumPotentialConfig config = {},
+    const VectorXd& initialLambda_V = {},
+    const VectorXd& initialPotentialLike_V = {});
+
+/// Material-resolved Eq. 231 variant.  coefficientVm2 stores
+/// gamma*hbar^2/(6*m*q) per node.  Eq. 231 keeps gamma/m outside the
+/// divergence, so it scales each material control-volume row rather than the
+/// continuous normal alpha-weighted interface flux.
+DensityGradientQuantumPotentialResult solveElectronDensityGradientPotential(
+    const DeviceMesh& mesh,
+    const VectorXd& classicalDensity,
+    const VectorXd& coefficientVm2,
+    const std::vector<bool>& activeNodes,
+    const std::unordered_map<Index, Real>& dirichletPotential_V,
+    Real thermalVoltage_V,
+    PhysicalUnitSystem units = PhysicalUnitSystem::legacySI(),
+    DensityGradientQuantumPotentialConfig config = {},
+    const VectorXd& initialPotential_V = {});
+
+DensityGradientQuantumPotentialResult solveElectronDensityGradientPotential(
+    const DeviceMesh& mesh,
+    const VectorXd& classicalDensity,
+    const VectorXd& coefficientVm2,
+    const std::vector<bool>& activeNodes,
+    const std::unordered_map<Index, Real>& dirichletPotential_V,
+    const std::vector<DensityGradientStepBoundary>& stepBoundaries,
     Real thermalVoltage_V,
     PhysicalUnitSystem units = PhysicalUnitSystem::legacySI(),
     DensityGradientQuantumPotentialConfig config = {},

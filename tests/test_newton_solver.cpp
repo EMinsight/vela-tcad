@@ -40,7 +40,13 @@ TEST_CASE("Newton JSON parses Sentaurus electron density-gradient controls",
             {"coupling_mode", "frozen"},
             {"formulation", "density_based"},
             {"gamma", 3.6},
-            {"effective_mass_ratio", 1.0618016171622988},
+            {"effective_mass_ratio", 1.0},
+            {"include_insulators", true},
+            {"insulator_gamma", 1.0},
+            {"insulator_effective_mass_ratio", 0.42},
+            {"interface_boundary", "sentaurus_step"},
+            {"theta", 0.5},
+            {"conduction_band_narrowing_fraction", 0.5},
             {"max_iterations", 12},
             {"outer_max_iterations", 9},
             {"relative_tolerance", 2.0e-7},
@@ -51,6 +57,13 @@ TEST_CASE("Newton JSON parses Sentaurus electron density-gradient controls",
             {"outer_relaxation", 0.6},
             {"outer_relaxation_min", 0.2},
             {"outer_relaxation_max", 1.2},
+            {"residual_diagnostic_prefix", "eq231/audit"},
+            {"residual_diagnostic_use_initial_state", true},
+            {"global_discretization", "cvfem_full"},
+            {"oxide_boundary", "devsim_wkb"},
+            {"oxide_quantum_mass_ratio", 0.14},
+            {"oxide_barrier_mass_ratio", 0.4},
+            {"oxide_barrier_height_V", 3.15},
         }},
     });
     REQUIRE(cfg.electronQuantumPotential.enabled);
@@ -58,7 +71,15 @@ TEST_CASE("Newton JSON parses Sentaurus electron density-gradient controls",
     REQUIRE(cfg.electronQuantumPotential.formulation == "density_based");
     REQUIRE(cfg.electronQuantumPotential.gamma == Catch::Approx(3.6));
     REQUIRE(cfg.electronQuantumPotential.effectiveMassRatio ==
-            Catch::Approx(1.0618016171622988));
+            Catch::Approx(1.0));
+    REQUIRE(cfg.electronQuantumPotential.includeInsulators);
+    REQUIRE(cfg.electronQuantumPotential.insulatorGamma == Catch::Approx(1.0));
+    REQUIRE(cfg.electronQuantumPotential.insulatorEffectiveMassRatio ==
+            Catch::Approx(0.42));
+    REQUIRE(cfg.electronQuantumPotential.interfaceBoundary == "sentaurus_step");
+    REQUIRE(cfg.electronQuantumPotential.theta == Catch::Approx(0.5));
+    REQUIRE(cfg.electronQuantumPotential.conductionBandNarrowingFraction ==
+            Catch::Approx(0.5));
     REQUIRE(cfg.electronQuantumPotential.maxIterations == 12);
     REQUIRE(cfg.electronQuantumPotential.outerMaxIterations == 9);
     REQUIRE(cfg.electronQuantumPotential.relativeTolerance == Catch::Approx(2.0e-7));
@@ -69,6 +90,17 @@ TEST_CASE("Newton JSON parses Sentaurus electron density-gradient controls",
     REQUIRE(cfg.electronQuantumPotential.outerRelaxation == Catch::Approx(0.6));
     REQUIRE(cfg.electronQuantumPotential.outerRelaxationMin == Catch::Approx(0.2));
     REQUIRE(cfg.electronQuantumPotential.outerRelaxationMax == Catch::Approx(1.2));
+    REQUIRE(cfg.electronQuantumPotential.residualDiagnosticPrefix ==
+            "eq231/audit");
+    REQUIRE(cfg.electronQuantumPotential.residualDiagnosticUseInitialState);
+    REQUIRE(cfg.electronQuantumPotential.globalDiscretization == "cvfem_full");
+    REQUIRE(cfg.electronQuantumPotential.oxideBoundary == "devsim_wkb");
+    REQUIRE(cfg.electronQuantumPotential.oxideQuantumMassRatio ==
+            Catch::Approx(0.14));
+    REQUIRE(cfg.electronQuantumPotential.oxideBarrierMassRatio ==
+            Catch::Approx(0.4));
+    REQUIRE(cfg.electronQuantumPotential.oxideBarrierHeight_V ==
+            Catch::Approx(3.15));
 }
 
 TEST_CASE("Frozen electron quantum potential shifts density and preserves flat-QF flux",
