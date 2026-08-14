@@ -59,8 +59,8 @@ TEST_CASE("Newton JSON parses Sentaurus electron density-gradient controls",
             {"outer_relaxation_max", 1.2},
             {"residual_diagnostic_prefix", "eq231/audit"},
             {"residual_diagnostic_use_initial_state", true},
-            {"global_discretization", "cvfem_full"},
-            {"oxide_boundary", "devsim_wkb"},
+            {"global_discretization", "gss_density_fitted"},
+            {"oxide_boundary", "none"},
             {"oxide_quantum_mass_ratio", 0.14},
             {"oxide_barrier_mass_ratio", 0.4},
             {"oxide_barrier_height_V", 3.15},
@@ -93,14 +93,29 @@ TEST_CASE("Newton JSON parses Sentaurus electron density-gradient controls",
     REQUIRE(cfg.electronQuantumPotential.residualDiagnosticPrefix ==
             "eq231/audit");
     REQUIRE(cfg.electronQuantumPotential.residualDiagnosticUseInitialState);
-    REQUIRE(cfg.electronQuantumPotential.globalDiscretization == "cvfem_full");
-    REQUIRE(cfg.electronQuantumPotential.oxideBoundary == "devsim_wkb");
+    REQUIRE(cfg.electronQuantumPotential.globalDiscretization ==
+            "gss_density_fitted");
+    REQUIRE(cfg.electronQuantumPotential.oxideBoundary == "none");
     REQUIRE(cfg.electronQuantumPotential.oxideQuantumMassRatio ==
             Catch::Approx(0.14));
     REQUIRE(cfg.electronQuantumPotential.oxideBarrierMassRatio ==
             Catch::Approx(0.4));
     REQUIRE(cfg.electronQuantumPotential.oxideBarrierHeight_V ==
             Catch::Approx(3.15));
+}
+
+TEST_CASE("Newton JSON rejects explicit oxide plus WKB quantum closure",
+          "[newton][density_gradient]")
+{
+    REQUIRE_THROWS_AS(
+        newtonConfigFromJson(nlohmann::json{
+            {"electron_quantum_potential", {
+                {"enabled", true},
+                {"include_insulators", true},
+                {"oxide_boundary", "devsim_wkb"},
+            }},
+        }),
+        std::invalid_argument);
 }
 
 TEST_CASE("Frozen electron quantum potential shifts density and preserves flat-QF flux",

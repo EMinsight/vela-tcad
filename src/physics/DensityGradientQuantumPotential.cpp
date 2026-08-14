@@ -24,6 +24,25 @@ Real safeExponential(Real argument)
     return std::exp(std::clamp(argument, -limit, limit));
 }
 
+Real safeExponentialMinusOne(Real argument)
+{
+    constexpr Real limit = 700.0;
+    return std::expm1(std::clamp(argument, -limit, limit));
+}
+
+// GSS Eq. 9.128 in Vela's w=-Phi convention. For h=(w_j-w_i)/2,
+// the decaying direction retains the exponential while the growing
+// direction uses Wettstein's second-order branch to avoid overflow.
+Real gssFittedJump(Real h)
+{
+    return h < 0.0 ? safeExponentialMinusOne(h) : h + 0.5 * h * h;
+}
+
+Real gssFittedJumpDerivative(Real h)
+{
+    return h < 0.0 ? safeExponential(h) : 1.0 + h;
+}
+
 struct Eq231CellResidualRecord {
     Index cellId = 0;
     Index regionId = 0;
@@ -38,8 +57,23 @@ struct Eq231CellResidualRecord {
     Real gradientSquaredPerM2 = 0.0;
 };
 
+struct Eq231FittedEdgeRecord {
+    Index cellId = 0;
+    Index regionId = 0;
+    Index rowNode = 0;
+    Index columnNode = 0;
+    Real rowW = 0.0;
+    Real columnW = 0.0;
+    Real halfJump = 0.0;
+    bool exponentialBranch = false;
+    Real stiffness = 0.0;
+    Real fluxContribution = 0.0;
+    Real jacobianContribution = 0.0;
+};
+
 struct Eq231ResidualDiagnostic {
     std::vector<Eq231CellResidualRecord> cells;
+    std::vector<Eq231FittedEdgeRecord> fittedEdges;
     VectorXd stiffness;
     VectorXd gradientSquared;
     VectorXd reaction;
@@ -77,7 +111,8 @@ void writeEq231ResidualDiagnostic(
     const VectorXd& state,
     const VectorXd& nodeOutputBandDrive_V,
     const std::vector<bool>& activeNodes,
-    const std::unordered_map<Index, Real>& dirichletLambda_V)
+    const std::unordered_map<Index, Real>& dirichletLambda_V,
+    bool stateIsLambda)
 {
     namespace fs = std::filesystem;
     const fs::path prefix(prefixValue);
@@ -179,21 +214,43 @@ void writeEq231ResidualDiagnostic(
         Real solverTotal = rawTotal;
         if (!activeNodes[node])
             solverTotal = state(row);
-        if (fixed) {
-            solverTotal = state(row) -
-                (dirichletLambda_V.at(node) - nodeOutputBandDrive_V(row));
-        }
+        if (fixed)
+            solverTotal = state(row) - (stateIsLambda
+                ? dirichletLambda_V.at(node)
+                : dirichletLambda_V.at(node) - nodeOutputBandDrive_V(row));
         if (activeNodes[node] && !fixed && std::abs(rawTotal) > maxFreeResidual) {
             maxFreeResidual = std::abs(rawTotal);
             maxFreeNode = node;
         }
         nodes << node << ',' << point.x << ',' << point.y << ','
               << (activeNodes[node] ? 1 : 0) << ',' << (fixed ? 1 : 0) << ','
-              << state(row) << ',' << state(row) + nodeOutputBandDrive_V(row) << ','
+              << (stateIsLambda
+                    ? state(row) - nodeOutputBandDrive_V(row)
+                    : state(row))
+              << ',' << (stateIsLambda
+                    ? state(row)
+                    : state(row) + nodeOutputBandDrive_V(row)) << ','
               << diagnostic.stiffness(row) << ','
               << diagnostic.gradientSquared(row) << ','
               << diagnostic.reaction(row) << ',' << rawTotal << ','
               << solverTotal << ',' << diagnostic.interfaceBoundary(row) << '\n';
+    }
+
+    if (!diagnostic.fittedEdges.empty()) {
+        auto edges = open("_fitted_edges.csv");
+        edges << "cell_id,region_id,region_name,material,row_node,column_node,"
+                 "row_w,column_w,half_jump,branch,stiffness,flux_contribution,"
+                 "jacobian_contribution\n";
+        for (const auto& edge : diagnostic.fittedEdges) {
+            const Region& region = mesh.getRegion(edge.regionId);
+            edges << edge.cellId << ',' << edge.regionId << ','
+                  << csvField(region.name) << ',' << csvField(region.material)
+                  << ',' << edge.rowNode << ',' << edge.columnNode << ','
+                  << edge.rowW << ',' << edge.columnW << ',' << edge.halfJump
+                  << ',' << (edge.exponentialBranch ? "exponential" : "quadratic")
+                  << ',' << edge.stiffness << ',' << edge.fluxContribution
+                  << ',' << edge.jacobianContribution << '\n';
+        }
     }
 
     struct RegionAggregate {
@@ -631,7 +688,11 @@ solveElectronDensityGradientPotentialLikeGlobal(
     }
     if (config.globalDiscretization != "p1_direct" &&
         config.globalDiscretization != "exponential_fitted" &&
-        config.globalDiscretization != "cvfem_full") {
+        config.globalDiscretization != "cvfem_full" &&
+        config.globalDiscretization != "p1_lambda_direct" &&
+        config.globalDiscretization != "gss_potentiallike_fitted" &&
+        config.globalDiscretization != "conservative_sqrt_fitted" &&
+        config.globalDiscretization != "gss_density_fitted") {
         throw std::invalid_argument(
             "unsupported global density-gradient discretization.");
     }
@@ -650,22 +711,47 @@ solveElectronDensityGradientPotentialLikeGlobal(
         throw std::invalid_argument(
             "invalid global density-gradient oxide boundary parameters.");
     }
-    VectorXd continuousPotential = -nodeOutputBandDrive_V;
-    if (initialPotentialLike_V.size() == nodeCount)
+    const bool stateIsLambda =
+        config.globalDiscretization == "gss_density_fitted" ||
+        config.globalDiscretization == "p1_lambda_direct";
+    const bool useGssFittedFlux =
+        config.globalDiscretization == "gss_density_fitted" ||
+        config.globalDiscretization == "gss_potentiallike_fitted";
+    const bool useConservativeSqrtFlux =
+        config.globalDiscretization == "conservative_sqrt_fitted";
+    if ((useGssFittedFlux || useConservativeSqrtFlux) &&
+        config.oxideBoundary != "none") {
+        throw std::invalid_argument(
+            "explicit-material fitted density-gradient modes cannot use an "
+            "oxide WKB boundary.");
+    }
+    VectorXd continuousPotential = VectorXd::Zero(nodeCount);
+    if (!stateIsLambda)
+        continuousPotential = -nodeOutputBandDrive_V;
+    if (stateIsLambda) {
+        if (initialLambda_V.size() == nodeCount)
+            continuousPotential = initialLambda_V;
+        else if (initialPotentialLike_V.size() == nodeCount)
+            continuousPotential =
+                initialPotentialLike_V + nodeOutputBandDrive_V;
+    } else if (initialPotentialLike_V.size() == nodeCount) {
         continuousPotential = initialPotentialLike_V;
-    else if (initialLambda_V.size() == nodeCount)
+    } else if (initialLambda_V.size() == nodeCount) {
         continuousPotential = initialLambda_V - nodeOutputBandDrive_V;
+    }
     for (int i = 0; i < nodeCount; ++i) {
         if (!std::isfinite(continuousPotential(i)))
-            continuousPotential(i) = -nodeOutputBandDrive_V(i);
+            continuousPotential(i) = stateIsLambda
+                ? 0.0 : -nodeOutputBandDrive_V(i);
         if (!activeNodes[static_cast<std::size_t>(i)])
             continuousPotential(i) = 0.0;
     }
     for (const auto& [node, lambda] : dirichletLambda_V) {
         if (node >= mesh.numNodes() || !std::isfinite(lambda))
             throw std::invalid_argument("invalid global density-gradient Dirichlet boundary.");
-        continuousPotential(static_cast<int>(node)) =
-            lambda - nodeOutputBandDrive_V(static_cast<int>(node));
+        continuousPotential(static_cast<int>(node)) = stateIsLambda
+            ? lambda
+            : lambda - nodeOutputBandDrive_V(static_cast<int>(node));
     }
     for (const auto& data : cellMaterials) {
         if (data.cellId >= mesh.numCells() || !(data.coefficientVm2 > 0.0) ||
@@ -738,6 +824,26 @@ solveElectronDensityGradientPotentialLikeGlobal(
 
     const Real lengthScale_m = units.lengthMPerInternal();
     const Real areaScale_m2 = lengthScale_m * lengthScale_m;
+    VectorXd conservativeRowLogReference = VectorXd::Zero(nodeCount);
+    if (useConservativeSqrtFlux) {
+        conservativeRowLogReference = VectorXd::Constant(
+            nodeCount, -std::numeric_limits<Real>::infinity());
+        for (const auto& data : cellMaterials) {
+            const Cell& cell = mesh.getCell(data.cellId);
+            for (int local = 0; local < 3; ++local) {
+                const int node = static_cast<int>(cell.node_ids[local]);
+                const Real initialW =
+                    (data.dynamicDrivingPotential_V[local] -
+                     continuousPotential(node)) / thermalVoltage_V;
+                conservativeRowLogReference(node) = std::max(
+                    conservativeRowLogReference(node), 0.5 * initialW);
+            }
+        }
+        for (int node = 0; node < nodeCount; ++node) {
+            if (!std::isfinite(conservativeRowLogReference(node)))
+                conservativeRowLogReference(node) = 0.0;
+        }
+    }
     LinearSolver solver;
     DensityGradientQuantumPotentialResult result;
     Real initialResidualNorm = -1.0;
@@ -753,6 +859,8 @@ solveElectronDensityGradientPotentialLikeGlobal(
         if (diagnostic != nullptr) {
             diagnostic->cells.clear();
             diagnostic->cells.reserve(cellMaterials.size());
+            diagnostic->fittedEdges.clear();
+            diagnostic->fittedEdges.reserve(cellMaterials.size() * 6);
             diagnostic->stiffness = VectorXd::Zero(nodeCount);
             diagnostic->gradientSquared = VectorXd::Zero(nodeCount);
             diagnostic->reaction = VectorXd::Zero(nodeCount);
@@ -785,9 +893,21 @@ solveElectronDensityGradientPotentialLikeGlobal(
             Real w[3]{};
             for (int local = 0; local < 3; ++local) {
                 const int node = static_cast<int>(nodes[local]);
-                lambda[local] = state(node) + data.materialBandDrive_V[local];
-                w[local] = (data.dynamicDrivingPotential_V[local] -
-                    state(node)) / thermalVoltage_V;
+                if (stateIsLambda) {
+                    lambda[local] = state(node);
+                    // The existing w convention is minus the GSS Phi:
+                    // w=-Phi=-(Eqc-EFn)/kT. Lambda is continuous, whereas
+                    // the band/DOS contribution and therefore w remain
+                    // material-side traces at an internal interface.
+                    w[local] = (data.dynamicDrivingPotential_V[local] +
+                        data.materialBandDrive_V[local] - state(node)) /
+                        thermalVoltage_V;
+                } else {
+                    lambda[local] =
+                        state(node) + data.materialBandDrive_V[local];
+                    w[local] = (data.dynamicDrivingPotential_V[local] -
+                        state(node)) / thermalVoltage_V;
+                }
             }
             const Real x[3] = {p0.x * lengthScale_m,
                                p1.x * lengthScale_m,
@@ -860,7 +980,87 @@ solveElectronDensityGradientPotentialLikeGlobal(
                 // no additional thermal-voltage factor belongs here.
                 const Real equationScale = 2.0 / cellCoefficientVm2;
                 Real gradientContribution = 0.0;
-                if (config.globalDiscretization == "exponential_fitted" &&
+                Real reactionWeight = 1.0;
+                Real reactionWeightDerivative = 0.0;
+                if (useGssFittedFlux &&
+                    std::abs(config.theta - 0.5) < 1.0e-14) {
+                    // GSS Eq. 9.125/9.127 written with u=sqrt(n/Nref)
+                    // and w=2*log(u).  Rewriting the P1 Laplace row as
+                    // edge differences gives
+                    //   -2*K_ad*expm1((w_d-w_a)/2), d != a.
+                    // Eq. 9.128 keeps the decaying exponential but replaces
+                    // the growing direction by its second-order branch;
+                    // expm1 also avoids cancellation near zero. Each cell
+                    // evaluates its own w trace, so
+                    // band/DOS steps do not force u to be continuous even
+                    // though the shared state Lambda is continuous.
+                    for (int d = 0; d < 3; ++d) {
+                        if (d == a)
+                            continue;
+                        const Real stiffness = cellArea_m2 *
+                            (b[a] * b[d] + c[a] * c[d]) / fourArea2;
+                        const Real halfJump = 0.5 * (w[d] - w[a]);
+                        const Real contribution = -2.0 * stiffness *
+                            gssFittedJump(halfJump);
+                        residual(row) += contribution;
+                        if (diagnostic != nullptr) {
+                            record.stiffness[a] += contribution;
+                            diagnostic->stiffness(row) += contribution;
+                        }
+                        const Real ratio =
+                            gssFittedJumpDerivative(halfJump);
+                        const Real derivative =
+                            stiffness * ratio / thermalVoltage_V;
+                        addJacobian(
+                            row, static_cast<int>(nodes[d]), derivative);
+                        addJacobian(row, row, -derivative);
+                        if (diagnostic != nullptr) {
+                            diagnostic->fittedEdges.push_back({
+                                data.cellId,
+                                cell.region_id,
+                                nodes[a],
+                                nodes[d],
+                                w[a],
+                                w[d],
+                                halfJump,
+                                halfJump < 0.0,
+                                stiffness,
+                                contribution,
+                                derivative,
+                            });
+                        }
+                    }
+                } else if (useConservativeSqrtFlux &&
+                    std::abs(config.theta - 0.5) < 1.0e-14) {
+                    // Exact conservative theta=1/2 weak form after
+                    // u=exp(w/2): -2*K*u + (2/C)*Lambda*u*V = 0.
+                    // A fixed positive scale is applied to each assembled
+                    // row. It preserves the nonlinear root and keeps the
+                    // imported oxide exponent range finite without adding a
+                    // state-dependent Jacobian term.
+                    const Real rowReference =
+                        conservativeRowLogReference(row);
+                    Real scaledU[3]{};
+                    for (int d = 0; d < 3; ++d) {
+                        scaledU[d] = safeExponential(
+                            0.5 * w[d] - rowReference);
+                        const Real stiffness = cellArea_m2 *
+                            (b[a] * b[d] + c[a] * c[d]) / fourArea2;
+                        const Real contribution =
+                            -2.0 * stiffness * scaledU[d];
+                        residual(row) += contribution;
+                        if (diagnostic != nullptr) {
+                            record.stiffness[a] += contribution;
+                            diagnostic->stiffness(row) += contribution;
+                        }
+                        addJacobian(
+                            row, static_cast<int>(nodes[d]),
+                            stiffness * scaledU[d] / thermalVoltage_V);
+                    }
+                    reactionWeight = scaledU[a];
+                    reactionWeightDerivative =
+                        -0.5 * reactionWeight / thermalVoltage_V;
+                } else if (config.globalDiscretization == "exponential_fitted" &&
                     std::abs(config.theta - 0.5) < 1.0e-14) {
                     // For theta=1/2, div(grad(w))+|grad(w)|^2/2 =
                     // 2*laplace(u)/u with u=exp(w/2). Normalize u per cell;
@@ -934,7 +1134,7 @@ solveElectronDensityGradientPotentialLikeGlobal(
                         config.theta * gradientSquared * lumpedVolume;
                 }
                 const Real reactionContribution =
-                    equationScale * lambda[a] * lumpedVolume;
+                    equationScale * lambda[a] * lumpedVolume * reactionWeight;
                 residual(row) += gradientContribution + reactionContribution;
                 if (diagnostic != nullptr) {
                     record.gradientSquared[a] = gradientContribution;
@@ -942,9 +1142,15 @@ solveElectronDensityGradientPotentialLikeGlobal(
                     diagnostic->gradientSquared(row) += gradientContribution;
                     diagnostic->reaction(row) += reactionContribution;
                 }
-                addJacobian(row, row, equationScale * lumpedVolume);
-                if (config.globalDiscretization != "exponential_fitted" ||
-                    std::abs(config.theta - 0.5) >= 1.0e-14) {
+                addJacobian(
+                    row, row, equationScale * lumpedVolume *
+                        (reactionWeight +
+                         lambda[a] * reactionWeightDerivative));
+                const bool fittedThetaHalf =
+                    (config.globalDiscretization == "exponential_fitted" ||
+                     useGssFittedFlux || useConservativeSqrtFlux) &&
+                    std::abs(config.theta - 0.5) < 1.0e-14;
+                if (!fittedThetaHalf) {
                     for (int d = 0; d < 3; ++d) {
                         Real gradientDerivative = 0.0;
                         for (int e = 0; e < 3; ++e) {
@@ -991,8 +1197,8 @@ solveElectronDensityGradientPotentialLikeGlobal(
         }
         for (const auto& [node, lambda] : dirichletLambda_V) {
             const int row = static_cast<int>(node);
-            residual(row) = state(row) -
-                (lambda - nodeOutputBandDrive_V(row));
+            residual(row) = state(row) - (stateIsLambda
+                ? lambda : lambda - nodeOutputBandDrive_V(row));
             addJacobian(row, row, 1.0);
         }
     };
@@ -1003,7 +1209,7 @@ solveElectronDensityGradientPotentialLikeGlobal(
         writeEq231ResidualDiagnostic(
             config.residualDiagnosticPrefix, mesh, diagnostic,
             continuousPotential, nodeOutputBandDrive_V, activeNodes,
-            dirichletLambda_V);
+            dirichletLambda_V, stateIsLambda);
     }
     for (int iteration = 1; iteration <= config.maxIterations; ++iteration) {
         VectorXd residual;
@@ -1066,8 +1272,9 @@ solveElectronDensityGradientPotentialLikeGlobal(
         }
         continuousPotential = std::move(trial);
         for (const auto& [node, lambda] : dirichletLambda_V) {
-            continuousPotential(static_cast<int>(node)) =
-                lambda - nodeOutputBandDrive_V(static_cast<int>(node));
+            continuousPotential(static_cast<int>(node)) = stateIsLambda
+                ? lambda
+                : lambda - nodeOutputBandDrive_V(static_cast<int>(node));
         }
         result.iterations = iteration;
         result.lastUpdateInfinityNorm_V = lineScale * updateNorm;
@@ -1082,8 +1289,13 @@ solveElectronDensityGradientPotentialLikeGlobal(
             break;
         }
     }
-    result.potentialLike_V = continuousPotential;
-    result.potential_V = continuousPotential + nodeOutputBandDrive_V;
+    if (stateIsLambda) {
+        result.potentialLike_V.resize(0);
+        result.potential_V = continuousPotential;
+    } else {
+        result.potentialLike_V = continuousPotential;
+        result.potential_V = continuousPotential + nodeOutputBandDrive_V;
+    }
     result.potentialInfinityNorm_V =
         result.potential_V.lpNorm<Eigen::Infinity>();
     return result;

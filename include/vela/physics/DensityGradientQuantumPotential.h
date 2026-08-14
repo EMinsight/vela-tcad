@@ -54,7 +54,14 @@ struct DensityGradientQuantumPotentialConfig {
     /// for u=exp(w/2); p1_direct retains the expanded audit form. The
     /// cvfem_full option integrates the complete expanded operator over
     /// median-dual sub-control volumes, following the Charon/DEVSIM CVFEM
-    /// architecture rather than the Galerkin P1 test functions.
+    /// architecture rather than the Galerkin P1 test functions. The
+    /// p1_lambda_direct keeps the expanded P1 audit operator but switches to
+    /// a globally continuous Lambda unknown. gss_potentiallike_fitted retains
+    /// the legacy continuous potential-like state and changes only the flux.
+    /// conservative_sqrt_fitted uses the exact theta=1/2 sqrt-density weak
+    /// form with a common fixed row scaling, preserving flux/reaction balance.
+    /// gss_density_fitted uses the GSS sqrt(n) fitted flux together with the
+    /// continuous-Lambda/material-side trace contract.
     std::string globalDiscretization = "p1_direct";
     /// Experimental DEVSIM/Garcia-Asenov oxide interface closure.  The
     /// oxide-side integrated Eq. 231 row receives the WKB penetration source
@@ -67,8 +74,9 @@ struct DensityGradientQuantumPotentialConfig {
 
 struct DensityGradientQuantumPotentialResult {
     VectorXd potential_V;
-    /// Continuous potential-like unknown Phi/q used by the all-material
-    /// Eq. 231 formulation. Empty for the legacy Lambda-only formulations.
+    /// Continuous potential-like unknown Phi/q used by the legacy
+    /// all-material formulations. Empty for Lambda-primary formulations,
+    /// including gss_density_fitted.
     VectorXd potentialLike_V;
     int iterations = 0;
     Real residualInfinityNorm = 0.0;
@@ -141,9 +149,11 @@ DensityGradientQuantumPotentialResult solveElectronDensityGradientPotential(
     DensityGradientQuantumPotentialConfig config = {},
     const VectorXd& initialPotential_V = {});
 
-/// Global Eq. 231 solve using the continuous potential-like interface
-/// unknown. nodeOutputBandDrive_V selects the region-side Lambda returned at
-/// each shared mesh node (the semiconductor side at transport interfaces).
+/// Global Eq. 231 solve. Legacy global discretizations use a continuous
+/// potential-like interface unknown. gss_density_fitted uses continuous
+/// Lambda and reconstructs the potential-like and sqrt(n) traces per cell.
+/// nodeOutputBandDrive_V selects the region-side output convention where a
+/// legacy potential-like result must be converted back to Lambda.
 DensityGradientQuantumPotentialResult
 solveElectronDensityGradientPotentialLikeGlobal(
     const DeviceMesh& mesh,

@@ -99,6 +99,104 @@ TEST_CASE("Global Eq 231 rejects unsupported experimental controls",
             mesh, {}, drive, active, {}, constants::Vt_300,
             PhysicalUnitSystem::legacySI(), config),
         std::invalid_argument);
+
+    config.globalDiscretization = "gss_density_fitted";
+    config.oxideBarrierHeight_V = 3.15;
+    REQUIRE_THROWS_AS(
+        solveElectronDensityGradientPotentialLikeGlobal(
+            mesh, {}, drive, active, {}, constants::Vt_300,
+            PhysicalUnitSystem::legacySI(), config),
+        std::invalid_argument);
+}
+
+TEST_CASE("GSS fitted operator keeps Lambda continuous across a band step",
+          "[density_gradient][quantum][gss][material_interface][manufactured]")
+{
+    const DeviceMesh mesh = twoMaterialStripMesh();
+    const Real vt = constants::Vt_300;
+    std::vector<DensityGradientCellMaterial> materials;
+    materials.reserve(mesh.numCells());
+    for (Index cellId = 0; cellId < mesh.numCells(); ++cellId) {
+        DensityGradientCellMaterial material;
+        material.cellId = cellId;
+        material.isTransport = cellId < 2;
+        material.coefficientVm2 = densityGradientCoefficientVm2(
+            material.isTransport ? 3.6 : 1.0,
+            material.isTransport ? 1.0 : 0.42);
+        const Real bandDrive = material.isTransport ? 0.25 : 3.4;
+        const Real sideW = material.isTransport ? -0.3 : -8.0;
+        for (int local = 0; local < 3; ++local) {
+            material.materialBandDrive_V[local] = bandDrive;
+            // Each material has a constant but discontinuous sqrt(n) trace.
+            // The fitted normal flux is therefore zero on both sides while
+            // the common exact Lambda remains zero.
+            material.dynamicDrivingPotential_V[local] =
+                sideW * vt - bandDrive;
+        }
+        materials.push_back(material);
+    }
+    DensityGradientQuantumPotentialConfig config;
+    config.globalDiscretization = "gss_density_fitted";
+    config.maxIterations = 20;
+    config.damping = 1.0;
+    config.relativeTolerance = 0.0;
+    config.absoluteTolerance_V = 1.0e-12;
+    const auto result = solveElectronDensityGradientPotentialLikeGlobal(
+        mesh, materials, VectorXd::Zero(6), std::vector<bool>(6, true),
+        {{0, 0.0}, {2, 0.0}, {3, 0.0}, {5, 0.0}}, vt,
+        PhysicalUnitSystem::legacySI(), config,
+        VectorXd::Constant(6, 1.0e-3));
+    REQUIRE(result.converged);
+    REQUIRE(result.residualInfinityNorm < 1.0e-9);
+    REQUIRE(result.potential_V.lpNorm<Eigen::Infinity>() < 1.0e-10);
+    REQUIRE(result.potentialLike_V.size() == 0);
+
+    config.globalDiscretization = "p1_lambda_direct";
+    const auto expanded = solveElectronDensityGradientPotentialLikeGlobal(
+        mesh, materials, VectorXd::Zero(6), std::vector<bool>(6, true),
+        {{0, 0.0}, {2, 0.0}, {3, 0.0}, {5, 0.0}}, vt,
+        PhysicalUnitSystem::legacySI(), config,
+        VectorXd::Constant(6, 1.0e-3));
+    REQUIRE(expanded.converged);
+    REQUIRE(expanded.residualInfinityNorm < 1.0e-9);
+    REQUIRE(expanded.potential_V.lpNorm<Eigen::Infinity>() < 1.0e-10);
+    REQUIRE(expanded.potentialLike_V.size() == 0);
+}
+
+TEST_CASE("GSS fitted operator preserves the linear sqrt-density limit",
+          "[density_gradient][quantum][gss][manufactured]")
+{
+    const DeviceMesh mesh = stripMesh();
+    const Real vt = constants::Vt_300;
+    const Real u[6] = {
+        1.0, 1.0001, 1.0002, 1.0, 1.0001, 1.0002};
+    std::vector<DensityGradientCellMaterial> materials;
+    for (Index cellId = 0; cellId < mesh.numCells(); ++cellId) {
+        DensityGradientCellMaterial material;
+        material.cellId = cellId;
+        material.coefficientVm2 = densityGradientCoefficientVm2(3.6, 1.0);
+        const Cell& cell = mesh.getCell(cellId);
+        for (int local = 0; local < 3; ++local) {
+            const int node = static_cast<int>(cell.node_ids[local]);
+            material.dynamicDrivingPotential_V[local] =
+                2.0 * vt * std::log(u[node]);
+        }
+        materials.push_back(material);
+    }
+    DensityGradientQuantumPotentialConfig config;
+    config.globalDiscretization = "gss_density_fitted";
+    config.maxIterations = 30;
+    config.damping = 1.0;
+    config.relativeTolerance = 0.0;
+    config.absoluteTolerance_V = 1.0e-12;
+    const auto result = solveElectronDensityGradientPotentialLikeGlobal(
+        mesh, materials, VectorXd::Zero(6), std::vector<bool>(6, true),
+        {{0, 0.0}, {2, 0.0}, {3, 0.0}, {5, 0.0}}, vt,
+        PhysicalUnitSystem::legacySI(), config,
+        VectorXd::Constant(6, 1.0e-4));
+    REQUIRE(result.converged);
+    REQUIRE(result.residualInfinityNorm < 1.0e-9);
+    REQUIRE(result.potential_V.lpNorm<Eigen::Infinity>() < 1.0e-9);
 }
 
 TEST_CASE("Sentaurus Eq 233 step function is stable at zero",
@@ -405,6 +503,17 @@ TEST_CASE("Exponential-fitted Eq 231 preserves a linear auxiliary field",
     REQUIRE(result.converged);
     REQUIRE(result.residualInfinityNorm < 1.0e-12);
     REQUIRE((result.potentialLike_V - exactPotential)
+                .lpNorm<Eigen::Infinity>() < 1.0e-12);
+
+    config.globalDiscretization = "conservative_sqrt_fitted";
+    const auto conservative = solveElectronDensityGradientPotentialLikeGlobal(
+        mesh, materials, -exactPotential, std::vector<bool>(6, true),
+        {{0, 0.0}, {2, 0.0}, {3, 0.0}, {5, 0.0}}, vt,
+        PhysicalUnitSystem::legacySI(), config, VectorXd::Zero(6),
+        exactPotential);
+    REQUIRE(conservative.converged);
+    REQUIRE(conservative.residualInfinityNorm < 1.0e-12);
+    REQUIRE((conservative.potentialLike_V - exactPotential)
                 .lpNorm<Eigen::Infinity>() < 1.0e-12);
 
     config.globalDiscretization = "p1_direct";

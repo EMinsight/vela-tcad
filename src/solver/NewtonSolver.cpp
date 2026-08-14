@@ -1922,17 +1922,33 @@ NewtonConfig newtonConfigFromJson(const nlohmann::json& json, UnitScalingConfig 
     if (cfg.electronQuantumPotential.globalDiscretization !=
             "exponential_fitted" &&
         cfg.electronQuantumPotential.globalDiscretization != "p1_direct" &&
-        cfg.electronQuantumPotential.globalDiscretization != "cvfem_full") {
+        cfg.electronQuantumPotential.globalDiscretization != "cvfem_full" &&
+        cfg.electronQuantumPotential.globalDiscretization !=
+            "p1_lambda_direct" &&
+        cfg.electronQuantumPotential.globalDiscretization !=
+            "gss_potentiallike_fitted" &&
+        cfg.electronQuantumPotential.globalDiscretization !=
+            "conservative_sqrt_fitted" &&
+        cfg.electronQuantumPotential.globalDiscretization !=
+            "gss_density_fitted") {
         throw std::invalid_argument(
             "newtonConfigFromJson: electron_quantum_potential."
             "global_discretization must be 'exponential_fitted', "
-            "'p1_direct', or 'cvfem_full'.");
+            "'p1_direct', 'cvfem_full', 'p1_lambda_direct', "
+            "'gss_potentiallike_fitted', 'conservative_sqrt_fitted', or "
+            "'gss_density_fitted'.");
     }
     if (cfg.electronQuantumPotential.oxideBoundary != "none" &&
         cfg.electronQuantumPotential.oxideBoundary != "devsim_wkb") {
         throw std::invalid_argument(
             "newtonConfigFromJson: electron_quantum_potential."
             "oxide_boundary must be 'none' or 'devsim_wkb'.");
+    }
+    if (cfg.electronQuantumPotential.includeInsulators &&
+        cfg.electronQuantumPotential.oxideBoundary != "none") {
+        throw std::invalid_argument(
+            "newtonConfigFromJson: explicit insulator density-gradient solve "
+            "cannot be combined with an oxide WKB truncation boundary.");
     }
     if (!(cfg.electronQuantumPotential.oxideQuantumMassRatio > 0.0) ||
         !(cfg.electronQuantumPotential.oxideBarrierMassRatio > 0.0) ||
@@ -4500,6 +4516,13 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
             initial.electronQuantumPotentialLike.size() == nodeCount
             ? initial.electronQuantumPotentialLike
             : VectorXd{};
+        const bool continuousLambdaState =
+            cfg_.electronQuantumPotential.globalDiscretization ==
+                "gss_density_fitted" ||
+            cfg_.electronQuantumPotential.globalDiscretization ==
+                "p1_lambda_direct";
+        if (continuousLambdaState)
+            quantumPotentialLike.resize(0);
         if (cfg_.electronQuantumPotential.couplingMode == "frozen") {
             NewtonResult result = solveClassicalWithFrozenElectronQuantumPotential(
                 initial, quantumPotential);
@@ -4744,7 +4767,8 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
                         cfg_.electronQuantumPotential.
                             conductionBandNarrowingFraction * narrowing;
                 }
-                if (quantumPotentialLike.size() != nodeCount)
+                if (!continuousLambdaState &&
+                    quantumPotentialLike.size() != nodeCount)
                     quantumPotentialLike = quantumPotential - nodeOutputShift;
                 for (Index cellId = 0; cellId < mesh_.numCells(); ++cellId) {
                     const Cell& cell = mesh_.getCell(cellId);
@@ -4870,6 +4894,8 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
                 else
                     quantumPotentialLike += relaxation *
                         (quantum.potentialLike_V - quantumPotentialLike);
+            } else if (continuousLambdaState) {
+                quantumPotentialLike.resize(0);
             }
             previousRawUpdate = rawUpdate;
             previousRelaxation = relaxation;

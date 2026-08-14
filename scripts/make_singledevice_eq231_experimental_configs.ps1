@@ -5,7 +5,10 @@ param(
 $variants = @(
     @{ Name = "p1"; Discretization = "p1_direct"; OxideBoundary = "none" },
     @{ Name = "cvfem"; Discretization = "cvfem_full"; OxideBoundary = "none" },
-    @{ Name = "cvfem_wkb"; Discretization = "cvfem_full"; OxideBoundary = "devsim_wkb" }
+    @{ Name = "p1_lambda"; Discretization = "p1_lambda_direct"; OxideBoundary = "none" },
+    @{ Name = "gss_state"; Discretization = "gss_potentiallike_fitted"; OxideBoundary = "none" },
+    @{ Name = "conservative_sqrt"; Discretization = "conservative_sqrt_fitted"; OxideBoundary = "none" },
+    @{ Name = "gss_lambda"; Discretization = "gss_density_fitted"; OxideBoundary = "none" }
 )
 
 foreach ($endpoint in @("lin", "sat")) {

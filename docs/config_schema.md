@@ -409,9 +409,10 @@ Notes:
   Material-resolved global interface experiments may instead set
   `include_insulators: true` together with
   `insulator_gamma` (default `1`) and `insulator_effective_mass_ratio`
-  (default `0.42`).  This global mode is experimental because exact Sentaurus
-  internal-interface parity requires a discontinuous/region-side
-  potential-like unknown; the qualified default keeps semiconductor-side
+  (default `0.42`). This global mode is experimental.
+  `gss_density_fitted` represents a continuous quantum potential Lambda while
+  reconstructing the band/DOS potential and sqrt-density traces independently
+  on each material side. The qualified default keeps semiconductor-side
   homogeneous Neumann treatment unless `sentaurus_step` is selected.
   For a fixed-reference audit of that experimental global mode,
   `residual_diagnostic_prefix` writes `<prefix>_cells.csv`, `_nodes.csv`,
@@ -430,12 +431,29 @@ Notes:
   `cvfem_full` is an experimental median-dual control-volume finite-element
   integration of the complete expanded Laplacian and quadratic-field terms,
   intended for comparison with Charon's density-gradient CVFEM architecture.
+  `p1_lambda_direct` is a diagnostic two-factor control: it retains the
+  expanded P1 volume operator but uses continuous Lambda with material-side
+  band/DOS traces. It isolates the interface unknown from the fitted flux.
+  `gss_potentiallike_fitted` is the orthogonal diagnostic: it retains the
+  continuous potential-like state and changes only the spatial operator to
+  the GSS Eq. 9.128 fitted flux.
+  `conservative_sqrt_fitted` retains the continuous potential-like state but
+  assembles the exact theta=0.5 sqrt-density weak form, including the matching
+  Lambda-times-sqrt-density reaction. A common fixed row scale prevents
+  overflow without changing the nonlinear root.
+  `gss_density_fitted` follows the GSS unexpanded sqrt-density control-volume
+  flux. It uses the Eq. 9.128 exponential/second-order piecewise flux with an
+  `expm1` small-jump evaluation and a globally continuous Lambda unknown; it
+  is the experimental explicit-oxide path for Si/SiO2/PolySilicon structures.
   `oxide_boundary: devsim_wkb` adds the experimental DEVSIM/Garcia-Asenov
   oxide interface closure. Its defaults follow the public DEVSIM MOSCAP
   example: oxide quantum mass `oxide_quantum_mass_ratio=0.14`, WKB barrier
   mass `oxide_barrier_mass_ratio=0.4`, and electron barrier
   `oxide_barrier_height_V=3.15`. `oxide_boundary` defaults to `none`; these
   controls are diagnostic and do not change the qualified SingleDevice path.
+  WKB is a truncation boundary for a mesh that omits the oxide quantum
+  equation. It is therefore rejected when `include_insulators: true`; an
+  explicit SiO2 solve must use `oxide_boundary: none`.
   A material JSON entry may override the solver-level coefficient with
   `electron_quantum_gamma` and `electron_quantum_dos_mass_ratio`. This is
   required when one mesh contains semiconductor or insulator materials with
