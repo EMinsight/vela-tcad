@@ -61,3 +61,13 @@ Comparison artifacts are under:
 The remaining validation item is localized to the linear deep-off leakage at
 `Vg = -0.5 V`; the full nonlinear Eq. 231 continuation and the saturation
 curve are no longer blockers.
+
+## 2026-08-16 deep-off follow-up
+
+The focused SRH, minority-density, contact-current, and numerical-floor audit
+is recorded in
+`singledevice_deep_off_current_diagnostic_2026-08-16.md`.  It classifies the
+remaining point as a real but small electron-state/transport mismatch.  SRH,
+contact extraction, KCL closure, and numerical current noise are not dominant.
+Use a documented hybrid low-current acceptance rule rather than the strict
+pointwise relative-current gate alone before closing the two-curve contract.
