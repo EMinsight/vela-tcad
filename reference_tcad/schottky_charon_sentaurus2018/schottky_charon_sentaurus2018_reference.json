@@ -36,20 +36,30 @@
     "iterations": 150
   },
   "vela_acceptance": {
-    "model": "newton_thermionic_robin",
+    "model": "newton_thermionic_robin_two_stage_arclength",
     "bias_min_V": 0.01,
-    "bias_max_V": 0.54,
-    "reference_points_compared": 14,
+    "bias_max_V": 1.0,
+    "reference_points_compared": 24,
     "trend_match": true,
-    "maximum_log10_current_error_dex": 0.47865211176950345,
+    "maximum_log10_current_error_dex": 0.47865207272847293,
     "threshold_dex": 0.5,
+    "vela_current_at_1V_A_per_um": 0.000108262382234183,
+    "sentaurus_current_at_1V_A_per_um": 0.000118824193013,
+    "relative_current_error_at_1V": 0.0888860299489798,
     "status": "pass"
   },
-  "deferred_extension": {
-    "last_converged_bias_V": 0.5625,
-    "first_failed_bias_V": 0.563125,
-    "failure": "newton line_search_non_decrease in electron continuity block",
-    "target_bias_V": 1.0
+  "vela_continuation": {
+    "stage_a": "voltage continuation from 0 to 0.82 V",
+    "stage_b": "pseudo-arclength continuation from the accepted 0.82 V restart to 1 V",
+    "stage_a_points": 42,
+    "stage_b_points": 114,
+    "stage_b_last_bias_V": 1.0002943642565783,
+    "stage_b_voltage_backsteps": 0,
+    "stage_b_current_decreases": 0,
+    "stage_b_max_adjacent_current_ratio": 1.00548491190325,
+    "resolved_failure": "removed the case-local 0.05 V quasi-Fermi hard update cap",
+    "new_physics_added": false,
+    "new_solver_feature_added": false
   },
   "sha256": {
     "charon_n_diode_dd_forward_inp": "16599eeda8a93b2be62323cf7f18df3fc6e5d47b8b23ed903cb66840c615ead9",
@@ -59,7 +69,9 @@
     "sentaurus_forward_reference.csv": "c2cb7fad73e3615efa1d56e05b26c23edbb5bf0cf934c65c4a79aaad6650e5a3",
     "vela/mesh.json": "f9086e086a149ea69051d4a863ba5611e34cc059df667334eb4a8266e870b397",
     "vela/doping.csv": "28d4b4caa9ea2ed905ac9ad0ba631d715c44a78e97b2e89a60c0edeeb2e41d6b",
-    "vela/simulation_iv.json": "7f2c9cad28f687fdd1234bd53299cbcc3dd5dcd39eb3393f926347d6f677caf6",
+    "vela/simulation_iv.json": "eada6922eb945e655e172489365679d09323e6a474e151b2ef29a7736980eef1",
+    "vela/simulation_iv_arclength.json": "d17ece829b65891e67dc9c43ec3b47a42d1c1add8ee33172a2f24908b7001d14",
+    "vela_schottky_iv_combined.csv": "ae36ec756adc33ef7fa60cc96b6f94842519801925a1b24620a432f3bc1526aa",
     "raw/schottky_n_msh.tdr": "881f4eb82f640d39c2e43a8e1359ba2249561f2d425d013eb03458f13a9e5541",
     "raw/forward_schottky_n_iv_des.plt": "96856f299d35affcdfc33532721c4fc15ca35b87b28c01e43317833cfd896eae"
   }

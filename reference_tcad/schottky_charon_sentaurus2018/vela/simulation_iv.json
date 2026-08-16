@@ -34,9 +34,11 @@
     "method": "newton",
     "max_iter": 150,
     "reltol": 1e-05,
+    "diagnostics": false,
     "damping_psi": 0.5,
     "max_update": 5.0,
-    "quasi_fermi_update_limit_V": 0.05,
+    "quasi_fermi_update_limit_V": 0.0,
+    "warm_start": true,
     "recombination": [
       "srh"
     ]
@@ -44,9 +46,10 @@
   "sweep": {
     "mode": "iv",
     "start": 0.0,
-    "stop": 0.54,
+    "stop": 0.82,
     "step": 0.02,
     "initial_step": 0.02,
+    "write_state_every_point_prefix": "outputs/states/schottky",
     "write_vtk": false,
     "contact": "anode",
     "current_contact": "anode"

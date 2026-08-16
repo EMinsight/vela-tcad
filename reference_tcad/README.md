@@ -103,6 +103,7 @@ ctest --test-dir build --output-on-failure -R sentaurus
   approaches, plus the corresponding supported Vela template mapping.
 - `schottky_charon_sentaurus2018`: Charon-derived 2-D n-silicon Schottky
   diode translated to Sentaurus O-2018.06-SP2, with a full 0--1 V reference
-  curve and a bounded 0--0.54 V Vela thermionic-Robin acceptance deck.
+  curve and a full 0--1 V two-stage Vela thermionic-Robin acceptance chain
+  using voltage continuation followed by pseudo-arclength continuation.
 
 See `docs/validation/` for the hand-written validation summaries.

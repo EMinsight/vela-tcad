@@ -19,18 +19,33 @@ electrostatic Schottky barrier pinning plus independent electron/hole
 thermionic Robin fluxes in coupled Newton. No image-force lowering, tunnelling,
 series resistance, AC, or high-field model is enabled.
 
-The first acceptance range is intentionally bounded to 0.01--0.54 V. It
-passes monotonic trend and a maximum 0.5-decade current-shape tolerance over
-all 14 Sentaurus points in the range. A diagnostic extension reached 0.5625 V
-and then stalled at 0.563125 V in the electron continuity block; 0.54--1 V is
-kept as a separate numerical-continuation milestone instead of expanding this
-feature slice.
+The Vela acceptance now covers the full 0.01--1 V Sentaurus range. The
+comparison uses all 24 nonzero Sentaurus points, has matching monotonic trend,
+and stays within the unchanged 0.5-decade current-shape tolerance. The maximum
+error is 0.478652 decade. At 1 V the log-interpolated Vela current is
+`1.08262e-4 A/um`, versus `1.18824e-4 A/um` in Sentaurus (8.89% relative
+error).
 
-Run the bounded Vela deck with:
+The Vela solve is intentionally split into two numerical stages without
+changing the physics. Stage A uses voltage continuation through 0.82 V and
+writes restart states. Stage B resumes the accepted 0.82 V state and uses the
+existing pseudo-arclength continuation through the high-injection branch to
+1 V:
 
 ```text
 build/vela_example_runner.exe --config reference_tcad/schottky_charon_sentaurus2018/vela/simulation_iv.json
+build/vela_example_runner.exe --config reference_tcad/schottky_charon_sentaurus2018/vela/simulation_iv_arclength.json
 ```
 
-The deck uses `scaling.mode = unit_scaling`, so its thermionic velocity values
-are in cm/s despite the stable historical `_m_per_s` field spelling.
+The earlier 0.563125 V failure was caused by the deck's
+`quasi_fermi_update_limit_V = 0.05` hard update cap. Both analytic and finite-
+difference Jacobians failed with that cap, while the same restart transition
+converged when the cap was disabled. No new physical model or solver feature
+was required. Secant prediction alone was rejected because it could converge
+to a non-monotonic branch near 0.835 V.
+
+The decks use `scaling.mode = unit_scaling`, so their thermionic velocity
+values are in cm/s despite the stable historical `_m_per_s` field spelling.
+The checked-in `vela_schottky_iv_combined.csv` is the small two-column merge of
+the two generated stage curves; large restart states and nonlinear histories
+remain ignored build artifacts.
