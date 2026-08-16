@@ -12,6 +12,7 @@
 #include "vela/physics/DopingModel.h"
 #include "vela/simulation/DCSweep.h"
 #include "vela/solver/GummelSolver.h"
+#include "vela/solver/NewtonSolver.h"
 
 #include <cmath>
 #include <filesystem>
@@ -145,6 +146,26 @@ TEST_CASE("parser captures Schottky fields", "[schottky]")
     REQUIRE(*specs[0].holeBarrier_eV == Approx(0.47));
     REQUIRE(*specs[0].surfaceRecombinationVelocity == Approx(1.0e5));
     REQUIRE(specs[0].emissionModel == "dirichlet_barrier");
+}
+
+TEST_CASE("parser captures independent thermionic velocities", "[schottky]")
+{
+    const nlohmann::json cfg = {
+        {"contacts", {
+            {{"name", "anode"},
+             {"type", "schottky"},
+             {"bias", 0.0},
+             {"barrier_eV", 0.7},
+             {"electron_surface_recombination_velocity_m_per_s", 4.91e4},
+             {"hole_surface_recombination_velocity_m_per_s", 2.74e4},
+             {"emission_model", "thermionic_robin"}}
+        }}
+    };
+    const auto specs = parseContactBoundarySpecs(cfg);
+    REQUIRE(specs.size() == 1);
+    REQUIRE(*specs[0].electronSurfaceRecombinationVelocity == Approx(4.91e4));
+    REQUIRE(*specs[0].holeSurfaceRecombinationVelocity == Approx(2.74e4));
+    REQUIRE(specs[0].emissionModel == "thermionic_robin");
 }
 
 // ---------------------------------------------------------------------------
@@ -316,4 +337,65 @@ TEST_CASE("Gummel with Schottky contact converges and produces finite output",
         REQUIRE(sol.n(i) >= 0.0);
         REQUIRE(sol.p(i) >= 0.0);
     }
+}
+
+TEST_CASE("Newton thermionic Robin Schottky equilibrium converges",
+          "[schottky][newton]")
+{
+    DeviceMesh mesh = buildSchottkyDiodeMesh();
+    MaterialDatabase matdb;
+    DopingModel doping = DopingModel::fromMeshAndRegions(
+        mesh, std::vector<RegionDopingSpec>{{"n_silicon", 1.0e22, 0.0}});
+
+    ContactBoundarySpec anode;
+    anode.name = "anode";
+    anode.type = ContactType::Schottky;
+    anode.bias = 0.0;
+    anode.barrier_eV = 0.7;
+    anode.electronSurfaceRecombinationVelocity = 4.91e4;
+    anode.holeSurfaceRecombinationVelocity = 2.74e4;
+    anode.emissionModel = "thermionic_robin";
+    ContactSpecsMap specs;
+    specs.emplace(anode.name, anode);
+
+    NewtonConfig cfg;
+    cfg.maxIter = 80;
+    cfg.reltol = 1.0e-6;
+    cfg.temperature_K = 300.0;
+    cfg.maxUpdate = 5.0;
+    cfg.quasiFermiUpdateLimit_V = 0.05;
+
+    NewtonSolver solver(
+        mesh, matdb, doping,
+        {{"anode", 0.0}, {"cathode", 0.0}}, cfg, {}, {}, specs);
+    const NewtonResult result = solver.solve();
+
+    REQUIRE(result.converged);
+    REQUIRE(result.solution.n.array().isFinite().all());
+    REQUIRE(result.solution.p.array().isFinite().all());
+    REQUIRE((result.solution.n.array() > 0.0).all());
+    REQUIRE((result.solution.p.array() > 0.0).all());
+}
+
+TEST_CASE("Gummel rejects thermionic Robin Schottky contact", "[schottky]")
+{
+    DeviceMesh mesh = buildSchottkyDiodeMesh();
+    MaterialDatabase matdb;
+    DopingModel doping = DopingModel::fromMeshAndRegions(
+        mesh, std::vector<RegionDopingSpec>{{"n_silicon", 1.0e22, 0.0}});
+
+    ContactBoundarySpec anode;
+    anode.name = "anode";
+    anode.type = ContactType::Schottky;
+    anode.barrier_eV = 0.7;
+    anode.electronSurfaceRecombinationVelocity = 4.91e4;
+    anode.holeSurfaceRecombinationVelocity = 2.74e4;
+    anode.emissionModel = "thermionic_robin";
+
+    GummelConfig cfg;
+    REQUIRE_THROWS_AS(
+        runGummel(
+            mesh, matdb, doping, {{"anode", 0.0}, {"cathode", 0.0}},
+            {{"anode", anode}}, cfg),
+        std::runtime_error);
 }

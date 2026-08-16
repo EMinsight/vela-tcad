@@ -144,6 +144,14 @@ parseContactBoundarySpecs(const nlohmann::json& cfg)
             spec.surfaceRecombinationVelocity =
                 ct.at("surface_recombination_velocity_m_per_s").get<Real>();
         }
+        if (ct.contains("electron_surface_recombination_velocity_m_per_s")) {
+            spec.electronSurfaceRecombinationVelocity =
+                ct.at("electron_surface_recombination_velocity_m_per_s").get<Real>();
+        }
+        if (ct.contains("hole_surface_recombination_velocity_m_per_s")) {
+            spec.holeSurfaceRecombinationVelocity =
+                ct.at("hole_surface_recombination_velocity_m_per_s").get<Real>();
+        }
         if (ct.contains("emission_model")) {
             spec.emissionModel = ct.at("emission_model").get<std::string>();
         }
@@ -161,7 +169,10 @@ parseContactBoundarySpecs(const nlohmann::json& cfg)
         requireFinite(spec.holeBarrier_eV, "hole_barrier_eV");
         requireFinite(spec.surfaceRecombinationVelocity,
                       "surface_recombination_velocity_m_per_s");
-
+        requireFinite(spec.electronSurfaceRecombinationVelocity,
+                      "electron_surface_recombination_velocity_m_per_s");
+        requireFinite(spec.holeSurfaceRecombinationVelocity,
+                      "hole_surface_recombination_velocity_m_per_s");
         specs.push_back(std::move(spec));
     }
     return specs;
@@ -309,13 +320,15 @@ ContactState computeSchottkyContactState(const ContactBoundarySpec& spec,
             "' has non-finite or negative intrinsic density 'ni'.");
     }
 
-    // Allow the model selector to be empty (default) or "dirichlet_barrier".
+    // Both supported selectors share the same electrostatic barrier state;
+    // thermionic_robin leaves the carrier quasi-Fermi rows unconstrained.
     if (!spec.emissionModel.empty() &&
-        spec.emissionModel != "dirichlet_barrier") {
+        spec.emissionModel != "dirichlet_barrier" &&
+        spec.emissionModel != "thermionic_robin") {
         throw std::runtime_error(
             "computeSchottkyContactState: contact '" + spec.name +
             "' uses unsupported emission_model '" + spec.emissionModel +
-            "'. Only 'dirichlet_barrier' is implemented in this prototype.");
+            "'. Supported values are 'dirichlet_barrier' and 'thermionic_robin'.");
     }
 
     const Real Vt = constants::kb * temperature_K / constants::q;

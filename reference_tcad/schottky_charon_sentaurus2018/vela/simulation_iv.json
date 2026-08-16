@@ -1,0 +1,57 @@
+{
+  "_comment": "Charon-derived n-Si Schottky diode on the exact Sentaurus 2018 TDR mesh. Only SRH and thermionic Robin contact fluxes are enabled.",
+  "simulation_type": "dc_sweep",
+  "mesh_file": "mesh.json",
+  "output_csv": "outputs/vela_schottky_iv.csv",
+  "scaling": {
+    "mode": "unit_scaling"
+  },
+  "node_doping_file": "doping.csv",
+  "doping": [
+    {
+      "region": "R.Silicon",
+      "donors": 1.0000000000000034e+16,
+      "acceptors": 0.0
+    }
+  ],
+  "contacts": [
+    {
+      "name": "cathode",
+      "type": "ohmic",
+      "bias": 0.0
+    },
+    {
+      "name": "anode",
+      "type": "schottky",
+      "barrier_eV": 0.70,
+      "electron_surface_recombination_velocity_m_per_s": 4.91e6,
+      "hole_surface_recombination_velocity_m_per_s": 2.74e6,
+      "emission_model": "thermionic_robin",
+      "bias": 0.0
+    }
+  ],
+  "solver": {
+    "method": "newton",
+    "max_iter": 150,
+    "reltol": 1e-05,
+    "damping_psi": 0.5,
+    "max_update": 5.0,
+    "quasi_fermi_update_limit_V": 0.05,
+    "recombination": [
+      "srh"
+    ]
+  },
+  "sweep": {
+    "mode": "iv",
+    "start": 0.0,
+    "stop": 0.54,
+    "step": 0.02,
+    "initial_step": 0.02,
+    "write_vtk": false,
+    "contact": "anode",
+    "current_contact": "anode"
+  },
+  "validation": {
+    "check_contact_quasi_fermi_bias": false
+  }
+}

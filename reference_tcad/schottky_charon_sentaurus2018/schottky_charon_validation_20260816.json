@@ -1,0 +1,66 @@
+{
+  "reference": "reference_tcad\\schottky_charon_sentaurus2018\\sentaurus_forward_reference.csv",
+  "candidate": "reference_tcad\\schottky_charon_sentaurus2018\\vela\\outputs\\vela_schottky_iv.csv",
+  "checked_kinds": [
+    "iv"
+  ],
+  "iv": {
+    "available": true,
+    "reference_column": "current_total_A_per_um",
+    "candidate_column": "current_total_A_per_um",
+    "points_compared": 14,
+    "reference_bias_range": [
+      0.01,
+      0.531640361883
+    ],
+    "candidate_scale": 1.0,
+    "candidate_bias_scale": 1.0,
+    "candidate_bias_offset": 0.0,
+    "interpolation": "log_current",
+    "reference_trend": "increasing",
+    "candidate_trend": "increasing",
+    "trend_match": true,
+    "orders_of_magnitude": 0.47865211176950345,
+    "max_relative_error": 0.667839574451585
+  },
+  "cv": {
+    "available": true,
+    "reference_column": "current_total_A_per_um",
+    "candidate_column": "current_total_A_per_um",
+    "points_compared": 14,
+    "reference_bias_range": [
+      0.01,
+      0.531640361883
+    ],
+    "candidate_scale": 1.0,
+    "candidate_bias_scale": 1.0,
+    "candidate_bias_offset": 0.0,
+    "interpolation": "linear",
+    "reference_trend": "increasing",
+    "candidate_trend": "increasing",
+    "trend_match": true,
+    "orders_of_magnitude": 0.43825314149482253,
+    "max_relative_error": 0.6354585988435034
+  },
+  "bv": {
+    "available": true,
+    "reference_column": "current_total_A_per_um",
+    "candidate_column": "current_total_A_per_um",
+    "points_compared": 14,
+    "reference_bias_range": [
+      0.01,
+      0.531640361883
+    ],
+    "candidate_scale": 1.0,
+    "candidate_bias_scale": 1.0,
+    "candidate_bias_offset": 0.0,
+    "interpolation": "linear",
+    "reference_trend": "increasing",
+    "candidate_trend": "increasing",
+    "trend_match": true,
+    "orders_of_magnitude": 0.43825314149482253,
+    "max_relative_error": 0.6354585988435034
+  },
+  "failures": [],
+  "status": "pass"
+}

@@ -69,8 +69,9 @@ support matrix.
   Neumann, insulating, and symmetry boundaries.
 - DD sweep regressions keep the historical natural zero-flux behavior on
   non-contact boundaries.
-- Schottky contacts are a prototype Gummel/Poisson path and are intentionally
-  rejected by Newton sweeps.
+- Schottky `dirichlet_barrier` contacts are the prototype Gummel/Poisson path.
+  Coupled Newton accepts only explicit `thermionic_robin` contacts with
+  positive electron and hole surface velocities.
 
 ## DC Sweep Regression Configuration
 

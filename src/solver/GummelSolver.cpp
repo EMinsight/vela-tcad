@@ -456,6 +456,12 @@ DDSolution runGummelImpl(const DeviceMesh&                          mesh,
         }
 
         if (isSchottky) {
+            if (spec->emissionModel == "thermionic_robin") {
+                throw std::runtime_error(
+                    "runGummel: Schottky contact '" + contact.name +
+                    "' uses emission_model='thermionic_robin', which requires "
+                    "the coupled Newton solver.");
+            }
             ContactBoundarySpec effSpec = *spec;
             effSpec.bias = Vbias; // honour the swept bias point
 

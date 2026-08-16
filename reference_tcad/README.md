@@ -101,5 +101,8 @@ ctest --test-dir build --output-on-failure -R sentaurus
 - `bvmethods_sentaurus2018`: Sentaurus Training NMOS BV method inputs covering
   ABA, external resistor, voltage-to-current, continuation, and transient
   approaches, plus the corresponding supported Vela template mapping.
+- `schottky_charon_sentaurus2018`: Charon-derived 2-D n-silicon Schottky
+  diode translated to Sentaurus O-2018.06-SP2, with a full 0--1 V reference
+  curve and a bounded 0--0.54 V Vela thermionic-Robin acceptance deck.
 
 See `docs/validation/` for the hand-written validation summaries.

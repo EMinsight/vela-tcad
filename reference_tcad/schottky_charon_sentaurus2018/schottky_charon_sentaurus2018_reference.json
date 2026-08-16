@@ -1,0 +1,66 @@
+{
+  "schema": "vela.reference_tcad.sentaurus_reference.v1",
+  "case": "schottky_charon_sentaurus2018",
+  "device": "n_type_silicon_schottky_diode_2d",
+  "canonical_source": {
+    "project": "Charon",
+    "commit": "7cc38745625a6011ae3584ed111ec7ee74fb890e",
+    "input": "test/nightlyTests/schottky_contacts/n_diode.dd.forward.inp",
+    "mesh_journal": "test/nightlyTests/schottky_contacts/n_diode_msh.jou"
+  },
+  "corroborating_sources": {
+    "genius_commit": "543da8452d5dfd33e6f8c457f962f6f670f0fce7",
+    "pisces_commit": "7f752a4ee279dad585d37e43a86287f185e89cdc",
+    "devsim_commit": "58a9a87083db00c6cadc0b4011c801db2cec5844"
+  },
+  "sentaurus_version": "O-2018.06-SP2",
+  "sentaurus_run": {
+    "status": "complete",
+    "bias_start_V": 0.0,
+    "bias_stop_V": 1.0,
+    "wallclock_s": 22.87,
+    "mesh_vertices": 697,
+    "mesh_triangles": 1280,
+    "reference_points": 25,
+    "terminal_current_at_1V_A_per_um": 0.000118824193013,
+    "large_artifact_root": "build-release/reference_tcad/schottky_charon_sentaurus2018/raw"
+  },
+  "physics": ["Poisson", "Electron", "Hole", "SRH", "Schottky thermionic emission"],
+  "excluded_physics": [
+    "barrier lowering", "tunnelling", "high-field mobility",
+    "quantum correction", "self heating", "AC", "series resistance"
+  ],
+  "vela_baseline": {
+    "model": "gummel_dirichlet_barrier",
+    "status": "failed_at_equilibrium",
+    "iterations": 150
+  },
+  "vela_acceptance": {
+    "model": "newton_thermionic_robin",
+    "bias_min_V": 0.01,
+    "bias_max_V": 0.54,
+    "reference_points_compared": 14,
+    "trend_match": true,
+    "maximum_log10_current_error_dex": 0.47865211176950345,
+    "threshold_dex": 0.5,
+    "status": "pass"
+  },
+  "deferred_extension": {
+    "last_converged_bias_V": 0.5625,
+    "first_failed_bias_V": 0.563125,
+    "failure": "newton line_search_non_decrease in electron continuity block",
+    "target_bias_V": 1.0
+  },
+  "sha256": {
+    "charon_n_diode_dd_forward_inp": "16599eeda8a93b2be62323cf7f18df3fc6e5d47b8b23ed903cb66840c615ead9",
+    "charon_n_diode_msh_jou": "acb65e2b415c24bd9280c292c96c637568f0f0418072a03bd168730d2725f49e",
+    "source/schottky_n_sde.cmd": "c381e21dc3bbc2fd9e56ba39db919c26ad0c8cf596d10fa64a03b631a2d56208",
+    "source/schottky_n_des.cmd": "2d27fafd43a86501b1420ea3a6c42cf42f35c56198782684fd2162b5afd20d00",
+    "sentaurus_forward_reference.csv": "c2cb7fad73e3615efa1d56e05b26c23edbb5bf0cf934c65c4a79aaad6650e5a3",
+    "vela/mesh.json": "f9086e086a149ea69051d4a863ba5611e34cc059df667334eb4a8266e870b397",
+    "vela/doping.csv": "28d4b4caa9ea2ed905ac9ad0ba631d715c44a78e97b2e89a60c0edeeb2e41d6b",
+    "vela/simulation_iv.json": "7f2c9cad28f687fdd1234bd53299cbcc3dd5dcd39eb3393f926347d6f677caf6",
+    "raw/schottky_n_msh.tdr": "881f4eb82f640d39c2e43a8e1359ba2249561f2d425d013eb03458f13a9e5541",
+    "raw/forward_schottky_n_iv_des.plt": "96856f299d35affcdfc33532721c4fc15ca35b87b28c01e43317833cfd896eae"
+  }
+}

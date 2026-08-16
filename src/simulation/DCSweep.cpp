@@ -3784,21 +3784,25 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
          solverMethod == SolverMethod::PoissonOnly ||
          solverMethod == SolverMethod::GummelNewton) &&
         !contactSpecs.empty()) {
-        // The Newton coupled-DD path supports electrostatic-only metal gates,
-        // but does not yet construct Schottky-aware carrier boundary states.
-        // Fail loudly rather than silently using the legacy Ohmic model.
-        std::string firstSchottky;
+        // Coupled Newton supports only the explicitly selected thermionic
+        // Robin Schottky boundary. Keep the older Dirichlet-barrier prototype
+        // on Gummel. Poisson-only would freeze away carrier emission, while a
+        // Gummel-Newton handoff would start from the incompatible Gummel model.
+        std::string unsupportedSchottky;
         for (const auto& [name, spec] : contactSpecs) {
-            if (spec.type == ContactType::Schottky) {
-                firstSchottky = name;
+            if (spec.type == ContactType::Schottky &&
+                (spec.emissionModel != "thermionic_robin" ||
+                 solverMethod != SolverMethod::Newton)) {
+                unsupportedSchottky = name;
                 break;
             }
         }
-        if (!firstSchottky.empty()) {
+        if (!unsupportedSchottky.empty()) {
             throw std::runtime_error(
-                "DCSweep: Newton-family solver methods do not yet support "
-                "Schottky contacts (contact '" + firstSchottky + "'). Use solver.method='gummel' for the "
-                "Schottky prototype, or switch the contact to type='ohmic'.");
+                "DCSweep: Schottky contact '" + unsupportedSchottky +
+                "' requires solver.method='newton' and "
+                "emission_model='thermionic_robin'. The dirichlet_barrier "
+                "prototype remains Gummel-only.");
         }
     }
 

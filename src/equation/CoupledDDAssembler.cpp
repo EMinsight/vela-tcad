@@ -1292,6 +1292,30 @@ VectorXd CoupledDDAssembler::residualImpl(
         }
     }
 
+    // Thermionic metal-semiconductor fluxes are natural (Robin) carrier
+    // boundaries.  The signs match Charon's Schottky evaluator:
+    //   Fn = sn * (n - n0), Fp = -sp * (p - p0).
+    // boundaryMeasure is the nodal half-edge length on the contact.  The
+    // generic factor maps input velocity/concentration units onto the same
+    // native line-flux units as the SG edge terms (it is one in both public
+    // unit systems, but keeping the expression documents the dimensional
+    // contract).
+    const Real thermionicSurfaceFactor = scaling_.enabled
+        ? scaling_.unitSystem.velocityMPerSPerInternal()
+            * scaling_.unitSystem.concentrationM3PerInternal()
+            / scaling_.unitSystem.currentDensityAM2PerInternal()
+        : 1.0;
+    for (const auto& [node, boundary] : bcs.thermionic) {
+        const int ii = static_cast<int>(node);
+        const Real measureFactor = boundary.boundaryMeasure * thermionicSurfaceFactor;
+        r(phinOffset() + ii) += boundary.electronVelocity
+            * (n(ii) - boundary.electronEquilibriumDensity) * measureFactor;
+        r(phipOffset() + ii) -= boundary.holeVelocity
+            * (p(ii) - boundary.holeEquilibriumDensity) * measureFactor;
+        hasElectronContribution[static_cast<std::size_t>(ii)] = true;
+        hasHoleContribution[static_cast<std::size_t>(ii)] = true;
+    }
+
     // Insulating nodes such as SiO2 (mun = mup = ni = 0) can have no
     // transport or recombination contribution in the continuity equations.
     // Pin those otherwise unconstrained quasi-Fermi unknowns to avoid zero
@@ -4283,6 +4307,27 @@ SparseMatrixd CoupledDDAssembler::assembleJacobian(
             -constants::q * (-dni_dphin) * vol_[i] * chargeAreaFactor);
         add(psiOffset() + ii, phipOffset() + ii,
             -constants::q * dpi_dphip * vol_[i] * chargeAreaFactor);
+
+        if (const auto boundaryIt = bcs.thermionic.find(i);
+            boundaryIt != bcs.thermionic.end()) {
+            const CoupledDDThermionicBoundary& boundary = boundaryIt->second;
+            const Real surfaceFactor = scaling_.enabled
+                ? scaling_.unitSystem.velocityMPerSPerInternal()
+                    * scaling_.unitSystem.concentrationM3PerInternal()
+                    / scaling_.unitSystem.currentDensityAM2PerInternal()
+                : 1.0;
+            const Real measureFactor = boundary.boundaryMeasure * surfaceFactor;
+            add(phinOffset() + ii, psiOffset() + ii,
+                boundary.electronVelocity * dni_dpsi * measureFactor);
+            add(phinOffset() + ii, phinOffset() + ii,
+                boundary.electronVelocity * dni_dphin * measureFactor);
+            add(phipOffset() + ii, psiOffset() + ii,
+                -boundary.holeVelocity * dpi_dpsi * measureFactor);
+            add(phipOffset() + ii, phipOffset() + ii,
+                -boundary.holeVelocity * dpi_dphip * measureFactor);
+            hasElectronContribution[static_cast<std::size_t>(ii)] = true;
+            hasHoleContribution[static_cast<std::size_t>(ii)] = true;
+        }
 
         const Real ni = ni_[i];
         if (ni <= 0.0)

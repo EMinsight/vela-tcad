@@ -29,10 +29,19 @@ struct CoupledDDState {
     VectorXd phip;
 };
 
+struct CoupledDDThermionicBoundary {
+    Real electronVelocity = 0.0;
+    Real holeVelocity = 0.0;
+    Real electronEquilibriumDensity = 0.0;
+    Real holeEquilibriumDensity = 0.0;
+    Real boundaryMeasure = 0.0;
+};
+
 struct CoupledDDBoundaryConditions {
     std::unordered_map<Index, Real> psi;
     std::unordered_map<Index, Real> phin;
     std::unordered_map<Index, Real> phip;
+    std::unordered_map<Index, CoupledDDThermionicBoundary> thermionic;
 };
 
 // Diagnostic-only frozen inputs for one-stage feedback substitutions.  The

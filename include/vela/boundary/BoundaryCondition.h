@@ -48,11 +48,13 @@ struct ContactBoundarySpec {
     std::optional<Real> barrier_eV;            ///< Schottky barrier height [eV] (electron barrier by default).
     std::optional<Real> electronBarrier_eV;    ///< Optional explicit electron Schottky barrier [eV].
     std::optional<Real> holeBarrier_eV;        ///< Optional explicit hole Schottky barrier [eV] (default Eg - phi_Bn).
-    std::optional<Real> surfaceRecombinationVelocity; ///< Surface recombination velocity [m/s] (reserved).
+    std::optional<Real> surfaceRecombinationVelocity; ///< Common thermionic velocity (legacy alias).
+    std::optional<Real> electronSurfaceRecombinationVelocity; ///< Electron thermionic velocity.
+    std::optional<Real> holeSurfaceRecombinationVelocity; ///< Hole thermionic velocity.
 
     /// Identifier of the carrier-boundary emission model.  Only
-    /// ``"dirichlet_barrier"`` is implemented today; thermionic emission
-    /// (Robin) is reserved for a follow-up milestone.
+    /// ``"dirichlet_barrier"`` selects the Gummel smoke model and
+    /// ``"thermionic_robin"`` selects coupled-Newton thermionic fluxes.
     std::string emissionModel;
 
     /// Verbatim copy of the spelling found in the deck for diagnostics.

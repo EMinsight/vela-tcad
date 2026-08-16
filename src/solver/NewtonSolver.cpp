@@ -2328,6 +2328,89 @@ CoupledDDBoundaryConditions NewtonSolver::buildBoundaryConditions(
                 bcs.psi[nid] = Vbias / potentialScale;
             continue;
         }
+        if (specIt != contactSpecs_.end() &&
+            specIt->second.type == ContactType::Schottky) {
+            ContactBoundarySpec spec = specIt->second;
+            spec.bias = Vbias;
+            if (spec.emissionModel != "thermionic_robin") {
+                throw std::runtime_error(
+                    "NewtonSolver: Schottky contact '" + contact.name +
+                    "' requires emission_model='thermionic_robin'.");
+            }
+
+            const Real electronVelocity =
+                spec.electronSurfaceRecombinationVelocity.value_or(
+                    spec.surfaceRecombinationVelocity.value_or(0.0));
+            const Real holeVelocity =
+                spec.holeSurfaceRecombinationVelocity.value_or(
+                    spec.surfaceRecombinationVelocity.value_or(0.0));
+            if (!(electronVelocity > 0.0) || !(holeVelocity > 0.0)) {
+                throw std::runtime_error(
+                    "NewtonSolver: thermionic Schottky contact '" + contact.name +
+                    "' requires positive electron and hole surface velocities.");
+            }
+
+            std::optional<Material> material;
+            if (contact.region_id < mesh_.numRegions()) {
+                const Region& region = mesh_.getRegion(contact.region_id);
+                if (matdb_.hasMaterial(region.material))
+                    material = matdb_.getMaterial(region.material, cfg_.temperature_K);
+            }
+            if (!material) {
+                for (Index cellId = 0; cellId < mesh_.numCells() && !material; ++cellId) {
+                    const Cell& cell = mesh_.getCell(cellId);
+                    const bool touches = std::any_of(
+                        cell.node_ids.begin(), cell.node_ids.end(), [&](Index node) {
+                            return std::find(contact.node_ids.begin(), contact.node_ids.end(), node)
+                                != contact.node_ids.end();
+                        });
+                    if (!touches)
+                        continue;
+                    const Region& region = mesh_.getRegion(cell.region_id);
+                    if (matdb_.hasMaterial(region.material))
+                        material = matdb_.getMaterial(region.material, cfg_.temperature_K);
+                }
+            }
+            const Real bandgap_eV = material && material->bandgap_eV
+                ? *material->bandgap_eV
+                : std::numeric_limits<Real>::quiet_NaN();
+            const Real affinity_eV = material && material->electron_affinity_eV
+                ? *material->electron_affinity_eV
+                : std::numeric_limits<Real>::quiet_NaN();
+
+            std::unordered_set<Index> contactNodes(
+                contact.node_ids.begin(), contact.node_ids.end());
+            std::unordered_map<Index, Real> nodalMeasure;
+            for (Index node : contact.node_ids)
+                nodalMeasure[node] = 0.0;
+            for (Index edgeId = 0; edgeId < mesh_.numEdges(); ++edgeId) {
+                const Edge& edge = mesh_.getEdge(edgeId);
+                if (!contactNodes.contains(edge.n0) || !contactNodes.contains(edge.n1))
+                    continue;
+                nodalMeasure[edge.n0] += 0.5 * edge.length;
+                nodalMeasure[edge.n1] += 0.5 * edge.length;
+            }
+
+            for (Index nid : contact.node_ids) {
+                if (!(nodalMeasure[nid] > 0.0)) {
+                    throw std::runtime_error(
+                        "NewtonSolver: thermionic Schottky contact '" + contact.name +
+                        "' has a node with zero boundary measure.");
+                }
+                const ContactState state = computeSchottkyContactState(
+                    spec, ni[nid], Nc[nid], Nv[nid], bandgap_eV, affinity_eV,
+                    doping_.netDoping(nid), cfg_.temperature_K);
+                bcs.psi[nid] = state.psi / potentialScale;
+                bcs.thermionic[nid] = CoupledDDThermionicBoundary{
+                    electronVelocity,
+                    holeVelocity,
+                    state.n,
+                    state.p,
+                    nodalMeasure[nid],
+                };
+            }
+            continue;
+        }
         const bool relaxByBiasAndTopology =
             enableMinorityElectronRelaxation
             && allowsMinorityRelaxation

@@ -309,6 +309,8 @@ Optional fields:
 - hole_barrier_eV: number (eV)
 - surface_recombination_velocity_m_per_s: number (m/s)
 - surface_recombination_velocity: number (legacy alias)
+- electron_surface_recombination_velocity_m_per_s: number
+- hole_surface_recombination_velocity_m_per_s: number
 - emission_model: string (prototype Schottky selector)
 
 Recognized type values (case-insensitive, `-`/`_` normalized):
@@ -323,11 +325,22 @@ Compatibility policy:
 
 Current implementation status:
 - Poisson driver: `ohmic`, `dirichlet`, `metal_gate`, `schottky` supported; `floating` rejected.
-- DC sweep (Gummel): `ohmic` and prototype `schottky` supported.
-- DC sweep (Newton): Schottky currently rejected with a clear error.
+- DC sweep (Gummel): `ohmic` and `schottky` with
+  `emission_model: "dirichlet_barrier"` supported.
+- DC sweep (Newton): `schottky` is supported only with
+  `emission_model: "thermionic_robin"`, a positive electron velocity, and a
+  positive hole velocity. Poisson-only and Gummel-Newton sweeps reject
+  thermionic contacts.
 
 Prototype notes:
-- Schottky is an engineering prototype (Dirichlet-barrier style), not a calibrated thermionic-emission model.
+- The Gummel `dirichlet_barrier` path fixes carrier densities and remains an
+  engineering smoke model.
+- The Newton `thermionic_robin` path pins only electrostatic potential at the
+  Schottky contact. Carrier quasi-Fermi potentials remain unknown, and the
+  continuity rows receive `sn*(n-n0)` and `-sp*(p-p0)` boundary fluxes.
+- In `unit_scaling` mode, all three velocity fields are interpreted in cm/s;
+  without it they are interpreted in m/s. The `_m_per_s` spelling is retained
+  for schema compatibility.
 
 ## boundaries[]
 

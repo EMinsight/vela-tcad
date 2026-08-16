@@ -167,8 +167,11 @@ The IGBT decks are engineering trend validation fixtures only.
 ### Schottky Diode
 
 `examples/schottky_diode_2d/simulation_iv.json` exercises the prototype
-Schottky contact path through the Gummel sweep. Schottky is not available in
-Newton sweeps.
+Dirichlet-barrier Schottky contact path through the Gummel sweep. The bounded
+Charon-derived fixture under
+`reference_tcad/schottky_charon_sentaurus2018` exercises independent electron
+and hole thermionic Robin velocities through coupled Newton on an imported
+Sentaurus mesh.
 
 ## Contact And Boundary Compatibility
 
