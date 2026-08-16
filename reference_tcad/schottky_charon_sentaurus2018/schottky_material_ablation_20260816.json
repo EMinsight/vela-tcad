@@ -1,0 +1,79 @@
+{
+  "schema": "vela.reference_tcad.material_ablation.v1",
+  "case": "schottky_charon_sentaurus2018",
+  "date": "2026-08-16",
+  "sentaurus_current_at_1V_A_per_um": 0.000118824193013,
+  "interpolation": "signed_log_current_with_linear_cross_zero_fallback",
+  "reference_points_compared": 24,
+  "ablations": [
+    {
+      "name": "baseline",
+      "parameters": "Vela built-in Si defaults",
+      "current_at_1V_A_per_um": 0.000108262382234183,
+      "relative_error_at_1V": 0.0888860299489798,
+      "maximum_log10_current_error_dex": 0.47865207272847293,
+      "maximum_relative_error": 0.6678395445919243
+    },
+    {
+      "name": "mu_n",
+      "parameters": {
+        "mun_cm2_per_V_s": 1417.0
+      },
+      "stage_a_points": 43,
+      "stage_b_points": 119,
+      "current_at_1V_A_per_um": 0.00011371822575633333,
+      "relative_error_at_1V": 0.04297077158443697,
+      "maximum_log10_current_error_dex": 0.4767488397667858,
+      "maximum_relative_error": 0.6663807050360591
+    },
+    {
+      "name": "mu_n_nc_eg",
+      "parameters": {
+        "mun_cm2_per_V_s": 1417.0,
+        "bandgap_eV_at_300K": 1.1241592307692307,
+        "Nc_cm3_at_300K": 2.8566652281655894e19
+      },
+      "stage_a_points": 42,
+      "stage_b_points": 121,
+      "current_at_1V_A_per_um": 0.0001142346184844906,
+      "relative_error_at_1V": 0.03862491645962439,
+      "maximum_log10_current_error_dex": 0.41939954992418993,
+      "maximum_relative_error": 0.6192845950702425
+    },
+    {
+      "name": "full_materials",
+      "parameters": {
+        "eps_r": 11.7,
+        "ni_cm3": 1.4638914958767616e10,
+        "mun_cm2_per_V_s": 1417.0,
+        "mup_cm2_per_V_s": 470.5,
+        "bandgap_eV_at_300K": 1.1241592307692307,
+        "electron_affinity_eV": 4.05,
+        "Nc_cm3_at_300K": 2.8566652281655894e19,
+        "Nv_cm3_at_300K": 3.10464190834412e19,
+        "taun_s": 1e-5,
+        "taup_s": 3e-6,
+        "temperature_K": 300.0
+      },
+      "stage_a_points": 42,
+      "stage_b_points": 122,
+      "stage_b_last_bias_V": 1.0003170855025,
+      "stage_b_voltage_backsteps": 0,
+      "stage_b_current_decreases": 0,
+      "terminal_current_consistency_ratio_near_1V": 1.0,
+      "current_at_1V_A_per_um": 0.00011802221462543673,
+      "relative_error_at_1V": 0.006749285370492986,
+      "maximum_log10_current_error_dex": 0.22831317394178877,
+      "maximum_relative_error": 0.4088647928586239
+    }
+  ],
+  "conclusion": {
+    "one_volt_gap_explained_by_explicit_material_defaults": true,
+    "new_physics_required_by_this_ablation": false,
+    "schottky_boundary_feature_development_required": false,
+    "worst_remaining_bias_V": 0.181640361883,
+    "worst_remaining_sentaurus_current_A_per_um": 9.37877602662e-10,
+    "worst_remaining_vela_current_A_per_um": 5.544124709228584e-10,
+    "remaining_work": "The remaining low-current prefactor difference is a Schottky-boundary candidate. Require a contact-state or fixed-state operator ablation before implementation."
+  }
+}

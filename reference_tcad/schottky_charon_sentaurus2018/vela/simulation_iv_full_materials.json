@@ -1,0 +1,33 @@
+{
+  "_comment": "Ablation C: explicitly freeze the Sentaurus 2018 candidate silicon defaults, including SRH lifetimes.",
+  "simulation_type": "dc_sweep",
+  "mesh_file": "mesh.json",
+  "materials_file": "materials_full_sentaurus2018.json",
+  "output_csv": "outputs/ablations/full_materials/vela_schottky_iv.csv",
+  "scaling": { "mode": "unit_scaling" },
+  "node_doping_file": "doping.csv",
+  "doping": [{ "region": "R.Silicon", "donors": 1.0000000000000034e16, "acceptors": 0.0 }],
+  "contacts": [
+    { "name": "cathode", "type": "ohmic", "bias": 0.0 },
+    {
+      "name": "anode", "type": "schottky", "barrier_eV": 0.70,
+      "electron_surface_recombination_velocity_m_per_s": 4.91e6,
+      "hole_surface_recombination_velocity_m_per_s": 2.74e6,
+      "emission_model": "thermionic_robin", "bias": 0.0
+    }
+  ],
+  "solver": {
+    "method": "newton", "max_iter": 150, "reltol": 1e-5,
+    "diagnostics": false, "damping_psi": 0.5, "max_update": 5.0,
+    "quasi_fermi_update_limit_V": 0.0, "warm_start": true,
+    "taun": 1e-5, "taup": 3e-6,
+    "recombination": ["srh"]
+  },
+  "sweep": {
+    "mode": "iv", "start": 0.0, "stop": 0.82, "step": 0.02,
+    "initial_step": 0.02,
+    "write_state_every_point_prefix": "outputs/ablations/full_materials/states/schottky",
+    "write_vtk": false, "contact": "anode", "current_contact": "anode"
+  },
+  "validation": { "check_contact_quasi_fermi_bias": false }
+}
