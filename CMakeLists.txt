@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.21)
 project(vela-tcad VERSION 0.1.0 LANGUAGES C CXX)
 
 # ---------------------------------------------------------------------------
@@ -57,6 +57,35 @@ set_property(CACHE VELA_SPARSELU_ORDERING PROPERTY STRINGS COLAMD AMD)
 # build directory.
 if(MINGW)
     get_filename_component(VELA_MINGW_RUNTIME_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
+
+    # An absolute gcc/g++ path does not help cc1/cc1plus find the UCRT64 DLLs
+    # when a build is launched from Explorer or a plain PowerShell session.
+    # Wrap compile commands so already-configured build trees remain usable
+    # without requiring a machine-wide or per-shell PATH modification.  Keep
+    # an explicitly supplied launcher (for example ccache) untouched.
+    set(VELA_UCRT64_COMPILER_LAUNCHER
+        "${CMAKE_CURRENT_SOURCE_DIR}/scripts/with_ucrt64_path.cmd")
+    if(NOT CMAKE_C_COMPILER_LAUNCHER)
+        set(CMAKE_C_COMPILER_LAUNCHER
+            "${VELA_UCRT64_COMPILER_LAUNCHER}"
+            CACHE FILEPATH "Launcher that supplies the MSYS2 UCRT64 compiler PATH")
+    endif()
+    if(NOT CMAKE_CXX_COMPILER_LAUNCHER)
+        set(CMAKE_CXX_COMPILER_LAUNCHER
+            "${VELA_UCRT64_COMPILER_LAUNCHER}"
+            CACHE FILEPATH "Launcher that supplies the MSYS2 UCRT64 compiler PATH")
+    endif()
+    if(NOT CMAKE_C_LINKER_LAUNCHER)
+        set(CMAKE_C_LINKER_LAUNCHER
+            "${VELA_UCRT64_COMPILER_LAUNCHER}"
+            CACHE FILEPATH "Launcher that supplies the MSYS2 UCRT64 linker PATH")
+    endif()
+    if(NOT CMAKE_CXX_LINKER_LAUNCHER)
+        set(CMAKE_CXX_LINKER_LAUNCHER
+            "${VELA_UCRT64_COMPILER_LAUNCHER}"
+            CACHE FILEPATH "Launcher that supplies the MSYS2 UCRT64 linker PATH")
+    endif()
+
     foreach(_vela_runtime_dll IN ITEMS
         libgcc_s_seh-1.dll
         libstdc++-6.dll

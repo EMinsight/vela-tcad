@@ -94,7 +94,7 @@ On Windows, this repository is developed primarily in MSYS2 UCRT64. If a tool or
 
 Prerequisites:
 
-- CMake 3.20 or newer
+- CMake 3.21 or newer
 - C++20 compiler
 - Boost headers (Boost.Multiprecision)
 - Eigen3
@@ -144,13 +144,22 @@ import executable and HDF5-specific tests.
 ### Windows / MSYS2 UCRT64
 
 The Windows development environment uses MSYS2 UCRT64, typically at
-`D:\msys64`. Keep UCRT64 tools first on `PATH`:
+`D:\msys64`. The Windows presets prepend the required UCRT64 directories to
+their configure, build, and test environments, so they also work from a plain
+PowerShell session:
 
 ```powershell
-$env:Path = "D:\msys64\ucrt64\bin;D:\msys64\usr\bin;$env:Path"
-cmake --preset windows-ucrt64-debug
-cmake --build --preset windows-ucrt64-debug
+D:\msys64\ucrt64\bin\cmake.exe --preset windows-ucrt64-debug
+D:\msys64\ucrt64\bin\cmake.exe --build --preset windows-ucrt64-debug
 ```
+
+Configured MinGW build trees also use the repository compiler and linker
+launcher in `scripts/with_ucrt64_path.cmd`. Consequently, a direct command such
+as `D:\msys64\ucrt64\bin\cmake.exe --build build` can start `cc1`/`cc1plus`,
+`collect2`, and `ld` without manually editing `PATH`. This setting is
+repository-local and does not change the Windows system or user environment.
+Set the UCRT64 `PATH` manually only when invoking raw MSYS2 tools outside these
+CMake workflows.
 
 Install packages from a UCRT64 shell:
 
