@@ -43,6 +43,45 @@ Real gssFittedJumpDerivative(Real h)
     return h < 0.0 ? safeExponential(h) : 1.0 + h;
 }
 
+std::array<Real, 3> averageBoxTriangleMeasures(
+    const Real x[3], const Real y[3], Real area)
+{
+    std::array<Real, 3> measures{};
+    // Sentaurus AverageBoxMethod uses the signed circumcentric dual measure.
+    // In particular, it does not replace an obtuse triangle by the positive
+    // Meyer mixed-area 1/2,1/4,1/4 fallback.  MeasureCoefficients.debug from
+    // the SingleDevice mesh confirms the signed rule at the 100.73-degree
+    // cell adjacent to node 1816.  Keeping the signed local measures is also
+    // necessary for the element contributions to cancel the fitted stiffness
+    // at the converged Sentaurus state.
+    const auto squaredDistance = [&](int a, int b) {
+        const Real dx = x[b] - x[a];
+        const Real dy = y[b] - y[a];
+        return dx * dx + dy * dy;
+    };
+    const auto cotangent = [&](int vertex, int a, int b) {
+        const Real uax = x[a] - x[vertex];
+        const Real uay = y[a] - y[vertex];
+        const Real ubx = x[b] - x[vertex];
+        const Real uby = y[b] - y[vertex];
+        const Real cross = std::abs(uax * uby - uay * ubx);
+        return (uax * ubx + uay * uby) / cross;
+    };
+    for (int i = 0; i < 3; ++i) {
+        const int j = (i + 1) % 3;
+        const int k = (i + 2) % 3;
+        measures[static_cast<std::size_t>(i)] = 0.125 * (
+            squaredDistance(i, k) * cotangent(j, i, k) +
+            squaredDistance(i, j) * cotangent(k, i, j));
+    }
+    const Real sum = measures[0] + measures[1] + measures[2];
+    if (sum > 0.0) {
+        for (Real& measure : measures)
+            measure *= area / sum;
+    }
+    return measures;
+}
+
 struct Eq231CellResidualRecord {
     Index cellId = 0;
     Index regionId = 0;
@@ -88,6 +127,16 @@ bool isSiliconDioxide(const std::string& material)
         lower.push_back(static_cast<char>(std::tolower(ch)));
     return lower == "sio2" || lower == "oxide" ||
            lower == "silicondioxide";
+}
+
+bool isPolySilicon(const std::string& material)
+{
+    std::string lower;
+    lower.reserve(material.size());
+    for (const unsigned char ch : material)
+        lower.push_back(static_cast<char>(std::tolower(ch)));
+    return lower == "polysilicon" || lower == "poly" ||
+           lower == "poly_si" || lower == "poly-si";
 }
 
 std::string csvField(const std::string& value)
@@ -691,6 +740,7 @@ solveElectronDensityGradientPotentialLikeGlobal(
         config.globalDiscretization != "cvfem_full" &&
         config.globalDiscretization != "p1_lambda_direct" &&
         config.globalDiscretization != "gss_potentiallike_fitted" &&
+        config.globalDiscretization != "sentaurus_box" &&
         config.globalDiscretization != "conservative_sqrt_fitted" &&
         config.globalDiscretization != "gss_density_fitted") {
         throw std::invalid_argument(
@@ -716,7 +766,10 @@ solveElectronDensityGradientPotentialLikeGlobal(
         config.globalDiscretization == "p1_lambda_direct";
     const bool useGssFittedFlux =
         config.globalDiscretization == "gss_density_fitted" ||
-        config.globalDiscretization == "gss_potentiallike_fitted";
+        config.globalDiscretization == "gss_potentiallike_fitted" ||
+        config.globalDiscretization == "sentaurus_box";
+    const bool useSentaurusBox =
+        config.globalDiscretization == "sentaurus_box";
     const bool useConservativeSqrtFlux =
         config.globalDiscretization == "conservative_sqrt_fitted";
     if ((useGssFittedFlux || useConservativeSqrtFlux) &&
@@ -724,34 +777,6 @@ solveElectronDensityGradientPotentialLikeGlobal(
         throw std::invalid_argument(
             "explicit-material fitted density-gradient modes cannot use an "
             "oxide WKB boundary.");
-    }
-    VectorXd continuousPotential = VectorXd::Zero(nodeCount);
-    if (!stateIsLambda)
-        continuousPotential = -nodeOutputBandDrive_V;
-    if (stateIsLambda) {
-        if (initialLambda_V.size() == nodeCount)
-            continuousPotential = initialLambda_V;
-        else if (initialPotentialLike_V.size() == nodeCount)
-            continuousPotential =
-                initialPotentialLike_V + nodeOutputBandDrive_V;
-    } else if (initialPotentialLike_V.size() == nodeCount) {
-        continuousPotential = initialPotentialLike_V;
-    } else if (initialLambda_V.size() == nodeCount) {
-        continuousPotential = initialLambda_V - nodeOutputBandDrive_V;
-    }
-    for (int i = 0; i < nodeCount; ++i) {
-        if (!std::isfinite(continuousPotential(i)))
-            continuousPotential(i) = stateIsLambda
-                ? 0.0 : -nodeOutputBandDrive_V(i);
-        if (!activeNodes[static_cast<std::size_t>(i)])
-            continuousPotential(i) = 0.0;
-    }
-    for (const auto& [node, lambda] : dirichletLambda_V) {
-        if (node >= mesh.numNodes() || !std::isfinite(lambda))
-            throw std::invalid_argument("invalid global density-gradient Dirichlet boundary.");
-        continuousPotential(static_cast<int>(node)) = stateIsLambda
-            ? lambda
-            : lambda - nodeOutputBandDrive_V(static_cast<int>(node));
     }
     for (const auto& data : cellMaterials) {
         if (data.cellId >= mesh.numCells() || !(data.coefficientVm2 > 0.0) ||
@@ -766,7 +791,6 @@ solveElectronDensityGradientPotentialLikeGlobal(
                 throw std::invalid_argument("nonfinite global density-gradient cell drive.");
         }
     }
-
     struct OxideInterfaceSegment {
         Index edgeId = 0;
         Index oxideCellId = 0;
@@ -824,6 +848,98 @@ solveElectronDensityGradientPotentialLikeGlobal(
 
     const Real lengthScale_m = units.lengthMPerInternal();
     const Real areaScale_m2 = lengthScale_m * lengthScale_m;
+    VectorXd maximumMaterialBandDrive = VectorXd::Constant(
+        nodeCount, -std::numeric_limits<Real>::infinity());
+    std::vector<bool> materialInterfaceNodes(
+        static_cast<std::size_t>(nodeCount), false);
+    std::vector<bool> interfaceHasSilicon(
+        static_cast<std::size_t>(nodeCount), false);
+    std::vector<bool> interfaceHasPolysilicon(
+        static_cast<std::size_t>(nodeCount), false);
+    std::vector<bool> insulatorReentrantCornerNodes(
+        static_cast<std::size_t>(nodeCount), false);
+    if (useSentaurusBox) {
+        std::vector<bool> hasTransport(
+            static_cast<std::size_t>(nodeCount), false);
+        std::vector<bool> hasNonTransport(
+            static_cast<std::size_t>(nodeCount), false);
+        std::vector<std::map<std::string, int>> nonTransportCellCounts(
+            static_cast<std::size_t>(nodeCount));
+        for (const auto& data : cellMaterials) {
+            const Cell& cell = mesh.getCell(data.cellId);
+            const Region& region = mesh.getRegion(cell.region_id);
+            for (int local = 0; local < 3; ++local) {
+                const int node = static_cast<int>(cell.node_ids[local]);
+                maximumMaterialBandDrive(node) = std::max(
+                    maximumMaterialBandDrive(node),
+                    data.materialBandDrive_V[local]);
+                if (data.isTransport)
+                    hasTransport[static_cast<std::size_t>(node)] = true;
+                else {
+                    hasNonTransport[static_cast<std::size_t>(node)] = true;
+                    ++nonTransportCellCounts[static_cast<std::size_t>(node)]
+                        [region.material];
+                }
+                if (data.isTransport) {
+                    if (isPolySilicon(region.material))
+                        interfaceHasPolysilicon[static_cast<std::size_t>(node)] = true;
+                    else
+                        interfaceHasSilicon[static_cast<std::size_t>(node)] = true;
+                }
+            }
+        }
+        for (int node = 0; node < nodeCount; ++node) {
+            materialInterfaceNodes[static_cast<std::size_t>(node)] =
+                hasTransport[static_cast<std::size_t>(node)] &&
+                hasNonTransport[static_cast<std::size_t>(node)];
+            const auto& counts = nonTransportCellCounts[
+                static_cast<std::size_t>(node)];
+            if (!hasTransport[static_cast<std::size_t>(node)] &&
+                counts.size() == 2) {
+                const int first = counts.begin()->second;
+                const int second = std::next(counts.begin())->second;
+                insulatorReentrantCornerNodes[static_cast<std::size_t>(node)] =
+                    first + second == 6 &&
+                    std::min(first, second) == 2 &&
+                    std::max(first, second) == 4;
+            }
+        }
+    }
+    VectorXd stateBandDrive_V = nodeOutputBandDrive_V;
+    if (useSentaurusBox) {
+        for (int node = 0; node < nodeCount; ++node) {
+            if (std::isfinite(maximumMaterialBandDrive(node)))
+                stateBandDrive_V(node) = maximumMaterialBandDrive(node);
+        }
+    }
+    VectorXd continuousPotential = VectorXd::Zero(nodeCount);
+    if (!stateIsLambda)
+        continuousPotential = -stateBandDrive_V;
+    if (stateIsLambda) {
+        if (initialLambda_V.size() == nodeCount)
+            continuousPotential = initialLambda_V;
+        else if (initialPotentialLike_V.size() == nodeCount)
+            continuousPotential = initialPotentialLike_V + stateBandDrive_V;
+    } else if (initialPotentialLike_V.size() == nodeCount) {
+        continuousPotential = initialPotentialLike_V;
+    } else if (initialLambda_V.size() == nodeCount) {
+        continuousPotential = initialLambda_V - stateBandDrive_V;
+    }
+    for (int i = 0; i < nodeCount; ++i) {
+        if (!std::isfinite(continuousPotential(i)))
+            continuousPotential(i) = stateIsLambda
+                ? 0.0 : -stateBandDrive_V(i);
+        if (!activeNodes[static_cast<std::size_t>(i)])
+            continuousPotential(i) = 0.0;
+    }
+    for (const auto& [node, lambda] : dirichletLambda_V) {
+        if (node >= mesh.numNodes() || !std::isfinite(lambda))
+            throw std::invalid_argument(
+                "invalid global density-gradient Dirichlet boundary.");
+        continuousPotential(static_cast<int>(node)) = stateIsLambda
+            ? lambda
+            : lambda - stateBandDrive_V(static_cast<int>(node));
+    }
     VectorXd conservativeRowLogReference = VectorXd::Zero(nodeCount);
     if (useConservativeSqrtFlux) {
         conservativeRowLogReference = VectorXd::Constant(
@@ -854,7 +970,7 @@ solveElectronDensityGradientPotentialLikeGlobal(
         residual = VectorXd::Zero(nodeCount);
         if (triplets != nullptr) {
             triplets->clear();
-                triplets->reserve(cellMaterials.size() * 18 + nodeCount);
+            triplets->reserve(cellMaterials.size() * 18 + nodeCount);
         }
         if (diagnostic != nullptr) {
             diagnostic->cells.clear();
@@ -907,6 +1023,24 @@ solveElectronDensityGradientPotentialLikeGlobal(
                         state(node) + data.materialBandDrive_V[local];
                     w[local] = (data.dynamicDrivingPotential_V[local] -
                         state(node)) / thermalVoltage_V;
+                    // Direct NewtonPlot and adjacent-row probes recover
+                    // separate oxide, Silicon, and PolySilicon traces.
+                    // Apply the side trace in w so the residual and analytic
+                    // Jacobian use the identical shifted state.  All offsets
+                    // are explicit and neutral by default.
+                    if (useSentaurusBox && materialInterfaceNodes[
+                            static_cast<std::size_t>(node)]) {
+                        Real sideOffset =
+                            config.sentaurusInterfaceInsulatorHalfJumpOffset;
+                        if (data.isTransport) {
+                            const Region& region = mesh.getRegion(cell.region_id);
+                            sideOffset = isPolySilicon(region.material)
+                                ? config.
+                                    sentaurusInterfacePolysiliconHalfJumpOffset
+                                : config.sentaurusInterfaceSiliconHalfJumpOffset;
+                        }
+                        w[local] += 2.0 * sideOffset;
+                    }
                 }
             }
             const Real x[3] = {p0.x * lengthScale_m,
@@ -918,6 +1052,10 @@ solveElectronDensityGradientPotentialLikeGlobal(
             const Real b[3] = {y[1] - y[2], y[2] - y[0], y[0] - y[1]};
             const Real c[3] = {x[2] - x[1], x[0] - x[2], x[1] - x[0]};
             const Real fourArea2 = 4.0 * cellArea_m2 * cellArea_m2;
+            const std::array<Real, 3> sentaurusBoxMeasures =
+                useSentaurusBox
+                ? averageBoxTriangleMeasures(x, y, cellArea_m2)
+                : std::array<Real, 3>{};
             Real cvfemFlux[3][3]{};
             if (config.globalDiscretization == "cvfem_full") {
                 const Real centroidX = (x[0] + x[1] + x[2]) / 3.0;
@@ -972,7 +1110,9 @@ solveElectronDensityGradientPotentialLikeGlobal(
                 const int row = static_cast<int>(nodes[a]);
                 if (!activeNodes[static_cast<std::size_t>(row)])
                     continue;
-                const Real lumpedVolume = cellArea_m2 / 3.0;
+                const Real lumpedVolume = useSentaurusBox
+                    ? sentaurusBoxMeasures[static_cast<std::size_t>(a)]
+                    : cellArea_m2 / 3.0;
                 // Eq. 231 is written for the dimensionless beta-weighted
                 // driving potential w.  With C=gamma*hbar^2/(6*m*q), its
                 // voltage form is div(grad(w)) + theta*|grad(w)|^2
@@ -1133,8 +1273,45 @@ solveElectronDensityGradientPotentialLikeGlobal(
                     gradientContribution =
                         config.theta * gradientSquared * lumpedVolume;
                 }
-                const Real reactionContribution =
-                    equationScale * lambda[a] * lumpedVolume * reactionWeight;
+                const Real reactionLambda = useSentaurusBox
+                    ? state(row) + maximumMaterialBandDrive(row)
+                    : lambda[a];
+                Real interfaceReactionMultiplier = 1.0;
+                Real interfaceReactionOffset_V = 0.0;
+                if (useSentaurusBox && materialInterfaceNodes[
+                        static_cast<std::size_t>(row)]) {
+                    if (data.isTransport) {
+                        const bool poly = isPolySilicon(cellRegion.material);
+                        interfaceReactionMultiplier = poly
+                            ? config.sentaurusInterfacePolysiliconReactionWeight
+                            : config.sentaurusInterfaceSiliconReactionWeight;
+                        interfaceReactionOffset_V = poly
+                            ? config.sentaurusInterfacePolysiliconReactionOffset_V
+                            : config.sentaurusInterfaceSiliconReactionOffset_V;
+                    } else {
+                        const bool polyOnly = interfaceHasPolysilicon[
+                            static_cast<std::size_t>(row)] &&
+                            !interfaceHasSilicon[static_cast<std::size_t>(row)];
+                        interfaceReactionMultiplier = polyOnly
+                            ? config.
+                                sentaurusInterfaceInsulatorAtPolysiliconReactionWeight
+                            : config.
+                                sentaurusInterfaceInsulatorAtSiliconReactionWeight;
+                        interfaceReactionOffset_V = polyOnly
+                            ? config.
+                                sentaurusInterfaceInsulatorAtPolysiliconReactionOffset_V
+                            : config.
+                                sentaurusInterfaceInsulatorAtSiliconReactionOffset_V;
+                    }
+                } else if (useSentaurusBox && !data.isTransport &&
+                           insulatorReentrantCornerNodes[
+                               static_cast<std::size_t>(row)]) {
+                    interfaceReactionMultiplier = config.
+                        sentaurusInsulatorReentrantCornerReactionWeight;
+                }
+                const Real reactionContribution = equationScale *
+                    (reactionLambda * interfaceReactionMultiplier +
+                     interfaceReactionOffset_V) * lumpedVolume * reactionWeight;
                 residual(row) += gradientContribution + reactionContribution;
                 if (diagnostic != nullptr) {
                     record.gradientSquared[a] = gradientContribution;
@@ -1145,7 +1322,8 @@ solveElectronDensityGradientPotentialLikeGlobal(
                 addJacobian(
                     row, row, equationScale * lumpedVolume *
                         (reactionWeight +
-                         lambda[a] * reactionWeightDerivative));
+                         reactionLambda * reactionWeightDerivative) *
+                        interfaceReactionMultiplier);
                 const bool fittedThetaHalf =
                     (config.globalDiscretization == "exponential_fitted" ||
                      useGssFittedFlux || useConservativeSqrtFlux) &&
@@ -1198,7 +1376,7 @@ solveElectronDensityGradientPotentialLikeGlobal(
         for (const auto& [node, lambda] : dirichletLambda_V) {
             const int row = static_cast<int>(node);
             residual(row) = state(row) - (stateIsLambda
-                ? lambda : lambda - nodeOutputBandDrive_V(row));
+                ? lambda : lambda - stateBandDrive_V(row));
             addJacobian(row, row, 1.0);
         }
     };
@@ -1208,7 +1386,7 @@ solveElectronDensityGradientPotentialLikeGlobal(
         assemble(continuousPotential, diagnosticResidual, nullptr, &diagnostic);
         writeEq231ResidualDiagnostic(
             config.residualDiagnosticPrefix, mesh, diagnostic,
-            continuousPotential, nodeOutputBandDrive_V, activeNodes,
+            continuousPotential, stateBandDrive_V, activeNodes,
             dirichletLambda_V, stateIsLambda);
     }
     for (int iteration = 1; iteration <= config.maxIterations; ++iteration) {
@@ -1274,7 +1452,7 @@ solveElectronDensityGradientPotentialLikeGlobal(
         for (const auto& [node, lambda] : dirichletLambda_V) {
             continuousPotential(static_cast<int>(node)) = stateIsLambda
                 ? lambda
-                : lambda - nodeOutputBandDrive_V(static_cast<int>(node));
+                : lambda - stateBandDrive_V(static_cast<int>(node));
         }
         result.iterations = iteration;
         result.lastUpdateInfinityNorm_V = lineScale * updateNorm;
@@ -1294,7 +1472,7 @@ solveElectronDensityGradientPotentialLikeGlobal(
         result.potential_V = continuousPotential;
     } else {
         result.potentialLike_V = continuousPotential;
-        result.potential_V = continuousPotential + nodeOutputBandDrive_V;
+        result.potential_V = continuousPotential + stateBandDrive_V;
     }
     result.potentialInfinityNorm_V =
         result.potential_V.lpNorm<Eigen::Infinity>();

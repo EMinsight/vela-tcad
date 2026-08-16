@@ -51,6 +51,40 @@ DeviceMesh twoMaterialStripMesh()
     return mesh;
 }
 
+DeviceMesh twoInsulatorReentrantCornerMesh()
+{
+    DeviceMesh mesh;
+    mesh.addNode({0, 0.0, 0.0});
+    mesh.addNode({1, 1.0e-9, 0.0});
+    mesh.addNode({2, 0.5e-9, 0.8660254037844386e-9});
+    mesh.addNode({3, -0.5e-9, 0.8660254037844386e-9});
+    mesh.addNode({4, -1.0e-9, 0.0});
+    mesh.addNode({5, -0.5e-9, -0.8660254037844386e-9});
+    mesh.addNode({6, 0.5e-9, -0.8660254037844386e-9});
+    mesh.addRegion({0, "oxide", "SiO2", {0, 1}});
+    mesh.addRegion({1, "nitride", "Nitride", {2, 3, 4, 5}});
+    mesh.addCell({0, CellType::Tri3, 0, {0, 1, 2}});
+    mesh.addCell({1, CellType::Tri3, 0, {0, 2, 3}});
+    mesh.addCell({2, CellType::Tri3, 1, {0, 3, 4}});
+    mesh.addCell({3, CellType::Tri3, 1, {0, 4, 5}});
+    mesh.addCell({4, CellType::Tri3, 1, {0, 5, 6}});
+    mesh.addCell({5, CellType::Tri3, 1, {0, 6, 1}});
+    mesh.buildEdges();
+    return mesh;
+}
+
+DeviceMesh obtuseTriangleMesh()
+{
+    DeviceMesh mesh;
+    mesh.addNode({0, 0.0, 0.0});
+    mesh.addNode({1, 2.0e-9, 0.0});
+    mesh.addNode({2, 0.5e-9, 0.2e-9});
+    mesh.addRegion({0, "silicon", "Silicon", {0}});
+    mesh.addCell({0, CellType::Tri3, 0, {0, 1, 2}});
+    mesh.buildEdges();
+    return mesh;
+}
+
 } // namespace
 
 TEST_CASE("Density-gradient coefficient follows Ancona-Tiersten form",
@@ -197,6 +231,208 @@ TEST_CASE("GSS fitted operator preserves the linear sqrt-density limit",
     REQUIRE(result.converged);
     REQUIRE(result.residualInfinityNorm < 1.0e-9);
     REQUIRE(result.potential_V.lpNorm<Eigen::Infinity>() < 1.0e-9);
+}
+
+TEST_CASE("Sentaurus box uses the maximum material-side reaction trace",
+          "[density_gradient][quantum][sentaurus_box][material_interface][manufactured]")
+{
+    const DeviceMesh mesh = twoMaterialStripMesh();
+    const Real vt = constants::Vt_300;
+    std::vector<DensityGradientCellMaterial> materials;
+    for (Index cellId = 0; cellId < mesh.numCells(); ++cellId) {
+        DensityGradientCellMaterial material;
+        material.cellId = cellId;
+        material.isTransport = cellId < 2;
+        material.coefficientVm2 = densityGradientCoefficientVm2(
+            material.isTransport ? 3.6 : 1.0,
+            material.isTransport ? 1.0 : 0.42);
+        const Real bandDrive = material.isTransport ? 0.2 : 0.5;
+        for (int local = 0; local < 3; ++local) {
+            material.materialBandDrive_V[local] = bandDrive;
+            material.dynamicDrivingPotential_V[local] = 0.0;
+        }
+        materials.push_back(material);
+    }
+
+    DensityGradientQuantumPotentialConfig config;
+    config.globalDiscretization = "sentaurus_box";
+    config.maxIterations = 3;
+    config.relativeTolerance = 0.0;
+    config.absoluteTolerance_V = 1.0e-12;
+    // Deliberately choose the Silicon-side output owner. sentaurus_box must
+    // still use the maximum material-side drive (0.5 V) at shared vertices.
+    const VectorXd outputBandDrive = VectorXd::Constant(6, 0.2);
+    const VectorXd exactPotentialLike = VectorXd::Constant(6, -0.5);
+    const auto result = solveElectronDensityGradientPotentialLikeGlobal(
+        mesh, materials, outputBandDrive, std::vector<bool>(6, true),
+        {{0, -0.3}, {2, 0.0}, {3, -0.3}, {5, 0.0}}, vt,
+        PhysicalUnitSystem::legacySI(), config, VectorXd::Zero(6),
+        exactPotentialLike);
+
+    REQUIRE(result.converged);
+    REQUIRE(result.residualInfinityNorm < 1.0e-12);
+    REQUIRE(std::abs(result.potential_V(1)) < 1.0e-12);
+    REQUIRE(std::abs(result.potential_V(4)) < 1.0e-12);
+    REQUIRE((result.potentialLike_V - exactPotentialLike)
+                .lpNorm<Eigen::Infinity>() < 1.0e-12);
+
+    SECTION("explicit interface trace offset has a restart-consistent root") {
+        config.sentaurusInterfaceInsulatorHalfJumpOffset = 0.02012;
+        config.sentaurusInterfaceSiliconHalfJumpOffset = -4.6008840569922854e-5;
+        config.sentaurusInterfacePolysiliconHalfJumpOffset =
+            0.0026674992132365016;
+        config.sentaurusInterfaceSiliconReactionWeight = 0.3370294035925238;
+        config.sentaurusInterfacePolysiliconReactionWeight = 1.044775636206889;
+        config.sentaurusInterfaceInsulatorAtSiliconReactionWeight =
+            2.5714393713226125;
+        config.sentaurusInterfaceInsulatorAtPolysiliconReactionWeight =
+            2.591446049803917;
+        config.sentaurusInterfaceSiliconReactionOffset_V = -2.0e-4;
+        config.sentaurusInterfaceInsulatorAtSiliconReactionOffset_V = -1.5e-3;
+        config.maxIterations = 100;
+        config.damping = 0.5;
+        const auto shifted = solveElectronDensityGradientPotentialLikeGlobal(
+            mesh, materials, outputBandDrive, std::vector<bool>(6, true),
+            {{0, -0.3}, {2, 0.0}, {3, -0.3}, {5, 0.0}}, vt,
+            PhysicalUnitSystem::legacySI(), config, VectorXd::Zero(6),
+            exactPotentialLike);
+        REQUIRE(shifted.converged);
+        REQUIRE(shifted.residualInfinityNorm < 1.0e-9);
+        REQUIRE((shifted.potentialLike_V - exactPotentialLike)
+                    .lpNorm<Eigen::Infinity>() > 1.0e-8);
+
+        const auto restarted = solveElectronDensityGradientPotentialLikeGlobal(
+            mesh, materials, outputBandDrive, std::vector<bool>(6, true),
+            {{0, -0.3}, {2, 0.0}, {3, -0.3}, {5, 0.0}}, vt,
+            PhysicalUnitSystem::legacySI(), config, shifted.potential_V,
+            shifted.potentialLike_V);
+        REQUIRE(restarted.converged);
+        REQUIRE((restarted.potentialLike_V - shifted.potentialLike_V)
+                    .lpNorm<Eigen::Infinity>() < 1.0e-9);
+    }
+}
+
+TEST_CASE("Sentaurus box keeps the signed AverageBox measure on an obtuse cell",
+          "[density_gradient][quantum][sentaurus_box][average_box][obtuse]")
+{
+    const DeviceMesh mesh = obtuseTriangleMesh();
+    const Real x[3] = {0.0, 2.0e-9, 0.5e-9};
+    const Real y[3] = {0.0, 0.0, 0.2e-9};
+    const Real area = 0.5 * std::abs(
+        (x[1] - x[0]) * (y[2] - y[0]) -
+        (x[2] - x[0]) * (y[1] - y[0]));
+    const Real b[3] = {y[1] - y[2], y[2] - y[0], y[0] - y[1]};
+    const Real c[3] = {x[2] - x[1], x[0] - x[2], x[1] - x[0]};
+    const auto distanceSquared = [&](int first, int second) {
+        return (x[second] - x[first]) * (x[second] - x[first]) +
+            (y[second] - y[first]) * (y[second] - y[first]);
+    };
+    const auto cotangent = [&](int vertex, int first, int second) {
+        const Real firstX = x[first] - x[vertex];
+        const Real firstY = y[first] - y[vertex];
+        const Real secondX = x[second] - x[vertex];
+        const Real secondY = y[second] - y[vertex];
+        return (firstX * secondX + firstY * secondY) /
+            std::abs(firstX * secondY - firstY * secondX);
+    };
+    const Real averageBoxMeasure = 0.125 * (
+        distanceSquared(2, 1) * cotangent(0, 2, 1) +
+        distanceSquared(2, 0) * cotangent(1, 2, 0));
+    REQUIRE(averageBoxMeasure > 0.5 * area);
+
+    const Real w[3] = {0.05, 0.05, 0.0};
+    Real fittedFlux = 0.0;
+    for (int neighbour : {0, 1}) {
+        const Real stiffness = area *
+            (b[2] * b[neighbour] + c[2] * c[neighbour]) /
+            (4.0 * area * area);
+        const Real halfJump = 0.5 * (w[neighbour] - w[2]);
+        fittedFlux += -2.0 * stiffness *
+            (halfJump + 0.5 * halfJump * halfJump);
+    }
+    const Real coefficient = densityGradientCoefficientVm2(3.6, 1.0);
+    const Real exactLambda =
+        -fittedFlux * coefficient / (2.0 * averageBoxMeasure);
+
+    DensityGradientCellMaterial material;
+    material.cellId = 0;
+    material.coefficientVm2 = coefficient;
+    for (int local = 0; local < 3; ++local) {
+        material.dynamicDrivingPotential_V[local] =
+            exactLambda + constants::Vt_300 * w[local];
+    }
+    DensityGradientQuantumPotentialConfig config;
+    config.globalDiscretization = "sentaurus_box";
+    config.maxIterations = 4;
+    config.damping = 1.0;
+    config.relativeTolerance = 0.0;
+    config.absoluteTolerance_V = 1.0e-12;
+    const auto result = solveElectronDensityGradientPotentialLikeGlobal(
+        mesh, {material}, VectorXd::Zero(3), std::vector<bool>(3, true),
+        {{0, exactLambda}, {1, exactLambda}}, constants::Vt_300,
+        PhysicalUnitSystem::legacySI(), config,
+        VectorXd::Constant(3, exactLambda));
+
+    REQUIRE(result.converged);
+    REQUIRE(result.residualInfinityNorm < 1.0e-9);
+    REQUIRE(result.potential_V(2) ==
+            Catch::Approx(exactLambda).margin(1.0e-11));
+}
+
+TEST_CASE("Sentaurus box closes a two-four insulator re-entrant corner",
+          "[density_gradient][quantum][sentaurus_box][insulator_corner]")
+{
+    const DeviceMesh mesh = twoInsulatorReentrantCornerMesh();
+    const Real vt = constants::Vt_300;
+    std::vector<DensityGradientCellMaterial> materials;
+    for (Index cellId = 0; cellId < mesh.numCells(); ++cellId) {
+        DensityGradientCellMaterial material;
+        material.cellId = cellId;
+        material.isTransport = false;
+        const bool oxide = cellId < 2;
+        material.coefficientVm2 = densityGradientCoefficientVm2(
+            1.0, oxide ? 0.5 : 0.42);
+        const Real bandDrive = oxide ? 0.2 : 0.5;
+        for (int local = 0; local < 3; ++local) {
+            material.materialBandDrive_V[local] = bandDrive;
+            material.dynamicDrivingPotential_V[local] = 0.0;
+        }
+        materials.push_back(material);
+    }
+
+    DensityGradientQuantumPotentialConfig config;
+    config.globalDiscretization = "sentaurus_box";
+    config.maxIterations = 80;
+    config.damping = 0.5;
+    config.relativeTolerance = 0.0;
+    config.absoluteTolerance_V = 1.0e-12;
+    const std::unordered_map<Index, Real> boundary = {
+        {1, 0.1}, {2, 0.0}, {3, 0.0},
+        {4, 0.0}, {5, 0.0}, {6, 0.0}};
+    const VectorXd outputBandDrive = VectorXd::Constant(7, 0.5);
+    const auto generic = solveElectronDensityGradientPotentialLikeGlobal(
+        mesh, materials, outputBandDrive, std::vector<bool>(7, true),
+        boundary, vt, PhysicalUnitSystem::legacySI(), config,
+        VectorXd::Zero(7), VectorXd::Zero(7));
+    REQUIRE(generic.converged);
+
+    config.sentaurusInsulatorReentrantCornerReactionWeight = 0.5;
+    const auto closed = solveElectronDensityGradientPotentialLikeGlobal(
+        mesh, materials, outputBandDrive, std::vector<bool>(7, true),
+        boundary, vt, PhysicalUnitSystem::legacySI(), config,
+        generic.potential_V, generic.potentialLike_V);
+    REQUIRE(closed.converged);
+    REQUIRE(closed.residualInfinityNorm < 1.0e-9);
+    REQUIRE(std::abs(closed.potentialLike_V(0) -
+                     generic.potentialLike_V(0)) > 1.0e-6);
+
+    const auto restarted = solveElectronDensityGradientPotentialLikeGlobal(
+        mesh, materials, outputBandDrive, std::vector<bool>(7, true),
+        boundary, vt, PhysicalUnitSystem::legacySI(), config,
+        closed.potential_V, closed.potentialLike_V);
+    REQUIRE(restarted.converged);
+    REQUIRE((restarted.potentialLike_V - closed.potentialLike_V)
+                .lpNorm<Eigen::Infinity>() < 1.0e-9);
 }
 
 TEST_CASE("Sentaurus Eq 233 step function is stable at zero",

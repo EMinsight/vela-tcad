@@ -101,6 +101,9 @@ class SingleDeviceReferenceFixtureTest(unittest.TestCase):
         self.assertEqual(1.0e10, poly["ni"])
         self.assertEqual(1417.0, poly["mun"])
         self.assertEqual(2.8e19, poly["Nc_m3"])
+        self.assertEqual(
+            1.0906506732296395,
+            poly["electron_quantum_coefficient_mass_ratio"])
         self.assertEqual(0.9, oxide["electron_affinity_eV"])
 
     def test_sdevice_frontend_maps_complete_singledevice_physics(self) -> None:

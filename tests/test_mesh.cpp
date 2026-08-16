@@ -275,11 +275,13 @@ TEST_CASE("MaterialDatabase reads material-specific electron quantum parameters"
 {
     const auto path = writeMeshReaderTestFile(
         "material_quantum_parameters",
-        R"json({"materials":[{"name":"Si","electron_quantum_gamma":4.5,"electron_quantum_dos_mass_ratio":1.07}]})json");
+        R"json({"materials":[{"name":"Si","electron_quantum_gamma":4.5,"electron_quantum_dos_mass_ratio":1.07,"electron_quantum_coefficient_mass_ratio":1.09}]})json");
     MaterialDatabase db(path.path.string());
     const Material& silicon = db.getMaterial("Si");
     REQUIRE(silicon.electron_quantum_gamma == Catch::Approx(4.5));
     REQUIRE(silicon.electron_quantum_dos_mass_ratio == Catch::Approx(1.07));
+    REQUIRE(silicon.electron_quantum_coefficient_mass_ratio ==
+            Catch::Approx(1.09));
 }
 
 static void requireReadThrowsContaining(const std::filesystem::path& path,

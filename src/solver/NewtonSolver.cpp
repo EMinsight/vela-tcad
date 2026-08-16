@@ -1306,6 +1306,10 @@ NewtonConfig newtonConfigFromJson(const nlohmann::json& json, UnitScalingConfig 
                 "gamma", cfg.electronQuantumPotential.gamma);
             cfg.electronQuantumPotential.effectiveMassRatio = value.value(
                 "effective_mass_ratio", cfg.electronQuantumPotential.effectiveMassRatio);
+            if (value.contains("coefficient_mass_ratio")) {
+                cfg.electronQuantumPotential.coefficientMassRatio =
+                    value.at("coefficient_mass_ratio").get<Real>();
+            }
             cfg.electronQuantumPotential.includeInsulators = value.value(
                 "include_insulators", cfg.electronQuantumPotential.includeInsulators);
             cfg.electronQuantumPotential.insulatorGamma = value.value(
@@ -1313,6 +1317,10 @@ NewtonConfig newtonConfigFromJson(const nlohmann::json& json, UnitScalingConfig 
             cfg.electronQuantumPotential.insulatorEffectiveMassRatio = value.value(
                 "insulator_effective_mass_ratio",
                 cfg.electronQuantumPotential.insulatorEffectiveMassRatio);
+            if (value.contains("insulator_coefficient_mass_ratio")) {
+                cfg.electronQuantumPotential.insulatorCoefficientMassRatio =
+                    value.at("insulator_coefficient_mass_ratio").get<Real>();
+            }
             cfg.electronQuantumPotential.interfaceBoundary = value.value(
                 "interface_boundary", cfg.electronQuantumPotential.interfaceBoundary);
             cfg.electronQuantumPotential.theta = value.value(
@@ -1328,6 +1336,10 @@ NewtonConfig newtonConfigFromJson(const nlohmann::json& json, UnitScalingConfig 
                 "relative_tolerance", cfg.electronQuantumPotential.relativeTolerance);
             cfg.electronQuantumPotential.absoluteTolerance_V = value.value(
                 "absolute_tolerance_V", cfg.electronQuantumPotential.absoluteTolerance_V);
+            if (value.contains("outer_absolute_tolerance_V")) {
+                cfg.electronQuantumPotential.outerAbsoluteTolerance_V =
+                    value.at("outer_absolute_tolerance_V").get<Real>();
+            }
             cfg.electronQuantumPotential.damping = value.value(
                 "damping", cfg.electronQuantumPotential.damping);
             cfg.electronQuantumPotential.maxUpdate_V = value.value(
@@ -1349,6 +1361,66 @@ NewtonConfig newtonConfigFromJson(const nlohmann::json& json, UnitScalingConfig 
             cfg.electronQuantumPotential.globalDiscretization = value.value(
                 "global_discretization",
                 cfg.electronQuantumPotential.globalDiscretization);
+            cfg.electronQuantumPotential.sentaurusInterfaceInsulatorHalfJumpOffset =
+                value.value(
+                    "sentaurus_interface_insulator_half_jump_offset",
+                    cfg.electronQuantumPotential.
+                        sentaurusInterfaceInsulatorHalfJumpOffset);
+            cfg.electronQuantumPotential.sentaurusInterfaceSiliconHalfJumpOffset =
+                value.value("sentaurus_interface_silicon_half_jump_offset",
+                    cfg.electronQuantumPotential.
+                        sentaurusInterfaceSiliconHalfJumpOffset);
+            cfg.electronQuantumPotential.sentaurusInterfacePolysiliconHalfJumpOffset =
+                value.value("sentaurus_interface_polysilicon_half_jump_offset",
+                    cfg.electronQuantumPotential.
+                        sentaurusInterfacePolysiliconHalfJumpOffset);
+            cfg.electronQuantumPotential.sentaurusInterfaceSiliconReactionWeight =
+                value.value("sentaurus_interface_silicon_reaction_weight",
+                    cfg.electronQuantumPotential.
+                        sentaurusInterfaceSiliconReactionWeight);
+            cfg.electronQuantumPotential.sentaurusInterfacePolysiliconReactionWeight =
+                value.value("sentaurus_interface_polysilicon_reaction_weight",
+                    cfg.electronQuantumPotential.
+                        sentaurusInterfacePolysiliconReactionWeight);
+            cfg.electronQuantumPotential.
+                sentaurusInterfaceInsulatorAtSiliconReactionWeight =
+                value.value(
+                    "sentaurus_interface_insulator_at_silicon_reaction_weight",
+                    cfg.electronQuantumPotential.
+                        sentaurusInterfaceInsulatorAtSiliconReactionWeight);
+            cfg.electronQuantumPotential.
+                sentaurusInterfaceInsulatorAtPolysiliconReactionWeight =
+                value.value(
+                    "sentaurus_interface_insulator_at_polysilicon_reaction_weight",
+                    cfg.electronQuantumPotential.
+                        sentaurusInterfaceInsulatorAtPolysiliconReactionWeight);
+            cfg.electronQuantumPotential.sentaurusInterfaceSiliconReactionOffset_V =
+                value.value("sentaurus_interface_silicon_reaction_offset_V",
+                    cfg.electronQuantumPotential.
+                        sentaurusInterfaceSiliconReactionOffset_V);
+            cfg.electronQuantumPotential.
+                sentaurusInterfacePolysiliconReactionOffset_V =
+                value.value("sentaurus_interface_polysilicon_reaction_offset_V",
+                    cfg.electronQuantumPotential.
+                        sentaurusInterfacePolysiliconReactionOffset_V);
+            cfg.electronQuantumPotential.
+                sentaurusInterfaceInsulatorAtSiliconReactionOffset_V =
+                value.value(
+                    "sentaurus_interface_insulator_at_silicon_reaction_offset_V",
+                    cfg.electronQuantumPotential.
+                        sentaurusInterfaceInsulatorAtSiliconReactionOffset_V);
+            cfg.electronQuantumPotential.
+                sentaurusInterfaceInsulatorAtPolysiliconReactionOffset_V =
+                value.value(
+                    "sentaurus_interface_insulator_at_polysilicon_reaction_offset_V",
+                    cfg.electronQuantumPotential.
+                        sentaurusInterfaceInsulatorAtPolysiliconReactionOffset_V);
+            cfg.electronQuantumPotential.
+                sentaurusInsulatorReentrantCornerReactionWeight =
+                value.value(
+                    "sentaurus_insulator_reentrant_corner_reaction_weight",
+                    cfg.electronQuantumPotential.
+                        sentaurusInsulatorReentrantCornerReactionWeight);
             cfg.electronQuantumPotential.oxideBoundary = value.value(
                 "oxide_boundary", cfg.electronQuantumPotential.oxideBoundary);
             cfg.electronQuantumPotential.oxideQuantumMassRatio = value.value(
@@ -1911,8 +1983,13 @@ NewtonConfig newtonConfigFromJson(const nlohmann::json& json, UnitScalingConfig 
             "must be finite and non-negative.");
     }
     (void)densityGradientCoefficientVm2(
+        cfg.electronQuantumPotential.gamma,
+        cfg.electronQuantumPotential.coefficientMassRatio.value_or(
+            cfg.electronQuantumPotential.effectiveMassRatio));
+    (void)densityGradientCoefficientVm2(
         cfg.electronQuantumPotential.insulatorGamma,
-        cfg.electronQuantumPotential.insulatorEffectiveMassRatio);
+        cfg.electronQuantumPotential.insulatorCoefficientMassRatio.value_or(
+            cfg.electronQuantumPotential.insulatorEffectiveMassRatio));
     if (cfg.electronQuantumPotential.interfaceBoundary != "homogeneous_neumann" &&
         cfg.electronQuantumPotential.interfaceBoundary != "sentaurus_step") {
         throw std::invalid_argument(
@@ -1928,6 +2005,8 @@ NewtonConfig newtonConfigFromJson(const nlohmann::json& json, UnitScalingConfig 
         cfg.electronQuantumPotential.globalDiscretization !=
             "gss_potentiallike_fitted" &&
         cfg.electronQuantumPotential.globalDiscretization !=
+            "sentaurus_box" &&
+        cfg.electronQuantumPotential.globalDiscretization !=
             "conservative_sqrt_fitted" &&
         cfg.electronQuantumPotential.globalDiscretization !=
             "gss_density_fitted") {
@@ -1935,8 +2014,57 @@ NewtonConfig newtonConfigFromJson(const nlohmann::json& json, UnitScalingConfig 
             "newtonConfigFromJson: electron_quantum_potential."
             "global_discretization must be 'exponential_fitted', "
             "'p1_direct', 'cvfem_full', 'p1_lambda_direct', "
-            "'gss_potentiallike_fitted', 'conservative_sqrt_fitted', or "
+            "'gss_potentiallike_fitted', 'sentaurus_box', "
+            "'conservative_sqrt_fitted', or "
             "'gss_density_fitted'.");
+    }
+    for (const Real offset : {
+             cfg.electronQuantumPotential.
+                 sentaurusInterfaceInsulatorHalfJumpOffset,
+             cfg.electronQuantumPotential.sentaurusInterfaceSiliconHalfJumpOffset,
+             cfg.electronQuantumPotential.
+                 sentaurusInterfacePolysiliconHalfJumpOffset}) {
+        if (!std::isfinite(offset) || std::abs(offset) > 1.0) {
+            throw std::invalid_argument(
+                "newtonConfigFromJson: sentaurus_box interface half-jump "
+                "offsets must be finite and have absolute value at most one.");
+        }
+    }
+    for (const Real weight : {
+             cfg.electronQuantumPotential.sentaurusInterfaceSiliconReactionWeight,
+             cfg.electronQuantumPotential.sentaurusInterfacePolysiliconReactionWeight,
+             cfg.electronQuantumPotential.
+                 sentaurusInterfaceInsulatorAtSiliconReactionWeight,
+             cfg.electronQuantumPotential.
+                 sentaurusInterfaceInsulatorAtPolysiliconReactionWeight}) {
+        if (!(weight > 0.0) || !std::isfinite(weight)) {
+            throw std::invalid_argument(
+                "newtonConfigFromJson: sentaurus_box interface reaction "
+                "weights must be finite and positive.");
+        }
+    }
+    for (const Real offset : {
+             cfg.electronQuantumPotential.
+                 sentaurusInterfaceSiliconReactionOffset_V,
+             cfg.electronQuantumPotential.
+                 sentaurusInterfacePolysiliconReactionOffset_V,
+             cfg.electronQuantumPotential.
+                 sentaurusInterfaceInsulatorAtSiliconReactionOffset_V,
+             cfg.electronQuantumPotential.
+                 sentaurusInterfaceInsulatorAtPolysiliconReactionOffset_V}) {
+        if (!std::isfinite(offset) || std::abs(offset) > 1.0) {
+            throw std::invalid_argument(
+                "newtonConfigFromJson: sentaurus_box interface reaction "
+                "offsets must be finite and have absolute value at most one V.");
+        }
+    }
+    const Real insulatorCornerWeight = cfg.electronQuantumPotential.
+        sentaurusInsulatorReentrantCornerReactionWeight;
+    if (!(insulatorCornerWeight > 0.0) ||
+        !std::isfinite(insulatorCornerWeight)) {
+        throw std::invalid_argument(
+            "newtonConfigFromJson: sentaurus_box insulator re-entrant "
+            "corner reaction weight must be finite and positive.");
     }
     if (cfg.electronQuantumPotential.oxideBoundary != "none" &&
         cfg.electronQuantumPotential.oxideBoundary != "devsim_wkb") {
@@ -1970,6 +2098,14 @@ NewtonConfig newtonConfigFromJson(const nlohmann::json& json, UnitScalingConfig 
         throw std::invalid_argument(
             "newtonConfigFromJson: electron_quantum_potential."
             "conduction_band_narrowing_fraction must be finite in [0,1].");
+    }
+    if (cfg.electronQuantumPotential.outerAbsoluteTolerance_V.has_value() &&
+        (!(cfg.electronQuantumPotential.outerAbsoluteTolerance_V.value() >= 0.0) ||
+         !std::isfinite(
+             cfg.electronQuantumPotential.outerAbsoluteTolerance_V.value()))) {
+        throw std::invalid_argument(
+            "newtonConfigFromJson: electron_quantum_potential."
+            "outer_absolute_tolerance_V must be finite and non-negative.");
     }
     if (cfg.electronQuantumPotential.outerAcceleration != "none" &&
         cfg.electronQuantumPotential.outerAcceleration != "aitken") {
@@ -4551,7 +4687,7 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
             static_cast<std::size_t>(mesh_.numCells()), 0.0);
         std::vector<Real> cellQuantumGamma(
             static_cast<std::size_t>(mesh_.numCells()), 0.0);
-        std::vector<Real> cellQuantumMassRatio(
+        std::vector<Real> cellQuantumCoefficientMassRatio(
             static_cast<std::size_t>(mesh_.numCells()), 0.0);
         VectorXd materialCoefficient = VectorXd::Zero(nodeCount);
         VectorXd materialBandDrive = VectorXd::Zero(nodeCount);
@@ -4573,21 +4709,29 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
             const Real gamma = material.electron_quantum_gamma.value_or(
                 transport ? cfg_.electronQuantumPotential.gamma
                           : cfg_.electronQuantumPotential.insulatorGamma);
-            const Real massRatio =
+            const Real dosMassRatio =
                 material.electron_quantum_dos_mass_ratio.value_or(
                     transport
                         ? cfg_.electronQuantumPotential.effectiveMassRatio
                         : cfg_.electronQuantumPotential.
                             insulatorEffectiveMassRatio);
+            const Real coefficientMassRatio =
+                material.electron_quantum_coefficient_mass_ratio.value_or(
+                    transport
+                        ? cfg_.electronQuantumPotential.coefficientMassRatio.
+                            value_or(dosMassRatio)
+                        : cfg_.electronQuantumPotential.
+                            insulatorCoefficientMassRatio.value_or(dosMassRatio));
             cellQuantumGamma[cellId] = gamma;
-            cellQuantumMassRatio[cellId] = massRatio;
-            const Real coefficient = densityGradientCoefficientVm2(gamma, massRatio);
+            cellQuantumCoefficientMassRatio[cellId] = coefficientMassRatio;
+            const Real coefficient = densityGradientCoefficientVm2(
+                gamma, coefficientMassRatio);
             // Ec/q = -psi-chi.  For xi=eta=1 (semiconductor), the
             // Eq. 231 drive is psi-phin+chi.  In insulators xi=eta=0;
             // the explicit (eta-1)q*grad(phi) term cancels Ec's
             // electrostatic contribution, leaving chi plus the DOS term.
             const Real dosMassDrive =
-                1.5 * Vt * std::log(massRatio);
+                1.5 * Vt * std::log(dosMassRatio);
             cellDosMassDrive_V[cellId] = dosMassDrive;
             for (Index node : cell.node_ids) {
                 activeNodes[node] = true;
@@ -4605,7 +4749,8 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
         for (const Contact& contact : mesh_.contacts()) {
             const auto spec = contactSpecs_.find(contact.name);
             if (spec != contactSpecs_.end() &&
-                spec->second.type == ContactType::MetalGate)
+                spec->second.type == ContactType::MetalGate &&
+                !cfg_.electronQuantumPotential.includeInsulators)
                 continue;
             for (Index node : contact.node_ids) {
                 if (activeNodes[node])
@@ -4649,6 +4794,15 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
             }
         }
         const auto quantumBgn = makeBandgapNarrowingModel(cfg_.bandgapNarrowing);
+        // Sentaurus OldSlotboom evaluates the Eq. 231 band drive from total
+        // ionized impurity.  Carrier-density dominance belongs to Vela's
+        // generic BGN model but must not leak into this quantum equation.
+        const auto quantumBandgapNarrowing = [&](Index node, bool transport) {
+            return transport
+                ? quantumBgn->deltaEg(
+                    doping_.totalImpurity(node), 0.0, 0.0)
+                : Real{0.0};
+        };
 
         for (int outer = 1;
              outer <= cfg_.electronQuantumPotential.outerMaxIterations; ++outer) {
@@ -4726,10 +4880,7 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
                         cfg_.inputScaling.unitSystem().lengthMPerInternal()
                     : 0.0;
                 const auto barrierAt = [&](Index node) {
-                    const int i = static_cast<int>(node);
-                    const Real narrowing = quantumBgn->deltaEg(
-                        doping_.totalImpurity(node),
-                        last.solution.n(i), last.solution.p(i));
+                    const Real narrowing = quantumBandgapNarrowing(node, true);
                     return descriptor.solvedAffinity_eV -
                         descriptor.unsolvedAffinity_eV +
                         cfg_.electronQuantumPotential.
@@ -4755,13 +4906,9 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
                 cellMaterials.reserve(mesh_.numCells());
                 VectorXd nodeOutputShift = VectorXd::Zero(nodeCount);
                 for (int i = 0; i < nodeCount; ++i) {
-                    const Real narrowing = transportNodes[
-                        static_cast<std::size_t>(i)]
-                        ? quantumBgn->deltaEg(
-                            doping_.totalImpurity(static_cast<Index>(i)),
-                            densityGradientState.n(i),
-                            densityGradientState.p(i))
-                        : 0.0;
+                    const Real narrowing = quantumBandgapNarrowing(
+                        static_cast<Index>(i),
+                        transportNodes[static_cast<std::size_t>(i)]);
                     nodeOutputShift(i) =
                         materialBandDrive(i) + densityGradientState.psi(i) +
                         cfg_.electronQuantumPotential.
@@ -4780,15 +4927,11 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
                     data.isTransport = transport;
                     data.coefficientVm2 = densityGradientCoefficientVm2(
                         cellQuantumGamma[cellId],
-                        cellQuantumMassRatio[cellId]);
+                        cellQuantumCoefficientMassRatio[cellId]);
                     for (int local = 0; local < 3; ++local) {
                         const int node = static_cast<int>(cell.node_ids[local]);
-                        const Real narrowing = transport
-                            ? quantumBgn->deltaEg(
-                                doping_.totalImpurity(cell.node_ids[local]),
-                                densityGradientState.n(node),
-                                densityGradientState.p(node))
-                            : 0.0;
+                        const Real narrowing = quantumBandgapNarrowing(
+                            cell.node_ids[local], transport);
                         // Phi/q is the continuous Eq. 231 primary unknown,
                         // whereas Lambda = Phi/q - Ec/q - Phi_m/q is a
                         // region-side quantity at a material interface.  The
@@ -4879,8 +5022,11 @@ NewtonResult NewtonSolver::solve(const DDSolution& initial) const
             }
             const Real scale = std::max<Real>(
                 quantum.potential_V.lpNorm<Eigen::Infinity>(), 1.0);
+            const Real outerAbsoluteTolerance_V =
+                cfg_.electronQuantumPotential.outerAbsoluteTolerance_V.
+                    value_or(cfg_.electronQuantumPotential.absoluteTolerance_V);
             const bool outerConverged = quantum.converged &&
-                change <= cfg_.electronQuantumPotential.absoluteTolerance_V +
+                change <= outerAbsoluteTolerance_V +
                     cfg_.electronQuantumPotential.relativeTolerance * scale;
             quantumPotential = outerConverged
                 ? std::move(quantum.potential_V)

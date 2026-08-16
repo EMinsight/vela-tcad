@@ -48,6 +48,9 @@ Material materialFromJson(const nlohmann::json& j,
     setOptionalReal(
         j, "electron_quantum_dos_mass_ratio",
         mat.electron_quantum_dos_mass_ratio);
+    setOptionalReal(
+        j, "electron_quantum_coefficient_mass_ratio",
+        mat.electron_quantum_coefficient_mass_ratio);
     return mat;
 }
 

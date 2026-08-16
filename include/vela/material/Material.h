@@ -26,6 +26,9 @@ struct Material {
     /// absent, solver-level controls provide the backward-compatible values.
     std::optional<Real> electron_quantum_gamma;
     std::optional<Real> electron_quantum_dos_mass_ratio;
+    /// Independent mass for the Eq. 231 gradient coefficient.  If absent,
+    /// the DOS mass preserves the legacy shared-mass behavior.
+    std::optional<Real> electron_quantum_coefficient_mass_ratio;
 
     /// Return a copy with ni and low-field mobilities scaled to temperature_K.
     Material atTemperature(Real targetTemperature_K) const;

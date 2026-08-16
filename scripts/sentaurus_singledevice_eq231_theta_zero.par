@@ -1,0 +1,40 @@
+Material = "Silicon" {
+  #include "Silicon.par"
+  QuantumPotentialParameters "theta_zero" {
+    gamma = 3.6, 3.6
+    theta = 0.0, 0.0
+    xi    = 1.0, 1.0
+    eta   = 1.0, 1.0
+    nu    = 0.0, 0.0
+  }
+}
+
+Material = "PolySilicon" {
+  QuantumPotentialParameters "theta_zero" {
+    gamma = 3.6, 3.6
+    theta = 0.0, 0.0
+    xi    = 1.0, 1.0
+    eta   = 1.0, 1.0
+    nu    = 0.0, 0.0
+  }
+}
+
+Material = "Oxide" {
+  QuantumPotentialParameters "theta_zero" {
+    gamma = 1.0, 1.0
+    theta = 0.0, 0.0
+    xi    = 0.0, 0.0
+    eta   = 0.0, 0.0
+    nu    = 0.0, 0.0
+  }
+}
+
+Material = "Nitride" {
+  QuantumPotentialParameters "theta_zero" {
+    gamma = 1.0, 1.0
+    theta = 0.0, 0.0
+    xi    = 0.0, 0.0
+    eta   = 0.0, 0.0
+    nu    = 0.0, 0.0
+  }
+}

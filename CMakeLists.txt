@@ -50,6 +50,31 @@ set(VELA_SPARSELU_ORDERING "COLAMD" CACHE STRING
     "Eigen SparseLU column ordering (COLAMD or AMD)")
 set_property(CACHE VELA_SPARSELU_ORDERING PROPERTY STRINGS COLAMD AMD)
 
+# Keep MinGW-built command-line tools directly runnable from Explorer and from
+# shells that have not inherited the MSYS2 UCRT64 PATH.  CMake knows about
+# package DLLs, but the compiler runtime DLLs are implicit link dependencies,
+# so stage the small runtime set next to every executable in the single-config
+# build directory.
+if(MINGW)
+    get_filename_component(VELA_MINGW_RUNTIME_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
+    foreach(_vela_runtime_dll IN ITEMS
+        libgcc_s_seh-1.dll
+        libstdc++-6.dll
+        libwinpthread-1.dll
+        libspdlog-1.17.dll
+    )
+        find_file(_vela_runtime_path_${_vela_runtime_dll}
+            NAMES ${_vela_runtime_dll}
+            PATHS "${VELA_MINGW_RUNTIME_DIR}"
+            NO_DEFAULT_PATH
+            REQUIRED)
+        configure_file(
+            "${_vela_runtime_path_${_vela_runtime_dll}}"
+            "${CMAKE_CURRENT_BINARY_DIR}/${_vela_runtime_dll}"
+            COPYONLY)
+    endforeach()
+endif()
+
 if(VELA_ENABLE_GPROF AND NOT CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     message(FATAL_ERROR "VELA_ENABLE_GPROF requires the GNU C++ compiler")
 endif()

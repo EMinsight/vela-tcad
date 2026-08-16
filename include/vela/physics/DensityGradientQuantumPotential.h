@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 #include <array>
+#include <optional>
 
 namespace vela {
 
@@ -21,6 +22,9 @@ struct DensityGradientQuantumPotentialConfig {
     /// Electron DOS mass divided by the free-electron mass. O-2018.06 Silicon
     /// eDOSMass Formula1 evaluates to 1.0618016171622988 at 300 K.
     Real effectiveMassRatio = 1.0618016171622988;
+    /// Optional mass used only by gamma*hbar^2/(6*m*q).  When absent, the
+    /// DOS mass above retains the legacy coupled-mass behavior.
+    std::optional<Real> coefficientMassRatio;
     /// Experimental complete global material domain.  Sentaurus solves the
     /// global eQuantumPotential equation in insulators with xi=eta=0, but the
     /// default remains the qualified semiconductor-side interface treatment
@@ -28,6 +32,8 @@ struct DensityGradientQuantumPotentialConfig {
     bool includeInsulators = false;
     Real insulatorGamma = 1.0;
     Real insulatorEffectiveMassRatio = 0.42;
+    /// Optional insulator counterpart of coefficientMassRatio.
+    std::optional<Real> insulatorCoefficientMassRatio;
     std::string interfaceBoundary = "homogeneous_neumann";
     ///< "homogeneous_neumann" or Sentaurus Eq. 233 "sentaurus_step".
     Real theta = 0.5;
@@ -36,6 +42,9 @@ struct DensityGradientQuantumPotentialConfig {
     int maxIterations = 30;
     Real relativeTolerance = 1.0e-7;
     Real absoluteTolerance_V = 1.0e-10;
+    /// Optional outer fixed-point Lambda-change tolerance.  When absent,
+    /// absoluteTolerance_V retains the legacy shared inner/outer behavior.
+    std::optional<Real> outerAbsoluteTolerance_V;
     Real damping = 0.5;
     Real maxUpdate_V = 0.1;
     int outerMaxIterations = 20;
@@ -61,8 +70,35 @@ struct DensityGradientQuantumPotentialConfig {
     /// conservative_sqrt_fitted uses the exact theta=1/2 sqrt-density weak
     /// form with a common fixed row scaling, preserving flux/reaction balance.
     /// gss_density_fitted uses the GSS sqrt(n) fitted flux together with the
-    /// continuous-Lambda/material-side trace contract.
+    /// continuous-Lambda/material-side trace contract. sentaurus_box uses
+    /// the verified Formula-0 fitted edge operator, signed AverageBox
+    /// circumcentric element-vertex measures, and algebraically eliminated
+    /// region-side fitted/reaction traces at a shared material vertex.
     std::string globalDiscretization = "p1_direct";
+    /// Dimensionless half-jump offsets for each material-side fitted trace at
+    /// a transport/insulator vertex.  Zeros preserve the generic operator.
+    Real sentaurusInterfaceInsulatorHalfJumpOffset = 0.0;
+    Real sentaurusInterfaceSiliconHalfJumpOffset = 0.0;
+    Real sentaurusInterfacePolysiliconHalfJumpOffset = 0.0;
+    /// Algebraically eliminated region-side reaction traces at shared
+    /// transport/nontransport vertices.  Each value multiplies Lambda and
+    /// its consistent diagonal Jacobian on that material side.  Ones retain
+    /// the generic single-trace control-volume reaction.  They are explicit
+    /// sentaurus_box oracle controls, not global material defaults.
+    Real sentaurusInterfaceSiliconReactionWeight = 1.0;
+    Real sentaurusInterfacePolysiliconReactionWeight = 1.0;
+    Real sentaurusInterfaceInsulatorAtSiliconReactionWeight = 1.0;
+    Real sentaurusInterfaceInsulatorAtPolysiliconReactionWeight = 1.0;
+    /// Constant terms in the algebraically eliminated affine material-side
+    /// reaction traces.  Zeros retain a purely multiplicative trace.
+    Real sentaurusInterfaceSiliconReactionOffset_V = 0.0;
+    Real sentaurusInterfacePolysiliconReactionOffset_V = 0.0;
+    Real sentaurusInterfaceInsulatorAtSiliconReactionOffset_V = 0.0;
+    Real sentaurusInterfaceInsulatorAtPolysiliconReactionOffset_V = 0.0;
+    /// Reaction control-volume closure for a pure insulator/insulator
+    /// re-entrant vertex: exactly six incident triangles split 2:4 between
+    /// two nontransport materials.  One preserves the generic box measure.
+    Real sentaurusInsulatorReentrantCornerReactionWeight = 1.0;
     /// Experimental DEVSIM/Garcia-Asenov oxide interface closure.  The
     /// oxide-side integrated Eq. 231 row receives the WKB penetration source
     /// b_n,ox/x_n at every transport/insulator interface segment.

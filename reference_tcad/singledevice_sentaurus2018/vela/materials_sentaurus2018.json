@@ -4,7 +4,8 @@
       "name": "Si",
       "electron_affinity_eV": 4.072740384615385,
       "electron_quantum_gamma": 3.6,
-      "electron_quantum_dos_mass_ratio": 1.0618016171622988
+      "electron_quantum_dos_mass_ratio": 1.0618016171622988,
+      "electron_quantum_coefficient_mass_ratio": 1.0906506732296395
     },
     {
       "name": "SiO2",
@@ -28,6 +29,7 @@
       "electron_affinity_eV": 4.072740384615385,
       "electron_quantum_gamma": 3.6,
       "electron_quantum_dos_mass_ratio": 1.0618016171622988,
+      "electron_quantum_coefficient_mass_ratio": 1.0906506732296395,
       "Nc_m3": 2.8e19,
       "Nv_m3": 1.04e19,
       "temperature_K": 300.0

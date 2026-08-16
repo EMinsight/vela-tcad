@@ -41,9 +41,11 @@ TEST_CASE("Newton JSON parses Sentaurus electron density-gradient controls",
             {"formulation", "density_based"},
             {"gamma", 3.6},
             {"effective_mass_ratio", 1.0},
+            {"coefficient_mass_ratio", 1.09},
             {"include_insulators", true},
             {"insulator_gamma", 1.0},
             {"insulator_effective_mass_ratio", 0.42},
+            {"insulator_coefficient_mass_ratio", 0.40},
             {"interface_boundary", "sentaurus_step"},
             {"theta", 0.5},
             {"conduction_band_narrowing_fraction", 0.5},
@@ -51,6 +53,7 @@ TEST_CASE("Newton JSON parses Sentaurus electron density-gradient controls",
             {"outer_max_iterations", 9},
             {"relative_tolerance", 2.0e-7},
             {"absolute_tolerance_V", 3.0e-10},
+            {"outer_absolute_tolerance_V", 5.0e-4},
             {"damping", 0.4},
             {"max_update_V", 0.08},
             {"outer_acceleration", "aitken"},
@@ -60,6 +63,18 @@ TEST_CASE("Newton JSON parses Sentaurus electron density-gradient controls",
             {"residual_diagnostic_prefix", "eq231/audit"},
             {"residual_diagnostic_use_initial_state", true},
             {"global_discretization", "gss_density_fitted"},
+            {"sentaurus_interface_insulator_half_jump_offset", 0.02012},
+            {"sentaurus_interface_silicon_half_jump_offset", -4.6e-5},
+            {"sentaurus_interface_polysilicon_half_jump_offset", 0.00267},
+            {"sentaurus_interface_silicon_reaction_weight", 0.34},
+            {"sentaurus_interface_polysilicon_reaction_weight", 1.04},
+            {"sentaurus_interface_insulator_at_silicon_reaction_weight", 2.57},
+            {"sentaurus_interface_insulator_at_polysilicon_reaction_weight", 2.59},
+            {"sentaurus_interface_silicon_reaction_offset_V", -2.0e-4},
+            {"sentaurus_interface_polysilicon_reaction_offset_V", 3.0e-4},
+            {"sentaurus_interface_insulator_at_silicon_reaction_offset_V", -1.5e-3},
+            {"sentaurus_interface_insulator_at_polysilicon_reaction_offset_V", 1.7e-3},
+            {"sentaurus_insulator_reentrant_corner_reaction_weight", 0.97},
             {"oxide_boundary", "none"},
             {"oxide_quantum_mass_ratio", 0.14},
             {"oxide_barrier_mass_ratio", 0.4},
@@ -72,10 +87,14 @@ TEST_CASE("Newton JSON parses Sentaurus electron density-gradient controls",
     REQUIRE(cfg.electronQuantumPotential.gamma == Catch::Approx(3.6));
     REQUIRE(cfg.electronQuantumPotential.effectiveMassRatio ==
             Catch::Approx(1.0));
+    REQUIRE(cfg.electronQuantumPotential.coefficientMassRatio ==
+            Catch::Approx(1.09));
     REQUIRE(cfg.electronQuantumPotential.includeInsulators);
     REQUIRE(cfg.electronQuantumPotential.insulatorGamma == Catch::Approx(1.0));
     REQUIRE(cfg.electronQuantumPotential.insulatorEffectiveMassRatio ==
             Catch::Approx(0.42));
+    REQUIRE(cfg.electronQuantumPotential.insulatorCoefficientMassRatio ==
+            Catch::Approx(0.40));
     REQUIRE(cfg.electronQuantumPotential.interfaceBoundary == "sentaurus_step");
     REQUIRE(cfg.electronQuantumPotential.theta == Catch::Approx(0.5));
     REQUIRE(cfg.electronQuantumPotential.conductionBandNarrowingFraction ==
@@ -84,6 +103,9 @@ TEST_CASE("Newton JSON parses Sentaurus electron density-gradient controls",
     REQUIRE(cfg.electronQuantumPotential.outerMaxIterations == 9);
     REQUIRE(cfg.electronQuantumPotential.relativeTolerance == Catch::Approx(2.0e-7));
     REQUIRE(cfg.electronQuantumPotential.absoluteTolerance_V == Catch::Approx(3.0e-10));
+    REQUIRE(cfg.electronQuantumPotential.outerAbsoluteTolerance_V.has_value());
+    REQUIRE(cfg.electronQuantumPotential.outerAbsoluteTolerance_V.value() ==
+            Catch::Approx(5.0e-4));
     REQUIRE(cfg.electronQuantumPotential.damping == Catch::Approx(0.4));
     REQUIRE(cfg.electronQuantumPotential.maxUpdate_V == Catch::Approx(0.08));
     REQUIRE(cfg.electronQuantumPotential.outerAcceleration == "aitken");
@@ -95,6 +117,40 @@ TEST_CASE("Newton JSON parses Sentaurus electron density-gradient controls",
     REQUIRE(cfg.electronQuantumPotential.residualDiagnosticUseInitialState);
     REQUIRE(cfg.electronQuantumPotential.globalDiscretization ==
             "gss_density_fitted");
+    REQUIRE(cfg.electronQuantumPotential.
+                sentaurusInterfaceInsulatorHalfJumpOffset ==
+            Catch::Approx(0.02012));
+    REQUIRE(cfg.electronQuantumPotential.sentaurusInterfaceSiliconHalfJumpOffset ==
+            Catch::Approx(-4.6e-5));
+    REQUIRE(cfg.electronQuantumPotential.
+                sentaurusInterfacePolysiliconHalfJumpOffset ==
+            Catch::Approx(0.00267));
+    REQUIRE(cfg.electronQuantumPotential.sentaurusInterfaceSiliconReactionWeight ==
+            Catch::Approx(0.34));
+    REQUIRE(cfg.electronQuantumPotential.
+                sentaurusInterfacePolysiliconReactionWeight ==
+            Catch::Approx(1.04));
+    REQUIRE(cfg.electronQuantumPotential.
+                sentaurusInterfaceInsulatorAtSiliconReactionWeight ==
+            Catch::Approx(2.57));
+    REQUIRE(cfg.electronQuantumPotential.
+                sentaurusInterfaceInsulatorAtPolysiliconReactionWeight ==
+            Catch::Approx(2.59));
+    REQUIRE(cfg.electronQuantumPotential.
+                sentaurusInterfaceSiliconReactionOffset_V ==
+            Catch::Approx(-2.0e-4));
+    REQUIRE(cfg.electronQuantumPotential.
+                sentaurusInterfacePolysiliconReactionOffset_V ==
+            Catch::Approx(3.0e-4));
+    REQUIRE(cfg.electronQuantumPotential.
+                sentaurusInterfaceInsulatorAtSiliconReactionOffset_V ==
+            Catch::Approx(-1.5e-3));
+    REQUIRE(cfg.electronQuantumPotential.
+                sentaurusInterfaceInsulatorAtPolysiliconReactionOffset_V ==
+            Catch::Approx(1.7e-3));
+    REQUIRE(cfg.electronQuantumPotential.
+                sentaurusInsulatorReentrantCornerReactionWeight ==
+            Catch::Approx(0.97));
     REQUIRE(cfg.electronQuantumPotential.oxideBoundary == "none");
     REQUIRE(cfg.electronQuantumPotential.oxideQuantumMassRatio ==
             Catch::Approx(0.14));
@@ -2786,6 +2842,12 @@ TEST_CASE("NewtonSolver: parses block residual norm controls", "[newton][config]
         std::invalid_argument);
     REQUIRE_THROWS_AS(
         newtonConfigFromJson(nlohmann::json{{"max_update", -1.0}}),
+        std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        newtonConfigFromJson(nlohmann::json{{
+            "electron_quantum_potential",
+            {{"outer_absolute_tolerance_V", -1.0}}
+        }}),
         std::invalid_argument);
     REQUIRE_THROWS_AS(
         newtonConfigFromJson(nlohmann::json{{"quasi_fermi_update_limit_V", -1.0}}),

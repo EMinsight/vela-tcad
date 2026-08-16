@@ -389,8 +389,10 @@ Notes:
   correction.  The object accepts `coupling_mode` (`outer`, the default, or
   `frozen` for an imported restart potential), `formulation`
   (`potential_based`, the Sentaurus default, or `density_based` for audit), `gamma`,
-  `effective_mass_ratio`, `max_iterations`, `outer_max_iterations`,
-  `relative_tolerance`, `absolute_tolerance_V`, `damping`, and
+  `effective_mass_ratio`, optional `coefficient_mass_ratio`,
+  `max_iterations`, `outer_max_iterations`,
+  `relative_tolerance`, `absolute_tolerance_V`, optional
+  `outer_absolute_tolerance_V`, `damping`, and
   `max_update_V`.  The outer fixed-point loop also accepts
   `outer_acceleration` (`none` or vector `aitken`), `outer_relaxation`,
   `outer_relaxation_min`, and `outer_relaxation_max`; every outer iteration is
@@ -398,6 +400,9 @@ Notes:
   is the non-negative infinity-norm cap on an
   inner density-gradient Newton update; its default is `0.1 V`, and `0`
   disables the cap.
+  `outer_absolute_tolerance_V` controls only the outer fixed-point Lambda
+  change. When omitted, `absolute_tolerance_V` is used for both inner and
+  outer convergence for backward compatibility.
   The qualified semiconductor-side interface model may set
   `interface_boundary: sentaurus_step` to apply the O-2018.06 Eq. 233
   inhomogeneous step boundary at semiconductor-to-unsolved-nonmetal edges.
@@ -409,7 +414,10 @@ Notes:
   Material-resolved global interface experiments may instead set
   `include_insulators: true` together with
   `insulator_gamma` (default `1`) and `insulator_effective_mass_ratio`
-  (default `0.42`). This global mode is experimental.
+  (default `0.42`). `insulator_coefficient_mass_ratio` is the optional
+  coefficient-mass counterpart. When either coefficient-mass control is
+  omitted, its DOS mass retains the legacy shared-mass behavior. This global
+  mode is experimental.
   `gss_density_fitted` represents a continuous quantum potential Lambda while
   reconstructing the band/DOS potential and sqrt-density traces independently
   on each material side. The qualified default keeps semiconductor-side
@@ -437,6 +445,44 @@ Notes:
   `gss_potentiallike_fitted` is the orthogonal diagnostic: it retains the
   continuous potential-like state and changes only the spatial operator to
   the GSS Eq. 9.128 fitted flux.
+  `sentaurus_box` is an experimental interface-trace prototype. It combines
+  that fitted edge operator with signed AverageBox circumcentric
+  element-vertex measures and
+  reconstructs side-specific fitted and reaction traces at a shared vertex.
+  It is not a qualified default and must pass the fixed-state
+  and endpoint gates before use in a sweep.
+  `sentaurus_interface_insulator_half_jump_offset`,
+  `sentaurus_interface_silicon_half_jump_offset`, and
+  `sentaurus_interface_polysilicon_half_jump_offset` independently shift the
+  fitted dimensionless half jump on each region side of a shared material
+  vertex. They default to `0`. The SingleDevice O-2018.06 direct
+  residual/Jacobian oracle selects about `0.02012` on the insulator side,
+  equivalent to a potential-like region trace shift of about `-1.03 mV` at
+  300 K. This calibration is local to the experimental `sentaurus_box` mode;
+  it is not applied to other discretizations.
+  Four side-specific reaction weights replace the invalid single interface
+  multiplier: `sentaurus_interface_silicon_reaction_weight`,
+  `sentaurus_interface_polysilicon_reaction_weight`,
+  `sentaurus_interface_insulator_at_silicon_reaction_weight`, and
+  `sentaurus_interface_insulator_at_polysilicon_reaction_weight`. Each scales
+  both the material-side reaction and its diagonal Jacobian and defaults to
+  `1`. They represent an algebraically eliminated region-side trace. The
+  SingleDevice fixed-state oracle calibrates them explicitly; they are not
+  global material parameters or qualified defaults.
+  Four matching `*_reaction_offset_V` controls add the constant term of each
+  affine material-side trace. They default to `0`; the residual uses
+  `weight * Lambda + offset` while the consistent diagonal Jacobian contains
+  only `weight`. This distinguishes a true eliminated interface trace from a
+  simple reaction-volume multiplier.
+  `sentaurus_insulator_reentrant_corner_reaction_weight` applies only to a
+  pure nontransport vertex with six incident triangles split 2:4 between two
+  distinct insulator materials. It scales that corner's reaction and
+  consistent diagonal Jacobian, defaults to `1`, and is ignored outside
+  `sentaurus_box`. The earlier SingleDevice SiO2/Nitride corner fit selected
+  about `0.9713` only as compensation for a positive mixed-area obtuse-cell
+  fallback. After adopting the signed AverageBox measure, the qualified
+  SingleDevice configuration restores this control to its neutral value `1`;
+  ordinary nodes along the same interface are unchanged.
   `conservative_sqrt_fitted` retains the continuous potential-like state but
   assembles the exact theta=0.5 sqrt-density weak form, including the matching
   Lambda-times-sqrt-density reaction. A common fixed row scale prevents
@@ -454,10 +500,14 @@ Notes:
   WKB is a truncation boundary for a mesh that omits the oxide quantum
   equation. It is therefore rejected when `include_insulators: true`; an
   explicit SiO2 solve must use `oxide_boundary: none`.
-  A material JSON entry may override the solver-level coefficient with
-  `electron_quantum_gamma` and `electron_quantum_dos_mass_ratio`. This is
-  required when one mesh contains semiconductor or insulator materials with
-  different Eq. 231 parameters; omitted fields retain the solver-level values.
+  A material JSON entry may override the solver-level parameters with
+  `electron_quantum_gamma`, `electron_quantum_dos_mass_ratio`, and
+  `electron_quantum_coefficient_mass_ratio`. The DOS mass controls only the
+  logarithmic DOS drive; the coefficient mass controls
+  `gamma*hbar^2/(6*m*q)`. If the latter is omitted it falls back to the DOS
+  mass for backward compatibility. Eq. 231 evaluates its OldSlotboom band
+  drive from total impurity only; this does not change the generic DD/BGN
+  model used by the transport equations.
 - `contact_boundary_reconstruction` controls only Ohmic-contact boundary
   quasi-Fermi/carrier reconstruction in the Newton path. Accepted values are
   `dominant_signed_contact_mean` (default, current behavior) and
