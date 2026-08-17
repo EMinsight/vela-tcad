@@ -31,7 +31,8 @@ Scope and conventions:
 | output_state_file | string | Optional | Restart-state CSV written by `newton_solve_from_state`. Uses Vela restart format: `node_id,psi,phin,phip,electrons_m3,holes_m3`. |
 | state_fields_dir | string | Required for `newton_solve_from_state` and probe-style external-state tools | Directory containing Sentaurus-export-style scalar field CSVs. |
 | runtime_log | object | Optional | Runtime log control. Default is enabled and writes `<config stem>.log` next to the config file. |
-| scaling | object | Optional | Input unit interpretation. Omit for legacy SI behavior, or set `mode` to `unit_scaling`; see below. |
+| scaling | object | Optional | Legacy input unit interpretation. Omit for legacy SI behavior, or set `mode` to `unit_scaling`; see below. Not accepted together with `format_version: 2`. |
+| format_version | integer | Optional | Deck format version. The only supported value is `2`, which interprets the whole deck in the TCAD internal units and forbids `scaling`; see below. |
 | mesh_geometry | object | Optional | Mesh box-geometry options; see below. |
 | doping | array | Yes | Region doping definitions; see below. |
 | regions | array | Optional | Region-level fixed charge definitions; see below. |
@@ -72,6 +73,75 @@ Runtime log CLI override:
 
 Optional runtime log profile CLI override:
 - `--log-profile minimal|default|debug`
+
+## format_version
+
+`format_version` declares the deck format. The only supported value is `2`.
+
+```json
+{ "format_version": 2 }
+```
+
+A `format_version: 2` deck expresses every value in the TCAD internal units:
+`um`, `cm^-3`, `cm^-2`, `cm^2/(V s)`, `cm/s`, `V/cm`, `cm^-1`, `cm/V`,
+`cm^6/s`, `V`, `K`, `s`, and `eV`. This is the same numeric interpretation as
+`scaling.mode: "unit_scaling"`, expressed as a deck-format declaration instead
+of a solver option.
+
+Rules:
+
+- `format_version: 2` and a `scaling` block together are rejected. The unit
+  mode is implied by the version, and `scaling` no longer has any remaining
+  role in a v2 deck.
+- Any `format_version` other than `2`, or a non-integer value, is rejected.
+- A v2 deck uses the v2 key names. Every key whose name still claims an SI unit
+  is renamed, and the old name is rejected rather than aliased; see below.
+- Omitting `format_version` keeps the legacy behavior described under
+  `scaling`: no `scaling` block means SI input, and
+  `scaling.mode: "unit_scaling"` means TCAD input. This transitional form is
+  scheduled for removal.
+
+### v2 key names
+
+A v2 deck renames the keys whose names claim an SI unit while their value is
+already read in the TCAD internal units. The rename is by unit suffix
+(`_m3` to `_cm3`, `_m2` to `_cm2`, `_m2_V_s` to `_cm2_V_s`, `_m_s` to `_cm_s`,
+`_m_inv` to `_cm_inv`, `_m_per_s` to `_cm_per_s`, `_m_per_V` to `_cm_per_V`,
+`_m6_per_s` to `_cm6_per_s`, `_V_per_m` and `_V_m` to `_V_per_cm`), plus the
+unsuffixed names `ni`, `mun`, `mup`, `donors`, `acceptors`, `contact_radius`,
+`surface_recombination_velocity` and `depth_m`, which become `ni_cm3`,
+`mun_cm2_V_s`, `mup_cm2_V_s`, `donors_cm3`, `acceptors_cm3`,
+`contact_radius_um`, `surface_recombination_velocity_cm_per_s` and `depth_um`.
+The v1 spelling of any renamed key is rejected in a v2 deck with a message
+naming its replacement. A materials file loaded by a v2 deck follows the same
+contract.
+
+Two blocks keep their names: `solver.band_to_band`, whose parameters are
+genuinely SI, and `solver.normalization`, which is already spelled in v2 units.
+Values are unchanged by the rename: a v2 deck is numerically identical to the
+same deck with `scaling.mode: "unit_scaling"`.
+
+The equation-normalization references that used to live inside `scaling` move
+to `solver.normalization` in a v2 deck:
+
+```json
+{
+  "format_version": 2,
+  "solver": {
+    "normalization": {
+      "characteristic_length_um": "auto",
+      "reference_concentration_cm3": "auto",
+      "reference_mobility_cm2_V_s": "auto"
+    }
+  }
+}
+```
+
+Each key accepts `"auto"` (the default, derived from the mesh, doping, and
+material data) or a positive number. `solver.normalization` requires
+`format_version: 2`; supplying it in a legacy deck is rejected. These values
+control the internal non-dimensionalization of the equations and are
+independent of the input unit system.
 
 ## scaling
 
@@ -574,6 +644,9 @@ Notes:
   passed into the recombination model (`2.90e-43` and `1.028e-43 m^6/s`
   Sentaurus 2018 silicon-at-300 K defaults).
   Negative values are rejected by the recombination model validation.
+  With `scaling.mode: "unit_scaling"` the compiled defaults are expressed in
+  the internal unit system (`2.90e-31` and `1.028e-31 cm^6/s`), and an explicit
+  deck value is read and kept internally as `cm^6/s`.
 - Both Gummel/Newton parse `mobility`, `recombination`, `impact_ionization`, `temperature_K`.
 - With `scaling.mode: "unit_scaling"`, `bandgap_narrowing.reference_doping_m3`
   is read and kept internally as `cm^-3`.
@@ -685,7 +758,9 @@ material intrinsic-density override, while the `old_slotboom` BGN term uses
 `Ebgn = 9e-3 eV`, `Nref = 1e17 cm^-3`, and `C = 0.5`. This is implemented in
 Gummel and Newton configurations. With
 `scaling.mode: "unit_scaling"`, `reference_doping_m3` numeric input is read as
-`cm^-3` and kept internally as `cm^-3`.
+`cm^-3` and kept internally as `cm^-3`. The compiled `Nref` default of both
+`slotboom` and `old_slotboom` is likewise expressed in the internal unit
+system (`1e23 m^-3` in `legacy_si`, `1e17 cm^-3` in `unit_scaling`).
 
 Set `fermi_statistics_correction: true` to reproduce the additional bandgap-
 narrowing correction that Sentaurus applies by default when `Fermi` and
@@ -1097,8 +1172,10 @@ Example matching the BVmethods `models.par` values at 300 K:
 `concentration_basis` accepts `total_impurity` (`Nd + Na`) or `net_doping`
 (`abs(Nd - Na)`). With `scaling.mode: "unit_scaling"`, numeric
 `reference_doping_m3` values are read in the active TCAD concentration unit,
-`cm^-3`, consistently with the existing mobility inputs. Omitting this block
-preserves the legacy uniform `taun` and `taup` behavior.
+`cm^-3`, consistently with the existing mobility inputs. The compiled
+`reference_doping_m3` default is likewise expressed in the internal unit
+system (`1e22 m^-3` in `legacy_si`, `1e16 cm^-3` in `unit_scaling`). Omitting
+this block preserves the legacy uniform `taun` and `taup` behavior.
 
 With `scaling.mode: "unit_scaling"`, Caughey-Thomas and Masetti mobility
 values are read as `cm^2/(V s)`, reference dopings as `cm^-3`, saturation

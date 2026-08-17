@@ -29,6 +29,15 @@ public:
         return surfaceFieldCoefficientMPerVPerInternal_;
     }
     Real currentDensityAM2PerInternal() const { return currentDensityAM2PerInternal_; }
+    /**
+     * Auger coefficients multiply a carrier density by an excess carrier
+     * product, so their unit scale is the inverse square of the concentration
+     * scale: SI [m^6/s] per internal [cm^6/s] is 1e-12 in the TCAD system.
+     */
+    Real augerCoefficientM6SPerInternal() const
+    {
+        return 1.0 / (concentrationM3PerInternal_ * concentrationM3PerInternal_);
+    }
 
     /**
      * Converts a volumetric concentration integrated over a 2-D control area
@@ -123,6 +132,14 @@ public:
     {
         return value / currentDensityAM2PerInternal_;
     }
+    Real internalAugerCoefficientToM6PerS(Real value) const
+    {
+        return value * augerCoefficientM6SPerInternal();
+    }
+    Real m6PerSToInternalAugerCoefficient(Real value) const
+    {
+        return value / augerCoefficientM6SPerInternal();
+    }
     Real internalCurrentPerDeviceDepthToAPerUm(Real value) const;
 
 private:
@@ -150,11 +167,16 @@ private:
 struct UnitScalingConfig {
     UnitScalingMode mode = UnitScalingMode::LegacySI;
     PhysicalUnitSystem physicalUnitSystem = PhysicalUnitSystem::legacySI();
+    /// Deck format version the config was parsed from: 0 for a legacy deck, 2
+    /// for a `format_version: 2` deck. Field parsers need this context to
+    /// apply the version-2 key contract to documents loaded next to the deck.
+    int deckFormatVersion = 0;
 
     UnitScalingConfig() = default;
     explicit UnitScalingConfig(UnitScalingMode mode);
 
     bool isUnitScaling() const { return mode == UnitScalingMode::UnitScaling; }
+    bool isDeckFormatVersion2() const { return deckFormatVersion == 2; }
     const PhysicalUnitSystem& unitSystem() const { return physicalUnitSystem; }
 
     Real lengthToInternal(Real value) const { return value; }
@@ -165,6 +187,7 @@ struct UnitScalingConfig {
     Real electricFieldToInternal(Real value) const { return value; }
     Real inverseLengthToInternal(Real value) const { return value; }
     Real surfaceFieldCoefficientToInternal(Real value) const { return value; }
+    Real augerCoefficientToInternal(Real value) const { return value; }
 
     Real lengthToSI(Real value) const;
     Real concentrationToSI(Real value) const;
@@ -176,6 +199,25 @@ struct UnitScalingConfig {
     Real surfaceFieldCoefficientToSI(Real value) const;
 };
 
+// Returns the declared deck format version, or 0 when `format_version` is
+// absent. Version 2 is the single-unit-system deck: values are expressed in
+// the TCAD internal units and the `scaling` block is not accepted. Version 0
+// is the transitional legacy form that still selects its unit system through
+// `scaling.mode`.
+int parseDeckFormatVersion(const nlohmann::json& cfg);
+
 UnitScalingConfig parseUnitScalingConfig(const nlohmann::json& cfg);
+
+// Applies the format_version 2 key contract to a JSON document: the v1 key
+// spellings the contract removed are rejected with a message naming their v2
+// replacement, and the v2 spellings are rewritten to the names the field
+// parsers consume. Documents that are not version 2 are returned unchanged.
+// `formatVersion` is the version of the deck the document belongs to, so that
+// documents referenced by a deck (materials files) follow the deck contract.
+nlohmann::json canonicalizeDeckKeys(const nlohmann::json& doc, int formatVersion);
+
+// Convenience wrapper that reads `format_version` from the deck itself. Every
+// deck loader must apply this to the JSON it reads before parsing fields.
+nlohmann::json canonicalizeDeck(const nlohmann::json& cfg);
 
 } // namespace vela
