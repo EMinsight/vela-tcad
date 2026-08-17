@@ -1,0 +1,111 @@
+{
+  "schema": "vela.singledevice.validation.v2",
+  "status": "pass",
+  "date": "2026-08-17",
+  "sentaurus_version": "O-2018.06-SP2",
+  "mesh": {
+    "nodes": 3584,
+    "triangles": 6972
+  },
+  "low_current_acceptance": {
+    "normal_rule": "relative_error <= 0.10",
+    "fallback_scope": "sentaurus_current < 1e-13 A/um",
+    "fallback_rule": "log_error <= 0.2 dex AND absolute_error <= 1e-14 A/um",
+    "linear_deep_off": {
+      "status": "pass",
+      "acceptance_path": "low_current_hybrid",
+      "relative_error": 0.10909661,
+      "log_error_dex": 0.0501694,
+      "absolute_error_A_per_um": 1.36067e-15
+    }
+  },
+  "save_load_workflow": {
+    "status": "pass",
+    "dependency_contract": "equilibrium -> save -> {linear drain ramp -> linear Id-Vg, saturation drain ramp -> saturation Id-Vg}",
+    "stages": {
+      "equilibrium": {"points": 1, "status": "pass"},
+      "linear_drain_ramp": {"points": 11, "status": "pass"},
+      "linear_idvg": {"points": 21, "status": "pass"},
+      "saturation_drain_ramp": {"points": 23, "status": "pass"},
+      "saturation_idvg": {"points": 41, "status": "pass", "reference_points": 21}
+    },
+    "common_saved_state_sha256": "04fa68f3f073803a7f253b6902ab123a550664dcf5f214b8ebedf7b1da631bbb",
+    "solver_path": {
+      "equilibrium_quasi_fermi_update_limit_V": 0.1,
+      "linear_idvg_quasi_fermi_update_limit_V": 0.1,
+      "saturation_idvg_quasi_fermi_update_limit_V": 0.025,
+      "physics_changed": false
+    }
+  },
+  "curve_closeout": {
+    "status": "pass",
+    "linear_vds_0p1_V": {
+      "points": 21,
+      "median_abs_log_error_dex": 0.00339653,
+      "p95_abs_log_error_dex": 0.0329827,
+      "ion_relative_error": 0.00654136,
+      "threshold_delta_V": 0.00196427,
+      "subthreshold_swing_relative_error": 0.00168043
+    },
+    "saturation_vds_1p1_V": {
+      "points": 21,
+      "median_abs_log_error_dex": 0.00259518,
+      "p95_abs_log_error_dex": 0.0316721,
+      "ion_relative_error": 0.00259824,
+      "threshold_delta_V": 0.00192168,
+      "subthreshold_swing_relative_error": 0.00183335
+    },
+    "dibl_absolute_error_V_per_V": 4.25899e-05,
+    "all_manifest_checks": true
+  },
+  "three_bias_field_kcl": {
+    "status": "pass",
+    "field_acceptance": "diagnostic_only",
+    "kcl_rule": "absolute residual <= 1e-14 A/um OR residual/drain <= 1%",
+    "points": [
+      {
+        "Vg_V": -0.5,
+        "Vds_V": 0.1,
+        "psi_median_abs_error_V": 0.00985204,
+        "psi_p95_abs_error_V": 0.0222378,
+        "electron_density_median_abs_log_error_dex": 0.0217999,
+        "electron_density_p95_abs_log_error_dex": 0.332307,
+        "electron_quantum_potential_median_abs_error_V": 0.000264211,
+        "electron_quantum_potential_p95_abs_error_V": 0.00832122,
+        "kcl_absolute_residual_A_per_um": 2.02901e-17,
+        "kcl_residual_over_drain": 0.00182605
+      },
+      {
+        "Vg_V": 0.31,
+        "Vds_V": 0.1,
+        "psi_median_abs_error_V": 0.00985204,
+        "psi_p95_abs_error_V": 0.0224357,
+        "electron_density_median_abs_log_error_dex": 0.0176556,
+        "electron_density_p95_abs_log_error_dex": 0.331806,
+        "electron_quantum_potential_median_abs_error_V": 0.000276936,
+        "electron_quantum_potential_p95_abs_error_V": 0.00803989,
+        "kcl_absolute_residual_A_per_um": 9.05581e-10,
+        "kcl_residual_over_drain": 3.68558e-05
+      },
+      {
+        "Vg_V": 2.2,
+        "Vds_V": 0.1,
+        "psi_median_abs_error_V": 0.00985204,
+        "psi_p95_abs_error_V": 0.0282009,
+        "electron_density_median_abs_log_error_dex": 0.0177369,
+        "electron_density_p95_abs_log_error_dex": 0.332572,
+        "electron_quantum_potential_median_abs_error_V": 0.000341862,
+        "electron_quantum_potential_p95_abs_error_V": 0.0110292,
+        "kcl_absolute_residual_A_per_um": 7.2699e-08,
+        "kcl_residual_over_drain": 0.000214079
+      }
+    ]
+  },
+  "runtime_artifacts": {
+    "root": "build/singledevice_closeout/workflow_current_run1",
+    "workflow_manifest_sha256": "971b89d8f5350a5291f0803557d78103a113fa43fe12920b220213664d59c17d",
+    "closeout_sha256": "7bc9cfa0e86340a0cc889d23009280e70d999a5cb1c6661ce949613e5f1e0b8a",
+    "three_bias_field_kcl_sha256": "ba085b9c132b8bbe010fd2b17966348eb56d2b8dd2143121ffdee9fbe30936ce"
+  },
+  "conclusion": "The minimum SingleDevice closeout path is complete without adding a physics model. Field metrics remain diagnostic and do not authorize further development by themselves."
+}

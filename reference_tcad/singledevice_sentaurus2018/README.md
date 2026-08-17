@@ -13,11 +13,19 @@ The two output branches both start from the saved equilibrium state:
 - `singledevice_idvg_lin_reference.csv`: `Vds=0.1 V`
 - `singledevice_idvg_sat_reference.csv`: `Vds=1.1 V`
 
-The fixed-state transport/current replay now passes both 21-point branches.  The
-durable metrics and the self-consistent endpoint status are recorded in
-`singledevice_validation_20260812.json`.  Full Vela-equivalence remains open
-until Vela's own density-gradient outer coupling converges and both complete
-self-consistent curves pass the manifest thresholds.
+The original Save/Load dependency graph and both self-consistent Id-Vg branches
+now pass with Vela's density-gradient outer coupling.  The current closeout,
+derived metrics, low-current rule, and three-bias field/KCL audit are recorded
+in `singledevice_validation_20260817.json`.  The older
+`singledevice_validation_20260812.json` remains an immutable historical
+snapshot of the previously partial state.
+
+Reproduce the staged Vela workflow with `scripts/run_singledevice_workflow.py`,
+then apply `scripts/close_singledevice_validation.py` and
+`scripts/analyze_singledevice_closeout_fields.py`.  The gate-sweep numerical
+settings are branch-specific: the linear branch uses a 0.1 V quasi-Fermi update
+limit, while the already proven saturation branch retains 0.025 V.  This is a
+solver-path setting only; no physics model was added for the closeout.
 
 Sentaurus field exports can be converted to a Vela restart state with
 `scripts/sentaurus_fields_to_restart.py`.  The converter clears Sentaurus's

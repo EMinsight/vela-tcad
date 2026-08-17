@@ -50,6 +50,15 @@
     "dibl_error_max_V_per_V": 0.02,
     "subthreshold_swing_relative_error_max": 0.1
   },
+  "low_current_acceptance": {
+    "relative_error_max": 0.1,
+    "log_error_max_dex": 0.2,
+    "low_current_reference_max_A_per_um": 1e-13,
+    "low_current_absolute_error_max_A_per_um": 1e-14,
+    "threshold_current_A_per_um": 1e-7,
+    "subthreshold_fit_current_min_A_per_um": 1e-13,
+    "subthreshold_fit_current_max_A_per_um": 1e-8
+  },
   "baseline_run": {
     "run_id": "singledevice_baseline_20260812",
     "status": "complete",

@@ -68,6 +68,29 @@ class SingleDeviceReferenceFixtureTest(unittest.TestCase):
             manifest["simulations"][1]["initial_state"],
         )
 
+    def test_minimum_closeout_ledger_is_complete_and_passed(self) -> None:
+        ledger = json.loads(
+            (FIXTURE / "singledevice_validation_20260817.json").read_text())
+        self.assertEqual("vela.singledevice.validation.v2", ledger["schema"])
+        self.assertEqual("pass", ledger["status"])
+        self.assertEqual("pass", ledger["save_load_workflow"]["status"])
+        self.assertTrue(all(
+            stage["status"] == "pass"
+            for stage in ledger["save_load_workflow"]["stages"].values()))
+        self.assertEqual("pass", ledger["curve_closeout"]["status"])
+        self.assertTrue(ledger["curve_closeout"]["all_manifest_checks"])
+        self.assertEqual("low_current_hybrid", ledger[
+            "low_current_acceptance"]["linear_deep_off"]["acceptance_path"])
+        self.assertEqual("pass", ledger["three_bias_field_kcl"]["status"])
+        self.assertEqual(
+            [-0.5, 0.31, 2.2],
+            [point["Vg_V"] for point in ledger["three_bias_field_kcl"]["points"]],
+        )
+        self.assertEqual(
+            "diagnostic_only",
+            ledger["three_bias_field_kcl"]["field_acceptance"],
+        )
+
     def test_import_config_keeps_two_quantum_corrected_branches(self) -> None:
         config = json.loads(
             (FIXTURE / "singledevice_import_config.json").read_text())
