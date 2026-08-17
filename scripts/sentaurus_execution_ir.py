@@ -245,12 +245,16 @@ def _stage_entries(cmd_summary: dict[str, Any]) -> list[dict[str, Any]]:
 def build_execution_ir(cmd_summary: dict[str, Any],
                        source: str,
                        models: Iterable[str],
-                       allow_unsupported: bool = False) -> dict[str, Any]:
+                       allow_unsupported: bool = False,
+                       permitted_unsupported_models: Iterable[str] = (),
+                       ) -> dict[str, Any]:
     """Build ``vela.sentaurus_execution_ir.v1`` from a parsed SDevice summary.
 
     Raises :class:`ExecutionIrError` when the deck uses models outside the
-    support whitelist, unless ``allow_unsupported`` is set by a caller that only
-    needs the report.
+    support whitelist.  ``allow_unsupported`` remains the report-only escape
+    hatch that admits every unsupported model.  Production importers should
+    instead pass ``permitted_unsupported_models`` so only models with an
+    explicit downstream substitution policy cross this gate.
     """
     unresolved = cmd_summary.get("unresolved_placeholders", [])
     if unresolved:
@@ -259,10 +263,15 @@ def build_execution_ir(cmd_summary: dict[str, Any],
             f"{', '.join(unresolved)}; supply --template-var for each")
 
     classification = classify_models(models)
-    if classification["unsupported"] and not allow_unsupported:
+    permitted = set(permitted_unsupported_models)
+    blocking_unsupported = [
+        item for item in classification["unsupported"]
+        if item["model"] not in permitted
+    ]
+    if blocking_unsupported and not allow_unsupported:
         details = "; ".join(
             f"{item['model']} ({item['reason']})"
-            for item in classification["unsupported"]
+            for item in blocking_unsupported
         )
         raise ExecutionIrError(
             f"{source}: unsupported SDevice physics: {details}")

@@ -1605,15 +1605,22 @@ def device_command(args: argparse.Namespace) -> None:
 
     template_vars = parse_template_vars(args.template_var)
     cmd_summary = parse_cmd(args.sdevice, template_vars)
+    models = sentaurus_models(cmd_summary)
+    permitted_unsupported_models = (
+        UNIMPLEMENTED_IONIZATION_MODELS
+        if args.allow_lossy and "Avalanche" in models
+        else ()
+    )
     try:
         execution_ir = build_execution_ir(
             cmd_summary,
             str(args.sdevice),
-            sentaurus_models(cmd_summary),
+            models,
             allow_unsupported=False,
+            permitted_unsupported_models=permitted_unsupported_models,
         )
     except ExecutionIrError as error:
-        classification = classify_models(sentaurus_models(cmd_summary))
+        classification = classify_models(models)
         _write_fail_report(
             output_dir, "sdevice_parse", str(error),
             {"unsupported": classification["unsupported"]})

@@ -167,6 +167,23 @@ def _rows() -> list[MappingEntry]:
         section="Bandgap", parameter="Chi0",
         status=STATUS_EXACT, target="materials[].electron_affinity_eV",
     ))
+    rows.append(MappingEntry(
+        section="Bandgap", parameter="Bgn2Chi",
+        status=STATUS_UNSUPPORTED_FORMULA, target=None,
+        note=(
+            "Vela folds bandgap narrowing into ni and has no material-level "
+            "DeltaEc/DeltaEv partition controlled by Bgn2Chi"
+        ),
+    ))
+    for name in ("alpha2", "beta2", "EgMin", "dEgMin"):
+        rows.append(MappingEntry(
+            section="Bandgap", parameter=name,
+            status=STATUS_UNSUPPORTED_FORMULA, target=None,
+            note=(
+                "secondary/minimum-gap control is not represented by Vela's "
+                "scalar bandgap temperature contract"
+            ),
+        ))
     # dEg0 is the bandgap-narrowing zero-doping reference, not a bandgap
     # shift.  Vela folds it into the material ni, and writing it into
     # bandgap_eV as well would double-count it.
@@ -238,6 +255,13 @@ def _rows() -> list[MappingEntry]:
             "Material::atTemperature applies pow(ratio, -2.2) to electrons "
             "and holes alike; the per-carrier exponents (2.5, 2.2) cannot be "
             "represented"
+        ),
+    ))
+    rows.append(MappingEntry(
+        section="ConstantMobility", parameter="mutunnel",
+        status=STATUS_UNSUPPORTED_MODEL, target=None,
+        note=(
+            "Vela has no separate tunnelling-mobility channel or JSON input"
         ),
     ))
 
@@ -335,7 +359,6 @@ def _rows() -> list[MappingEntry]:
 
     # -- Recombination ---------------------------------------------------
     scharfetter = {
-        "tau0": "solver.srh_doping_dependence.{carrier}.tau_max_s",
         "taumin": "solver.srh_doping_dependence.{carrier}.tau_min_s",
         "taumax": "solver.srh_doping_dependence.{carrier}.tau_max_s",
         "Nref": "solver.srh_doping_dependence.{carrier}.reference_doping_m3",
@@ -346,6 +369,16 @@ def _rows() -> list[MappingEntry]:
             section="Scharfetter", parameter=name,
             status=STATUS_EXACT, target=target, requires_model="SRH",
         ))
+    rows.append(MappingEntry(
+        section="Scharfetter", parameter="tau0",
+        status=STATUS_UNSUPPORTED_FORMULA, target=None,
+        requires_model="Nakagawa",
+        note=(
+            "denominator parameter of the improved Nakagawa lifetime law; "
+            "Vela implements only the ordinary Scharfetter tau_min/tau_max "
+            "law"
+        ),
+    ))
     rows.append(MappingEntry(
         section="Scharfetter", parameter="Talpha",
         status=STATUS_EXACT,
@@ -482,6 +515,13 @@ def _rows() -> list[MappingEntry]:
 #: The mapping matrix, as an ordered list of rows.
 MATRIX: tuple[MappingEntry, ...] = tuple(_rows())
 
+#: Sections with at least one parameter that is meaningful without an
+#: execution-model activation gate.  An unknown parameter in one of these
+#: sections cannot be proven inert, so it must fail closed as ``unmapped``.
+ALWAYS_ACTIVE_SECTIONS = frozenset(
+    entry.section for entry in MATRIX if entry.requires_model is None
+)
+
 
 def _build_index() -> dict[tuple[str, str], list[MappingEntry]]:
     index: dict[tuple[str, str], list[MappingEntry]] = {}
@@ -615,6 +655,14 @@ def classify(
     }
     entry = lookup(section, parameter, variant, formula)
     if entry is None:
+        if section in ALWAYS_ACTIVE_SECTIONS:
+            return Classification(
+                section, parameter, variant, formula, STATUS_UNMAPPED, None,
+                reason=(
+                    "no mapping contract row describes this parameter in an "
+                    "always-active section"
+                ),
+            )
         section_model = SECTION_MODELS.get(section, section)
         if models is None or section_model not in models:
             return Classification(

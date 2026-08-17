@@ -163,8 +163,27 @@ class LookupStrictnessTest(unittest.TestCase):
             pmap.lookup("DopingDependence", "mumin1", formula="2"),
         )
 
-    def test_unknown_parameter_is_unmapped_not_guessed(self):
-        result = pmap.classify("Bandgap", "EgSomethingNew")
+    def test_unknown_parameter_in_always_active_section_is_unmapped(self):
+        for section, parameter in (
+            ("Epsilon", "epsilonn"),
+            ("Bandgap", "EgSomethingNew"),
+        ):
+            with self.subTest(section=section, parameter=parameter):
+                result = pmap.classify(
+                    section, parameter, active_models=None,
+                )
+                self.assertEqual(result.status, pmap.STATUS_UNMAPPED)
+                self.assertIsNone(result.entry)
+                with self.assertRaises(pmap.ParameterMapError):
+                    pmap.assert_importable([result])
+                with self.assertRaises(pmap.ParameterMapError):
+                    pmap.assert_importable([result], allow_lossy=True)
+
+    def test_unknown_parameter_in_inactive_model_section_stays_inactive(self):
+        result = pmap.classify(
+            "DopingDependence", "new_coefficient", formula="3",
+            active_models=["SRH"],
+        )
         self.assertEqual(result.status, pmap.STATUS_INACTIVE)
         self.assertIsNone(result.entry)
 
@@ -198,6 +217,29 @@ class ActivationContextTest(unittest.TestCase):
         """Permittivity is meaningful whatever the model set is."""
         result = pmap.classify("Epsilon", "epsilon", active_models=None)
         self.assertEqual(result.status, pmap.STATUS_EXACT)
+
+    def test_tau0_is_not_aliased_to_the_ordinary_tau_max(self):
+        entry = pmap.lookup("Scharfetter", "tau0")
+        self.assertEqual(entry.status, pmap.STATUS_UNSUPPORTED_FORMULA)
+        self.assertEqual(entry.requires_model, "Nakagawa")
+        self.assertIsNone(entry.target)
+        self.assertEqual(
+            pmap.lookup("Scharfetter", "taumax").target,
+            "solver.srh_doping_dependence.{carrier}.tau_max_s",
+        )
+
+    def test_tau0_is_inactive_for_ordinary_srh_and_blocks_nakagawa(self):
+        ordinary = pmap.classify(
+            "Scharfetter", "tau0", active_models=["SRH"],
+        )
+        self.assertEqual(ordinary.status, pmap.STATUS_INACTIVE)
+
+        nakagawa = pmap.classify(
+            "Scharfetter", "tau0", active_models=["SRH", "Nakagawa"],
+        )
+        self.assertEqual(nakagawa.status, pmap.STATUS_UNSUPPORTED_FORMULA)
+        with self.assertRaises(pmap.ParameterMapError):
+            pmap.assert_importable([nakagawa], allow_lossy=True)
 
 
 class NeutralValueTest(unittest.TestCase):
@@ -297,6 +339,17 @@ class KnownOverstatementTest(unittest.TestCase):
             result = pmap.classify("Auger", name, active_models=["Auger"])
             self.assertEqual(result.status, pmap.STATUS_APPROXIMATED)
 
+    def test_known_ungated_parameters_without_vela_paths_are_explicit(self):
+        for name in ("Bgn2Chi", "alpha2", "beta2", "EgMin", "dEgMin"):
+            with self.subTest(parameter=name):
+                entry = pmap.lookup("Bandgap", name)
+                self.assertIsNotNone(entry)
+                self.assertEqual(entry.status, pmap.STATUS_UNSUPPORTED_FORMULA)
+                self.assertIsNone(entry.target)
+        mutunnel = pmap.lookup("ConstantMobility", "mutunnel")
+        self.assertEqual(mutunnel.status, pmap.STATUS_UNSUPPORTED_MODEL)
+        self.assertIsNone(mutunnel.target)
+
     def test_constant_mobility_exponent_is_approximated(self):
         """Vela hardcodes -2.2 for both carriers; .par has 2.5 and 2.2."""
         result = pmap.classify("ConstantMobility", "Exponent")
@@ -374,11 +427,20 @@ class CorpusClassificationTest(unittest.TestCase):
         results, report = pmap.classify_ir(self.pn2d, PN2D_ACTIVE_MODELS)
         self.assertEqual(sum(report.counts.values()), len(results))
 
-    def test_pn2d_blocks_on_the_auger_density_enhancement(self):
-        """The one honest blocker in this corpus, named explicitly."""
+    def test_pn2d_blockers_are_named_explicitly(self):
+        """Every meaningful corpus parameter without a Vela path is named."""
         _, report = pmap.classify_ir(self.pn2d, PN2D_ACTIVE_MODELS)
         blocked = {(item.section, item.parameter) for item in report.blocking}
-        self.assertEqual(blocked, {("Auger", "H"), ("Auger", "N0")})
+        self.assertEqual(blocked, {
+            ("Auger", "H"),
+            ("Auger", "N0"),
+            ("Bandgap", "Bgn2Chi"),
+            ("Bandgap", "alpha2"),
+            ("Bandgap", "beta2"),
+            ("Bandgap", "EgMin"),
+            ("Bandgap", "dEgMin"),
+            ("ConstantMobility", "mutunnel"),
+        })
 
     def test_inactive_alternative_models_do_not_block(self):
         """Lackner and UniBo ship in every ``.par`` and are never selected."""

@@ -52,6 +52,12 @@ file is a candidate library. `unmapped` means an active section contains no
 matching contract row; it is an error so new, misspelled, or unsupported
 coefficients cannot be silently dropped.
 
+Sections that contain ungated material inputs, such as `Epsilon`, `Bandgap`,
+`eDOSMass`, `hDOSMass`, and `ConstantMobility`, are always active for mapping
+purposes.  An unknown parameter in one of these sections is therefore
+`unmapped` even when no execution-model context was supplied: there is no
+inactive model selection that proves it harmless.
+
 `--allow-lossy` widens the gate to `approximated`. It never admits
 `unsupported_formula` or `unsupported_model`: those represent physics Vela
 cannot reproduce at any temperature, and accepting them would produce a deck
@@ -82,6 +88,11 @@ example the `Lackner` rows require the `Lackner` model. Because that name is
 not in the execution IR's supported list, those rows can never be reached
 through a legitimate import, but if the gate is ever widened they immediately
 report `unsupported_model` instead of being silently forgotten.
+
+`Scharfetter.tau0` follows the same rule.  It is the independent denominator
+parameter of the improved Nakagawa lifetime law, not an alias for `taumax`.
+The row is inactive for the ordinary Scharfetter law and reports
+`unsupported_formula` when a `Nakagawa` activation context is supplied.
 
 When no activation context is supplied at all, every model-gated row is
 `inactive`. Only material constants such as permittivity import without one.
@@ -180,9 +191,12 @@ prints the offending rows with the reason for each.
 ## Current coverage
 
 Against `reference_tcad/pn2d_sentaurus2018/source/models.par` with the PN2D
-breakdown model set active, the matrix reports a single honest blocker:
-`Auger.H` and `Auger.N0`, the carrier-density enhancement Vela does not
-implement. Six parameters classify as `approximated` — the two mobility
+breakdown model set active, the matrix reports eight blockers. `Auger.H` and
+`Auger.N0` describe carrier-density enhancement Vela does not implement;
+`Bandgap.Bgn2Chi`, `alpha2`, `beta2`, `EgMin`, and `dEgMin` require band-edge
+partition or secondary/minimum-gap formulas absent from the scalar Vela
+material contract; and `ConstantMobility.mutunnel` has no Vela tunnelling-
+mobility channel. Six parameters classify as `approximated` — the two mobility
 temperature exponents, and the three Auger polynomial coefficients plus the
 constant-mobility exponent. Everything else is either importable or inert.
 

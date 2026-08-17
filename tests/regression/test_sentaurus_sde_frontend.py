@@ -400,6 +400,30 @@ class ExecutionIrTest(unittest.TestCase):
         self.assertIn("Hydrodynamic",
                       {entry["model"] for entry in report["unsupported"]})
 
+    def test_selective_unsupported_permission_does_not_widen_the_whitelist(self) -> None:
+        summary = parse_cmd(PN2D_BV_CMD, {})
+        models = sentaurus_models(summary) | {"OkutoCrowell"}
+        report = build_execution_ir(
+            summary,
+            str(PN2D_BV_CMD),
+            models,
+            permitted_unsupported_models={"OkutoCrowell"},
+        )
+        self.assertIn(
+            "OkutoCrowell",
+            {entry["model"] for entry in report["unsupported"]},
+        )
+
+        with self.assertRaises(ExecutionIrError) as ctx:
+            build_execution_ir(
+                summary,
+                str(PN2D_BV_CMD),
+                models | {"Hydrodynamic"},
+                permitted_unsupported_models={"OkutoCrowell"},
+            )
+        self.assertIn("Hydrodynamic", str(ctx.exception))
+        self.assertNotIn("OkutoCrowell (", str(ctx.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

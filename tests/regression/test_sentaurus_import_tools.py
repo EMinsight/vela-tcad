@@ -118,6 +118,79 @@ class SentaurusImportToolsTest(unittest.TestCase):
             warnings, ["OkutoCrowell approximated by selberherr (allow_lossy)"],
         )
 
+    def test_device_allow_lossy_reaches_execution_ir_and_manifest(self) -> None:
+        source = (
+            REPO / "reference_tcad" / "pn2d_sentaurus2018" / "source"
+        )
+        with tempfile.TemporaryDirectory(prefix="vela_device_lossy_") as tmp:
+            root = Path(tmp)
+            sdevice = root / "pn2d_okuto_sdevice.cmd"
+            sdevice.write_text(
+                (source / "pn2d_bv_sdevice.cmd").read_text(encoding="utf-8")
+                .replace("VanOverstraeten", "OkutoCrowell"),
+                encoding="utf-8",
+            )
+            command = [
+                sys.executable,
+                str(REPO / "scripts" / "sentaurus_import.py"),
+                "device",
+                "--sde",
+                str(source / "pn2d_sde.cmd"),
+                "--sdevice",
+                str(sdevice),
+            ]
+            env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+
+            blocked_output = root / "blocked"
+            blocked = subprocess.run(
+                [*command, "--output-dir", str(blocked_output)],
+                cwd=REPO,
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(blocked.returncode, 0)
+            fail_report = json.loads(
+                (blocked_output / "fail_report.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(fail_report["stage"], "sdevice_parse")
+            self.assertIn("OkutoCrowell", fail_report["message"])
+
+            allowed_output = root / "allowed"
+            subprocess.run(
+                [
+                    *command,
+                    "--output-dir",
+                    str(allowed_output),
+                    "--allow-lossy",
+                ],
+                check=True,
+                cwd=REPO,
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+            execution_ir = json.loads(
+                (allowed_output / "execution_ir.json").read_text(encoding="utf-8")
+            )
+            self.assertIn(
+                "OkutoCrowell",
+                {entry["model"] for entry in execution_ir["unsupported"]},
+            )
+            deck = json.loads(
+                (allowed_output / "simulation.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                deck["solver"]["impact_ionization"]["model"], "selberherr",
+            )
+            manifest = json.loads(
+                (allowed_output / "run_manifest.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                manifest["warnings"],
+                ["OkutoCrowell approximated by selberherr (allow_lossy)"],
+            )
+
     def test_plain_avalanche_is_unaffected_by_the_guard(self) -> None:
         deck = {"solver": {"type": "gummel"}}
 

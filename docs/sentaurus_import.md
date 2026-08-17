@@ -70,6 +70,27 @@ Example pattern:
 python scripts/sentaurus_import.py --help
 ```
 
+### Explicit lossy impact-ionization substitution
+
+The `device` command fails closed when an SDevice deck selects an impact-
+ionization coefficient model that Vela does not implement.  `--allow-lossy`
+permits only the coefficient models covered by the importer's explicit
+substitution policy and records both the unsupported source model and the
+chosen Vela model:
+
+```bash
+python scripts/sentaurus_import.py device \
+  --sde path/to/device_sde.cmd \
+  --sdevice path/to/device_sdevice.cmd \
+  --output-dir build/imported_device \
+  --allow-lossy
+```
+
+This option is not a general physics-whitelist override. Models without a
+downstream substitution, including hydrodynamic and carrier-temperature
+transport, remain fatal. `execution_ir.json` retains the unsupported source
+model and `run_manifest.json` records the substitution warning.
+
 ## End-to-End Workflow
 
 1. Build with HDF5 enabled and verify `sentaurus_import` exists.
