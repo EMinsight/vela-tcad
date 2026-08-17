@@ -3769,6 +3769,95 @@ TEST_CASE("DCSweep: BV reverse arclength continuation records converged arc poin
     }
 }
 
+TEST_CASE("DCSweep: persisted stage state restarts into arclength continuation",
+          "[dc_sweep][restart][continuation][arclength]")
+{
+    const auto dir = makeUniqueSweepDir();
+    const ScopedDirectoryCleanup cleanup{dir};
+    std::filesystem::create_directories(dir);
+    const auto meshPath = writePNMesh(dir);
+    const auto statePrefix = dir / "states" / "stage_a";
+
+    const auto stageAConfig = writeUnitScalingSweepConfig(
+        dir,
+        meshPath,
+        dir / "stage_a.csv",
+        {
+            {"mode", "bv_reverse"},
+            {"start", 0.0},
+            {"stop", -0.02},
+            {"step", -0.02},
+            {"initial_step", 0.02},
+            {"min_step", 0.005},
+            {"max_step", 0.02},
+            {"write_vtk", false},
+            {"write_state_every_point_prefix", statePrefix.string()}
+        },
+        {
+            {"method", "newton"},
+            {"max_iter", 100},
+            {"reltol", 1.0e-12},
+            {"abstol", 1.0e-8}
+        });
+
+    DCSweep sweep;
+    const DCSweepResult stageA = sweep.runWithResult(stageAConfig.string());
+    REQUIRE(stageA.points.size() == 2);
+    REQUIRE(stageA.points.back().converged);
+
+    const auto restartPath = dir / "states" / "stage_a_bias_m0p020000.csv";
+    REQUIRE(std::filesystem::exists(restartPath));
+
+    const auto stageBConfig = writeUnitScalingSweepConfig(
+        dir,
+        meshPath,
+        dir / "stage_b.csv",
+        {
+            {"mode", "bv_reverse"},
+            {"start", -0.02},
+            {"stop", -0.05},
+            {"step", -0.01},
+            {"initial_step", 0.01},
+            {"min_step", 0.005},
+            {"max_step", 0.01},
+            {"initial_state_file", restartPath.string()},
+            {"write_vtk", false},
+            {"continuation", {
+                {"arclength", {
+                    {"enabled", true},
+                    {"initial_step", 0.01},
+                    {"min_step", 0.005},
+                    {"max_step", 0.01},
+                    {"growth_factor", 1.0},
+                    {"shrink_factor", 0.5},
+                    {"max_corrector_iterations", 40},
+                    {"corrector_tolerance", 1.0e-7},
+                    {"max_step_retries", 8},
+                    {"parameter_scale", 1.0},
+                    {"bias_finite_difference_step_V", 1.0e-4}
+                }}
+            }}
+        },
+        {
+            {"method", "newton"},
+            {"max_iter", 80},
+            {"reltol", 1.0e-8},
+            {"abstol", 2.0e-8}
+        });
+
+    const DCSweepResult stageB = sweep.runWithResult(stageBConfig.string());
+    REQUIRE(stageB.points.size() >= 3);
+    REQUIRE(stageB.points.front().converged);
+    REQUIRE(stageB.points.front().iterations == 0);
+    for (std::size_t i = 1; i < stageB.points.size(); ++i) {
+        INFO(i);
+        REQUIRE(stageB.points.at(i).converged);
+        REQUIRE(stageB.points.at(i).solverMethod == "arclength");
+        REQUIRE(stageB.points.at(i).bias < stageB.points.at(i - 1).bias);
+    }
+    REQUIRE(stageB.points.back().bias <= -0.05);
+}
+
 TEST_CASE("DCSweep: explicit bias_points solve only requested biases", "[dc_sweep]")
 {
     const auto dir = makeUniqueSweepDir();

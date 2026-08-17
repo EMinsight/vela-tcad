@@ -37,6 +37,15 @@ build/vela_example_runner.exe --config reference_tcad/schottky_charon_sentaurus2
 build/vela_example_runner.exe --config reference_tcad/schottky_charon_sentaurus2018/vela/simulation_iv_arclength.json
 ```
 
+A fresh two-command rerun produces 42 stage-A points and 114 stage-B points,
+ending at `1.0002943642565851 V` without voltage backsteps or current
+decreases. Stage B explicitly sets `abstol = 2e-9`: the imported 0.82 V state
+has already reached the attainable normalized residual floor, while restarting
+a purely relative solve would reset that small residual to a relative norm of
+one and incorrectly demand another five orders of magnitude reduction. The
+freshly merged curve agrees with the checked-in curve to `1.46e-14 V` in bias
+and `6.77e-13` relative current.
+
 The earlier 0.563125 V failure was caused by the deck's
 `quasi_fermi_update_limit_V = 0.05` hard update cap. Both analytic and finite-
 difference Jacobians failed with that cap, while the same restart transition

@@ -34,6 +34,7 @@
     "method": "newton",
     "max_iter": 150,
     "reltol": 1e-5,
+    "abstol": 2e-9,
     "diagnostics": false,
     "damping_psi": 0.5,
     "max_update": 5.0,
