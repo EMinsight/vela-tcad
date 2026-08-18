@@ -618,6 +618,13 @@ add_test(NAME sentaurus_import_tools
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/regression/test_sentaurus_import_tools.py)
 vela_set_windows_msys2_test_path(sentaurus_import_tools)
 
+add_test(NAME sentaurus_vm_reference_runner
+    COMMAND ${Python3_EXECUTABLE} -m unittest
+            tests.regression.test_sentaurus_vm_reference_runner)
+set_tests_properties(sentaurus_vm_reference_runner PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+vela_set_windows_msys2_test_path(sentaurus_vm_reference_runner)
+
 add_test(NAME sentaurus_sde_frontend
     COMMAND ${Python3_EXECUTABLE} -m unittest
             tests.regression.test_sentaurus_sde_frontend)

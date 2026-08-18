@@ -30,6 +30,12 @@ def run(command: list[str], *, cwd: Path | None = None) -> None:
     subprocess.run(command, cwd=cwd, check=True)
 
 
+def ssh_host_options(host_name: str | None) -> list[str]:
+    if not host_name:
+        return []
+    return ["-o", f"HostName={host_name}"]
+
+
 def build_command(template: str, bias: float, tag: str) -> str:
     text = template
     text = text.replace('Plot      = "n4_des.tdr"', f'Plot      = "{tag}_des.tdr"')
@@ -64,7 +70,11 @@ def main() -> int:
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--biases", default="0,0.001,0.002,0.005,0.01")
     parser.add_argument("--ssh-target", default="sentaurus")
-    parser.add_argument("--host-name", default="192.168.119.130")
+    parser.add_argument(
+        "--host-name",
+        default=None,
+        help="optional HostName override; defaults to the --ssh-target SSH config",
+    )
     parser.add_argument(
         "--remote-dir",
         default="/home/tcad/sentaurus_runs/vela_oracle/bvmethods_low_bias_20260802",
@@ -100,7 +110,7 @@ def main() -> int:
     for name in ("n1_msh.tdr", "pp4_des.par"):
         (bundle / name).write_bytes((source / name).read_bytes())
 
-    ssh_common = ["-o", f"HostName={args.host_name}"]
+    ssh_common = ssh_host_options(args.host_name)
     run(
         [
             str(args.ssh_bin),

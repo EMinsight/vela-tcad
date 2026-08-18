@@ -134,6 +134,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--source-dir", type=Path, default=DEFAULT_SOURCE_DIR)
     parser.add_argument("--local-output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--remote-root", default=DEFAULT_REMOTE_ROOT)
+    parser.add_argument(
+        "--sentaurus-version",
+        default=None,
+        help="Release label recorded in the manifest, for example T-2022.03-SP2",
+    )
     parser.add_argument("--run-id", default=None)
     parser.add_argument("--stages", default="bv", help="Comma-separated stages: 0v,iv,bv")
     parser.add_argument("--dry-run", action="store_true")
@@ -162,6 +167,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "device": args.device,
             "dry_run": args.dry_run,
             "ssh_target": args.ssh_target,
+            "sentaurus_version": args.sentaurus_version,
             "remote_root": args.remote_root,
             "remote_source_dir": remote_dir,
             "run_id": run_id,

@@ -82,6 +82,12 @@ def run(command: list[str]) -> None:
     subprocess.run(command, check=True)
 
 
+def ssh_host_options(host_name: str | None) -> list[str]:
+    if not host_name:
+        return []
+    return ["-o", f"HostName={host_name}"]
+
+
 def safe_remote_root(value: str) -> str:
     if re.fullmatch(r"/[A-Za-z0-9._/-]+", value) is None:
         raise ValueError("remote root must be a safe absolute POSIX path")
@@ -145,7 +151,11 @@ def main() -> int:
     parser.add_argument("--source-dir", type=Path, default=DEFAULT_SOURCE)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--ssh-target", default="sentaurus")
-    parser.add_argument("--host-name", default="192.168.119.130")
+    parser.add_argument(
+        "--host-name",
+        default=None,
+        help="optional HostName override; defaults to the --ssh-target SSH config",
+    )
     parser.add_argument(
         "--drive",
         choices=("eparallel", "electric_field"),
@@ -210,7 +220,7 @@ def main() -> int:
             parameter, encoding="utf-8"
         )
 
-    ssh_common = ["-o", f"HostName={args.host_name}"]
+    ssh_common = ssh_host_options(args.host_name)
     run([str(args.ssh_bin), *ssh_common, args.ssh_target, f"mkdir -p {remote_root}"])
     run(
         [
