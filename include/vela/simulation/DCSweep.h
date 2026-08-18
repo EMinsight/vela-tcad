@@ -185,6 +185,11 @@ struct SweepArclengthConfig {
     PseudoArclengthConfig core;
     /// Finite-difference step (in volts) used to estimate dF/dV at the active contact.
     Real biasFiniteDifferenceStep_V = 1.0e-4;
+    /// Optional earlier converged state used with the sweep start state to form
+    /// the first branch tangent by a secant.  This avoids relying on a single,
+    /// potentially ill-scaled Jacobian tangent at the restart point.
+    std::string initialSecantStateFile;
+    Real initialSecantBias_V = std::numeric_limits<Real>::quiet_NaN();
 };
 
 struct SweepContinuationConfig {

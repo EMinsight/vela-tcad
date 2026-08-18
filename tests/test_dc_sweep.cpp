@@ -2765,7 +2765,8 @@ TEST_CASE("DCSweep: continuation predictor config is validated",
                 {"max_step", 0.5},
                 {"state_weight", 0.25},
                 {"damping_factor", 0.5},
-                {"max_line_search_steps", 4}
+                {"max_line_search_steps", 4},
+                {"max_parameter_update", 0.02}
             }}
         });
         const DCSweepResult result = sweep.runWithResult(cfgPath.string());
@@ -2821,6 +2822,40 @@ TEST_CASE("DCSweep: continuation predictor config is validated",
             sweep.runWithResult(cfgPath.string()),
             Catch::Matchers::ContainsSubstring(
                 "DCSweep: sweep.continuation.arclength.max_line_search_steps"));
+    }
+
+    SECTION("negative arclength parameter update cap is rejected")
+    {
+        const auto cfgPath = writeConfigWithContinuation({
+            {"arclength", {
+                {"enabled", true},
+                {"initial_step", 0.2},
+                {"min_step", 0.01},
+                {"max_step", 0.5},
+                {"max_parameter_update", -0.1}
+            }}
+        });
+        REQUIRE_THROWS_WITH(
+            sweep.runWithResult(cfgPath.string()),
+            Catch::Matchers::ContainsSubstring(
+                "DCSweep: sweep.continuation.arclength.max_parameter_update"));
+    }
+
+    SECTION("arclength initial secant requires state and bias together")
+    {
+        const auto cfgPath = writeConfigWithContinuation({
+            {"arclength", {
+                {"enabled", true},
+                {"initial_step", 0.2},
+                {"min_step", 0.01},
+                {"max_step", 0.5},
+                {"initial_secant_state_file", "previous.csv"}
+            }}
+        });
+        REQUIRE_THROWS_WITH(
+            sweep.runWithResult(cfgPath.string()),
+            Catch::Matchers::ContainsSubstring(
+                "initial_secant_state_file and initial_secant_bias_V"));
     }
 
     SECTION("invalid arclength predictor is rejected")
@@ -3806,7 +3841,9 @@ TEST_CASE("DCSweep: persisted stage state restarts into arclength continuation",
     REQUIRE(stageA.points.back().converged);
 
     const auto restartPath = dir / "states" / "stage_a_bias_m0p020000.csv";
+    const auto secantPreviousPath = dir / "states" / "stage_a_bias_0p000000.csv";
     REQUIRE(std::filesystem::exists(restartPath));
+    REQUIRE(std::filesystem::exists(secantPreviousPath));
 
     const auto stageBConfig = writeUnitScalingSweepConfig(
         dir,
@@ -3834,7 +3871,9 @@ TEST_CASE("DCSweep: persisted stage state restarts into arclength continuation",
                     {"corrector_tolerance", 1.0e-7},
                     {"max_step_retries", 8},
                     {"parameter_scale", 1.0},
-                    {"bias_finite_difference_step_V", 1.0e-4}
+                    {"bias_finite_difference_step_V", 1.0e-4},
+                    {"initial_secant_state_file", secantPreviousPath.string()},
+                    {"initial_secant_bias_V", 0.0}
                 }}
             }}
         },

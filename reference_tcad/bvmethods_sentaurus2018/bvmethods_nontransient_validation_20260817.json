@@ -1,0 +1,237 @@
+{
+  "schema": "vela.bvmethods.nontransient_freeze.v1",
+  "scope": [
+    "ABA_poisson",
+    "ABA_coupled",
+    "resistor",
+    "voltage2current",
+    "continuation"
+  ],
+  "excluded": [
+    "transient"
+  ],
+  "sentaurus_version": "O-2018.06-SP2",
+  "sentaurus_reference": {
+    "status": "pass",
+    "methods": [
+      {
+        "method": "ABA_poisson",
+        "rows": 24,
+        "last_inner_voltage_V": 17.0126852581404,
+        "last_outer_voltage_V": 17.0126852581404,
+        "last_drain_total_current_A_per_um": 0.0,
+        "criterion": "min(PhiElectron,PhiHole) crossing 1.05",
+        "electron_bv_V": 5.31106010711801,
+        "hole_bv_V": 5.305525632989282,
+        "bv_V": 5.305525632989282,
+        "node": 3,
+        "source_artifact": "n3_des.plt",
+        "curve": "reference_curves/ABA_poisson.csv",
+        "expected_bv_V": 5.305525632989282,
+        "reference_matches": true
+      },
+      {
+        "method": "ABA_coupled",
+        "rows": 28,
+        "last_inner_voltage_V": 10.4482667308337,
+        "last_outer_voltage_V": 10.4482667308337,
+        "last_drain_total_current_A_per_um": 0.000133715623316762,
+        "criterion": "integrated avalanche current equals drain conduction current",
+        "bv_V": 6.377494277837012,
+        "last_avalanche_current_A_per_um": 0.0002151261945178064,
+        "node": 4,
+        "source_artifact": "n4_des.plt",
+        "curve": "reference_curves/ABA_coupled.csv",
+        "expected_bv_V": 6.377494277837012,
+        "reference_matches": true
+      },
+      {
+        "method": "resistor",
+        "rows": 63,
+        "last_inner_voltage_V": 7.19529377007974,
+        "last_outer_voltage_V": 14605.68133258,
+        "last_drain_total_current_A_per_um": 0.00145984860388099,
+        "criterion": "abs(drain current) crossing 0.0001 A/um",
+        "bv_V": 6.379791636301563,
+        "node": 5,
+        "source_artifact": "n5_des.plt",
+        "curve": "reference_curves/resistor.csv",
+        "expected_bv_V": 6.379791636301563,
+        "reference_matches": true
+      },
+      {
+        "method": "voltage2current",
+        "rows": 89,
+        "last_inner_voltage_V": 7.1930514986477,
+        "last_outer_voltage_V": 7.1930514986477,
+        "last_drain_total_current_A_per_um": 0.001443,
+        "criterion": "abs(drain current) crossing 0.0001 A/um",
+        "bv_V": 6.38318420057198,
+        "node": 6,
+        "source_artifact": "n6_des.plt",
+        "curve": "reference_curves/voltage2current.csv",
+        "expected_bv_V": 6.38318420057198,
+        "reference_matches": true
+      },
+      {
+        "method": "continuation",
+        "rows": 59,
+        "last_inner_voltage_V": 7.19400998419034,
+        "last_outer_voltage_V": 7.19400998419034,
+        "last_drain_total_current_A_per_um": 0.0014680183359934,
+        "criterion": "abs(drain current) crossing 0.0001 A/um",
+        "bv_V": 6.383727168968036,
+        "node": 7,
+        "source_artifact": "n7_des.plt",
+        "curve": "reference_curves/continuation.csv",
+        "expected_bv_V": 6.383727168968036,
+        "reference_matches": true
+      }
+    ]
+  },
+  "vela_acceptance": {
+    "aba_poisson": {
+      "status": "reference_operator_only",
+      "reason": "Poisson ABA is retained as an ionization-path operator reference"
+    },
+    "aba_coupled_iic": {
+      "scope": "Sentaurus 2018 BVmethods NMOS path-type and current-type IIC",
+      "status": "pass_with_documented_state_field_residual",
+      "path_iic": {
+        "status": "pass",
+        "terminal_bias_V": 10.4482667308,
+        "terminal_rank_comparison": [
+          {
+            "physical_path_rank": 1,
+            "vela_mean_ionization_integral": 1.7881274943339436,
+            "sentaurus_mean_ionization_integral": 1.80832,
+            "relative_error": -0.011166444913542043
+          },
+          {
+            "physical_path_rank": 2,
+            "vela_mean_ionization_integral": 1.5426012729373697,
+            "sentaurus_mean_ionization_integral": 1.578535,
+            "relative_error": -0.0227639723304395
+          },
+          {
+            "physical_path_rank": 3,
+            "vela_mean_ionization_integral": 1.4770627767291153,
+            "sentaurus_mean_ionization_integral": 1.46803,
+            "relative_error": 0.006152991920543449
+          }
+        ],
+        "max_absolute_relative_error": 0.0227639723304395,
+        "vela_transition_bracket_V": [
+          9.2,
+          9.3
+        ],
+        "sentaurus_transition_bracket_V": [
+          9.151,
+          9.251
+        ],
+        "transition_overlap_V": [
+          9.2,
+          9.251
+        ]
+      },
+      "current_iic": {
+        "status": "pass_within_3_percent",
+        "crossings": [
+          {
+            "workflow": "dense fixed-bias",
+            "vela_crossing_V": 6.920073789501318,
+            "sentaurus_crossing_V": 6.734425890478791,
+            "delta_V": 0.18564789902252699,
+            "relative_error": 0.027566997104385413
+          },
+          {
+            "workflow": "official sparse-point linear interpolation",
+            "vela_crossing_V": 6.564747378882984,
+            "sentaurus_crossing_V": 6.377494277837012,
+            "delta_V": 0.1872531010459726,
+            "relative_error": 0.029361547480600998
+          }
+        ],
+        "nodal_support": [
+          {
+            "bias_V": 6.4,
+            "hotspot_current_magnitude_ratio_p50": 1.0033053188139616,
+            "hotspot_current_direction_cosine_p50": 0.999878887878995,
+            "sentaurus_alpha_plus_vela_current_source_ratio": 0.9934573443465224,
+            "vela_field_alpha_plus_vela_current_source_ratio": 0.9652602966116055
+          },
+          {
+            "bias_V": 7.0,
+            "hotspot_current_magnitude_ratio_p50": 0.9950922565820841,
+            "hotspot_current_direction_cosine_p50": 0.9998843013505236,
+            "sentaurus_alpha_plus_vela_current_source_ratio": 0.9876786396861652,
+            "vela_field_alpha_plus_vela_current_source_ratio": 0.9454162357845549
+          }
+        ],
+        "strict_identity": false,
+        "remaining_residual": "Vela self-consistent high-field shoulder potential/Eparallel distribution; not current recovery, avalanche parameters, units, or a fixed source-map factor"
+      },
+      "criteria": {
+        "path_terminal_max_absolute_relative_error_limit": 0.03,
+        "current_crossing_relative_error_limit": 0.03,
+        "sentaurus_alpha_vela_current_source_ratio_min": 0.98
+      },
+      "interpretation": {
+        "official_6p377494_V": "sparse accepted-point linear crossing of Iava-Id",
+        "dense_6p734426_V": "direct fixed-bias Sentaurus Iava-Id crossing",
+        "path_break": "BreakAtIonIntegral(3 1.0), distinct from the current intersection"
+      }
+    },
+    "external_resistor": {
+      "sentaurus_voltage_V": 6.379791636301563,
+      "vela_voltage_V": 6.401809064565914,
+      "vela_current_A_per_um": 9.995305295344149e-05,
+      "load_line_residual_V": -0.06766140101922247,
+      "absolute_error_vs_sentaurus_V": 0.02201742826435016,
+      "relative_error_vs_sentaurus": 0.003451120274691903,
+      "absolute_difference_vs_voltage_to_current_V": 0.00010275834964357244,
+      "relative_difference_vs_voltage_to_current": 1.605119728074828e-05,
+      "status": "PASS"
+    },
+    "voltage_to_current": {
+      "method": "voltage_to_current",
+      "sentaurus_voltage_V": 6.38318420057198,
+      "vela_voltage_V": 6.401911822915557,
+      "absolute_error_V": 0.018727622343576833,
+      "relative_error": 0.0029338997207535855,
+      "relative_error_limit": 0.02,
+      "status": "PASS"
+    },
+    "continuation": {
+      "status": "pending",
+      "reason": "no converged Vela BVmethods NMOS arclength curve supplied",
+      "sentaurus_bv_V": 6.383727168968036,
+      "diagnostic": "continuation_diagnostic_20260818.json",
+      "classification": "The Sentaurus continuation curve is frozen, but Vela NMOS continuation is not accepted. The failure reproduces with and without Enormal mobility, so it is classified as continuation state scaling/corrector robustness rather than a missing physical model."
+    }
+  },
+  "status": "pass_with_continuation_pending",
+  "sha256": {
+    "reference_curves/ABA_poisson.csv": "d9200d2eafcf20afc328e63ed4d8eac7f8fe07e742b428918244f45fcd74fd77",
+    "runtime/n3_des.plt": "8d04234f196d03dcde87dd92cc4a22d2e02e5261abf2472695ec7e4ea134049b",
+    "reference_curves/ABA_coupled.csv": "e85aefd04136d42b7accd57e4b3ad3c1026475675393ab5097ae1904529f894f",
+    "runtime/n4_des.plt": "fb4a3440127367e2c8ddd2156fa42d772c08f1f278d731ec492f46ed87b30cb6",
+    "reference_curves/resistor.csv": "dc19bac3b6cfd2449508c5c8fe0103249375132b149ae267b5cc57ffa78dd69a",
+    "runtime/n5_des.plt": "24fa3fdb58183f3aafb09838624b075b42acac8203933e0b2f054c81dd28d572",
+    "reference_curves/voltage2current.csv": "2e12b6ebd86b5df0b0ae46dde4cb7f41746b9754f60e50d40b94d2ea7f2123ba",
+    "runtime/n6_des.plt": "bf5876ec15d831bea28f7f8471419ce44d4d82dfc6e192cd9697c2efb5ddc5c8",
+    "reference_curves/continuation.csv": "c80244deb3f4d154b53028b608bc9f94e552b05014324f0501611fd441c9f9ee",
+    "runtime/n7_des.plt": "0dc4271d6d27844323013bdf0419c85424a87ce6d59c90fa83047e752dc14cf3",
+    "source/aba_coupled_sdevice.cmd": "b34bc2b7dcc2a066efe6ea1513f097913be0b980c7578a201622146b73088cef",
+    "source/aba_poisson_sdevice.cmd": "6fd83bbcb147de0dce160ff3c4578e3d6e72b63ec75be8d01c7468c2c66c97f3",
+    "source/bvmethods_nmos_sde.cmd": "7cfb1748b85e6a095fa18321e9d4ecc12ae2f80f9c7e817153bcdcc076ea5f37",
+    "source/continuation_sdevice.cmd": "006ffeca619fc60e2a9f26d069021a38854cc6a3e20cfd49de42c04df1bbe622",
+    "source/external_resistor_sdevice.cmd": "1c71f2bb8844ec9dff00c12cd8e680b53cf6328a3d4059006c87caae627717c2",
+    "source/full_physics_ablation_sdevice.cmd": "7a792768da51aefc49fd27e65250aaecc29eafee6bb7f91104bd4637a223d5cc",
+    "source/full_physics_constant_srh.par": "779e954beb42403f44be003c220fd633ef7343ecd8de7961ad10840c7491c663",
+    "source/models.par": "8f347051a6a8a9c40ffebc6e54abe85adc2343735b53c4f1eb34406409b5ad0c",
+    "source/transient_sdevice.cmd": "28b579ded229314a6cd7fdc7256cc0220365e7fda7765584a64547f67702d0b7",
+    "source/voltage_to_current_sdevice.cmd": "9e9c5e8cfef6aa8afbe690494abefaacc7bfb07ab613ece7460f5a9b680acd48",
+    "continuation_diagnostic_20260818.json": "2fd0f5cdfe68318efcb2abb8e10a42ccee925b90cbdaba70de6c3ccfef0b5c21"
+  }
+}

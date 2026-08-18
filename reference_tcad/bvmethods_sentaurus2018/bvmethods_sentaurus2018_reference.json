@@ -13,12 +13,14 @@
       "name": "aba_poisson",
       "workbench_node": 3,
       "cmd": "aba_poisson_sdevice.cmd",
+      "reference_breakdown_voltage_V": 5.305525632989282,
       "vela_template": null
     },
     {
       "name": "aba_coupled",
       "workbench_node": 4,
       "cmd": "aba_coupled_sdevice.cmd",
+      "reference_breakdown_voltage_V": 6.377494277837012,
       "vela_template": null
     },
     {
@@ -41,6 +43,8 @@
       "name": "continuation",
       "workbench_node": 7,
       "cmd": "continuation_sdevice.cmd",
+      "reference_breakdown_voltage_V": 6.383727168968036,
+      "vela_workflow": "scripts/prepare_bvmethods_nmos_continuation.py",
       "vela_template": null
     },
     {

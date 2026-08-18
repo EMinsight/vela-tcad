@@ -2,6 +2,7 @@
 
 #include "vela/core/Types.h"
 
+#include <algorithm>
 #include <cmath>
 #include <functional>
 #include <limits>
@@ -43,6 +44,10 @@ struct PseudoArclengthConfig {
     Real dampingFactor = 1.0;
     /// Maximum number of residual-monotone backtracking halvings per corrector step.
     int maxLineSearchSteps = 10;
+    /// Optional absolute cap on a bordered-Newton continuation-parameter update.
+    /// Zero disables the cap. This is a numerical trust region on lambda, not a
+    /// clamp on the accepted branch or on the device state.
+    Real maxParameterUpdate = 0.0;
 };
 
 /// A point on the solution branch: state vector x and continuation parameter lambda.
@@ -123,6 +128,12 @@ public:
             throw std::invalid_argument(
                 "PseudoArclengthContinuation: maxLineSearchSteps must be non-negative.");
         }
+        if (config_.maxParameterUpdate < 0.0 ||
+            !std::isfinite(config_.maxParameterUpdate)) {
+            throw std::invalid_argument(
+                "PseudoArclengthContinuation: maxParameterUpdate must be finite and "
+                "non-negative.");
+        }
     }
 
     const PseudoArclengthConfig& config() const { return config_; }
@@ -166,6 +177,43 @@ public:
         return tangent;
     }
 
+    /// Form a normalized initial tangent from two already-converged branch
+    /// points.  The secant is oriented toward directionSign in lambda and uses
+    /// the same weighted norm as the analytic tangent and corrector constraint.
+    ArclengthTangent computeSecantTangent(const ArclengthState& previous,
+                                          const ArclengthState& current,
+                                          Real directionSign) const
+    {
+        if (previous.x.size() != current.x.size() || current.x.size() <= 0) {
+            throw std::invalid_argument(
+                "PseudoArclengthContinuation: secant states must have equal, non-zero size.");
+        }
+        ArclengthTangent tangent;
+        tangent.xDot = current.x - previous.x;
+        tangent.lambdaDot = current.lambda - previous.lambda;
+        if (!tangent.xDot.allFinite() || !std::isfinite(tangent.lambdaDot)) {
+            throw std::invalid_argument(
+                "PseudoArclengthContinuation: secant difference must be finite.");
+        }
+        const Real theta2 = config_.parameterScale * config_.parameterScale;
+        const Real stateWeight = stateWeightForSize(current.x.size());
+        const Real norm = std::sqrt(
+            stateWeight * tangent.xDot.squaredNorm() +
+            theta2 * tangent.lambdaDot * tangent.lambdaDot);
+        if (!(norm > 0.0) || !std::isfinite(norm)) {
+            throw std::invalid_argument(
+                "PseudoArclengthContinuation: secant points must be distinct.");
+        }
+        tangent.xDot /= norm;
+        tangent.lambdaDot /= norm;
+        const Real sign = directionSign >= 0.0 ? 1.0 : -1.0;
+        if (sign * tangent.lambdaDot < 0.0) {
+            tangent.xDot = -tangent.xDot;
+            tangent.lambdaDot = -tangent.lambdaDot;
+        }
+        return tangent;
+    }
+
     /// Attempt a single arclength step from `anchor` along `tangent`.
     ///
     /// The corrector keeps the predictor tangent fixed (standard pseudo-arclength).
@@ -196,42 +244,72 @@ public:
             int iter = 0;
             Real residualNorm = std::numeric_limits<Real>::infinity();
             for (iter = 0; iter < config_.maxCorrectorIterations; ++iter) {
-                const VectorXd f = system_.residual(current.x, current.lambda);
+                VectorXd f;
+                try {
+                    f = system_.residual(current.x, current.lambda);
+                } catch (const std::exception& error) {
+                    result.failureReason =
+                        std::string("residual evaluation failed: ") + error.what();
+                    break;
+                }
                 const Real arclengthResidual = arclengthResidualNorm(
                     anchor, tangent, current, deltaS, stateWeight, theta2);
                 residualNorm = std::max(infinityNorm(f), std::abs(arclengthResidual));
-                if (!std::isfinite(residualNorm))
+                if (!std::isfinite(residualNorm)) {
+                    result.failureReason = "non-finite corrector residual";
                     break;
+                }
                 if (residualNorm <= config_.correctorTolerance) {
                     correctorOk = true;
                     break;
                 }
 
-                const VectorXd fLambda =
-                    system_.parameterDerivative(current.x, current.lambda);
+                VectorXd fLambda;
+                try {
+                    fLambda = system_.parameterDerivative(current.x, current.lambda);
+                } catch (const std::exception& error) {
+                    result.failureReason =
+                        std::string("parameter derivative failed: ") + error.what();
+                    break;
+                }
                 VectorXd a(current.x.size());
                 VectorXd zStep(current.x.size());
                 const VectorXd negF = -f;
-                if (!system_.solveJacobian(current.x, current.lambda, negF, a))
+                if (!system_.solveJacobian(current.x, current.lambda, negF, a)) {
+                    result.failureReason = "Jacobian solve failed for corrector residual";
                     break;
-                if (!system_.solveJacobian(current.x, current.lambda, fLambda, zStep))
+                }
+                if (!system_.solveJacobian(current.x, current.lambda, fLambda, zStep)) {
+                    result.failureReason = "Jacobian solve failed for parameter derivative";
                     break;
+                }
 
                 const Real denom =
                     theta2 * tangent.lambdaDot - stateWeight * tangent.xDot.dot(zStep);
                 if (!std::isfinite(denom) || std::abs(denom) <
                         std::numeric_limits<Real>::min()) {
+                    result.failureReason = "singular bordered corrector denominator";
                     break;
                 }
                 Real deltaLambda =
                     (-arclengthResidual - stateWeight * tangent.xDot.dot(a)) / denom;
                 VectorXd deltaX = a - zStep * deltaLambda;
-                if (!deltaX.allFinite() || !std::isfinite(deltaLambda))
+                if (!deltaX.allFinite() || !std::isfinite(deltaLambda)) {
+                    result.failureReason = "non-finite bordered corrector update";
                     break;
+                }
                 if (system_.limitUpdate) {
                     system_.limitUpdate(current.x, deltaX, deltaLambda);
-                    if (!deltaX.allFinite() || !std::isfinite(deltaLambda))
+                    if (!deltaX.allFinite() || !std::isfinite(deltaLambda)) {
+                        result.failureReason = "non-finite limited corrector update";
                         break;
+                    }
+                }
+                if (config_.maxParameterUpdate > 0.0) {
+                    deltaLambda = std::clamp(
+                        deltaLambda,
+                        -config_.maxParameterUpdate,
+                        config_.maxParameterUpdate);
                 }
 
                 bool accepted = false;
@@ -240,7 +318,13 @@ public:
                     ArclengthState trial;
                     trial.x = current.x + alpha * deltaX;
                     trial.lambda = current.lambda + alpha * deltaLambda;
-                    const VectorXd trialF = system_.residual(trial.x, trial.lambda);
+                    VectorXd trialF;
+                    try {
+                        trialF = system_.residual(trial.x, trial.lambda);
+                    } catch (const std::exception&) {
+                        alpha *= 0.5;
+                        continue;
+                    }
                     const Real trialArclengthResidual = arclengthResidualNorm(
                         anchor, tangent, trial, deltaS, stateWeight, theta2);
                     const Real trialNorm = std::max(
@@ -252,8 +336,10 @@ public:
                     }
                     alpha *= 0.5;
                 }
-                if (!accepted)
+                if (!accepted) {
+                    result.failureReason = "corrector line search rejected update";
                     break;
+                }
             }
 
             if (correctorOk) {
@@ -267,7 +353,8 @@ public:
             deltaS *= config_.shrinkFactor;
         }
 
-        result.failureReason = "corrector failed to converge within retry budget";
+        if (result.failureReason.empty())
+            result.failureReason = "corrector failed to converge within retry budget";
         result.arclengthStep = deltaS;
         return result;
     }

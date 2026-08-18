@@ -1,0 +1,32 @@
+{
+  "schema": "vela.bvmethods.continuation_diagnostic.v1",
+  "status": "pending",
+  "scope": "NMOS pseudo-arclength numerical closure only",
+  "physics_changes": "none",
+  "sentaurus_reference_bv_V": 6.383727168968036,
+  "analytic_tangent_trials": [
+    {
+      "physics": "doping-dependent SRH plus Enormal mobility",
+      "start_bias_V": 6.0,
+      "furthest_accepted_bias_V": 6.000000000158597,
+      "outcome": "failed after the arclength step reached min_step"
+    },
+    {
+      "physics": "control deck without Enormal mobility",
+      "start_bias_V": 6.0,
+      "furthest_accepted_bias_V": 6.000000000148641,
+      "outcome": "failed after the arclength step reached min_step"
+    }
+  ],
+  "secant_tangent_trial": {
+    "previous_bias_V": 6.0,
+    "start_bias_V": 6.056459,
+    "initial_step": 0.01,
+    "state_weight": 1e-15,
+    "max_parameter_update_V": 0.02,
+    "observed_runtime_minutes": 8,
+    "accepted_points_after_start": 0,
+    "outcome": "manually stopped after the bounded corrector produced no accepted point"
+  },
+  "conclusion": "The Sentaurus continuation curve is frozen, but Vela NMOS continuation is not accepted. The failure reproduces with and without Enormal mobility, so it is classified as continuation state scaling/corrector robustness rather than a missing physical model."
+}

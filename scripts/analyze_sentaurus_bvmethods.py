@@ -97,8 +97,8 @@ def write_curve(
         datasets, rows, "IntegrSemiconductor AvalancheGeneration")
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", newline="") as handle:
-        writer = csv.writer(handle)
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle, lineterminator="\n")
         writer.writerow([
             "inner_voltage_V",
             "outer_voltage_V",

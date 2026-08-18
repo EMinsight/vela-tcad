@@ -46,6 +46,13 @@ one and incorrectly demand another five orders of magnitude reduction. The
 freshly merged curve agrees with the checked-in curve to `1.46e-14 V` in bias
 and `6.77e-13` relative current.
 
+The clean workflow is automated by
+`scripts/run_schottky_reference_workflow.py`. It materializes both stages in
+an isolated output directory, verifies the exact 0.82 V restart dependency,
+merges the curve, applies the 24-point Sentaurus gate, and audits terminal KCL
+at 0, 0.4, and approximately 1 V. The compact passed ledger is
+`schottky_workflow_validation_20260817.json`.
+
 The earlier 0.563125 V failure was caused by the deck's
 `quasi_fermi_update_limit_V = 0.05` hard update cap. Both analytic and finite-
 difference Jacobians failed with that cap, while the same restart transition

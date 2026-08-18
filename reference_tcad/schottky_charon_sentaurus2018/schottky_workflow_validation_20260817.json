@@ -1,0 +1,268 @@
+{
+  "schema": "vela.schottky.reference_workflow.v1",
+  "status": "pass",
+  "physics": [
+    "Poisson",
+    "Electron",
+    "Hole",
+    "SRH",
+    "thermionic Robin"
+  ],
+  "excluded_physics": [
+    "barrier lowering",
+    "tunnelling",
+    "high-field mobility",
+    "self heating",
+    "AC",
+    "series resistance"
+  ],
+  "stage_a": {
+    "points": 42,
+    "last_bias_V": 0.8200000000000004
+  },
+  "stage_b": {
+    "points": 114,
+    "last_bias_V": 1.000294364256584,
+    "voltage_backsteps": 0,
+    "current_decreases": 0,
+    "status": "pass"
+  },
+  "curve_acceptance": {
+    "status": "pass",
+    "points_compared": 24,
+    "bias_range_V": [
+      0.01,
+      1.0
+    ],
+    "trend_match": true,
+    "maximum_log10_current_error_dex": 0.47865207272847216,
+    "threshold_dex": 0.5,
+    "one_volt": {
+      "bias_V": 1.0,
+      "sentaurus_current_A_per_um": 0.000118824193013,
+      "vela_current_A_per_um": 0.00010826238223418296,
+      "absolute_log10_error_dex": 0.04042729430208357,
+      "relative_error": 0.08888602994898123
+    },
+    "points": [
+      {
+        "bias_V": 0.01,
+        "sentaurus_current_A_per_um": 4.05113616285e-13,
+        "vela_current_A_per_um": 1.551018847095653e-13,
+        "absolute_log10_error_dex": 0.4169597653684875,
+        "relative_error": 0.6171397887538539
+      },
+      {
+        "bias_V": 0.0231266666667,
+        "sentaurus_current_A_per_um": 1.23875606379e-12,
+        "vela_current_A_per_um": 4.1146577828800244e-13,
+        "absolute_log10_error_dex": 0.47865207272847216,
+        "relative_error": 0.6678395445919237
+      },
+      {
+        "bias_V": 0.0403576044444,
+        "sentaurus_current_A_per_um": 3.21725937598e-12,
+        "vela_current_A_per_um": 1.1608609958559638e-12,
+        "absolute_log10_error_dex": 0.4427058557662082,
+        "relative_error": 0.6391770571801171
+      },
+      {
+        "bias_V": 0.0629760821007,
+        "sentaurus_current_A_per_um": 8.88662073296e-12,
+        "vela_current_A_per_um": 3.253082620017137e-12,
+        "absolute_log10_error_dex": 0.4364415521600276,
+        "relative_error": 0.633934797290085
+      },
+      {
+        "bias_V": 0.0926666037709,
+        "sentaurus_current_A_per_um": 2.97303181876e-11,
+        "vela_current_A_per_um": 1.0969754245329689e-11,
+        "absolute_log10_error_dex": 0.43300265903651364,
+        "relative_error": 0.6310246605465197
+      },
+      {
+        "bias_V": 0.131640361883,
+        "sentaurus_current_A_per_um": 1.36333528962e-10,
+        "vela_current_A_per_um": 5.0532868935332966e-11,
+        "absolute_log10_error_dex": 0.4310287210486317,
+        "relative_error": 0.6293437915084125
+      },
+      {
+        "bias_V": 0.181640361883,
+        "sentaurus_current_A_per_um": 9.37877602662e-10,
+        "vela_current_A_per_um": 3.483593211824519e-10,
+        "absolute_log10_error_dex": 0.43011872904280696,
+        "relative_error": 0.6285663287046247
+      },
+      {
+        "bias_V": 0.231640361883,
+        "sentaurus_current_A_per_um": 6.39223844456e-09,
+        "vela_current_A_per_um": 2.379749845574653e-09,
+        "absolute_log10_error_dex": 0.42912165943779845,
+        "relative_error": 0.6277125976738405
+      },
+      {
+        "bias_V": 0.281640361883,
+        "sentaurus_current_A_per_um": 4.30072838586e-08,
+        "vela_current_A_per_um": 1.612539971265703e-08,
+        "absolute_log10_error_dex": 0.4260315267553539,
+        "relative_error": 0.6250542171955252
+      },
+      {
+        "bias_V": 0.331640361883,
+        "sentaurus_current_A_per_um": 2.76414330118e-07,
+        "vela_current_A_per_um": 1.0658450593508298e-07,
+        "absolute_log10_error_dex": 0.41386647796910825,
+        "relative_error": 0.6144031103974148
+      },
+      {
+        "bias_V": 0.381640361883,
+        "sentaurus_current_A_per_um": 1.48405785151e-06,
+        "vela_current_A_per_um": 6.414818855176729e-07,
+        "absolute_log10_error_dex": 0.36426643386876884,
+        "relative_error": 0.5677514290531346
+      },
+      {
+        "bias_V": 0.431640361883,
+        "sentaurus_current_A_per_um": 5.21524991098e-06,
+        "vela_current_A_per_um": 2.821422672833888e-06,
+        "absolute_log10_error_dex": 0.2668069723433219,
+        "relative_error": 0.4590052785593714
+      },
+      {
+        "bias_V": 0.481640361883,
+        "sentaurus_current_A_per_um": 1.17340887837e-05,
+        "vela_current_A_per_um": 7.823382773911796e-06,
+        "absolute_log10_error_dex": 0.17605479044640143,
+        "relative_error": 0.33327734959877114
+      },
+      {
+        "bias_V": 0.531640361883,
+        "sentaurus_current_A_per_um": 2.00315375615e-05,
+        "vela_current_A_per_um": 1.4962652012590063e-05,
+        "absolute_log10_error_dex": 0.12670571009332912,
+        "relative_error": 0.25304525592943905
+      },
+      {
+        "bias_V": 0.581640361883,
+        "sentaurus_current_A_per_um": 2.93336986819e-05,
+        "vela_current_A_per_um": 2.34541152863129e-05,
+        "absolute_log10_error_dex": 0.09714777101132992,
+        "relative_error": 0.20043784656501656
+      },
+      {
+        "bias_V": 0.631640361883,
+        "sentaurus_current_A_per_um": 3.92332066159e-05,
+        "vela_current_A_per_um": 3.260186969009597e-05,
+        "absolute_log10_error_dex": 0.08041129821005862,
+        "relative_error": 0.1690235771632431
+      },
+      {
+        "bias_V": 0.681640361883,
+        "sentaurus_current_A_per_um": 4.95142340746e-05,
+        "vela_current_A_per_um": 4.226380810506873e-05,
+        "absolute_log10_error_dex": 0.06876143961760754,
+        "relative_error": 0.14643114459990458
+      },
+      {
+        "bias_V": 0.731640361883,
+        "sentaurus_current_A_per_um": 6.00539101661e-05,
+        "vela_current_A_per_um": 5.216787454126568e-05,
+        "absolute_log10_error_dex": 0.06113814721421852,
+        "relative_error": 0.13131593934554373
+      },
+      {
+        "bias_V": 0.781640361883,
+        "sentaurus_current_A_per_um": 7.07771774023e-05,
+        "vela_current_A_per_um": 6.232734825283885e-05,
+        "absolute_log10_error_dex": 0.055214588942812164,
+        "relative_error": 0.11938635390094762
+      },
+      {
+        "bias_V": 0.831640361883,
+        "sentaurus_current_A_per_um": 8.16354206095e-05,
+        "vela_current_A_per_um": 7.262279181365364e-05,
+        "absolute_log10_error_dex": 0.050805694368890895,
+        "relative_error": 0.11040095988428773
+      },
+      {
+        "bias_V": 0.881640361883,
+        "sentaurus_current_A_per_um": 9.25956318317e-05,
+        "vela_current_A_per_um": 8.302605868610449e-05,
+        "absolute_log10_error_dex": 0.04737607736302715,
+        "relative_error": 0.10334799770024762
+      },
+      {
+        "bias_V": 0.931640361883,
+        "sentaurus_current_A_per_um": 0.000103634534971,
+        "vela_current_A_per_um": 9.352911181727254e-05,
+        "absolute_log10_error_dex": 0.04455769281327129,
+        "relative_error": 0.09751018959611535
+      },
+      {
+        "bias_V": 0.981640361883,
+        "sentaurus_current_A_per_um": 0.000114735206065,
+        "vela_current_A_per_um": 0.00010417552739060754,
+        "absolute_log10_error_dex": 0.04193099221468702,
+        "relative_error": 0.09203520903958783
+      },
+      {
+        "bias_V": 1.0,
+        "sentaurus_current_A_per_um": 0.000118824193013,
+        "vela_current_A_per_um": 0.00010826238223418296,
+        "absolute_log10_error_dex": 0.04042729430208357,
+        "relative_error": 0.08888602994898123
+      }
+    ]
+  },
+  "three_bias_boundary_kcl": {
+    "rule": "terminal |It-Ie+Ih| <= 1e-14 A/um OR relative residual <= 1%; forward current positive",
+    "points": [
+      {
+        "requested_bias_V": 0.0,
+        "actual_bias_V": 0.0,
+        "current_total_A_per_um": -3.035564223857597e-14,
+        "electron_current_A_per_um": -3.036433598934796e-14,
+        "hole_current_A_per_um": -8.693750771989413e-18,
+        "terminal_kcl_absolute_residual_A_per_um": 2.375827179396094e-30,
+        "terminal_kcl_relative_residual": 7.826641125638551e-17,
+        "global_electron_continuity_ratio_diagnostic": 0.9999426447407674,
+        "global_hole_continuity_ratio_diagnostic": 1.8997344967328464,
+        "forward_current_sign_ok": true,
+        "status": "pass"
+      },
+      {
+        "requested_bias_V": 0.4,
+        "actual_bias_V": 0.4000000000000001,
+        "current_total_A_per_um": 1.168100963519127e-06,
+        "electron_current_A_per_um": 1.168096675158271e-06,
+        "hole_current_A_per_um": -4.288360856075804e-12,
+        "terminal_kcl_absolute_residual_A_per_um": 3.86577689397829e-23,
+        "terminal_kcl_relative_residual": 3.309454417648882e-17,
+        "global_electron_continuity_ratio_diagnostic": 0.9999999986993588,
+        "global_hole_continuity_ratio_diagnostic": 1.0003543753919584,
+        "forward_current_sign_ok": true,
+        "status": "pass"
+      },
+      {
+        "requested_bias_V": 1.0,
+        "actual_bias_V": 1.000294364256584,
+        "current_total_A_per_um": 0.00010833159008345901,
+        "electron_current_A_per_um": 0.00010822374575981666,
+        "hole_current_A_per_um": -1.0784432364234748e-07,
+        "terminal_kcl_absolute_residual_A_per_um": 3.348427119614656e-21,
+        "terminal_kcl_relative_residual": 3.0909055401430154e-17,
+        "global_electron_continuity_ratio_diagnostic": 0.0,
+        "global_hole_continuity_ratio_diagnostic": 0.0,
+        "forward_current_sign_ok": true,
+        "status": "pass"
+      }
+    ],
+    "status": "pass"
+  },
+  "artifacts": {
+    "stage_a_sha256": "6a84203f2c2fad4f70f7bc3c106a437839579895877a646de895eaa83c4f080a",
+    "stage_b_sha256": "05abf162ea293f466e4e7f8136b4fe28735895a1e0cca0727f0cc2f69939cc6f",
+    "combined_sha256": "a91d0aa5720804dc782d0ad66aff6cca3aacc054438b6edfb80a8779aa664403"
+  }
+}

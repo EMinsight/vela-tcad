@@ -193,6 +193,32 @@ TEST_CASE("PseudoArclength: line search damps a stiff scalar corrector",
     REQUIRE(f.lpNorm<Eigen::Infinity>() <= config.correctorTolerance);
 }
 
+TEST_CASE("PseudoArclength: invalid predictor residual shrinks instead of escaping",
+          "[arclength]")
+{
+    ArclengthSystem system = makeCircleSystem();
+    const auto baseResidual = system.residual;
+    system.residual = [baseResidual](const VectorXd& x, Real lambda) {
+        if (lambda > 0.3)
+            throw std::runtime_error("trial parameter outside model range");
+        return baseResidual(x, lambda);
+    };
+    PseudoArclengthConfig config = makeCircleConfig();
+    config.initialStep = 0.4;
+    config.minStep = 0.1;
+    config.maxStep = 0.4;
+    config.maxStepRetries = 2;
+    PseudoArclengthContinuation continuation(system, config);
+    ArclengthState point;
+    point.x = VectorXd::Constant(1, 1.0);
+    point.lambda = 0.0;
+    const ArclengthTangent tangent = continuation.computeTangent(point, +1.0);
+    const ArclengthStepResult result = continuation.step(point, tangent, 0.4);
+    REQUIRE(result.converged);
+    REQUIRE(result.retries >= 1);
+    REQUIRE(result.state.lambda <= 0.3);
+}
+
 TEST_CASE("PseudoArclength: tangent normalization uses weighted state norm",
           "[arclength]")
 {
@@ -213,6 +239,38 @@ TEST_CASE("PseudoArclength: tangent normalization uses weighted state norm",
         theta2 * tangent.lambdaDot * tangent.lambdaDot;
 
     REQUIRE(norm == Approx(1.0).margin(1.0e-12));
+}
+
+TEST_CASE("PseudoArclength: initial secant tangent uses weighted norm and direction",
+          "[arclength]")
+{
+    PseudoArclengthConfig config = makeCircleConfig();
+    config.stateWeight = 0.25;
+    config.parameterScale = 2.0;
+    PseudoArclengthContinuation continuation(makeLinearWeightedSystem(2), config);
+
+    ArclengthState previous;
+    previous.x = VectorXd::Zero(2);
+    previous.lambda = 0.0;
+    ArclengthState current;
+    current.x = VectorXd::Zero(2);
+    current.x(0) = 3.0;
+    current.x(1) = 4.0;
+    current.lambda = 2.0;
+
+    const ArclengthTangent forward =
+        continuation.computeSecantTangent(previous, current, +1.0);
+    const Real theta2 = config.parameterScale * config.parameterScale;
+    REQUIRE(config.stateWeight * forward.xDot.squaredNorm() +
+                theta2 * forward.lambdaDot * forward.lambdaDot ==
+            Approx(1.0).margin(1.0e-12));
+    REQUIRE(forward.lambdaDot > 0.0);
+
+    const ArclengthTangent reverse =
+        continuation.computeSecantTangent(previous, current, -1.0);
+    REQUIRE(reverse.lambdaDot < 0.0);
+    REQUIRE(reverse.xDot(0) == Approx(-forward.xDot(0)));
+    REQUIRE(reverse.xDot(1) == Approx(-forward.xDot(1)));
 }
 
 TEST_CASE("PseudoArclength: limitUpdate hook clamps corrector step before line search",
@@ -280,6 +338,15 @@ TEST_CASE("PseudoArclength: parameterScale must be positive", "[arclength]")
 {
     PseudoArclengthConfig config = makeCircleConfig();
     config.parameterScale = 0.0;
+    REQUIRE_THROWS_AS(
+        PseudoArclengthContinuation(makeCircleSystem(), config),
+        std::invalid_argument);
+}
+
+TEST_CASE("PseudoArclength: negative parameter update cap is rejected", "[arclength]")
+{
+    PseudoArclengthConfig config = makeCircleConfig();
+    config.maxParameterUpdate = -0.1;
     REQUIRE_THROWS_AS(
         PseudoArclengthContinuation(makeCircleSystem(), config),
         std::invalid_argument);

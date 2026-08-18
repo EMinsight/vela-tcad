@@ -1286,8 +1286,15 @@ void parseSweepContinuationConfig(const nlohmann::json& sweepJson,
         cfg.core.dampingFactor = arclength.value("damping_factor", cfg.core.dampingFactor);
         cfg.core.maxLineSearchSteps =
             arclength.value("max_line_search_steps", cfg.core.maxLineSearchSteps);
+        cfg.core.maxParameterUpdate =
+            arclength.value("max_parameter_update", cfg.core.maxParameterUpdate);
         cfg.biasFiniteDifferenceStep_V =
             arclength.value("bias_finite_difference_step_V", cfg.biasFiniteDifferenceStep_V);
+        cfg.initialSecantStateFile =
+            arclength.value("initial_secant_state_file", cfg.initialSecantStateFile);
+        if (arclength.contains("initial_secant_bias_V")) {
+            cfg.initialSecantBias_V = arclength.at("initial_secant_bias_V").get<Real>();
+        }
 
         if (cfg.enabled) {
             auto requirePositive = [&](Real value, const char* key) {
@@ -1302,6 +1309,18 @@ void parseSweepContinuationConfig(const nlohmann::json& sweepJson,
             requirePositive(cfg.core.maxStep, "max_step");
             requirePositive(cfg.core.parameterScale, "parameter_scale");
             requirePositive(cfg.biasFiniteDifferenceStep_V, "bias_finite_difference_step_V");
+            const bool haveSecantFile = !cfg.initialSecantStateFile.empty();
+            const bool haveSecantBias = std::isfinite(cfg.initialSecantBias_V);
+            if (haveSecantFile != haveSecantBias) {
+                throw std::invalid_argument(
+                    "DCSweep: sweep.continuation.arclength initial_secant_state_file "
+                    "and initial_secant_bias_V must be supplied together.");
+            }
+            if (haveSecantBias && cfg.initialSecantBias_V == sweep.start) {
+                throw std::invalid_argument(
+                    "DCSweep: sweep.continuation.arclength.initial_secant_bias_V "
+                    "must differ from sweep.start.");
+            }
             if (!std::isfinite(cfg.core.stateWeight) || cfg.core.stateWeight < 0.0) {
                 throw std::invalid_argument(
                     "DCSweep: sweep.continuation.arclength.state_weight must be finite "
@@ -1316,6 +1335,12 @@ void parseSweepContinuationConfig(const nlohmann::json& sweepJson,
                 throw std::invalid_argument(
                     "DCSweep: sweep.continuation.arclength.max_line_search_steps "
                     "must be non-negative.");
+            }
+            if (!std::isfinite(cfg.core.maxParameterUpdate) ||
+                cfg.core.maxParameterUpdate < 0.0) {
+                throw std::invalid_argument(
+                    "DCSweep: sweep.continuation.arclength.max_parameter_update "
+                    "must be finite and non-negative.");
             }
             if (cfg.core.minStep > cfg.core.maxStep) {
                 throw std::invalid_argument(
@@ -1924,6 +1949,10 @@ DCSweepConfig dcSweepConfigFromJson(const nlohmann::json& cfg,
     sweep.vtkPrefix = resolve(sweep.vtkPrefix);
     if (!sweep.initialStateFile.empty())
         sweep.initialStateFile = resolve(sweep.initialStateFile);
+    if (!sweep.continuation.arclength.initialSecantStateFile.empty()) {
+        sweep.continuation.arclength.initialSecantStateFile =
+            resolve(sweep.continuation.arclength.initialSecantStateFile);
+    }
     if (!sweep.writeStateFile.empty())
         sweep.writeStateFile = resolve(sweep.writeStateFile);
     if (!sweep.initialization.diagnosticCsv.empty())
@@ -4586,8 +4615,9 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                 sweep.storedCharge.perMeter ? "stored_charge_C_per_m" : "stored_charge_C",
                 storedCharge.compute(sol, sweep.storedCharge).charge);
         }
-        if (!converged && sweep.mode != CurveSweepMode::BVReverse)
-            point.failureReason = failureReason;
+        if (!converged)
+            point.failureReason = failureReason.empty()
+                ? std::string("non_convergence") : failureReason;
         if (converged && sweep.mode == CurveSweepMode::CVQuasistatic) {
             for (std::size_t i = 0; i < sweep.terminalCharges.size(); ++i) {
                 const TerminalChargeConfig& config = sweep.terminalCharges[i];
@@ -4642,7 +4672,6 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                    sweep.breakdown.nonConvergenceBreakdown) {
             point.failed = true;
             point.failedBias = voltage;
-            point.failureReason = failureReason.empty() ? "non_convergence" : failureReason;
             if (const DCSweepPoint* stable = lastConvergedPoint()) {
                 point.lastStableBias = stable->bias;
                 point.breakdownDetected = true;
@@ -7157,16 +7186,33 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
         ArclengthState anchor;
         anchor.x = arclengthSolver.packArclengthState(previousSolution);
         anchor.lambda = sweep.start;
+        std::optional<ArclengthTangent> initialSecantTangent;
+        if (!sweep.continuation.arclength.initialSecantStateFile.empty()) {
+            const DDSolution secantPreviousSolution = readDDSolutionStateCsv(
+                sweep.continuation.arclength.initialSecantStateFile,
+                mesh.numNodes(),
+                sweep.scaling);
+            ArclengthState secantPrevious;
+            secantPrevious.x =
+                arclengthSolver.packArclengthState(secantPreviousSolution);
+            secantPrevious.lambda =
+                sweep.continuation.arclength.initialSecantBias_V;
+            initialSecantTangent = continuation.computeSecantTangent(
+                secantPrevious, anchor, directionSign);
+        }
         Real deltaS = sweep.continuation.arclength.core.initialStep;
         ArclengthTangent previousTangent;
         bool havePreviousTangent = false;
 
         constexpr int maxArclengthPoints = 10000;
         for (int pointCount = 0; pointCount < maxArclengthPoints; ++pointCount) {
-            const ArclengthTangent tangent = continuation.computeTangent(
-                anchor,
-                directionSign,
-                havePreviousTangent ? &previousTangent : nullptr);
+            const ArclengthTangent tangent =
+                pointCount == 0 && initialSecantTangent.has_value()
+                ? *initialSecantTangent
+                : continuation.computeTangent(
+                    anchor,
+                    directionSign,
+                    havePreviousTangent ? &previousTangent : nullptr);
             const ArclengthStepResult stepResult = continuation.step(
                 anchor,
                 tangent,
