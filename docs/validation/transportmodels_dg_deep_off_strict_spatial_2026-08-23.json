@@ -1,0 +1,675 @@
+{
+  "schema": "vela.transportmodels.dg_deep_off_strict_spatial.v1",
+  "status": "complete",
+  "cases": [
+    {
+      "bias_V": -1.0,
+      "sentaurus_export": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\sentaurus_vm_runs\\remaining_spatial_oracles_20260823\\exports\\vg_m1p00",
+      "baseline": {
+        "state": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_quantum_contract_regression_2026-08-23\\runs\\dg\\dg_idvg_final_bias_relax_final_state.csv",
+        "zones": {
+          "all_substrate": {
+            "psi_abs_error_mV": {
+              "count": 2564,
+              "median": 1.3053551577581652,
+              "p95": 10.195880496121383,
+              "maximum": 32.67886508802339
+            },
+            "phin_abs_error_mV": {
+              "count": 2564,
+              "median": 2.7696154244784875e-12,
+              "p95": 5.205948243127025,
+              "maximum": 284.59612216242056
+            },
+            "qn_abs_error_mV": {
+              "count": 2564,
+              "median": 0.6294387232870027,
+              "p95": 9.92832182536288,
+              "maximum": 192.9433865763486
+            },
+            "electron_density_abs_error_dex": {
+              "count": 2564,
+              "median": 0.008389184963250251,
+              "p95": 0.11398231271984452,
+              "maximum": 2.333067633886326
+            }
+          },
+          "source_end": {
+            "psi_abs_error_mV": {
+              "count": 20,
+              "median": 3.6504013626436573,
+              "p95": 3.83750206139384,
+              "maximum": 3.842626039614071
+            },
+            "phin_abs_error_mV": {
+              "count": 20,
+              "median": 4.692595523349472e-11,
+              "p95": 2.9940859177351445e-05,
+              "maximum": 0.00016453938774851107
+            },
+            "qn_abs_error_mV": {
+              "count": 20,
+              "median": 4.173179601068881,
+              "p95": 5.098194305845361,
+              "maximum": 5.124066041493388
+            },
+            "electron_density_abs_error_dex": {
+              "count": 20,
+              "median": 0.013035751663962536,
+              "p95": 0.029228564303278318,
+              "maximum": 0.032989882759837386
+            }
+          },
+          "channel_mid": {
+            "psi_abs_error_mV": {
+              "count": 20,
+              "median": 2.647879806318948,
+              "p95": 4.835408679533781,
+              "maximum": 4.861834371953034
+            },
+            "phin_abs_error_mV": {
+              "count": 20,
+              "median": 0.773163517906043,
+              "p95": 0.7824864290920871,
+              "maximum": 0.7927367904506828
+            },
+            "qn_abs_error_mV": {
+              "count": 20,
+              "median": 0.27146971948297915,
+              "p95": 3.792873074535281,
+              "maximum": 4.1132430278977425
+            },
+            "electron_density_abs_error_dex": {
+              "count": 20,
+              "median": 0.04771950062853181,
+              "p95": 0.06795245591984939,
+              "maximum": 0.06830746934407772
+            }
+          },
+          "drain_end": {
+            "psi_abs_error_mV": {
+              "count": 20,
+              "median": 5.91945730906554,
+              "p95": 6.492426168123157,
+              "maximum": 6.4948454124055255
+            },
+            "phin_abs_error_mV": {
+              "count": 20,
+              "median": 7.1889783752933365,
+              "p95": 210.77793350417244,
+              "maximum": 217.20429359370175
+            },
+            "qn_abs_error_mV": {
+              "count": 20,
+              "median": 7.098001846587431,
+              "p95": 188.15069985998494,
+              "maximum": 192.9433865763486
+            },
+            "electron_density_abs_error_dex": {
+              "count": 20,
+              "median": 0.08042619370749549,
+              "p95": 0.538422245033853,
+              "maximum": 0.8436636536345503
+            }
+          }
+        }
+      },
+      "strict_closed": {
+        "state": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_dg_deep_off_strict_20260823\\scaled_filter\\m1p00\\final_state.csv",
+        "zones": {
+          "all_substrate": {
+            "psi_abs_error_mV": {
+              "count": 2564,
+              "median": 1.305361034280455,
+              "p95": 10.195879706999914,
+              "maximum": 32.67886509327103
+            },
+            "phin_abs_error_mV": {
+              "count": 2564,
+              "median": 2.886579864025407e-12,
+              "p95": 5.205942384482054,
+              "maximum": 286.5988080318109
+            },
+            "qn_abs_error_mV": {
+              "count": 2564,
+              "median": 0.6260549763959233,
+              "p95": 9.928321825367322,
+              "maximum": 200.89693437637402
+            },
+            "electron_density_abs_error_dex": {
+              "count": 2564,
+              "median": 0.008389185419804157,
+              "p95": 0.114119924935805,
+              "maximum": 2.338031590800686
+            }
+          },
+          "source_end": {
+            "psi_abs_error_mV": {
+              "count": 20,
+              "median": 3.6504069009459412,
+              "p95": 3.8375065821938135,
+              "maximum": 3.8426303606284016
+            },
+            "phin_abs_error_mV": {
+              "count": 20,
+              "median": 4.69258074360224e-11,
+              "p95": 2.9941072875709282e-05,
+              "maximum": 0.00016454046353397528
+            },
+            "qn_abs_error_mV": {
+              "count": 20,
+              "median": 4.173180308891126,
+              "p95": 5.098195497283465,
+              "maximum": 5.124067380541372
+            },
+            "electron_density_abs_error_dex": {
+              "count": 20,
+              "median": 0.01303569572536123,
+              "p95": 0.029228688306019993,
+              "maximum": 0.032990016469527816
+            }
+          },
+          "channel_mid": {
+            "psi_abs_error_mV": {
+              "count": 20,
+              "median": 2.647983087828348,
+              "p95": 4.8354813261770335,
+              "maximum": 4.861906706133567
+            },
+            "phin_abs_error_mV": {
+              "count": 20,
+              "median": 0.7731504721079208,
+              "p95": 0.7824751131600267,
+              "maximum": 0.7927197185078547
+            },
+            "qn_abs_error_mV": {
+              "count": 20,
+              "median": 0.27147272751324847,
+              "p95": 3.7928569800098577,
+              "maximum": 4.113226602324841
+            },
+            "electron_density_abs_error_dex": {
+              "count": 20,
+              "median": 0.0477209914312714,
+              "p95": 0.06795377589769573,
+              "maximum": 0.06830880537543571
+            }
+          },
+          "drain_end": {
+            "psi_abs_error_mV": {
+              "count": 20,
+              "median": 5.9225954015756095,
+              "p95": 6.498297337895451,
+              "maximum": 6.500165481426123
+            },
+            "phin_abs_error_mV": {
+              "count": 20,
+              "median": 7.186878930590279,
+              "p95": 219.22781896675716,
+              "maximum": 225.1271593841997
+            },
+            "qn_abs_error_mV": {
+              "count": 20,
+              "median": 7.099339733329712,
+              "p95": 196.56464633235018,
+              "maximum": 200.89693437637402
+            },
+            "electron_density_abs_error_dex": {
+              "count": 20,
+              "median": 0.0806516187545041,
+              "p95": 0.5380446359346773,
+              "maximum": 0.8436641533035152
+            }
+          }
+        }
+      }
+    },
+    {
+      "bias_V": -0.84,
+      "sentaurus_export": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\sentaurus_vm_runs\\remaining_spatial_oracles_20260823\\exports\\vg_m0p84",
+      "baseline": {
+        "state": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_quantum_contract_regression_2026-08-23\\runs\\dg\\dg_idvg_curve_state_bias_m0p840000.csv",
+        "zones": {
+          "all_substrate": {
+            "psi_abs_error_mV": {
+              "count": 2564,
+              "median": 1.3119335156052125,
+              "p95": 10.133531328221036,
+              "maximum": 32.678879852735626
+            },
+            "phin_abs_error_mV": {
+              "count": 2564,
+              "median": 2.4424906541753444e-12,
+              "p95": 4.610688457741947,
+              "maximum": 251.46256526319084
+            },
+            "qn_abs_error_mV": {
+              "count": 2564,
+              "median": 0.6171117002261272,
+              "p95": 9.770396784225383,
+              "maximum": 141.78150145759838
+            },
+            "electron_density_abs_error_dex": {
+              "count": 2564,
+              "median": 0.007960694839544313,
+              "p95": 0.10712476880753694,
+              "maximum": 1.9058009796426822
+            }
+          },
+          "source_end": {
+            "psi_abs_error_mV": {
+              "count": 20,
+              "median": 3.876747165790513,
+              "p95": 3.999951030642685,
+              "maximum": 4.010379306692319
+            },
+            "phin_abs_error_mV": {
+              "count": 20,
+              "median": 3.58078620565598e-10,
+              "p95": 2.1771844213859316e-05,
+              "maximum": 0.00011840376685124641
+            },
+            "qn_abs_error_mV": {
+              "count": 20,
+              "median": 4.035663162114712,
+              "p95": 4.6399758460839475,
+              "maximum": 4.656505884904807
+            },
+            "electron_density_abs_error_dex": {
+              "count": 20,
+              "median": 0.004270651536462999,
+              "p95": 0.03250999735760729,
+              "maximum": 0.035679928237406955
+            }
+          },
+          "channel_mid": {
+            "psi_abs_error_mV": {
+              "count": 20,
+              "median": 2.7566136314623737,
+              "p95": 4.829965600289304,
+              "maximum": 4.854590419335947
+            },
+            "phin_abs_error_mV": {
+              "count": 20,
+              "median": 0.02402449185147544,
+              "p95": 0.10342045264112368,
+              "maximum": 0.1947997102196529
+            },
+            "qn_abs_error_mV": {
+              "count": 20,
+              "median": 0.18724658480422746,
+              "p95": 3.9190138460123696,
+              "maximum": 4.264896482400152
+            },
+            "electron_density_abs_error_dex": {
+              "count": 20,
+              "median": 0.03539325035001295,
+              "p95": 0.056251186348701056,
+              "maximum": 0.057012295873442476
+            }
+          },
+          "drain_end": {
+            "psi_abs_error_mV": {
+              "count": 20,
+              "median": 5.221817121612293,
+              "p95": 5.656887130000774,
+              "maximum": 5.665618253221205
+            },
+            "phin_abs_error_mV": {
+              "count": 20,
+              "median": 0.953703172776238,
+              "p95": 37.35372934683213,
+              "maximum": 83.63188474693573
+            },
+            "qn_abs_error_mV": {
+              "count": 20,
+              "median": 6.823261607432296,
+              "p95": 9.926098335455409,
+              "maximum": 44.76196944270919
+            },
+            "electron_density_abs_error_dex": {
+              "count": 20,
+              "median": 0.022350528647811174,
+              "p95": 0.5487598498600987,
+              "maximum": 0.6962470703925963
+            }
+          }
+        }
+      },
+      "strict_closed": {
+        "state": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_dg_deep_off_strict_20260823\\scaled_filter\\m0p84\\final_state.csv",
+        "zones": {
+          "all_substrate": {
+            "psi_abs_error_mV": {
+              "count": 2564,
+              "median": 1.311926175598499,
+              "p95": 10.13377862798508,
+              "maximum": 32.678879829835914
+            },
+            "phin_abs_error_mV": {
+              "count": 2564,
+              "median": 2.4424906541753444e-12,
+              "p95": 4.610575790031244,
+              "maximum": 250.0797684921356
+            },
+            "qn_abs_error_mV": {
+              "count": 2564,
+              "median": 0.6173944904676598,
+              "p95": 9.770781063672446,
+              "maximum": 140.52977410769373
+            },
+            "electron_density_abs_error_dex": {
+              "count": 2564,
+              "median": 0.007960509142039385,
+              "p95": 0.10711516416267608,
+              "maximum": 1.9034639498260502
+            }
+          },
+          "source_end": {
+            "psi_abs_error_mV": {
+              "count": 20,
+              "median": 3.8765841039780646,
+              "p95": 3.9997825947758345,
+              "maximum": 4.01021732883669
+            },
+            "phin_abs_error_mV": {
+              "count": 20,
+              "median": 3.5809335146120564e-10,
+              "p95": 2.1770644367743127e-05,
+              "maximum": 0.00011839854050965061
+            },
+            "qn_abs_error_mV": {
+              "count": 20,
+              "median": 4.035459183380365,
+              "p95": 4.639737985832896,
+              "maximum": 4.656287927919014
+            },
+            "electron_density_abs_error_dex": {
+              "count": 20,
+              "median": 0.004271076020788023,
+              "p95": 0.0325090095790678,
+              "maximum": 0.035678698460449354
+            }
+          },
+          "channel_mid": {
+            "psi_abs_error_mV": {
+              "count": 20,
+              "median": 2.75592198380753,
+              "p95": 4.829418678647197,
+              "maximum": 4.854045003154339
+            },
+            "phin_abs_error_mV": {
+              "count": 20,
+              "median": 0.02401017875310399,
+              "p95": 0.1031703932182261,
+              "maximum": 0.194663056185998
+            },
+            "qn_abs_error_mV": {
+              "count": 20,
+              "median": 0.18726485247959984,
+              "p95": 3.9192144716174098,
+              "maximum": 4.265100380945311
+            },
+            "electron_density_abs_error_dex": {
+              "count": 20,
+              "median": 0.035384888280444615,
+              "p95": 0.05624343927891626,
+              "maximum": 0.05700471082444558
+            }
+          },
+          "drain_end": {
+            "psi_abs_error_mV": {
+              "count": 20,
+              "median": 5.209790122940705,
+              "p95": 5.638386539848483,
+              "maximum": 5.6453045406404385
+            },
+            "phin_abs_error_mV": {
+              "count": 20,
+              "median": 0.9290381987858976,
+              "p95": 37.39768815346867,
+              "maximum": 83.56543771615999
+            },
+            "qn_abs_error_mV": {
+              "count": 20,
+              "median": 6.7151928196924615,
+              "p95": 9.079104724547179,
+              "maximum": 44.695176301430855
+            },
+            "electron_density_abs_error_dex": {
+              "count": 20,
+              "median": 0.02238342753509226,
+              "p95": 0.5487984304920891,
+              "maximum": 0.6962056557543805
+            }
+          }
+        }
+      }
+    },
+    {
+      "bias_V": -0.68,
+      "sentaurus_export": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\sentaurus_vm_runs\\remaining_spatial_oracles_20260823\\exports\\vg_m0p68",
+      "baseline": {
+        "state": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_quantum_contract_regression_2026-08-23\\runs\\dg\\dg_idvg_curve_state_bias_m0p680000.csv",
+        "zones": {
+          "all_substrate": {
+            "psi_abs_error_mV": {
+              "count": 2564,
+              "median": 1.317331310860148,
+              "p95": 10.067517701033973,
+              "maximum": 32.67889630774301
+            },
+            "phin_abs_error_mV": {
+              "count": 2564,
+              "median": 1.794716902450452e-12,
+              "p95": 4.5181079928251995,
+              "maximum": 123.2094137237103
+            },
+            "qn_abs_error_mV": {
+              "count": 2564,
+              "median": 0.614753148011248,
+              "p95": 9.720159119604336,
+              "maximum": 51.02222735761683
+            },
+            "electron_density_abs_error_dex": {
+              "count": 2564,
+              "median": 0.008236529559865424,
+              "p95": 0.10453201631857656,
+              "maximum": 1.651558264266563
+            }
+          },
+          "source_end": {
+            "psi_abs_error_mV": {
+              "count": 20,
+              "median": 4.124791738796734,
+              "p95": 4.291267712108935,
+              "maximum": 4.292711789955245
+            },
+            "phin_abs_error_mV": {
+              "count": 20,
+              "median": 4.742319485046109e-09,
+              "p95": 2.120791162415811e-05,
+              "maximum": 0.00010273175884192692
+            },
+            "qn_abs_error_mV": {
+              "count": 20,
+              "median": 3.8827932870274386,
+              "p95": 4.139939495221896,
+              "maximum": 4.144260494426649
+            },
+            "electron_density_abs_error_dex": {
+              "count": 20,
+              "median": 0.01316342465857101,
+              "p95": 0.035591183220029174,
+              "maximum": 0.037957621679630904
+            }
+          },
+          "channel_mid": {
+            "psi_abs_error_mV": {
+              "count": 20,
+              "median": 2.6805025687250543,
+              "p95": 4.6968218826154455,
+              "maximum": 4.7208102186711285
+            },
+            "phin_abs_error_mV": {
+              "count": 20,
+              "median": 0.37631987867148453,
+              "p95": 0.5833639686285004,
+              "maximum": 0.5868199692216463
+            },
+            "qn_abs_error_mV": {
+              "count": 20,
+              "median": 0.18843848405111047,
+              "p95": 4.047189203118139,
+              "maximum": 4.414041648528377
+            },
+            "electron_density_abs_error_dex": {
+              "count": 20,
+              "median": 0.02774399709242248,
+              "p95": 0.0489257158818619,
+              "maximum": 0.049987683754688206
+            }
+          },
+          "drain_end": {
+            "psi_abs_error_mV": {
+              "count": 20,
+              "median": 4.764644617296976,
+              "p95": 5.206825832098566,
+              "maximum": 5.215211962490862
+            },
+            "phin_abs_error_mV": {
+              "count": 20,
+              "median": 0.13940492838548924,
+              "p95": 43.41930840106837,
+              "maximum": 74.79870180225213
+            },
+            "qn_abs_error_mV": {
+              "count": 20,
+              "median": 5.519390055481637,
+              "p95": 10.409245331991297,
+              "maximum": 40.661620740882796
+            },
+            "electron_density_abs_error_dex": {
+              "count": 20,
+              "median": 0.023216212713202733,
+              "p95": 0.5956370499418212,
+              "maximum": 0.6148501129083668
+            }
+          }
+        }
+      },
+      "strict_closed": {
+        "state": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_dg_deep_off_strict_20260823\\scaled_filter\\m0p68\\final_state.csv",
+        "zones": {
+          "all_substrate": {
+            "psi_abs_error_mV": {
+              "count": 2564,
+              "median": 1.317331310860148,
+              "p95": 10.07067020360885,
+              "maximum": 32.67889631082446
+            },
+            "phin_abs_error_mV": {
+              "count": 2564,
+              "median": 1.789041937608581e-12,
+              "p95": 4.519136943218907,
+              "maximum": 123.20422233846851
+            },
+            "qn_abs_error_mV": {
+              "count": 2564,
+              "median": 0.6147300641113453,
+              "p95": 9.727199335972157,
+              "maximum": 49.72389483117465
+            },
+            "electron_density_abs_error_dex": {
+              "count": 2564,
+              "median": 0.008233790971286403,
+              "p95": 0.10439727971328408,
+              "maximum": 1.651492132966065
+            }
+          },
+          "source_end": {
+            "psi_abs_error_mV": {
+              "count": 20,
+              "median": 4.122630117089382,
+              "p95": 4.289070142826092,
+              "maximum": 4.290787575564364
+            },
+            "phin_abs_error_mV": {
+              "count": 20,
+              "median": 4.73770855279519e-09,
+              "p95": 2.12064243209618e-05,
+              "maximum": 0.00010273028203080472
+            },
+            "qn_abs_error_mV": {
+              "count": 20,
+              "median": 3.880251131335707,
+              "p95": 4.134737042179178,
+              "maximum": 4.139586599706507
+            },
+            "electron_density_abs_error_dex": {
+              "count": 20,
+              "median": 0.013178994057053472,
+              "p95": 0.03559000584532353,
+              "maximum": 0.03795378697511076
+            }
+          },
+          "channel_mid": {
+            "psi_abs_error_mV": {
+              "count": 20,
+              "median": 2.677901484098466,
+              "p95": 4.693963954933374,
+              "maximum": 4.717950352269268
+            },
+            "phin_abs_error_mV": {
+              "count": 20,
+              "median": 0.376490247514091,
+              "p95": 0.5835979897331636,
+              "maximum": 0.5870410143308836
+            },
+            "qn_abs_error_mV": {
+              "count": 20,
+              "median": 0.1883718676507145,
+              "p95": 4.046749816963234,
+              "maximum": 4.413596605457981
+            },
+            "electron_density_abs_error_dex": {
+              "count": 20,
+              "median": 0.027699175747949223,
+              "p95": 0.048878597105668845,
+              "maximum": 0.049941002002573676
+            }
+          },
+          "drain_end": {
+            "psi_abs_error_mV": {
+              "count": 20,
+              "median": 4.765638962335117,
+              "p95": 5.207180198685462,
+              "maximum": 5.215720153211145
+            },
+            "phin_abs_error_mV": {
+              "count": 20,
+              "median": 0.13941471447698195,
+              "p95": 43.62264503087719,
+              "maximum": 74.42787410981654
+            },
+            "qn_abs_error_mV": {
+              "count": 20,
+              "median": 5.556223806907017,
+              "p95": 10.592196541072212,
+              "maximum": 40.320386050209976
+            },
+            "electron_density_abs_error_dex": {
+              "count": 20,
+              "median": 0.023134748255882798,
+              "p95": 0.5959812367633673,
+              "maximum": 0.6143567161505628
+            }
+          }
+        }
+      }
+    }
+  ],
+  "artifacts": {
+    "comparison_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_dg_deep_off_strict_20260823\\deep_off_strict_spatial_comparison.csv"
+  }
+}

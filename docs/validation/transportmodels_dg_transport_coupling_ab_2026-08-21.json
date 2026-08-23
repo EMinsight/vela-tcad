@@ -1,0 +1,91 @@
+{
+  "schema": "vela.transportmodels.dg_transport_coupling_ab.v1",
+  "as_of": "2026-08-21",
+  "status": "partial",
+  "design": {
+    "gate_biases_V": [
+      -0.2,
+      -0.04,
+      0.12,
+      0.28,
+      1.0
+    ],
+    "fixed_drain_bias_V": 1.1
+  },
+  "execution": [],
+  "variants": {
+    "direct_band_edge": {
+      "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_transport_coupling_ab_2026-08-21\\direct_band_edge\\config.json",
+      "curve_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_transport_coupling_ab_2026-08-21\\direct_band_edge\\curve_combined.csv",
+      "curve_sha256": "27621C9AB3533E4DB170DB51EBEC2A7D6EB1409C361508B397FDB19A04AEA268",
+      "completed_points": 5,
+      "all_converged": true
+    },
+    "sentaurus_exponential": {
+      "config": [
+        "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_transport_coupling_ab_2026-08-21\\frozen2_exponential_m0p200000\\config.json",
+        "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_transport_coupling_ab_2026-08-21\\frozen2_exponential_m0p040000\\config.json",
+        "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_transport_coupling_ab_2026-08-21\\frozen2_exponential_0p120000\\config.json",
+        "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_transport_coupling_ab_2026-08-21\\frozen2_exponential_0p280000\\config.json",
+        "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_transport_coupling_ab_2026-08-21\\frozen2_exponential_1p000000\\config.json"
+      ],
+      "curve_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_transport_coupling_ab_2026-08-21\\sentaurus_exponential\\curve_combined.csv",
+      "curve_sha256": "E4803F4A3BB4E30DF7923EC3762D75F21F8CA33192A4EF7EF6B37B89864A6389",
+      "completed_points": 5,
+      "all_converged": false
+    }
+  },
+  "comparison": [
+    {
+      "gate_bias_V": -0.2,
+      "vela_direct_A_per_um": 3.1175106081596337e-10,
+      "vela_exponential_A_per_um": 3.0864615812045145e-09,
+      "sentaurus_default_A_per_um": 3.24296348009132e-10,
+      "sentaurus_directqc_A_per_um": 3.20441719515677e-10,
+      "vela_exponential_direct_dex": 0.9956529354914043,
+      "sentaurus_default_directqc_dex": 0.005193004460887857,
+      "effect_error_dex": 0.9904599310305164
+    },
+    {
+      "gate_bias_V": -0.04,
+      "vela_direct_A_per_um": 2.877557025518475e-08,
+      "vela_exponential_A_per_um": 2.435716073561272e-07,
+      "sentaurus_default_A_per_um": 2.97693349400415e-08,
+      "sentaurus_directqc_A_per_um": 2.94603922454116e-08,
+      "vela_exponential_direct_dex": 0.9276027231447321,
+      "sentaurus_default_directqc_dex": 0.004530607540931148,
+      "effect_error_dex": 0.923072115603801
+    },
+    {
+      "gate_bias_V": 0.12,
+      "vela_direct_A_per_um": 2.179440781737912e-06,
+      "vela_exponential_A_per_um": 0.0,
+      "sentaurus_default_A_per_um": 2.25398350908295e-06,
+      "sentaurus_directqc_A_per_um": 2.23540972927005e-06,
+      "vela_exponential_direct_dex": null,
+      "sentaurus_default_directqc_dex": 0.0035935974763101402,
+      "effect_error_dex": null
+    },
+    {
+      "gate_bias_V": 0.28,
+      "vela_direct_A_per_um": 3.835305771856158e-05,
+      "vela_exponential_A_per_um": 6.98706865857149e-05,
+      "sentaurus_default_A_per_um": 3.92970755591278e-05,
+      "sentaurus_directqc_A_per_um": 3.91898532350759e-05,
+      "vela_exponential_direct_dex": 0.26049501684776366,
+      "sentaurus_default_directqc_dex": 0.0011865948472281472,
+      "effect_error_dex": 0.2593084220005355
+    },
+    {
+      "gate_bias_V": 1.0,
+      "vela_direct_A_per_um": 0.0006194971920752712,
+      "vela_exponential_A_per_um": 0.0006291147074708582,
+      "sentaurus_default_A_per_um": 0.000632443746545901,
+      "sentaurus_directqc_A_per_um": 0.000638417241068837,
+      "vela_exponential_direct_dex": 0.00669049601972558,
+      "sentaurus_default_directqc_dex": -0.004082704307962488,
+      "effect_error_dex": 0.010773200327688068
+    }
+  ],
+  "sentaurus_oracle": "D:\\code-repo\\vela-tcad\\docs\\validation\\transportmodels_sentaurus_idvg_semantics_2x2_2026-08-21.json"
+}

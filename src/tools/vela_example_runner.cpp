@@ -538,6 +538,13 @@ vela::DDSolution readExternalState(const std::filesystem::path& cfgDir,
                                    const nlohmann::json& cfg,
                                    vela::Index nodeCount)
 {
+    if (cfg.contains("state_file")) {
+        return vela::readDDSolutionStateCsv(
+            resolvePath(
+                cfgDir, cfg.at("state_file").get<std::string>()),
+            nodeCount,
+            vela::parseUnitScalingConfig(cfg));
+    }
     const std::filesystem::path fieldsDir =
         resolvePath(cfgDir, cfg.at("state_fields_dir").get<std::string>());
     const auto read = [&](const char* field) {
@@ -607,6 +614,7 @@ void writeResidualProbeCsv(const std::filesystem::path& path,
     std::ofstream out(path);
     if (!out.is_open())
         throw std::runtime_error("Cannot write residual probe CSV: " + path.string());
+    out << std::setprecision(17);
     out << "node_id,x,y,psi,phin,phip,psi_residual,phin_residual,phip_residual,"
         << "abs_psi_residual,abs_phin_residual,abs_phip_residual,"
         << "donors_m3,acceptors_m3,net_doping_m3,ni_eff_m3\n";
@@ -1303,6 +1311,7 @@ struct JvpProbeDirection {
     vela::Real amplitude_V = 0.0;
     vela::DDSolution perturbation;
     int selectedNodes = 0;
+    std::vector<vela::Index> selectedNodeIds;
 };
 
 JvpProbeDirection makeJvpProbeDirection(const vela::DeviceMesh& mesh,
@@ -1320,9 +1329,51 @@ JvpProbeDirection makeJvpProbeDirection(const vela::DeviceMesh& mesh,
     probe.perturbation.phin = vela::VectorXd::Zero(n);
     probe.perturbation.phip = vela::VectorXd::Zero(n);
 
+    std::vector<bool> selected(static_cast<std::size_t>(n), true);
+    if (direction.contains("node_ids")) {
+        std::fill(selected.begin(), selected.end(), false);
+        const int indexBase = direction.value("node_index_base", 0);
+        if (indexBase != 0 && indexBase != 1) {
+            throw std::invalid_argument(
+                "newton_jvp_probe node_index_base must be 0 or 1.");
+        }
+        for (const auto& encoded : direction.at("node_ids")) {
+            const auto decoded = encoded.get<long long>() - indexBase;
+            if (decoded < 0 || decoded >= n) {
+                throw std::out_of_range(
+                    "newton_jvp_probe node id is outside the mesh.");
+            }
+            selected[static_cast<std::size_t>(decoded)] = true;
+        }
+        const int adjacentCellRings =
+            direction.value("adjacent_cell_rings", 0);
+        if (adjacentCellRings < 0) {
+            throw std::invalid_argument(
+                "newton_jvp_probe adjacent_cell_rings must be non-negative.");
+        }
+        for (int ring = 0; ring < adjacentCellRings; ++ring) {
+            std::vector<bool> expanded = selected;
+            for (vela::Index cellId = 0; cellId < mesh.numCells(); ++cellId) {
+                const vela::Cell& cell = mesh.getCell(cellId);
+                const bool touchesSelection = std::any_of(
+                    cell.node_ids.begin(), cell.node_ids.end(),
+                    [&](vela::Index node) {
+                        return selected.at(static_cast<std::size_t>(node));
+                    });
+                if (!touchesSelection)
+                    continue;
+                for (vela::Index node : cell.node_ids)
+                    expanded.at(static_cast<std::size_t>(node)) = true;
+            }
+            selected = std::move(expanded);
+        }
+    }
+
     const bool excludeContacts = direction.value("exclude_contacts", true);
     const std::vector<bool> contactNodes = contactNodeMask(mesh);
     for (int i = 0; i < n; ++i) {
+        if (!selected[static_cast<std::size_t>(i)])
+            continue;
         const vela::Node& node = mesh.getNode(static_cast<vela::Index>(i));
         if (excludeContacts && contactNodes[static_cast<std::size_t>(i)])
             continue;
@@ -1349,6 +1400,7 @@ JvpProbeDirection makeJvpProbeDirection(const vela::DeviceMesh& mesh,
                 "psi_minus_phin, phip_minus_psi.");
         }
         ++probe.selectedNodes;
+        probe.selectedNodeIds.push_back(static_cast<vela::Index>(i));
     }
     if (probe.selectedNodes == 0)
         throw std::runtime_error("newton_jvp_probe direction selected no nodes: " + probe.name);
@@ -1366,11 +1418,14 @@ void writeNewtonJvpProbeCsv(const std::filesystem::path& path,
     std::ofstream out(path);
     if (!out.is_open())
         throw std::runtime_error("Cannot write Newton JVP probe CSV: " + path.string());
+    out << std::setprecision(17);
     out << "direction,mode,amplitude_V,selected_nodes,perturbation_norm,"
         << "analytic_norm,finite_difference_norm,absolute_error,relative_error,"
         << "analytic_psi_norm,analytic_phin_norm,analytic_phip_norm,"
         << "finite_difference_psi_norm,finite_difference_phin_norm,finite_difference_phip_norm,"
-        << "psi_relative_error,phin_relative_error,phip_relative_error\n";
+        << "psi_relative_error,phin_relative_error,phip_relative_error,"
+        << "max_error_index,max_error_block,max_error_node,"
+        << "analytic_at_max_error,finite_difference_at_max_error\n";
     for (const auto& row : rows) {
         out << row.at("direction").get<std::string>() << ','
             << row.at("mode").get<std::string>() << ','
@@ -1389,7 +1444,12 @@ void writeNewtonJvpProbeCsv(const std::filesystem::path& path,
             << row.at("finite_difference_phip_norm").get<vela::Real>() << ','
             << row.at("psi_relative_error").get<vela::Real>() << ','
             << row.at("phin_relative_error").get<vela::Real>() << ','
-            << row.at("phip_relative_error").get<vela::Real>()
+            << row.at("phip_relative_error").get<vela::Real>() << ','
+            << row.at("max_error_index").get<int>() << ','
+            << row.at("max_error_block").get<std::string>() << ','
+            << row.at("max_error_node").get<int>() << ','
+            << row.at("analytic_at_max_error").get<vela::Real>() << ','
+            << row.at("finite_difference_at_max_error").get<vela::Real>()
             << '\n';
     }
 }
@@ -1419,12 +1479,23 @@ nlohmann::json runNewtonJvpProbe(const std::string& configFile, const nlohmann::
         const vela::Real psiError = vectorBlockNorm(error, 0, n);
         const vela::Real phinError = vectorBlockNorm(error, n, n);
         const vela::Real phipError = vectorBlockNorm(error, 2 * n, n);
+        Eigen::Index maxErrorIndex = -1;
+        if (error.size() > 0)
+            error.cwiseAbs().maxCoeff(&maxErrorIndex);
+        const int maxErrorBlockIndex = maxErrorIndex >= 0
+            ? static_cast<int>(maxErrorIndex) / n : -1;
+        const int maxErrorNode = maxErrorIndex >= 0
+            ? static_cast<int>(maxErrorIndex) % n : -1;
+        const std::string maxErrorBlock = maxErrorBlockIndex == 0
+            ? "psi" : (maxErrorBlockIndex == 1
+                ? "phin" : (maxErrorBlockIndex == 2 ? "phip" : "invalid"));
         maxRelativeError = std::max(maxRelativeError, jvp.relativeError);
         rows.push_back({
             {"direction", direction.name},
             {"mode", direction.mode},
             {"amplitude_V", direction.amplitude_V},
             {"selected_nodes", direction.selectedNodes},
+            {"selected_node_ids", direction.selectedNodeIds},
             {"perturbation_norm", jvp.perturbationNorm},
             {"analytic_norm", jvp.analyticNorm},
             {"finite_difference_norm", jvp.finiteDifferenceNorm},
@@ -1439,6 +1510,13 @@ nlohmann::json runNewtonJvpProbe(const std::string& configFile, const nlohmann::
             {"psi_relative_error", psiError / std::max<vela::Real>(1.0, psiFd)},
             {"phin_relative_error", phinError / std::max<vela::Real>(1.0, phinFd)},
             {"phip_relative_error", phipError / std::max<vela::Real>(1.0, phipFd)},
+            {"max_error_index", static_cast<int>(maxErrorIndex)},
+            {"max_error_block", maxErrorBlock},
+            {"max_error_node", maxErrorNode},
+            {"analytic_at_max_error", maxErrorIndex >= 0
+                ? jvp.analyticJv(maxErrorIndex) : 0.0},
+            {"finite_difference_at_max_error", maxErrorIndex >= 0
+                ? jvp.finiteDifferenceJv(maxErrorIndex) : 0.0},
         });
     }
 
@@ -1948,10 +2026,10 @@ void writeNewtonCarrierTermProbeCsv(
         throw std::runtime_error("Cannot write Newton carrier-term probe CSV: " + path.string());
     out << std::setprecision(17);
     out << "node_id,x,y,"
-        << "electron_flux,electron_recombination,electron_impact,electron_gauge,electron_boundary,"
+        << "electron_flux,electron_flux_abs_sum,electron_recombination,electron_impact,electron_gauge,electron_boundary,"
         << "electron_term_sum,electron_residual,electron_adjusted_impact,"
         << "electron_adjusted_term_sum,electron_adjusted_residual,"
-        << "hole_flux,hole_recombination,hole_impact,hole_gauge,hole_boundary,"
+        << "hole_flux,hole_flux_abs_sum,hole_recombination,hole_impact,hole_gauge,hole_boundary,"
         << "hole_term_sum,hole_residual,hole_adjusted_impact,"
         << "hole_adjusted_term_sum,hole_adjusted_residual,"
         << "impact_electron_source,impact_hole_source,impact_combined_source,"
@@ -1984,6 +2062,7 @@ void writeNewtonCarrierTermProbeCsv(
             << node.x << ','
             << node.y << ','
             << row.electronFlux << ','
+            << row.electronFluxAbsSum << ','
             << row.electronRecombination << ','
             << row.electronImpact << ','
             << row.electronGauge << ','
@@ -1994,6 +2073,7 @@ void writeNewtonCarrierTermProbeCsv(
             << electronAdjustedSum << ','
             << electronAdjustedSum << ','
             << row.holeFlux << ','
+            << row.holeFluxAbsSum << ','
             << row.holeRecombination << ','
             << row.holeImpact << ','
             << row.holeGauge << ','
@@ -2017,6 +2097,7 @@ void writeNewtonCarrierTermProbeCsv(
 struct CarrierTermProbeOptions {
     vela::Real electronImpactScale = 1.0;
     vela::Real holeImpactScale = 1.0;
+    bool solvedEquationTerms = false;
 };
 
 CarrierTermProbeOptions carrierTermProbeOptionsFromJson(const nlohmann::json& cfg)
@@ -2029,6 +2110,7 @@ CarrierTermProbeOptions carrierTermProbeOptionsFromJson(const nlohmann::json& cf
         throw std::runtime_error("carrier_term_probe must be an object.");
     options.electronImpactScale = probe.value("electron_impact_scale", 1.0);
     options.holeImpactScale = probe.value("hole_impact_scale", 1.0);
+    options.solvedEquationTerms = probe.value("solved_equation_terms", false);
     if (!std::isfinite(options.electronImpactScale) || !std::isfinite(options.holeImpactScale))
         throw std::runtime_error("carrier_term_probe impact scales must be finite.");
     return options;
@@ -2067,9 +2149,9 @@ nlohmann::json runNewtonCarrierTermProbe(const std::string& configFile, const nl
     NewtonProblem problem = loadNewtonProblem(configFile, cfg);
     const vela::DDSolution state = readExternalState(cfgDir, cfg, problem.mesh.numNodes());
     const vela::NewtonSolver solver = makeNewtonSolver(problem);
-    const vela::NewtonCarrierTermDiagnosticsEvaluation diagnostics =
-        solver.evaluateCarrierTermDiagnostics(state);
     const CarrierTermProbeOptions options = carrierTermProbeOptionsFromJson(cfg);
+    const vela::NewtonCarrierTermDiagnosticsEvaluation diagnostics =
+        solver.evaluateCarrierTermDiagnostics(state, options.solvedEquationTerms);
     writeNewtonCarrierTermProbeCsv(
         resolvePath(cfgDir, cfg.at("output_csv").get<std::string>()),
         problem.mesh,
@@ -2089,6 +2171,7 @@ nlohmann::json runNewtonCarrierTermProbe(const std::string& configFile, const nl
         {"carrier_term_probe", {
             {"electron_impact_scale", options.electronImpactScale},
             {"hole_impact_scale", options.holeImpactScale},
+            {"solved_equation_terms", options.solvedEquationTerms},
         }},
         {"block_residuals", {
             {"psi", diagnostics.residual.blockNorms.psi},
@@ -2114,7 +2197,10 @@ void writeSgEdgeFluxProbeCsv(
     if (!out.is_open())
         throw std::runtime_error("Cannot write SG edge flux probe CSV: " + path.string());
     out << "edge_id,node0,node1,x0,y0,x1,y1,length_m,couple_m,"
-        << "net_doping_avg_m3,ni0_m3,ni1_m3,psi0_V,psi1_V,phin0_V,phin1_V,"
+        << "net_doping_avg_m3,ni0_m3,ni1_m3,"
+        << "electron_density0_m3,electron_density1_m3,"
+        << "hole_density0_m3,hole_density1_m3,"
+        << "psi0_V,psi1_V,phin0_V,phin1_V,"
         << "phip0_V,phip1_V,electric_field_V_m,electron_mobility_m2_V_s,"
         << "hole_mobility_m2_V_s,electron_flux,hole_flux,"
         << "electron_particle_line_flux_per_m_s,hole_particle_line_flux_per_m_s\n";
@@ -2133,6 +2219,10 @@ void writeSgEdgeFluxProbeCsv(
             << units.internalConcentrationToM3(edge.netDopingAvg_m3) << ','
             << units.internalConcentrationToM3(edge.ni0_m3) << ','
             << units.internalConcentrationToM3(edge.ni1_m3) << ','
+            << units.internalConcentrationToM3(edge.electronDensity0_m3) << ','
+            << units.internalConcentrationToM3(edge.electronDensity1_m3) << ','
+            << units.internalConcentrationToM3(edge.holeDensity0_m3) << ','
+            << units.internalConcentrationToM3(edge.holeDensity1_m3) << ','
             << edge.psi0_V << ','
             << edge.psi1_V << ','
             << edge.phin0_V << ','

@@ -4,6 +4,8 @@
 #include "vela/simulation/PseudoArclength.h"
 
 #include <cmath>
+#include <utility>
+#include <vector>
 
 using namespace vela;
 using Catch::Approx;
@@ -158,6 +160,29 @@ TEST_CASE("PseudoArclength: step fails when length falls below min_step",
     REQUIRE(result.failureReason == "arclength step shrank below min_step");
 }
 
+TEST_CASE("PseudoArclength: accepted updates report exhausted corrector budget",
+          "[arclength]")
+{
+    PseudoArclengthConfig config = makeCircleConfig();
+    config.minStep = config.initialStep;
+    config.maxStepRetries = 0;
+    config.maxCorrectorIterations = 1;
+    PseudoArclengthContinuation continuation(makeCircleSystem(), config);
+
+    ArclengthState point;
+    point.x = VectorXd::Constant(1, 1.0);
+    point.lambda = 0.0;
+    const ArclengthTangent tangent = continuation.computeTangent(point, +1.0);
+
+    const ArclengthStepResult result =
+        continuation.step(point, tangent, config.initialStep);
+    REQUIRE_FALSE(result.converged);
+    REQUIRE(result.failureReason ==
+            "corrector failed to converge within iteration budget");
+    REQUIRE(result.lineSearchAttempts >= 1);
+    REQUIRE(result.bestTrialResidualNorm < result.residualNorm);
+}
+
 TEST_CASE("PseudoArclength: line search damps a stiff scalar corrector",
           "[arclength]")
 {
@@ -181,6 +206,28 @@ TEST_CASE("PseudoArclength: line search damps a stiff scalar corrector",
     const ArclengthStepResult fullStepResult =
         fullStep.step(point, fullStepTangent, fullStepConfig.initialStep);
     REQUIRE_FALSE(fullStepResult.converged);
+    REQUIRE(fullStepResult.lineSearchAttempts == 1);
+    REQUIRE(fullStepResult.bestTrialAlpha == Approx(1.0));
+    REQUIRE(fullStepResult.smallestTrialAlpha == Approx(1.0));
+    REQUIRE(std::isfinite(fullStepResult.bestTrialResidualNorm));
+    REQUIRE(fullStepResult.bestTrialResidualNorm >= fullStepResult.residualNorm);
+
+    PseudoArclengthConfig exhaustedConfig = fullStepConfig;
+    exhaustedConfig.minStep = 3.0;
+    exhaustedConfig.maxStepRetries = 1;
+    PseudoArclengthContinuation exhausted(makeSineSystem(), exhaustedConfig);
+    const ArclengthStepResult exhaustedResult =
+        exhausted.step(point, fullStepTangent, exhaustedConfig.initialStep);
+    REQUIRE_FALSE(exhaustedResult.converged);
+    REQUIRE(exhaustedResult.failureReason.find(
+                "corrector line search rejected update") != std::string::npos);
+    REQUIRE(exhaustedResult.failureReason.find(
+                "arclength step shrank below min_step") != std::string::npos);
+    REQUIRE(exhaustedResult.correctorIterations == 0);
+    REQUIRE(std::isfinite(exhaustedResult.residualNorm));
+    REQUIRE(exhaustedResult.lineSearchAttempts == 1);
+    REQUIRE(std::isfinite(exhaustedResult.bestTrialEquationResidualNorm));
+    REQUIRE(std::isfinite(exhaustedResult.bestTrialArclengthResidual));
 
     config.maxLineSearchSteps = 12;
     PseudoArclengthContinuation damped(makeSineSystem(), config);
@@ -324,6 +371,51 @@ TEST_CASE("PseudoArclength: limitUpdate hook clamps corrector step before line s
     REQUIRE(calls == 2);
     REQUIRE(largestProposedDelta > 9.0);
 }
+
+TEST_CASE("PseudoArclength: parameter cap preserves bordered update consistency",
+          "[arclength]")
+{
+    std::vector<std::pair<Real, Real>> evaluated;
+    ArclengthSystem system;
+    system.residual = [&](const VectorXd& x, Real lambda) {
+        evaluated.emplace_back(x(0), lambda);
+        VectorXd f(1);
+        f(0) = x(0) + 10.0 * lambda;
+        return f;
+    };
+    system.parameterDerivative = [](const VectorXd&, Real) {
+        return VectorXd::Constant(1, 10.0);
+    };
+    system.solveJacobian = [](const VectorXd&, Real, const VectorXd& b, VectorXd& y) {
+        y = b;
+        return true;
+    };
+
+    PseudoArclengthConfig config = makeCircleConfig();
+    config.initialStep = 1.0;
+    config.minStep = 1.0;
+    config.maxStep = 1.0;
+    config.maxCorrectorIterations = 1;
+    config.maxStepRetries = 0;
+    config.maxLineSearchSteps = 0;
+    config.maxParameterUpdate = 0.05;
+
+    ArclengthState point;
+    point.x = VectorXd::Zero(1);
+    point.lambda = 0.0;
+    ArclengthTangent tangent;
+    tangent.xDot = VectorXd::Ones(1);
+    tangent.lambdaDot = 0.0;
+
+    PseudoArclengthContinuation continuation(system, config);
+    continuation.step(point, tangent, config.initialStep);
+
+    REQUIRE(evaluated.size() >= 2);
+    REQUIRE(evaluated[1].second == Approx(-0.05));
+    // J dx + F_lambda d_lambda = -F must be recomputed after the lambda
+    // trust-region cap: dx = -1 - 10*(-0.05) = -0.5.
+    REQUIRE(evaluated[1].first == Approx(0.5));
+}
 TEST_CASE("PseudoArclength: missing callbacks are rejected", "[arclength]")
 {
     ArclengthSystem incomplete;
@@ -347,6 +439,16 @@ TEST_CASE("PseudoArclength: negative parameter update cap is rejected", "[arclen
 {
     PseudoArclengthConfig config = makeCircleConfig();
     config.maxParameterUpdate = -0.1;
+    REQUIRE_THROWS_AS(
+        PseudoArclengthContinuation(makeCircleSystem(), config),
+        std::invalid_argument);
+}
+
+TEST_CASE("PseudoArclength: negative line-search increase tolerance is rejected",
+          "[arclength]")
+{
+    PseudoArclengthConfig config = makeCircleConfig();
+    config.lineSearchRelativeIncreaseTolerance = -1.0e-4;
     REQUIRE_THROWS_AS(
         PseudoArclengthContinuation(makeCircleSystem(), config),
         std::invalid_argument);

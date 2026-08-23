@@ -234,6 +234,8 @@ GummelConfig gummelConfigFromJson(const nlohmann::json& json, UnitScalingConfig 
                 "source_volume_factor", cfg.impactIonization.sourceVolumeFactor);
             cfg.impactIonization.sourceMappingMode = value.value(
                 "source_mapping_mode", cfg.impactIonization.sourceMappingMode);
+            cfg.impactIonization.sourceJacobianMode = value.value(
+                "source_jacobian", cfg.impactIonization.sourceJacobianMode);
             cfg.impactIonization.edgeSourcePartition = value.value(
                 "edge_source_partition", cfg.impactIonization.edgeSourcePartition);
             cfg.impactIonization.quasiFermiCarrierTruncation = value.value(
@@ -1026,11 +1028,51 @@ void writeDDSolutionVTK(const std::string& filename,
     const Real Vt = constants::kb * temperature_K / constants::q;
     const std::unique_ptr<BandgapNarrowing> bgn =
         makeBandgapNarrowingModel(bandgapNarrowingConfig);
+    const auto edgeCells = detail::buildEdgeCellMap(mesh);
+    MobilityModelConfig resolvedMobilityConfig = mobilityConfig;
+    if (isSurfaceMobilityModel(resolvedMobilityConfig)) {
+        detail::updateSurfaceMobilityCellGeometry(
+            resolvedMobilityConfig, mesh, edgeCells, sol.psi,
+            resolvedMobilityConfig.surface.coordinateFieldFactor);
+
+        // Export the exact normal electric field used by the surface-mobility
+        // model. CellSurfaceNormalField is the native discretization;
+        // SurfaceNormalField is its area-weighted nodal reconstruction for
+        // direct comparison with Sentaurus eEnormal vertex data.
+        std::vector<Real> cellSurfaceNormalField_V_cm(
+            mesh.numCells(), std::numeric_limits<Real>::quiet_NaN());
+        std::vector<Real> nodeSurfaceNormalField_V_cm(N, 0.0);
+        std::vector<Real> nodeSurfaceNormalWeight(N, 0.0);
+        for (Index cellId = 0; cellId < mesh.numCells(); ++cellId) {
+            if (cellId >= resolvedMobilityConfig.surface.cellNormalFields.size())
+                continue;
+            const Real normalField =
+                resolvedMobilityConfig.surface.cellNormalFields[cellId];
+            if (!std::isfinite(normalField))
+                continue;
+            const Real normalField_V_cm = normalField * scaleToVcm;
+            cellSurfaceNormalField_V_cm[cellId] = normalField_V_cm;
+            const Cell& cell = mesh.getCell(cellId);
+            const Real weight = detail::triangleArea(mesh, cell);
+            for (const Index node : cell.node_ids) {
+                nodeSurfaceNormalField_V_cm[node] += normalField_V_cm * weight;
+                nodeSurfaceNormalWeight[node] += weight;
+            }
+        }
+        for (Index node = 0; node < N; ++node) {
+            if (nodeSurfaceNormalWeight[node] > 0.0)
+                nodeSurfaceNormalField_V_cm[node] /= nodeSurfaceNormalWeight[node];
+        }
+        writer.addCellScalar(
+            "CellSurfaceNormalField", cellSurfaceNormalField_V_cm);
+        writer.addNodeScalar(
+            "SurfaceNormalField", nodeSurfaceNormalField_V_cm);
+    }
     const RecombinationModel recombination(recombinationConfig);
     const std::unique_ptr<ImpactIonizationModel> impact =
         makeImpactIonizationModel(impactIonizationConfig);
-    const std::unique_ptr<MobilityModel> mobility = makeMobilityModel(mobilityConfig);
-    const auto edgeCells = detail::buildEdgeCellMap(mesh);
+    const std::unique_ptr<MobilityModel> mobility =
+        makeMobilityModel(resolvedMobilityConfig);
     const std::vector<Material> cellMaterials =
         detail::buildCellMaterials(mesh, matdb, temperature_K);
     const std::vector<Real> effectiveNi = detail::buildValidatedEffectiveNodeNi(
@@ -1120,7 +1162,7 @@ void writeDDSolutionVTK(const std::string& filename,
         ? detail::triangleGssAvalancheSourceRecords(
             impactIonizationConfig,
             *impact,
-            mobilityConfig,
+            resolvedMobilityConfig,
             *mobility,
             edgeCells,
             mesh,
@@ -1141,7 +1183,7 @@ void writeDDSolutionVTK(const std::string& filename,
         ? detail::sgEdgeCurrentAvalancheSourceRecords(
             impactIonizationConfig,
             *impact,
-            mobilityConfig,
+            resolvedMobilityConfig,
             *mobility,
             edgeCells,
             mesh,
@@ -1165,7 +1207,7 @@ void writeDDSolutionVTK(const std::string& filename,
         ? detail::currentDensityAvalancheSourceIntegrals(
             impactIonizationConfig,
             *impact,
-            mobilityConfig,
+            resolvedMobilityConfig,
             *mobility,
             edgeCells,
             mesh,
@@ -1195,13 +1237,18 @@ void writeDDSolutionVTK(const std::string& filename,
         // quasi-Fermi increments retain the sub-ulp carrier imbalance even
         // when the absolute contact bias is tens of volts.
         const Real electronQf = electronQfForDifferences(row)
-            + (hasReferencedElectronQf ? sol.electronQfReference_V : 0.0);
+            + (hasReferencedElectronQf
+                ? sol.electronQuasiFermiReferenceAt(row) : 0.0);
         const Real holeQf = holeQfForDifferences(row)
-            + (hasReferencedHoleQf ? sol.holeQfReference_V : 0.0);
-        const Real excessProduct = ni * ni *
-            std::expm1((holeQf - electronQf) / Vt);
-        srh[i] = recombination.srhRateFromExcessProduct(
-            excessProduct, n, p, ni,
+            + (hasReferencedHoleQf
+                ? sol.holeQuasiFermiReferenceAt(row) : 0.0);
+        const GeneralizedSrhCarrierState srhState =
+            generalizedSrhCarrierState(
+                n, p, ni, densityOfStatesNc[i], densityOfStatesNv[i],
+                holeQf - electronQf, Vt, carrierStatistics);
+        srh[i] = recombination.srhRateGeneralizedFromExcessProduct(
+            srhState.excessProduct, n, p, ni, ni,
+            srhState.electronDegeneracy, srhState.holeDegeneracy,
             recombination.srhDopingConcentration(
                 doping.donors(i), doping.acceptors(i)));
         bandToBandGeneration[i] = transportNodeAreas[i] > 0.0
@@ -1215,7 +1262,7 @@ void writeDDSolutionVTK(const std::string& filename,
             avalanche[i] = detail::impactIonizationGenerationRate(
                 impactIonizationConfig,
                 *impact,
-                mobilityConfig,
+                resolvedMobilityConfig,
                 *mobility,
                 nodeCells,
                 mesh,
@@ -1242,16 +1289,16 @@ void writeDDSolutionVTK(const std::string& filename,
         holeHighFieldDrive_V_cm[i] = holeMobilityField * scaleToVcm;
         electronLowFieldMobility[i] = detail::nodeMobility(
             nodeCells, mesh, doping, *mobility, cellMaterials, i,
-            CarrierType::Electron, 0.0, &mobilityConfig);
+            CarrierType::Electron, 0.0, &resolvedMobilityConfig);
         holeLowFieldMobility[i] = detail::nodeMobility(
             nodeCells, mesh, doping, *mobility, cellMaterials, i,
-            CarrierType::Hole, 0.0, &mobilityConfig);
+            CarrierType::Hole, 0.0, &resolvedMobilityConfig);
         electronMobility[i] = detail::nodeMobility(
             nodeCells, mesh, doping, *mobility, cellMaterials, i,
-            CarrierType::Electron, electronMobilityField, &mobilityConfig);
+            CarrierType::Electron, electronMobilityField, &resolvedMobilityConfig);
         holeMobility[i] = detail::nodeMobility(
             nodeCells, mesh, doping, *mobility, cellMaterials, i,
-            CarrierType::Hole, holeMobilityField, &mobilityConfig);
+            CarrierType::Hole, holeMobilityField, &resolvedMobilityConfig);
         if (electronLowFieldMobility[i] > 0.0)
             electronMobilityLimiter[i] = electronMobility[i] / electronLowFieldMobility[i];
         if (holeLowFieldMobility[i] > 0.0)

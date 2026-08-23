@@ -15,6 +15,7 @@
 #include "vela/physics/MobilityModel.h"
 #include "vela/simulation/PseudoArclength.h"
 #include "vela/solver/GummelSolver.h"
+#include <functional>
 #include <memory>
 #include <nlohmann/json_fwd.hpp>
 #include <string>
@@ -35,6 +36,14 @@ struct NewtonCarrierRowConvergenceConfig {
     std::vector<Index> traceNodes;
     int traceFirstIterations = 10;
     int traceEveryIterations = 10;
+};
+
+struct NewtonLocalUpdateDiagnosticsConfig {
+    bool enabled = false; ///< Write opt-in per-node Newton update and linear-residual diagnostics.
+    std::string csvFile;
+    std::vector<Index> nodes;
+    int firstIterations = 10;
+    int everyIterations = 10;
 };
 
 struct NewtonContinuityRowScalingConfig {
@@ -117,12 +126,21 @@ struct NewtonConfig {
     Real temperature_K = constants::T0; ///< Lattice temperature [K]
     Real dampingFactor = 1.0;
     bool lineSearch = true;
+    std::string lineSearchMode = "merit"; ///< "merit" or "block_filter".
+    Real residualFilterGamma = 1.0e-4;
+    Real residualFilterEnvelopeFactor = 2.0;
     bool verbose = true;
     bool warmStart = false; ///< Preserve supplied quasi-Fermi potentials instead of resetting interiors.
     bool diagnostics = false; ///< Store detailed line-search diagnostics in NewtonResult::history.
     Real maxUpdate = 0.0; ///< Optional infinity-norm cap on one Newton update in solver unknown units.
     Real quasiFermiUpdateLimit_V = 0.0; ///< Optional physical-voltage cap on phin/phip Newton updates.
     Real quasiFermiUpdateLimitMinority_V = 0.0; ///< Optional tighter physical-voltage cap on the minority-carrier quasi-Fermi update per node; 0 disables (uses the global cap for both carriers).
+    std::string quasiFermiUpdateLimitMode = "componentwise_poisson_recorrect"; ///< "componentwise_poisson_recorrect" or direction-preserving "uniform_trust_region".
+    Real quasiFermiTrustRegionGrowthFactor = 1.0; ///< Accepted-step radius growth; 1 disables adaptive expansion.
+    Real quasiFermiTrustRegionMaxMultiplier = 1.0; ///< Maximum multiplier applied to configured quasi-Fermi limits.
+    Real quasiFermiTrustRegionExpansionThreshold = 0.75; ///< Minimum actual/predicted residual decrease ratio for radius expansion.
+    Real quasiFermiTrustRegionShrinkFactor = 1.0; ///< Radius contraction after a backtracked accepted step; 1 disables contraction.
+    Real quasiFermiTrustRegionMinMultiplier = 1.0; ///< Positive minimum multiplier used by adaptive contraction.
     Real stallResidualFloor = 1.0e-9; ///< Residual floor for accepting line-search stalls as solved.
     Real poissonLineSearchStallResidualFloor = 1.0e-6; ///< Poisson-block floor for near-flat line-search stalls.
     Real poissonLineSearchStallRelativeIncrease = 1.0e-5; ///< Allowed best rejected residual increase at the Poisson floor.
@@ -132,12 +150,13 @@ struct NewtonConfig {
     Real carrierRegularizationScale = 0.0; ///< Optional carrier-row diagonal regularization scale.
     CarrierDiagonalFloorRegularizationConfig carrierDiagonalFloor{}; ///< Optional absolute floor for depleted minority carrier-row diagonals.
     NewtonCarrierRowConvergenceConfig carrierRowConvergence{}; ///< Optional per-carrier-row local residual convergence check.
+    NewtonLocalUpdateDiagnosticsConfig localUpdateDiagnostics{}; ///< Opt-in raw/capped/applied Newton-step trace.
     NewtonCarrierRowRecoveryConfig carrierRowRecovery{}; ///< Optional recovery pass for locally unbalanced carrier rows.
     NewtonContinuityRowScalingConfig continuityRowScaling{}; ///< Optional source-aware left row equilibration.
     NewtonGlobalContinuityClosureConfig globalContinuityClosure{}; ///< Optional contact-flux versus integrated-source convergence check.
     Real finiteDifferenceStep = 1.0e-6;
     std::string jacobian = "analytic"; ///< "analytic" or "finite_difference"
-    std::string quasiFermiReference = "none"; ///< "none" or "contact_majority"
+    std::string quasiFermiReference = "none"; ///< "none", "contact_majority", or "contact_basin"
     std::string residualNorm = "block"; ///< "block" or "l2" convergence/line-search norm
     Real residualWeightPsi = 1.0;
     Real residualWeightPhin = 1.0;
@@ -637,7 +656,8 @@ public:
     NewtonCarrierBlockDecompositionEvaluation
     evaluateCarrierBlockDecomposition(const DDSolution& state) const;
     NewtonCarrierTermDiagnosticsEvaluation evaluateCarrierTermDiagnostics(
-        const DDSolution& state) const;
+        const DDSolution& state,
+        bool solvedEquationTerms = false) const;
     std::vector<NewtonJacobianBlockAuditRow> evaluateJacobianBlockAudit(
         const DDSolution& state,
         Real finiteDifferenceStep = 1.0e-7,
@@ -665,6 +685,18 @@ public:
     /// from a converged Newton solution and interpret the corrected state.
     VectorXd packArclengthState(const DDSolution& state) const;
     DDSolution unpackArclengthState(const VectorXd& x) const;
+    /// Return a reusable unpacker backed by one cached assembler. This avoids
+    /// rebuilding immutable mesh/material kernels for repeated terminal-current
+    /// evaluations inside bordered circuit Newton.
+    std::function<DDSolution(const VectorXd&)>
+    makeArclengthStateUnpacker() const;
+    /// Build a terminal-current functional on the same packed state and
+    /// assembler as makeArclengthSystem. currentScale converts the assembler's
+    /// internal current-per-depth units (excluding its line factor) to the
+    /// caller's signed terminal-current units.
+    ArclengthScalarFunctional makeArclengthContactCurrentFunctional(
+        const std::string& contactName,
+        Real currentScale) const;
 
 private:
     void configureQuasiFermiReferences(CoupledDDAssembler& assembler) const;

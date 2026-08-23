@@ -161,6 +161,14 @@ TEST_CASE("Generalized Fermi-Dirac SG preserves flat quasi-Fermi equilibrium",
         qf, adjacentQf, Vt, 3.0);
     REQUIRE(std::isfinite(adjacentElectronFlux));
     REQUIRE(adjacentElectronFlux != 0.0);
+    const Real quantumFactor = 0.25;
+    const Real quantumElectronFlux =
+        sgElectronFermiDiracQuantumContinuityFlux(
+            quantumFactor * n0, quantumFactor * adjacentN1,
+            n0, adjacentN1, etaN0, adjacentEtaN1, electronDrift,
+            qf, adjacentQf, Vt, 3.0);
+    REQUIRE(quantumElectronFlux / adjacentElectronFlux ==
+            Catch::Approx(quantumFactor).epsilon(1.0e-12));
 
     const Real adjacentP1 = holeDensity(
         ni1, Nv, psi1, adjacentQf, Vt, statistics);
@@ -170,4 +178,62 @@ TEST_CASE("Generalized Fermi-Dirac SG preserves flat quasi-Fermi equilibrium",
         qf, adjacentQf, Vt, 3.0);
     REQUIRE(std::isfinite(adjacentHoleFlux));
     REQUIRE(adjacentHoleFlux != 0.0);
+}
+
+TEST_CASE("Generalized SRH state retains a near-equilibrium quasi-Fermi split",
+          "[carrier_statistics][srh][equilibrium]")
+{
+    const Real Vt = constants::kb * 300.0 / constants::q;
+    const Real ni = 1.68e16;
+    const Real split = 1.0e-18;
+    const GeneralizedSrhCarrierState state = generalizedSrhCarrierState(
+        1.0e21, 1.0e21, ni, 2.8e25, 1.04e25, split, Vt,
+        CarrierStatisticsConfig{"boltzmann"});
+
+    REQUIRE(state.electronDegeneracy == 1.0);
+    REQUIRE(state.holeDegeneracy == 1.0);
+    REQUIRE(state.excessProduct != 0.0);
+    REQUIRE(state.excessProduct ==
+            Approx(ni * ni * std::expm1(split / Vt)).epsilon(1.0e-14));
+}
+
+TEST_CASE("Generalized SRH state resolves deep-depletion generation",
+          "[carrier_statistics][srh][deep_depletion]")
+{
+    const Real Vt = constants::kb * 300.0 / constants::q;
+    const Real ni = 1.68e16;
+    const Real split = -1.6;
+    const GeneralizedSrhCarrierState state = generalizedSrhCarrierState(
+        1.0, 1.0, ni, 2.8e25, 1.04e25, split, Vt,
+        CarrierStatisticsConfig{"boltzmann"});
+
+    REQUIRE(std::isfinite(state.excessProduct));
+    REQUIRE(state.excessProduct < 0.0);
+    REQUIRE(state.excessProduct == Approx(-ni * ni).epsilon(1.0e-14));
+}
+
+TEST_CASE("Generalized Fermi SRH factors reproduce the carrier product identity",
+          "[carrier_statistics][fermi_dirac][srh]")
+{
+    const CarrierStatisticsConfig statistics{"fermi_dirac"};
+    const Real Vt = constants::kb * 300.0 / constants::q;
+    const Real ni = 1.68e16;
+    const Real Nc = 2.8e25;
+    const Real Nv = 1.04e25;
+    const Real psi = 0.75;
+    const Real phin = -0.05;
+    const Real phip = 0.02;
+    const Real n = electronDensity(ni, Nc, psi, phin, Vt, statistics);
+    const Real p = holeDensity(ni, Nv, psi, phip, Vt, statistics);
+    const GeneralizedSrhCarrierState state = generalizedSrhCarrierState(
+        n, p, ni, Nc, Nv, phip - phin, Vt, statistics);
+
+    REQUIRE(state.electronDegeneracy > 0.0);
+    REQUIRE(state.holeDegeneracy > 0.0);
+    REQUIRE(state.electronDegeneracy != Approx(1.0).margin(1.0e-3));
+    REQUIRE(n * p ==
+            Approx(state.equilibriumProduct * std::exp((phip - phin) / Vt))
+                .epsilon(3.0e-10));
+    REQUIRE(state.excessProduct ==
+            Approx(n * p - state.equilibriumProduct).epsilon(3.0e-10));
 }

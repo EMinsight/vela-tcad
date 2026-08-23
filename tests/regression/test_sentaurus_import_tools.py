@@ -66,6 +66,20 @@ class SentaurusImportToolsTest(unittest.TestCase):
         )
         self.assertEqual(warnings, [])
 
+    def test_solver_physics_emits_srh_reference_doping_in_tcad_internal_units(self) -> None:
+        deck = {"scaling": {"mode": "unit_scaling"}, "solver": {"type": "newton"}}
+
+        warnings = sentaurus_import.apply_solver_physics(
+            deck,
+            {"physics": [{"models": ["Recombination", "SRH", "DopingDep"]}]},
+            {"name": "idvg", "kind": "iv"},
+        )
+
+        dependence = deck["solver"]["srh_doping_dependence"]
+        self.assertEqual(dependence["electron"]["reference_doping_m3"], 1.0e16)
+        self.assertEqual(dependence["hole"]["reference_doping_m3"], 1.0e16)
+        self.assertEqual(warnings, [])
+
     def test_solver_physics_maps_old_slotboom_and_van_overstraeten(self) -> None:
         deck = {"solver": {"type": "gummel"}}
 

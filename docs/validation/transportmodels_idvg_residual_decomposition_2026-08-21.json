@@ -1,0 +1,42 @@
+{
+  "schema": "vela.transportmodels.idvg_residual_decomposition.v1",
+  "as_of": "2026-08-21",
+  "method": "log-current interpolation on aligned 21-point Id-Vg curves",
+  "inputs": {
+    "dd_reference": "build-release/reference_tcad/transportmodels_sentaurus2022/vela_baseline/generated/reference_curves/transportmodels_sentaurus2022_dd_idvg_reference.csv",
+    "dd_candidate": "build-release/reference_tcad/transportmodels_sentaurus2022/vela_baseline/workflow_dd_vector_run01/dd_idvg_curve_comparison_candidate.csv",
+    "dg_reference": "build-release/reference_tcad/transportmodels_sentaurus2022/vela_baseline/generated/reference_curves/transportmodels_sentaurus2022_dg_idvg_reference.csv",
+    "dg_candidate": "build-release/reference_tcad/transportmodels_sentaurus2022/vela_baseline/dg_phase7_regression_2026-08-21/idvg/curve_combined.csv"
+  },
+  "equal_current_gate_shift_mV": {
+    "1e-10_A_per_um": {"dd": -14.7284098265, "dg": -14.4793797087},
+    "1e-8_A_per_um": {"dd": -15.4247504916, "dg": -14.3378748758},
+    "1e-6_A_per_um": {"dd": -15.0880024964, "dg": -13.0917565846},
+    "1e-5_A_per_um": {"dd": -19.4590684883, "dg": -14.0380438929},
+    "1e-4_A_per_um": {"dd": -17.8350856752, "dg": -10.8473351966}
+  },
+  "selected_biases": {
+    "-0.20_V": {
+      "dd_candidate_over_reference": 1.5694751782,
+      "dg_candidate_over_reference": 1.5067677706,
+      "dg_minus_dd_signed_log_error_dex": -0.0177081294
+    },
+    "-0.04_V": {
+      "dd_candidate_over_reference": 1.6130910692,
+      "dg_candidate_over_reference": 1.4956385547,
+      "dg_minus_dd_signed_log_error_dex": -0.0328322348
+    },
+    "0.12_V": {
+      "dd_candidate_over_reference": 1.5205689191,
+      "dg_candidate_over_reference": 1.3995353153,
+      "dg_minus_dd_signed_log_error_dex": -0.0360222474
+    },
+    "2.20_V": {
+      "dd_candidate_over_reference": 0.9790378112,
+      "dg_candidate_over_reference": 0.9787717472,
+      "dg_minus_dd_signed_log_error_dex": -0.0001180402
+    }
+  },
+  "interpretation": "The remaining phase-7 Id-Vg error contains a dominant DD/DG-common component. Re-run DD with the phase-7 shared configuration before treating this as a final causal attribution.",
+  "caveat": "The frozen DD candidate predates some phase-7 DG material and discretization corrections."
+}

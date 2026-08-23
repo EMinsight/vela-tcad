@@ -91,6 +91,10 @@ struct CoupledDDEdgeFluxDiagnostic {
     Real netDopingAvg_m3 = 0.0;
     Real ni0_m3 = 0.0;
     Real ni1_m3 = 0.0;
+    Real electronDensity0_m3 = 0.0;
+    Real electronDensity1_m3 = 0.0;
+    Real holeDensity0_m3 = 0.0;
+    Real holeDensity1_m3 = 0.0;
     Real psi0_V = 0.0;
     Real psi1_V = 0.0;
     Real phin0_V = 0.0;
@@ -201,8 +205,17 @@ public:
     /// absolute potentials; only the internal packed coordinates are shifted.
     void setQuasiFermiReferences(Real electronReference_V,
                                  Real holeReference_V);
+    /// Store independent quasi-Fermi reference coordinates at every node.
+    /// References are constant coordinate shifts; physical fields and the
+    /// assembled equations remain invariant under a consistent repartition.
+    void setQuasiFermiReferenceFields(const VectorXd& electronReference_V,
+                                      const VectorXd& holeReference_V);
     Real electronQuasiFermiReference() const { return electronQfReference_V_; }
     Real holeQuasiFermiReference() const { return holeQfReference_V_; }
+    Real electronQuasiFermiReferenceAt(Index node) const;
+    Real holeQuasiFermiReferenceAt(Index node) const;
+    VectorXd electronQuasiFermiReferenceField() const;
+    VectorXd holeQuasiFermiReferenceField() const;
 
     /// Set a frozen electron quantum correction [V] for one outer
     /// density-gradient iteration.  The coupled unknown count remains 3*N.
@@ -368,6 +381,26 @@ private:
         CarrierType carrier,
         Real drivingField,
         const VectorXd* psi) const;
+    bool usesSentaurusExponentialQuantumCoupling() const;
+    Real electronTransportPotential(Index node, Real psiRelative_V) const;
+    Real electronDensityAt(Index node,
+                           Real psiRelative_V,
+                           Real phinIncrement_V) const;
+    Real electronDensityDerivativeEtaAt(Index node,
+                                        Real psiRelative_V,
+                                        Real phinIncrement_V) const;
+    bool usesSentaurusDefaultSrhDensityCoupling() const;
+    Real electronSrhDensityAt(Index node,
+                              Real psiRelative_V,
+                              Real phinIncrement_V) const;
+    Real electronSrhDensityDerivativeEtaAt(Index node,
+                                           Real psiRelative_V,
+                                           Real phinIncrement_V) const;
+    Real nodeRecombinationRate(Index node,
+                               Real electronTransportDensity,
+                               Real electronSrhDensity,
+                               Real holeDensity,
+                               Real quasiFermiSplitting_V) const;
     void rebuildFixedJacobianPattern(
         const std::vector<bool>& constrainedRows,
         bool includeCellStencil,
@@ -416,6 +449,8 @@ private:
     CarrierDiagonalFloorRegularizationConfig carrierDiagonalFloor_;
     Real electronQfReference_V_ = 0.0;
     Real holeQfReference_V_ = 0.0;
+    VectorXd electronQfReferenceField_V_;
+    VectorXd holeQfReferenceField_V_;
     MobilityDopingBasis mobilityDopingBasis_ = MobilityDopingBasis::NetDoping;
     bool surfaceMobilityEnabled_ = false;
     bool highFieldMobilityEnabled_ = false;

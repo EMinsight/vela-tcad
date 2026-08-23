@@ -151,6 +151,27 @@ TEST_CASE("SRH recombination is near zero when n*p equals ni squared", "[recombi
     REQUIRE(model.totalRate(n, p, ni) == Catch::Approx(0.0).margin(1.0e6));
 }
 
+TEST_CASE("Generalized SRH denominator includes both Fermi degeneracy factors",
+          "[recombination][srh][fermi_dirac]")
+{
+    const Real taun = 1.0e-7;
+    const Real taup = 2.0e-7;
+    const RecombinationModel model(
+        recombinationModelConfig({"srh"}, taun, taup));
+    const Real n = 4.0e25;
+    const Real p = 3.0e20;
+    const Real ni = 1.0e16;
+    const Real gammaN = 0.35;
+    const Real gammaP = 0.92;
+    const Real excess = 7.0e39;
+    const Real expected = excess /
+        (taup * (n + gammaN * ni) + taun * (p + gammaP * ni));
+
+    REQUIRE(model.srhRateGeneralizedFromExcessProduct(
+                excess, n, p, ni, ni, gammaN, gammaP) ==
+            Catch::Approx(expected).epsilon(1.0e-14));
+}
+
 TEST_CASE("Sentaurus Scharfetter doping-dependent SRH lifetime follows limits",
           "[recombination][srh][doping]")
 {
@@ -261,6 +282,61 @@ TEST_CASE("Doping-dependent SRH carrier derivatives match central differences",
 
     REQUIRE(derivative.dRateDn == Catch::Approx(fdN).epsilon(2.0e-9));
     REQUIRE(derivative.dRateDp == Catch::Approx(fdP).epsilon(2.0e-9));
+}
+
+TEST_CASE("Generalized Fermi SRH partial derivatives match central differences",
+          "[recombination][srh][fermi][jacobian]")
+{
+    const RecombinationModel model(
+        recombinationModelConfig({"srh"}, 1.3e-7, 2.1e-7));
+    const Real excess = -2.7e31;
+    const Real n = 4.0e20;
+    const Real p = 3.0e17;
+    const Real n1 = 1.2e16;
+    const Real p1 = 1.2e16;
+    const Real gammaN = 1.35;
+    const Real gammaP = 0.92;
+    const auto derivative =
+        model.srhRateGeneralizedDerivativesFromExcessProduct(
+            excess, n, p, n1, p1, gammaN, gammaP);
+
+    const auto rate = [&](Real excessValue, Real nValue, Real pValue,
+                          Real gammaNValue, Real gammaPValue) {
+        return model.srhRateGeneralizedFromExcessProduct(
+            excessValue, nValue, pValue, n1, p1,
+            gammaNValue, gammaPValue);
+    };
+    const Real stepN = 1.0e14;
+    const Real stepP = 1.0e12;
+    const Real stepExcess = 1.0e25;
+    const Real stepGamma = 1.0e-4;
+    const Real fdN = (rate(excess, n + stepN, p, gammaN, gammaP) -
+                      rate(excess, n - stepN, p, gammaN, gammaP)) /
+        (2.0 * stepN);
+    const Real fdP = (rate(excess, n, p + stepP, gammaN, gammaP) -
+                      rate(excess, n, p - stepP, gammaN, gammaP)) /
+        (2.0 * stepP);
+    const Real fdExcess =
+        (rate(excess + stepExcess, n, p, gammaN, gammaP) -
+         rate(excess - stepExcess, n, p, gammaN, gammaP)) /
+        (2.0 * stepExcess);
+    const Real fdGammaN =
+        (rate(excess, n, p, gammaN + stepGamma, gammaP) -
+         rate(excess, n, p, gammaN - stepGamma, gammaP)) /
+        (2.0 * stepGamma);
+    const Real fdGammaP =
+        (rate(excess, n, p, gammaN, gammaP + stepGamma) -
+         rate(excess, n, p, gammaN, gammaP - stepGamma)) /
+        (2.0 * stepGamma);
+
+    REQUIRE(derivative.dRateDn == Catch::Approx(fdN).epsilon(2.0e-8));
+    REQUIRE(derivative.dRateDp == Catch::Approx(fdP).epsilon(2.0e-7));
+    REQUIRE(derivative.dRateDExcess ==
+            Catch::Approx(fdExcess).epsilon(2.0e-8));
+    REQUIRE(derivative.dRateDElectronDegeneracy ==
+            Catch::Approx(fdGammaN).epsilon(2.0e-7));
+    REQUIRE(derivative.dRateDHoleDegeneracy ==
+            Catch::Approx(fdGammaP).epsilon(2.0e-7));
 }
 
 TEST_CASE("SRH doping-dependence JSON respects unit scaling concentration units",

@@ -434,6 +434,12 @@ Newton-specific keys:
 - max_update
 - quasi_fermi_update_limit_V
 - quasi_fermi_update_limit_minority_V
+- quasi_fermi_update_limit_mode
+- quasi_fermi_trust_region_growth_factor
+- quasi_fermi_trust_region_max_multiplier
+- quasi_fermi_trust_region_expansion_threshold
+- quasi_fermi_trust_region_shrink_factor
+- quasi_fermi_trust_region_min_multiplier
 - electron_quantum_potential
 - carrier_regularization_scale
 - line_search
@@ -470,7 +476,14 @@ Notes:
 - `line_search` and `damping_factor` apply to Newton config.
 - `electron_quantum_potential` enables the electron density-gradient quantum
   correction.  The object accepts `coupling_mode` (`outer`, the default, or
-  `frozen` for an imported restart potential), `formulation`
+  `frozen` for an imported restart potential), `transport_coupling`
+  (`direct_band_edge`, the compatibility default corresponding to Sentaurus
+  `DirectQuantumCorrection`, or experimental `sentaurus_exponential`), and
+  `transport_coupling_weight` (finite in `[0,1]`, default `1`; an optional
+  homotopy parameter for the experimental exponential mode). The exponential
+  mode keeps the classical Fermi argument and multiplies the transported
+  density by `exp(-weight*Lambda/Vt)`; it is not yet qualified for production
+  self-consistent DG sweeps. The object also accepts `formulation`
   (`potential_based`, the Sentaurus default, or `density_based` for audit), `gamma`,
   `effective_mass_ratio`, optional `coefficient_mass_ratio`,
   `max_iterations`, `outer_max_iterations`,
@@ -630,6 +643,32 @@ Notes:
   the majority carrier keeps the looser `quasi_fermi_update_limit_V`. `0`
   disables the minority-specific cap and reproduces the global uniform behavior
   (default). It must be finite and non-negative.
+- `quasi_fermi_update_limit_mode` selects how those physical quasi-Fermi caps
+  constrain a Newton step. `componentwise_poisson_recorrect` (default) clips
+  each `phin`/`phip` component and then re-solves the Poisson block.
+  `uniform_trust_region` computes the most restrictive active global/minority
+  cap and uniformly scales the complete `(psi, phin, phip)` Newton vector. The
+  latter preserves the linearized Newton direction and is intended for strongly
+  nonlinear avalanche branch correction; it does not relax convergence or
+  forcing tolerances.
+- For `uniform_trust_region`, `quasi_fermi_trust_region_growth_factor` and
+  `quasi_fermi_trust_region_max_multiplier` optionally expand the physical
+  update radius after a boundary-limited step. Expansion occurs only when the
+  line search accepts the complete step and the ratio of actual residual
+  decrease to linearized predicted decrease is at least
+  `quasi_fermi_trust_region_expansion_threshold`. Defaults are `1`, `1`, and
+  `0.75`, so adaptive expansion is disabled unless explicitly requested.
+  `quasi_fermi_trust_region_shrink_factor` contracts the multiplier after an
+  accepted step required line-search backtracking, down to
+  the positive `quasi_fermi_trust_region_min_multiplier`. Their defaults are
+  both `1`, so contraction is likewise opt-in.
+- `line_search_mode: block_filter` accepts a trial when at least one enabled
+  carrier block achieves its configured sufficient decrease while every block
+  remains inside `residual_filter_envelope_factor`. For a limited direction,
+  `residual_filter_gamma` multiplies the block decrease predicted by
+  `F + J*dx`, rather than incorrectly assuming that the limited step predicts
+  a zero residual. This changes globalization only; the final Newton
+  convergence tolerances are unchanged.
 - `poisson_line_search_stall_contact_majority_qf_drop_limit_V` is an optional
   non-negative physical-voltage guard for the `poisson_line_search_stall_floor`
   acceptance path. When greater than zero, a Poisson-block line-search stall is
@@ -1190,6 +1229,21 @@ Example matching the BVmethods `models.par` values at 300 K:
 system (`1e22 m^-3` in `legacy_si`, `1e16 cm^-3` in `unit_scaling`). Omitting
 this block preserves the legacy uniform `taun` and `taup` behavior.
 
+For density-gradient runs, `solver.srh_density_coupling` selects the electron
+density used only by the SRH denominator and generalized Fermi factors:
+
+```json
+"srh_density_coupling": "sentaurus_default"
+```
+
+`quantum` (the default) preserves the legacy Vela behavior and uses the
+quantum-corrected transport density. `sentaurus_default` follows the Sentaurus
+default density-gradient SRH convention: SRH uses the classical electron
+density obtained without the electron quantum potential, while Poisson,
+transport, contact current, and Auger recombination continue to use the
+quantum-corrected density. Both modes use an analytic generalized Fermi-SRH
+Jacobian.
+
 With `scaling.mode: "unit_scaling"`, Caughey-Thomas and Masetti mobility
 values are read as `cm^2/(V s)`, reference dopings as `cm^-3`, saturation
 velocities as `cm/s`, surface reference fields as `V/cm`, and surface theta
@@ -1346,6 +1400,15 @@ Diagnostics fields:
 - `diagnostics.terminal_balance.enabled`: writes per-contact terminal current
   balance rows. Optional `contacts` selects contacts and `csv_file` overrides
   the default `<sweep csv stem>_terminal_balance.csv`.
+- `diagnostics.srh_balance.enabled`: integrates the net, generation, and
+  recombination parts of SRH over triangular cells in `material` (default
+  `"Si"`). It compares the generated current with the electron current at
+  `drain_contact` and the hole current at `substrate_contact`, and sums
+  `kcl_contacts` for a port-conservation residual. A point is written as
+  `numerically_unresolved` unless the magnitude of the drain total current is
+  at least `resolution_margin_ratio` (default `10`) times the four-terminal
+  KCL residual. Optional `csv_file` overrides the default
+  `<sweep csv stem>_srh_balance.csv`.
 - `diagnostics.sg_avalanche_edges.enabled`: writes C++ assembled SG
   edge-current avalanche source rows for `impact_ionization.generation:
   "current_density"` with an SG edge-current `current_approximation`
@@ -1490,6 +1553,17 @@ Diagnostics fields:
   `initial_state_file`; use this together with the nonlinear trace to seal
   exact parent states for failed-transition reproduction.
 
+For deterministic avalanche-source diagnostics,
+`solver.impact_ionization.source_jacobian` accepts `local_ad`,
+`finite_difference` (default), or `frozen`. For the canonical legacy
+`triangle_gss_gradqf_truncated` profile, `local_ad` propagates the nine local
+Tri3 potential/quasi-Fermi derivatives through the impact coefficient,
+midpoint density, high-field mobility, edge GradQF magnitude, truncated source
+volume, and symmetric source partition. `finite_difference` remains an audit
+oracle. `frozen` keeps the self-consistent avalanche residual but omits only
+its Jacobian contribution; it is an ablation control and does not match the
+default Sentaurus avalanche-derivative semantics.
+
 ### External circuit and voltage-to-current boundary control
 
 `sweep.external_circuit` enables a Sentaurus-compatible 2-D series-resistor
@@ -1507,6 +1581,65 @@ device boundary remains the inner voltage and is solved repeatedly until
 oriented terminal. `initial_inner_voltage_V`, `max_inner_voltage_step_V`,
 `voltage_tolerance_V`, `max_bracket_steps`, and `max_iterations` control only
 the scalar boundary solve.
+
+`external_circuit.solver` defaults to `nested_scalar`. The opt-in
+`coupled_newton` mode augments the device unknown vector with the inner
+terminal voltage and solves the device equations together with
+`InnerVoltage + Rseries * Iterminal - OuterVoltage = 0`. It supports
+`coupled_equation_tolerance`, `current_directional_step`,
+`coupled_damping_factor`, `coupled_max_line_search_steps`, and
+`coupled_apply_device_update_limit`. `coupled_line_search_mode` is `merit`
+(strict maximum normalized residual decrease) or `residual_filter` (one
+equation block may decrease while the other remains inside a bounded
+non-divergence envelope); both modes retain the same final device and
+load-line convergence tolerances. The filter controls are
+`coupled_filter_gamma` and `coupled_filter_envelope_factor`. The envelope is
+applied independently to the device-equation and load-line residual blocks;
+a large load-line residual cannot authorize growth of the device residual.
+
+`coupled_inexact_device_forcing` is an optional object for locator or branch-
+tracking runs. It is disabled by default. When enabled, the device tolerance
+remains `coupled_equation_tolerance` while the scalar row is far from closure.
+Inside `load_activation_ratio * residual_tolerance_V`, it grows geometrically
+toward `max_equation_tolerance` as the scalar residual closes. The same dynamic
+tolerance is used by convergence, normalized merit, and residual-filter
+globalization. A production endpoint should normally be reclosed with forcing
+disabled and the strict device tolerance. Example:
+
+```json
+"coupled_inexact_device_forcing": {
+  "enabled": true,
+  "max_equation_tolerance": 5e-6,
+  "load_activation_ratio": 100.0,
+  "zero_converged_residual": true
+}
+```
+
+When `zero_converged_residual` is true and the device block is already inside
+the current effective inexact tolerance, the bordered tangent solve sets the device right-
+hand side to zero while retaining the full device Jacobian. This lets the
+scalar circuit row move along the local device manifold without repeatedly
+polishing a device residual that already meets the locator tolerance. If a
+trial leaves that active tolerance, the next iteration restores the device
+right-hand side instead of suppressing the normal correction.
+
+`coupled_linear_solver` accepts `direct_bordered` and
+`direct_bordered_qr`. The QR spelling forces the rank-revealing sparse QR
+backend first and falls back only if that factorization fails; the non-QR
+spelling uses sparse LU first. `coupled_linearization_audit` is an opt-in,
+diagnostic-only check that reports device and circuit linear solve residuals,
+the analytic versus central-finite-difference terminal-current directional
+derivative, and the full device JVP error (including the largest-error row).
+It is intended for bounded developer probes because each audited Newton step
+evaluates extra residuals.
+
+Coupled outer-voltage continuation is controlled by
+`coupled_initial_outer_step_V`, `coupled_min_outer_step_V`,
+`coupled_max_outer_step_V`, `coupled_outer_growth_factor`,
+`coupled_outer_shrink_factor`, and `coupled_max_step_retries`. Failed trials
+do not replace the last accepted coupled state. Every accepted adaptive
+intermediate point is recorded and is eligible for the normal DCSweep state
+checkpoint/restart outputs.
 
 `sweep.voltage_to_current` first solves the voltage points through the final
 point, which must equal `switch_voltage_V`, and then replaces the voltage

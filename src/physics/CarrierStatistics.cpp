@@ -360,6 +360,55 @@ Real equilibriumCarrierProduct(
         n, p, ni, Nc, Nv, Vt, carrierStatisticsModel(config));
 }
 
+namespace {
+
+Real fermiDegeneracyFactor(Real density, Real densityOfStates)
+{
+    if (!(density > 0.0) || !(densityOfStates > 0.0))
+        return 1.0;
+    const Real reducedDensity = density / densityOfStates;
+    if (!(reducedDensity > 0.0) || !std::isfinite(reducedDensity))
+        return 1.0;
+    const Real eta = inverseFermiDiracHalf(reducedDensity);
+    const Real logGamma = std::log(reducedDensity) - eta;
+    return std::exp(std::clamp(logGamma, Real{-500.0}, Real{500.0}));
+}
+
+} // namespace
+
+GeneralizedSrhCarrierState generalizedSrhCarrierState(
+    Real n, Real p, Real ni, Real Nc, Real Nv,
+    Real quasiFermiSplitting_V, Real Vt,
+    CarrierStatisticsModel model)
+{
+    if (!(Vt > 0.0) || !std::isfinite(Vt))
+        throw std::invalid_argument(
+            "generalizedSrhCarrierState: Vt must be finite and positive.");
+
+    GeneralizedSrhCarrierState state;
+    if (usesFermiDirac(model)) {
+        state.electronDegeneracy = fermiDegeneracyFactor(n, Nc);
+        state.holeDegeneracy = fermiDegeneracyFactor(p, Nv);
+    }
+    state.equilibriumProduct = state.electronDegeneracy
+        * state.holeDegeneracy * ni * ni;
+    const Real normalizedSplitting = std::clamp(
+        quasiFermiSplitting_V / Vt, Real{-500.0}, Real{500.0});
+    state.excessProduct = state.equilibriumProduct
+        * std::expm1(normalizedSplitting);
+    return state;
+}
+
+GeneralizedSrhCarrierState generalizedSrhCarrierState(
+    Real n, Real p, Real ni, Real Nc, Real Nv,
+    Real quasiFermiSplitting_V, Real Vt,
+    const CarrierStatisticsConfig& config)
+{
+    return generalizedSrhCarrierState(
+        n, p, ni, Nc, Nv, quasiFermiSplitting_V, Vt,
+        carrierStatisticsModel(config));
+}
+
 
 double intrinsicDensity(const Material& material, double temperature_K)
 {

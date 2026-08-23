@@ -1,0 +1,41 @@
+{
+  "schema": "vela.transportmodels.dg_frozen_q_oracle.v1",
+  "status": "pass",
+  "work_point": {
+    "gate_bias_V": 1.0,
+    "drain_bias_V": 2.0
+  },
+  "initialization": {
+    "dd_variables": "converged Vela self-consistent DG state at Vg=1 V, Vd=2 V",
+    "electron_quantum_potential": "Sentaurus DG state at Vg=1 V, Vd=2 V"
+  },
+  "current_A_per_um": {
+    "sentaurus": 0.000705525753105,
+    "vela_self_consistent": 0.0007749662478956785,
+    "vela_frozen_q": 0.0007148076513665678
+  },
+  "relative_error": {
+    "vela_self_consistent": 0.09842375630524136,
+    "vela_frozen_q": 0.013156002060475283
+  },
+  "error_reduction": {
+    "absolute_percentage_points": 8.52677542447661,
+    "fraction_of_baseline_error_removed": 0.8663330627244646
+  },
+  "classification": "DG equation/field is the dominant endpoint error source",
+  "paths": {
+    "sentaurus_restart": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\frozen_q_oracle_vg1_vd2_run01\\sentaurus_dg_idvd_restart.csv",
+    "hybrid_restart": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\frozen_q_oracle_vg1_vd2_run01\\vela_state_with_sentaurus_q.csv",
+    "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\frozen_q_oracle_vg1_vd2_run01\\frozen_q_idvd_2V.json",
+    "curve": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\frozen_q_oracle_vg1_vd2_run01\\frozen_q_idvd_2V.csv",
+    "final_state": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\frozen_q_oracle_vg1_vd2_run01\\frozen_q_final_state.csv",
+    "console": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\frozen_q_oracle_vg1_vd2_run01\\frozen_q.console.log"
+  },
+  "hashes": {
+    "sentaurus_restart": "1B401AF8B3A8172E4835F6603132DC7370DA0ED3416396B5BF0C8935FC5E2917",
+    "hybrid_restart": "4665D7C01C4B87ABA3935B0E769909ACDA149ABBCA3E63D954DC7953971BB917",
+    "config": "878050D579CBD320A068D08D4E2AED16188B3DFBA276AF4A0784EDB501688230",
+    "curve": "A5264981F8C3D7E7913E2B3B43817CC72A933F27F6D26DC28FB88C27711B1438",
+    "final_state": "080FCB75434EAD3B36125B1C4B8354EB70A5A4BD7D477E0E8E10E5B71EA886E6"
+  }
+}

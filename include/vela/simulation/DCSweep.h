@@ -37,6 +37,17 @@ struct TerminalBalanceDiagnosticsConfig {
     std::string csvFile;
 };
 
+struct SrhBalanceDiagnosticsConfig {
+    bool enabled = false;
+    std::string material = "Si";
+    std::string drainContact = "drain";
+    std::string substrateContact = "substrate";
+    std::vector<std::string> kclContacts;
+    std::string csvFile;
+    /// A point is resolved only when |Id|/|KCL residual| reaches this margin.
+    Real resolutionMarginRatio = 10.0;
+};
+
 struct TransportDiagnosticsConfig {
     bool enabled = false;
 };
@@ -144,6 +155,7 @@ struct ContactCurrentQfFloorDiagnosticsConfig {
 
 struct SweepDiagnosticsConfig {
     TerminalBalanceDiagnosticsConfig terminalBalance;
+    SrhBalanceDiagnosticsConfig srhBalance;
     ContactEdgeDiagnosticsConfig contactEdge;
     TransportDiagnosticsConfig transport;
     ContinuityBalanceDiagnosticsConfig continuityBalance;
@@ -185,6 +197,9 @@ struct SweepArclengthConfig {
     PseudoArclengthConfig core;
     /// Finite-difference step (in volts) used to estimate dF/dV at the active contact.
     Real biasFiniteDifferenceStep_V = 1.0e-4;
+    /// Optional impact-ionization source Jacobian used only by the arclength
+    /// tangent and corrector. Empty preserves the main Newton configuration.
+    std::string sourceJacobianMode;
     /// Optional earlier converged state used with the sweep start state to form
     /// the first branch tangent by a secant.  This avoids relying on a single,
     /// potentially ill-scaled Jacobian tangent at the restart point.
@@ -206,14 +221,36 @@ struct SweepInitializationConfig {
 
 struct ExternalResistorControlConfig {
     bool enabled = false;
+    std::string solver = "nested_scalar";
     Real resistance_ohm_um = 0.0;
     Real currentDirection = 1.0;
     Real initialInnerVoltage_V = 0.0;
     Real residualTolerance_V = 1.0e-6;
+    Real coupledVoltageCoefficient = 1.0;
     Real voltageTolerance_V = 1.0e-8;
     Real maxInnerVoltageStep_V = 0.1;
     int maxBracketSteps = 200;
     int maxIterations = 40;
+    Real coupledEquationTolerance = 1.0e-8;
+    Real currentDirectionalStep = 1.0e-5;
+    Real coupledDampingFactor = 1.0;
+    int coupledMaxLineSearchSteps = 12;
+    Real coupledInitialOuterStep_V = 0.0;
+    Real coupledMinOuterStep_V = 1.0e-6;
+    Real coupledMaxOuterStep_V = 0.0;
+    Real coupledOuterGrowthFactor = 1.5;
+    Real coupledOuterShrinkFactor = 0.5;
+    int coupledMaxStepRetries = 12;
+    bool coupledApplyDeviceUpdateLimit = true;
+    std::string coupledLineSearchMode = "merit";
+    std::string coupledLinearSolver = "direct_bordered";
+    Real coupledFilterGamma = 1.0e-4;
+    Real coupledFilterEnvelopeFactor = 2.0;
+    bool coupledInexactDeviceForcingEnabled = false;
+    Real coupledInexactDeviceToleranceMax = 1.0e-8;
+    Real coupledInexactLoadActivationRatio = 10.0;
+    bool coupledInexactZeroConvergedResidual = false;
+    bool coupledLinearizationAudit = false;
 };
 
 struct VoltageToCurrentControlConfig {
@@ -234,6 +271,7 @@ struct BoundaryControlPersistenceConfig {
     bool resume = false;
     Real predictorMaxStepFactor = 4.0;
     int preferredMaxEvaluations = 3;
+    bool adaptiveDeviceContinuation = false;
 };
 
 struct DCSweepConfig {
@@ -301,6 +339,9 @@ struct DCSweepPoint {
     int newtonIterations = 0;
     std::string handoffStage;
     std::string newtonConvergenceReason;
+    Real finalPsiResidualNorm = 0.0;
+    Real finalElectronContinuityResidualNorm = 0.0;
+    Real finalHoleContinuityResidualNorm = 0.0;
     int carrierRowViolations = 0;
     Real carrierRowMaxRatio = 0.0;
     bool globalContinuityClosureSatisfied = true;

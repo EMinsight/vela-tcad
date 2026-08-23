@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import csv
 import json
+import shutil
 import sys
 import unittest
 from pathlib import Path
@@ -25,8 +26,14 @@ class SingleDeviceReferenceFixtureTest(unittest.TestCase):
         import tempfile
 
         with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source"
+            shutil.copytree(FIXTURE / "source", source)
+            parameter = source / "sdevice.par"
+            parameter.write_text(
+                parameter.read_text().replace(
+                    '#include "Silicon.par"', '#include "@pwd@/Silicon.par"'))
             bundle = Path(directory) / "bundle"
-            prepare_bundle(FIXTURE / "source", bundle)
+            prepare_bundle(source, bundle)
             self.assertEqual(
                 {"singledevice_sde.cmd", "singledevice_sdevice.cmd", "Silicon.par", "sdevice.par"},
                 {path.name for path in bundle.iterdir()},
@@ -35,11 +42,17 @@ class SingleDeviceReferenceFixtureTest(unittest.TestCase):
             sdevice = (bundle / "singledevice_sdevice.cmd").read_text()
             self.assertNotIn("@tdr@", sdevice)
             self.assertIn('Grid      = "n2_msh.tdr"', sdevice)
+            parameter_bundle = (bundle / "sdevice.par").read_text()
+            self.assertNotIn("@pwd@", parameter_bundle)
+            self.assertIn('#include "./Silicon.par"', parameter_bundle)
 
         commands = remote_commands("/tmp/singledevice")
         self.assertIn("sde -e -l", commands[0])
-        self.assertIn("tdx -mtt", commands[1])
-        self.assertIn("sdevice singledevice_sdevice.cmd", commands[2])
+        # The SDE deck itself invokes TDX after mesh generation; do not repeat
+        # the same licensed conversion in the host-side runner.
+        self.assertEqual(3, len(commands))
+        self.assertIn("sdevice singledevice_sdevice.cmd", commands[1])
+        self.assertIn("tar -czf", commands[2])
 
     def test_reference_curves_are_two_complete_matching_bias_grids(self) -> None:
         curves = []

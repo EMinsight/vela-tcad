@@ -517,6 +517,30 @@ Real sgElectronFermiDiracContinuityFlux(
         (bernoulli(-argument) * n0 - bernoulli(argument) * n1);
 }
 
+Real sgElectronFermiDiracQuantumContinuityFlux(
+    Real qmDensity0, Real qmDensity1,
+    Real fermiDensity0, Real fermiDensity1,
+    Real eta0, Real eta1, Real driftPotential,
+    Real quasiFermi0, Real quasiFermi1, Real Vt, Real coef)
+{
+    if (quasiFermi0 == quasiFermi1)
+        return 0.0;
+    if (!(Vt > 0.0))
+        return 0.0;
+    const Real factor = sgGeneralizedEinsteinFactor(
+        fermiDensity0, fermiDensity1, eta0, eta1);
+    const Real argument = driftPotential / (Vt * factor);
+    const Real logLeftOverRight =
+        (quasiFermi1 - quasiFermi0) / (Vt * factor);
+    const Real stable = stableGeneralizedFermiDifference(
+        qmDensity1, argument, logLeftOverRight, coef * factor);
+    if (std::isfinite(stable))
+        return stable;
+    return coef * factor * (
+        bernoulli(-argument) * qmDensity0 -
+        bernoulli(argument) * qmDensity1);
+}
+
 Real sgHoleFermiDiracContinuityFlux(
     Real p0, Real p1, Real eta0, Real eta1, Real driftPotential,
     Real quasiFermi0, Real quasiFermi1, Real Vt, Real coef)
@@ -534,6 +558,50 @@ Real sgHoleFermiDiracContinuityFlux(
         return stable;
     return coef * factor *
         (bernoulli(argument) * p0 - bernoulli(-argument) * p1);
+}
+
+long double sgElectronFermiDiracQuantumContinuityFluxLongDouble(
+    Real qmDensity1, Real fermiDensity0, Real fermiDensity1,
+    Real eta0, Real eta1, Real driftPotential,
+    long double quasiFermiDrop, Real Vt, Real coef)
+{
+    if (!(qmDensity1 > 0.0) || !(Vt > 0.0) || coef == 0.0 ||
+        quasiFermiDrop == 0.0L) {
+        return 0.0L;
+    }
+    const long double factor = static_cast<long double>(
+        sgGeneralizedEinsteinFactor(
+            fermiDensity0, fermiDensity1, eta0, eta1));
+    const long double thermalVoltage = static_cast<long double>(Vt);
+    const long double argument = static_cast<long double>(driftPotential) /
+        (thermalVoltage * factor);
+    const long double logarithmicLeftOverRight =
+        quasiFermiDrop / (thermalVoltage * factor);
+    return static_cast<long double>(coef) * factor *
+        longDoubleBernoulli(argument) *
+        static_cast<long double>(qmDensity1) *
+        std::expm1(logarithmicLeftOverRight);
+}
+
+long double sgHoleFermiDiracContinuityFluxLongDouble(
+    Real p0, Real p1, Real eta0, Real eta1, Real driftPotential,
+    long double quasiFermiDrop, Real Vt, Real coef)
+{
+    if (!(p1 > 0.0) || !(Vt > 0.0) || coef == 0.0 ||
+        quasiFermiDrop == 0.0L) {
+        return 0.0L;
+    }
+    const long double factor = static_cast<long double>(
+        sgGeneralizedEinsteinFactor(p0, p1, eta0, eta1));
+    const long double thermalVoltage = static_cast<long double>(Vt);
+    const long double argument = static_cast<long double>(driftPotential) /
+        (thermalVoltage * factor);
+    const long double logarithmicLeftOverRight =
+        -quasiFermiDrop / (thermalVoltage * factor);
+    return static_cast<long double>(coef) * factor *
+        longDoubleBernoulli(-argument) *
+        static_cast<long double>(p1) *
+        std::expm1(logarithmicLeftOverRight);
 }
 
 double sgElectronFlux(double n0, double n1, double dpsi, double Vt,

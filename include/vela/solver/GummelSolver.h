@@ -48,10 +48,57 @@ struct DDSolution {
     VectorXd electronQuantumPotentialLike;
     Real electronQfReference_V = 0.0; ///< Reference for phinIncrement.
     Real holeQfReference_V = 0.0; ///< Reference for phipIncrement.
+    /// Optional per-node references for cancellation-free quasi-Fermi states.
+    /// When absent, the scalar references above apply to every node.
+    VectorXd electronQfReference;
+    VectorXd holeQfReference;
     VectorXd n;     ///< Electron concentration [m^-3]
     VectorXd p;     ///< Hole concentration [m^-3]
     int      iters = 0; ///< Number of Gummel iterations performed
     bool     converged = false; ///< True if the Gummel convergence criteria were met
+
+    bool hasReferencedElectronQuasiFermi() const
+    {
+        return phinIncrement.size() == phin.size();
+    }
+    bool hasReferencedHoleQuasiFermi() const
+    {
+        return phipIncrement.size() == phip.size();
+    }
+    Real electronQuasiFermiReferenceAt(int node) const
+    {
+        return electronQfReference.size() == phin.size()
+            ? electronQfReference(node) : electronQfReference_V;
+    }
+    Real holeQuasiFermiReferenceAt(int node) const
+    {
+        return holeQfReference.size() == phip.size()
+            ? holeQfReference(node) : holeQfReference_V;
+    }
+    Real electronQuasiFermiAt(int node) const
+    {
+        return hasReferencedElectronQuasiFermi()
+            ? electronQuasiFermiReferenceAt(node) + phinIncrement(node)
+            : phin(node);
+    }
+    Real holeQuasiFermiAt(int node) const
+    {
+        return hasReferencedHoleQuasiFermi()
+            ? holeQuasiFermiReferenceAt(node) + phipIncrement(node)
+            : phip(node);
+    }
+    Real holeMinusElectronQuasiFermiAt(int node) const
+    {
+        if (hasReferencedElectronQuasiFermi() &&
+            hasReferencedHoleQuasiFermi()) {
+            return static_cast<Real>(
+                (static_cast<long double>(holeQuasiFermiReferenceAt(node)) -
+                 static_cast<long double>(electronQuasiFermiReferenceAt(node))) +
+                (static_cast<long double>(phipIncrement(node)) -
+                 static_cast<long double>(phinIncrement(node))));
+        }
+        return holeQuasiFermiAt(node) - electronQuasiFermiAt(node);
+    }
 };
 
 /**

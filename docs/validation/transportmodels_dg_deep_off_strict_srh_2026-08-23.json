@@ -1,0 +1,46 @@
+{
+  "schema": "vela.transportmodels.dg_deep_off_strict_srh.v1",
+  "status": "complete",
+  "conversion_note": "Sentaurus srhRecombination is integrated over um^2 mesh area and a 1 um device depth: q * sum(rate_cm-3 * area_um2) * 1e-12 gives A/um. Vela internal carrier-term sums are calibrated against the production strict-state SRH balance at the same bias.",
+  "points": [
+    {
+      "bias_V": -1.0,
+      "sentaurus_exported_srh_A_per_um": 1.6263580995494346e-15,
+      "vela_formula_on_sentaurus_state_A_per_um": 1.3990216272395667e-15,
+      "vela_formula_on_strict_state_A_per_um": 1.405289542988009e-15,
+      "sentaurus_to_vela_formula_gap_fraction": 0.13978254381544203,
+      "sentaurus_state_to_strict_state_gap_fraction": 0.004480213619577525,
+      "full_sentaurus_to_strict_gap_fraction": 0.13592858585244563,
+      "internal_residual_to_A_per_um": 4.685458780662815e-05,
+      "strict_carrier_terms": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_dg_deep_off_strict_20260823\\srh_decomposition\\m1p00\\newton_carrier_term.csv",
+      "sentaurus_carrier_terms": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_deep_off\\gate_m1p00\\newton_carrier_term.csv"
+    },
+    {
+      "bias_V": -0.84,
+      "sentaurus_exported_srh_A_per_um": 1.6179474222595338e-15,
+      "vela_formula_on_sentaurus_state_A_per_um": 1.4138602499823932e-15,
+      "vela_formula_on_strict_state_A_per_um": 1.4200177974345351e-15,
+      "sentaurus_to_vela_formula_gap_fraction": 0.12613955773181054,
+      "sentaurus_state_to_strict_state_gap_fraction": 0.004355131599617849,
+      "full_sentaurus_to_strict_gap_fraction": 0.12233378050603233,
+      "internal_residual_to_A_per_um": 4.685623543529358e-05,
+      "strict_carrier_terms": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_dg_deep_off_strict_20260823\\srh_decomposition\\m0p84\\newton_carrier_term.csv",
+      "sentaurus_carrier_terms": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_deep_off\\gate_m0p84\\newton_carrier_term.csv"
+    },
+    {
+      "bias_V": -0.68,
+      "sentaurus_exported_srh_A_per_um": 1.6112580936131013e-15,
+      "vela_formula_on_sentaurus_state_A_per_um": 1.4276768737019912e-15,
+      "vela_formula_on_strict_state_A_per_um": 1.4338911133000648e-15,
+      "sentaurus_to_vela_formula_gap_fraction": 0.11393656959044078,
+      "sentaurus_state_to_strict_state_gap_fraction": 0.004352693324757684,
+      "full_sentaurus_to_strict_gap_fraction": 0.1100798072115852,
+      "internal_residual_to_A_per_um": 4.685290050363629e-05,
+      "strict_carrier_terms": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_dg_deep_off_strict_20260823\\srh_decomposition\\m0p68\\newton_carrier_term.csv",
+      "sentaurus_carrier_terms": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_deep_off\\gate_m0p68\\newton_carrier_term.csv"
+    }
+  ],
+  "artifacts": {
+    "csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_dg_deep_off_strict_20260823\\srh_decomposition\\strict_srh_decomposition.csv"
+  }
+}

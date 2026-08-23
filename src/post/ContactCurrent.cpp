@@ -19,6 +19,23 @@ Real validatedThermalVoltage(Real temperature_K)
     return constants::kb * temperature_K / constants::q;
 }
 
+struct NeumaierSum {
+    Real sum = 0.0;
+    Real correction = 0.0;
+
+    void add(Real value)
+    {
+        const Real next = sum + value;
+        if (std::abs(sum) >= std::abs(value))
+            correction += (sum - next) + value;
+        else
+            correction += (value - next) + sum;
+        sum = next;
+    }
+
+    Real value() const { return sum + correction; }
+};
+
 } // namespace
 
 ContactCurrent::ContactCurrent(const DeviceMesh& mesh,
@@ -28,7 +45,9 @@ ContactCurrent::ContactCurrent(const DeviceMesh& mesh,
                                Real temperature_K,
                                DDScalingSpec scaling,
                                BandgapNarrowingConfig bandgapNarrowingConfig,
-                               CarrierStatisticsConfig carrierStatistics)
+                               CarrierStatisticsConfig carrierStatistics,
+                               DensityGradientQuantumPotentialConfig
+                                   electronQuantumPotential)
     : mesh_(mesh)
     , matdb_(matdb)
     , doping_(doping)
@@ -48,6 +67,7 @@ ContactCurrent::ContactCurrent(const DeviceMesh& mesh,
     , Nc_(detail::buildNodeDensityOfStates(mesh, matdb, temperature_K, true))
     , Nv_(detail::buildNodeDensityOfStates(mesh, matdb, temperature_K, false))
     , carrierStatistics_(std::move(carrierStatistics))
+    , electronQuantumPotentialConfig_(std::move(electronQuantumPotential))
 {}
 
 
@@ -131,10 +151,26 @@ ContactCurrentDetailedResult ContactCurrent::computeDetailed(
         solution.phinIncrement.size() == solution.phin.size();
     const bool hasReferencedHoleQf =
         solution.phipIncrement.size() == solution.phip.size();
-    const VectorXd& electronQf = hasReferencedElectronQf
+    VectorXd electronQf = hasReferencedElectronQf
         ? solution.phinIncrement : solution.phin;
-    const VectorXd& holeQf = hasReferencedHoleQf
+    VectorXd holeQf = hasReferencedHoleQf
         ? solution.phipIncrement : solution.phip;
+    if (hasReferencedElectronQf) {
+        for (int i = 0; i < electronQf.size(); ++i) {
+            electronQf(i) = static_cast<Real>(
+                static_cast<long double>(
+                    solution.electronQuasiFermiReferenceAt(i)) +
+                static_cast<long double>(solution.phinIncrement(i)));
+        }
+    }
+    if (hasReferencedHoleQf) {
+        for (int i = 0; i < holeQf.size(); ++i) {
+            holeQf(i) = static_cast<Real>(
+                static_cast<long double>(
+                    solution.holeQuasiFermiReferenceAt(i)) +
+                static_cast<long double>(solution.phipIncrement(i)));
+        }
+    }
     const bool vectorQfMobility =
         mobilityConfig_.highFieldDrivingForce == "quasi_fermi_gradient" &&
         mobilityConfig_.highFieldGradientDiscretization == "transport_cell_vector";
@@ -148,6 +184,10 @@ ContactCurrentDetailedResult ContactCurrent::computeDetailed(
         : std::vector<Real>{};
 
     ContactCurrentDetailedResult detailed;
+    NeumaierSum electronCurrentCompensated;
+    NeumaierSum holeCurrentCompensated;
+    long double electronCurrentLongDouble = 0.0L;
+    long double holeCurrentLongDouble = 0.0L;
     for (Index e = 0; e < mesh_.numEdges(); ++e) {
         const Edge& edge = mesh_.getEdge(e);
         const bool n0OnContact = contactNodes.count(edge.n0) > 0;
@@ -182,18 +222,49 @@ ContactCurrentDetailedResult ContactCurrent::computeDetailed(
             ? solution.phipIncrement(i) : solution.phip(i);
         const Real phip_j = hasReferencedHoleQf
             ? solution.phipIncrement(j) : solution.phip(j);
-        const Real electronPsi_i = psi_i -
-            (hasReferencedElectronQf ? solution.electronQfReference_V : 0.0)
-            - (solution.electronQuantumPotential.size() == solution.psi.size()
-                ? solution.electronQuantumPotential(i) : 0.0);
-        const Real electronPsi_j = psi_j -
-            (hasReferencedElectronQf ? solution.electronQfReference_V : 0.0)
-            - (solution.electronQuantumPotential.size() == solution.psi.size()
-                ? solution.electronQuantumPotential(j) : 0.0);
-        const Real holePsi_i = psi_i -
-            (hasReferencedHoleQf ? solution.holeQfReference_V : 0.0);
-        const Real holePsi_j = psi_j -
-            (hasReferencedHoleQf ? solution.holeQfReference_V : 0.0);
+        const Real electronReference_i = hasReferencedElectronQf
+            ? solution.electronQuasiFermiReferenceAt(i) : 0.0;
+        const Real electronReference_j = hasReferencedElectronQf
+            ? solution.electronQuasiFermiReferenceAt(j) : 0.0;
+        const Real holeReference_i = hasReferencedHoleQf
+            ? solution.holeQuasiFermiReferenceAt(i) : 0.0;
+        const Real holeReference_j = hasReferencedHoleQf
+            ? solution.holeQuasiFermiReferenceAt(j) : 0.0;
+        const long double electronQfDropLong = hasReferencedElectronQf
+            ? (static_cast<long double>(electronReference_j) -
+               static_cast<long double>(electronReference_i)) +
+              (static_cast<long double>(phin_j) -
+               static_cast<long double>(phin_i))
+            : static_cast<long double>(solution.phin(j)) -
+              static_cast<long double>(solution.phin(i));
+        const long double holeQfDropLong = hasReferencedHoleQf
+            ? (static_cast<long double>(holeReference_j) -
+               static_cast<long double>(holeReference_i)) +
+              (static_cast<long double>(phip_j) -
+               static_cast<long double>(phip_i))
+            : static_cast<long double>(solution.phip(j)) -
+              static_cast<long double>(solution.phip(i));
+        const Real electronQfDrop = static_cast<Real>(electronQfDropLong);
+        const Real holeQfDrop = static_cast<Real>(holeQfDropLong);
+        const bool sentaurusExponential =
+            electronQuantumPotentialConfig_.enabled &&
+            usesFermiDirac(carrierStatistics_) &&
+            electronQuantumPotentialConfig_.transportCoupling ==
+                "sentaurus_exponential";
+        const Real exponentialWeight = sentaurusExponential
+            ? electronQuantumPotentialConfig_.transportCouplingWeight : 0.0;
+        const Real quantum_i =
+            solution.electronQuantumPotential.size() == solution.psi.size()
+                ? solution.electronQuantumPotential(i) : 0.0;
+        const Real quantum_j =
+            solution.electronQuantumPotential.size() == solution.psi.size()
+                ? solution.electronQuantumPotential(j) : 0.0;
+        const Real electronPsi_i = psi_i - electronReference_i
+            - (1.0 - exponentialWeight) * quantum_i;
+        const Real electronPsi_j = psi_j - electronReference_j
+            - (1.0 - exponentialWeight) * quantum_j;
+        const Real holePsi_i = psi_i - holeReference_i;
+        const Real holePsi_j = psi_j - holeReference_j;
         Real phip_i_forHole = phip_i;
         Real phip_j_forHole = phip_j;
         bool holeQfDropOverrideApplied = false;
@@ -203,17 +274,22 @@ ContactCurrentDetailedResult ContactCurrent::computeDetailed(
             phip_j_forHole = phip_i_forHole + holeDropIt->second;
             holeQfDropOverrideApplied = true;
         }
+        const long double holeQfDropForFluxLong = holeQfDropOverrideApplied
+            ? static_cast<long double>(holeDropIt->second)
+            : holeQfDropLong;
+        const Real holeQfDropForFlux =
+            static_cast<Real>(holeQfDropForFluxLong);
         const Real electronMobilityField =
             vectorQfMobility
             ? electronVectorMobilityFields[e]
             : mobilityConfig_.highFieldDrivingForce == "quasi_fermi_gradient"
-            ? std::abs((phin_j - phin_i) / edgeLength) * fieldFactor
+            ? std::abs(electronQfDrop / edgeLength) * fieldFactor
             : electricField;
         const Real holeMobilityField =
             vectorQfMobility
             ? holeVectorMobilityFields[e]
             : mobilityConfig_.highFieldDrivingForce == "quasi_fermi_gradient"
-            ? std::abs((phip_j - phip_i) / edgeLength) * fieldFactor
+            ? std::abs(holeQfDrop / edgeLength) * fieldFactor
             : electricField;
 
         const Real mun = detail::edgeMobility(
@@ -242,6 +318,7 @@ ContactCurrentDetailedResult ContactCurrent::computeDetailed(
         Real holeGeneralizedFactor = 1.0;
         Real holeGeneralizedArgument = dpsi / thermalVoltage_;
         Real electronContinuityFlux01 = 0.0;
+        long double electronContinuityFluxLongDouble01 = 0.0L;
         Real electronFlux01 = 0.0;
         if (mun > 0.0) {
             const Real coef = mun * thermalVoltage_ * fieldFactor / edgeLength;
@@ -250,25 +327,43 @@ ContactCurrentDetailedResult ContactCurrent::computeDetailed(
                     + std::log(ni_i / Nc_[idxI]);
                 const Real etaJ = (electronPsi_j - phin_j) / thermalVoltage_
                     + std::log(ni_j / Nc_[idxJ]);
-                const Real driftPotential = electronPsi_j - electronPsi_i
+                const Real driftPotential =
+                    (psi_j - psi_i) -
+                    (1.0 - exponentialWeight) * (quantum_j - quantum_i)
                     + thermalVoltage_ * std::log(
                         (ni_j / Nc_[idxJ]) / (ni_i / Nc_[idxI]));
+                const Real fermiDensityI = Nc_[idxI] * fermiDiracHalf(etaI);
+                const Real fermiDensityJ = Nc_[idxJ] * fermiDiracHalf(etaJ);
                 electronGeneralizedFactor = sgGeneralizedEinsteinFactor(
-                    n_i, n_j, etaI, etaJ);
+                    fermiDensityI, fermiDensityJ, etaI, etaJ);
                 electronGeneralizedArgument = driftPotential /
                     (thermalVoltage_ * electronGeneralizedFactor);
-                electronContinuityFlux01 = sgElectronFermiDiracContinuityFlux(
-                    n_i, n_j, etaI, etaJ, driftPotential,
-                    phin_i, phin_j, thermalVoltage_, coef);
+                electronContinuityFlux01 =
+                    sgElectronFermiDiracQuantumContinuityFlux(
+                    n_i, n_j, fermiDensityI, fermiDensityJ,
+                    etaI, etaJ, driftPotential,
+                    0.0, electronQfDrop, thermalVoltage_, coef);
+                electronContinuityFluxLongDouble01 =
+                    sgElectronFermiDiracQuantumContinuityFluxLongDouble(
+                        n_j, fermiDensityI, fermiDensityJ,
+                        etaI, etaJ, driftPotential,
+                        electronQfDropLong, thermalVoltage_, coef);
             } else {
+                const Real electronPsiFromNode0Qf = electronPsi_i - phin_i;
+                const Real electronPsiFromNode0QfAtJ =
+                    electronPsi_j - phin_j + electronQfDrop;
                 electronContinuityFlux01 = sgElectronContinuityFluxFromQuasiFermiVariableNi(
-                    ni_i, ni_j, electronPsi_i, electronPsi_j,
-                    phin_i, phin_j, thermalVoltage_, coef);
+                    ni_i, ni_j,
+                    electronPsiFromNode0Qf, electronPsiFromNode0QfAtJ,
+                    0.0, electronQfDrop, thermalVoltage_, coef);
             }
+            if (!fermiDirac)
+                electronContinuityFluxLongDouble01 = electronContinuityFlux01;
             // sgElectronFlux = -sgElectronContinuityFlux by definition.
             electronFlux01 = -electronContinuityFlux01;
         }
         Real holeContinuityFlux01 = 0.0;
+        long double holeContinuityFluxLongDouble01 = 0.0L;
         Real holeFlux01 = 0.0;
         if (mup > 0.0) {
             const Real coef = mup * thermalVoltage_ * fieldFactor / edgeLength;
@@ -277,7 +372,7 @@ ContactCurrentDetailedResult ContactCurrent::computeDetailed(
                     + std::log(ni_i / Nv_[idxI]);
                 const Real etaJ = (phip_j_forHole - holePsi_j) / thermalVoltage_
                     + std::log(ni_j / Nv_[idxJ]);
-                const Real driftPotential = holePsi_j - holePsi_i
+                const Real driftPotential = psi_j - psi_i
                     + thermalVoltage_ * std::log(
                         (ni_i / Nv_[idxI]) / (ni_j / Nv_[idxJ]));
                 holeGeneralizedFactor = sgGeneralizedEinsteinFactor(
@@ -286,14 +381,24 @@ ContactCurrentDetailedResult ContactCurrent::computeDetailed(
                     (thermalVoltage_ * holeGeneralizedFactor);
                 holeContinuityFlux01 = sgHoleFermiDiracContinuityFlux(
                     p_i, p_j, etaI, etaJ, driftPotential,
-                    phip_i_forHole, phip_j_forHole,
+                    0.0, holeQfDropForFlux,
                     thermalVoltage_, coef);
+                holeContinuityFluxLongDouble01 =
+                    sgHoleFermiDiracContinuityFluxLongDouble(
+                        p_i, p_j, etaI, etaJ, driftPotential,
+                        holeQfDropForFluxLong, thermalVoltage_, coef);
             } else {
+                const Real holePsiFromNode0Qf = holePsi_i - phip_i_forHole;
+                const Real holePsiFromNode0QfAtJ =
+                    holePsi_j - phip_j_forHole + holeQfDropForFlux;
                 holeContinuityFlux01 = sgHoleContinuityFluxFromQuasiFermiVariableNi(
-                    ni_i, ni_j, holePsi_i, holePsi_j,
-                    phip_i_forHole, phip_j_forHole,
+                    ni_i, ni_j,
+                    holePsiFromNode0Qf, holePsiFromNode0QfAtJ,
+                    0.0, holeQfDropForFlux,
                     thermalVoltage_, coef);
             }
+            if (!fermiDirac)
+                holeContinuityFluxLongDouble01 = holeContinuityFlux01;
             holeFlux01 = -holeContinuityFlux01;
         }
 
@@ -348,6 +453,18 @@ ContactCurrentDetailedResult ContactCurrent::computeDetailed(
         const Real holeCurrent = constants::q * outwardSign * holeFlux01 * couple_[e] * currentLineFactor;
         const Real holeDriftCurrent = constants::q * outwardSign * holeDriftFlux01 * couple_[e] * currentLineFactor;
         const Real holeDiffusionCurrent = constants::q * outwardSign * holeDiffusionFlux01 * couple_[e] * currentLineFactor;
+        const long double electronCurrentLongDoubleEdge =
+            -static_cast<long double>(constants::q) *
+            static_cast<long double>(outwardSign) *
+            electronContinuityFluxLongDouble01 *
+            static_cast<long double>(couple_[e]) *
+            static_cast<long double>(currentLineFactor);
+        const long double holeCurrentLongDoubleEdge =
+            -static_cast<long double>(constants::q) *
+            static_cast<long double>(outwardSign) *
+            holeContinuityFluxLongDouble01 *
+            static_cast<long double>(couple_[e]) *
+            static_cast<long double>(currentLineFactor);
 
         detailed.totals.electronCurrent += electronCurrent;
         detailed.totals.electronDriftCurrent += electronDriftCurrent;
@@ -355,6 +472,10 @@ ContactCurrentDetailedResult ContactCurrent::computeDetailed(
         detailed.totals.holeCurrent += holeCurrent;
         detailed.totals.holeDriftCurrent += holeDriftCurrent;
         detailed.totals.holeDiffusionCurrent += holeDiffusionCurrent;
+        electronCurrentCompensated.add(electronCurrent);
+        holeCurrentCompensated.add(holeCurrent);
+        electronCurrentLongDouble += electronCurrentLongDoubleEdge;
+        holeCurrentLongDouble += holeCurrentLongDoubleEdge;
 
         ContactCurrentEdgeDiagnostic edgeDiag;
         edgeDiag.edgeId = e;
@@ -370,14 +491,10 @@ ContactCurrentDetailedResult ContactCurrent::computeDetailed(
         edgeDiag.holeUsedQuasiFermi = true;
         edgeDiag.psi0 = psi_i;
         edgeDiag.psi1 = psi_j;
-        edgeDiag.phin0 = phin_i +
-            (hasReferencedElectronQf ? solution.electronQfReference_V : 0.0);
-        edgeDiag.phin1 = phin_j +
-            (hasReferencedElectronQf ? solution.electronQfReference_V : 0.0);
-        edgeDiag.phip0 = phip_i_forHole +
-            (hasReferencedHoleQf ? solution.holeQfReference_V : 0.0);
-        edgeDiag.phip1 = phip_j_forHole +
-            (hasReferencedHoleQf ? solution.holeQfReference_V : 0.0);
+        edgeDiag.phin0 = phin_i + electronReference_i;
+        edgeDiag.phin1 = phin_j + electronReference_j;
+        edgeDiag.phip0 = phip_i_forHole + holeReference_i;
+        edgeDiag.phip1 = phip_j_forHole + holeReference_j;
         edgeDiag.holeQfDropOverrideApplied = holeQfDropOverrideApplied;
         edgeDiag.n0 = n_i;
         edgeDiag.n1 = n_j;
@@ -390,9 +507,13 @@ ContactCurrentDetailedResult ContactCurrent::computeDetailed(
         edgeDiag.electronContinuityFlux = electronContinuityFlux01;
         edgeDiag.holeContinuityFlux = holeContinuityFlux01;
         edgeDiag.electronCurrent = electronCurrent;
+        edgeDiag.electronCurrentLongDoubleReference =
+            static_cast<Real>(electronCurrentLongDoubleEdge);
         edgeDiag.electronDriftCurrent = electronDriftCurrent;
         edgeDiag.electronDiffusionCurrent = electronDiffusionCurrent;
         edgeDiag.holeCurrent = holeCurrent;
+        edgeDiag.holeCurrentLongDoubleReference =
+            static_cast<Real>(holeCurrentLongDoubleEdge);
         edgeDiag.holeDriftCurrent = holeDriftCurrent;
         edgeDiag.holeDiffusionCurrent = holeDiffusionCurrent;
         edgeDiag.totalCurrent = electronCurrent - holeCurrent;
@@ -409,6 +530,18 @@ ContactCurrentDetailedResult ContactCurrent::computeDetailed(
     // recombination integral into the terminal current and breaks the
     // Kirchhoff balance |I_anode| = |I_cathode| for a two-terminal device.
     detailed.totals.totalCurrent = detailed.totals.electronCurrent - detailed.totals.holeCurrent;
+    detailed.precision.electronCurrentCompensated =
+        electronCurrentCompensated.value();
+    detailed.precision.holeCurrentCompensated = holeCurrentCompensated.value();
+    detailed.precision.totalCurrentCompensated =
+        detailed.precision.electronCurrentCompensated -
+        detailed.precision.holeCurrentCompensated;
+    detailed.precision.electronCurrentLongDoubleReference =
+        static_cast<Real>(electronCurrentLongDouble);
+    detailed.precision.holeCurrentLongDoubleReference =
+        static_cast<Real>(holeCurrentLongDouble);
+    detailed.precision.totalCurrentLongDoubleReference =
+        static_cast<Real>(electronCurrentLongDouble - holeCurrentLongDouble);
     return detailed;
 }
 
@@ -423,10 +556,12 @@ ContactCurrentResult ContactCurrent::compute(
     Real temperature_K,
     DDScalingSpec scaling,
     const BandgapNarrowingConfig& bandgapNarrowingConfig,
-    const CarrierStatisticsConfig& carrierStatistics)
+    const CarrierStatisticsConfig& carrierStatistics,
+    const DensityGradientQuantumPotentialConfig& electronQuantumPotential)
 {
     return ContactCurrent(mesh, matdb, doping, mobilityConfig, temperature_K, scaling,
-                          bandgapNarrowingConfig, carrierStatistics)
+                          bandgapNarrowingConfig, carrierStatistics,
+                          electronQuantumPotential)
         .compute(solution, contactName);
 }
 

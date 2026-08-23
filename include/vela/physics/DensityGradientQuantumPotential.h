@@ -17,6 +17,15 @@ namespace vela {
 struct DensityGradientQuantumPotentialConfig {
     bool enabled = false;
     std::string couplingMode = "outer"; ///< "outer" or frozen imported potential.
+    /// How the converged quantum potential enters electron transport.
+    /// direct_band_edge preserves Vela's historical behavior and matches
+    /// Sentaurus Math{DirectQuantumCorrection}. sentaurus_exponential keeps
+    /// the classical Fermi argument and multiplies the carrier density by
+    /// exp(-Lambda/kT), matching the Sentaurus default approximation.
+    std::string transportCoupling = "direct_band_edge";
+    /// Optional continuation parameter for sentaurus_exponential: zero is
+    /// direct-band-edge coupling and one is the full exponential form.
+    Real transportCouplingWeight = 1.0;
     std::string formulation = "potential_based"; ///< Sentaurus default or density-based audit.
     Real gamma = 3.6;
     /// Electron DOS mass divided by the free-electron mass. O-2018.06 Silicon

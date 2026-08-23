@@ -1,0 +1,301 @@
+{
+  "schema": "vela.transportmodels.dg_discretization_fixed_state_audit.v1",
+  "status": "pass",
+  "as_of": "2026-08-21",
+  "work_point": {
+    "gate_bias_V": 1.0,
+    "drain_bias_V": 2.0
+  },
+  "controlled_inputs": {
+    "materials": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_parameter_fixed_state_sweep_2026-08-21\\materials_sentaurus2022_dg_band_drive.json",
+    "interface": "neutral_continuous"
+  },
+  "comparability_caveat": "Raw residual scales are operator-specific across primary variables and row scalings.",
+  "results": [
+    {
+      "status": "diagnostic_complete",
+      "cell_total_l1_free": 483220.1723770898,
+      "max_free_residual": 21372.43531178636,
+      "max_free_node": 2,
+      "reaction_l1_share": 0.619056106811303,
+      "top_node": {
+        "node_id": 2,
+        "x_um": -0.0667875,
+        "y_um": 0.025,
+        "raw_total": -21372.43531178636,
+        "absolute_raw_total": 21372.43531178636,
+        "dominant_component": "reaction",
+        "components": {
+          "stiffness": -204.4238457237493,
+          "gradient_squared": 3570.6480919355213,
+          "reaction": -24738.659557998133,
+          "interface_boundary": 0.0
+        }
+      },
+      "top_cell": {
+        "cell_id": 679,
+        "region_name": "R.PolyReox_mirrored",
+        "material": "SiO2",
+        "is_interface_cell": true,
+        "interface_pairs": "R.PolyReox_mirrored|R.Spacer_mirrored",
+        "max_absolute_local_total": 10933.440337182416,
+        "centroid_um": {
+          "x": -0.08972916666666668,
+          "y": -0.03166666666666667
+        }
+      },
+      "nodes": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_discretization_fixed_state_audit_2026-08-21\\p1_direct\\eq231_nodes.csv",
+      "nodes_sha256": "618883809D5EFD25CEA229B1298C323DAB33F2C46E2A8D730A244FDCE053B526",
+      "name": "p1_direct",
+      "label": "P1 direct",
+      "runner_exit_code": 1,
+      "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_discretization_fixed_state_audit_2026-08-21\\p1_direct\\config.json",
+      "config_sha256": "FBC4210B0DC6E53E6358FB9DA1DEC8562E5F6F4AA7659108019C80C6A65231E7"
+    },
+    {
+      "status": "diagnostic_complete",
+      "cell_total_l1_free": 140513.77133637876,
+      "max_free_residual": 7376.299714267192,
+      "max_free_node": 69,
+      "reaction_l1_share": 0.06065333091539877,
+      "top_node": {
+        "node_id": 69,
+        "x_um": -0.0012,
+        "y_um": 0.0115625,
+        "raw_total": 7376.299714267192,
+        "absolute_raw_total": 7376.299714267192,
+        "dominant_component": "gradient_squared",
+        "components": {
+          "stiffness": 2843.5510749067057,
+          "gradient_squared": 4530.098703113074,
+          "reaction": 2.649936247411407,
+          "interface_boundary": 0.0
+        }
+      },
+      "top_cell": {
+        "cell_id": 2,
+        "region_name": "R.Gateox",
+        "material": "SiO2",
+        "is_interface_cell": true,
+        "interface_pairs": "R.Gateox|R.Polygate",
+        "max_absolute_local_total": 3786.677830785876,
+        "centroid_um": {
+          "x": -0.001196223958333333,
+          "y": 0.015416666666666667
+        }
+      },
+      "nodes": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_discretization_fixed_state_audit_2026-08-21\\p1_lambda_direct\\eq231_nodes.csv",
+      "nodes_sha256": "4403A819ED00BFD5F2889B551DA417C382FFC9B82B8029D95C9B0C0A364156B4",
+      "name": "p1_lambda_direct",
+      "label": "P1 lambda",
+      "runner_exit_code": 1,
+      "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_discretization_fixed_state_audit_2026-08-21\\p1_lambda_direct\\config.json",
+      "config_sha256": "8319F03773EAC836E77D13C3B7CB6D19A946DE2C3AE3C640E552EFB3AFA5D2CC"
+    },
+    {
+      "status": "diagnostic_complete",
+      "cell_total_l1_free": 483220.1723770897,
+      "max_free_residual": 21372.43531178636,
+      "max_free_node": 2,
+      "reaction_l1_share": 0.619056106811303,
+      "top_node": {
+        "node_id": 2,
+        "x_um": -0.0667875,
+        "y_um": 0.025,
+        "raw_total": -21372.43531178636,
+        "absolute_raw_total": 21372.43531178636,
+        "dominant_component": "reaction",
+        "components": {
+          "stiffness": -204.4238457237493,
+          "gradient_squared": 3570.6480919355213,
+          "reaction": -24738.659557998133,
+          "interface_boundary": 0.0
+        }
+      },
+      "top_cell": {
+        "cell_id": 679,
+        "region_name": "R.PolyReox_mirrored",
+        "material": "SiO2",
+        "is_interface_cell": true,
+        "interface_pairs": "R.PolyReox_mirrored|R.Spacer_mirrored",
+        "max_absolute_local_total": 10933.440337182416,
+        "centroid_um": {
+          "x": -0.08972916666666668,
+          "y": -0.03166666666666667
+        }
+      },
+      "nodes": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_discretization_fixed_state_audit_2026-08-21\\cvfem_full\\eq231_nodes.csv",
+      "nodes_sha256": "3FCB5EEAFBB0F615135F0FFCF7370B8BBB347FDCB34B16135A3788C63147DFF9",
+      "name": "cvfem_full",
+      "label": "CVFEM full",
+      "runner_exit_code": 1,
+      "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_discretization_fixed_state_audit_2026-08-21\\cvfem_full\\config.json",
+      "config_sha256": "FBF4F43F6014D552C1262DBDC6E2A53EB447F11DE49156F79DC234E0C02BA648"
+    },
+    {
+      "status": "diagnostic_complete",
+      "cell_total_l1_free": 405274.8015137196,
+      "max_free_residual": 3391.665940583426,
+      "max_free_node": 1640,
+      "reaction_l1_share": 0.638308062435832,
+      "top_node": {
+        "node_id": 1640,
+        "x_um": 0.931175,
+        "y_um": 0.0925,
+        "raw_total": -3391.665940583426,
+        "absolute_raw_total": 3391.665940583426,
+        "dominant_component": "reaction",
+        "components": {
+          "stiffness": -0.5347219068291331,
+          "gradient_squared": 0.0,
+          "reaction": -3391.131218676597,
+          "interface_boundary": 0.0
+        }
+      },
+      "top_cell": {
+        "cell_id": 677,
+        "region_name": "R.PolyReox_mirrored",
+        "material": "SiO2",
+        "is_interface_cell": true,
+        "interface_pairs": "R.PolyReox_mirrored|R.Polygate",
+        "max_absolute_local_total": 2212.219085844792,
+        "centroid_um": {
+          "x": -0.07825833333333333,
+          "y": -0.028333333333333335
+        }
+      },
+      "nodes": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_discretization_fixed_state_audit_2026-08-21\\sentaurus_box\\eq231_nodes.csv",
+      "nodes_sha256": "0F9675B558C4D7944C2758F7DE2741EEB49C1CB8052ADE54E4EB7BA9295C12DA",
+      "name": "sentaurus_box",
+      "label": "Sentaurus box",
+      "runner_exit_code": 1,
+      "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_discretization_fixed_state_audit_2026-08-21\\sentaurus_box\\config.json",
+      "config_sha256": "DE7E30754802C9FFCCF0821A389A3FF472DDF06F5680AB88D0794C661FFBED9F"
+    },
+    {
+      "status": "diagnostic_complete",
+      "cell_total_l1_free": 564137.1436554478,
+      "max_free_residual": 24744.475983328863,
+      "max_free_node": 2,
+      "reaction_l1_share": 0.7324133847765207,
+      "top_node": {
+        "node_id": 2,
+        "x_um": -0.0667875,
+        "y_um": 0.025,
+        "raw_total": -24744.475983328863,
+        "absolute_raw_total": 24744.475983328863,
+        "dominant_component": "reaction",
+        "components": {
+          "stiffness": -5.81642533072838,
+          "gradient_squared": 0.0,
+          "reaction": -24738.659557998133,
+          "interface_boundary": 0.0
+        }
+      },
+      "top_cell": {
+        "cell_id": 671,
+        "region_name": "R.PolyReox",
+        "material": "SiO2",
+        "is_interface_cell": true,
+        "interface_pairs": "R.PolyReox|R.Spacer",
+        "max_absolute_local_total": 12412.194872176075,
+        "centroid_um": {
+          "x": -0.08972916666666668,
+          "y": 0.03166666666666667
+        }
+      },
+      "nodes": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_discretization_fixed_state_audit_2026-08-21\\gss_potentiallike_fitted\\eq231_nodes.csv",
+      "nodes_sha256": "D59921685127E8CA60A9E02D7DA8D240B84BE0A5B5E79D89B6B95DA0F733822C",
+      "name": "gss_potentiallike_fitted",
+      "label": "GSS potential-like",
+      "runner_exit_code": 1,
+      "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_discretization_fixed_state_audit_2026-08-21\\gss_potentiallike_fitted\\config.json",
+      "config_sha256": "87B564364CAF8D36AC90689F35FB8B05BBED77B4B043EF48EA530EAE801410AA"
+    },
+    {
+      "status": "diagnostic_complete",
+      "cell_total_l1_free": 130906.80170207843,
+      "max_free_residual": 7331.69848255598,
+      "max_free_node": 123,
+      "reaction_l1_share": 0.0956782663727109,
+      "top_node": {
+        "node_id": 123,
+        "x_um": -0.0012,
+        "y_um": 0.017343749999999998,
+        "raw_total": 7331.69848255598,
+        "absolute_raw_total": 7331.69848255598,
+        "dominant_component": "stiffness",
+        "components": {
+          "stiffness": 7328.916884611299,
+          "gradient_squared": 0.0,
+          "reaction": 2.78159794468111,
+          "interface_boundary": 0.0
+        }
+      },
+      "top_cell": {
+        "cell_id": 2,
+        "region_name": "R.Gateox",
+        "material": "SiO2",
+        "is_interface_cell": true,
+        "interface_pairs": "R.Gateox|R.Polygate",
+        "max_absolute_local_total": 4799.445502337244,
+        "centroid_um": {
+          "x": -0.001196223958333333,
+          "y": 0.015416666666666667
+        }
+      },
+      "nodes": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_discretization_fixed_state_audit_2026-08-21\\gss_density_fitted\\eq231_nodes.csv",
+      "nodes_sha256": "CF83E6363589FE12A3ABB8D9994441C1251DF475A278147526DCFCF7BD6CA485",
+      "name": "gss_density_fitted",
+      "label": "GSS density",
+      "runner_exit_code": 1,
+      "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_discretization_fixed_state_audit_2026-08-21\\gss_density_fitted\\config.json",
+      "config_sha256": "3C42ADEA9EFD00E8D4FF29BB19B16DD30EAA99B1EC615F1D89B69F714F00AFE2"
+    },
+    {
+      "status": "diagnostic_complete",
+      "cell_total_l1_free": 2.166804377166799e+21,
+      "max_free_residual": 6.02462075796532e+20,
+      "max_free_node": 1703,
+      "reaction_l1_share": 1.6707414444762307e-16,
+      "top_node": {
+        "node_id": 1703,
+        "x_um": -0.032375,
+        "y_um": -0.034687499999999996,
+        "raw_total": 6.02462075796532e+20,
+        "absolute_raw_total": 6.02462075796532e+20,
+        "dominant_component": "stiffness",
+        "components": {
+          "stiffness": 6.02462075796532e+20,
+          "gradient_squared": 0.0,
+          "reaction": -3987.9137518495854,
+          "interface_boundary": 0.0
+        }
+      },
+      "top_cell": {
+        "cell_id": 682,
+        "region_name": "R.PolyReox_mirrored",
+        "material": "SiO2",
+        "is_interface_cell": true,
+        "interface_pairs": "R.PolyReox_mirrored|R.Polygate",
+        "max_absolute_local_total": 3.9889202721202576e+20,
+        "centroid_um": {
+          "x": -0.03811041666666667,
+          "y": -0.028229166666666666
+        }
+      },
+      "nodes": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_discretization_fixed_state_audit_2026-08-21\\conservative_sqrt_fitted\\eq231_nodes.csv",
+      "nodes_sha256": "B6DDDDECB3481FA2A3E9BF23A3622F016E082CD37366ED8F87DB7850B714A04E",
+      "name": "conservative_sqrt_fitted",
+      "label": "Conservative sqrt",
+      "runner_exit_code": 1,
+      "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_discretization_fixed_state_audit_2026-08-21\\conservative_sqrt_fitted\\config.json",
+      "config_sha256": "ADB87EA2EC3B1C36F22967D29C17040256B2EEBCAB6D15CC8DCBF9D908DD9D8B"
+    }
+  ],
+  "artifacts": {
+    "csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_discretization_fixed_state_audit_2026-08-21\\discretization_residuals.csv",
+    "png": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_discretization_fixed_state_audit_2026-08-21\\discretization_residuals.png",
+    "svg": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_discretization_fixed_state_audit_2026-08-21\\discretization_residuals.svg"
+  }
+}

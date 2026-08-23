@@ -10,6 +10,24 @@
 
 namespace vela {
 
+/// Rank-revealing sparse direct fallback for bordered systems whose principal
+/// device block may be singular. Returns false instead of throwing when Eigen
+/// cannot factor or solve the matrix.
+bool solveSparseQrSystem(const SparseMatrixd& A,
+                         const VectorXd& b,
+                         VectorXd& x) noexcept;
+
+/// Solve with SuiteSparse UMFPACK when Vela was configured with that optional
+/// backend. Returns false when the backend is unavailable or the solve fails.
+bool solveUmfPackSystem(const SparseMatrixd& A,
+                        const VectorXd& b,
+                        VectorXd& x) noexcept;
+
+/// Rank-revealing SuiteSparseQR solve for large sparse bordered systems.
+bool solveSpqrSystem(const SparseMatrixd& A,
+                     const VectorXd& b,
+                     VectorXd& x) noexcept;
+
 /**
  * @brief Sparse direct linear solver based on Eigen SparseLU.
  *

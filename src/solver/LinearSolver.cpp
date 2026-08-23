@@ -1,4 +1,10 @@
 #include "vela/solver/LinearSolver.h"
+#if defined(VELA_HAS_UMFPACK)
+#include <Eigen/UmfPackSupport>
+#endif
+#if defined(VELA_HAS_SPQR)
+#include <Eigen/SPQRSupport>
+#endif
 #include "vela/core/PerformanceProfiler.h"
 
 #include <Eigen/IterativeLinearSolvers>
@@ -199,6 +205,89 @@ VectorXd solveWithAlternateBackend(const std::string& backend,
 }
 
 } // namespace
+
+bool solveSparseQrSystem(const SparseMatrixd& A,
+                         const VectorXd& b,
+                         VectorXd& x) noexcept
+{
+    try {
+        x = solveWithAlternateBackend("sparseqr", A, b);
+        return x.size() == A.cols() && x.allFinite();
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
+bool solveUmfPackSystem(const SparseMatrixd& A,
+                        const VectorXd& b,
+                        VectorXd& x) noexcept
+{
+#if defined(VELA_HAS_UMFPACK)
+    try {
+        Eigen::UmfPackLU<SparseMatrixd> solver;
+        solver.umfpackControl()[UMFPACK_STRATEGY] =
+            UMFPACK_STRATEGY_UNSYMMETRIC;
+        solver.umfpackControl()[UMFPACK_PIVOT_TOLERANCE] = 1.0e-12;
+        solver.compute(A);
+        if (solver.info() == Eigen::InvalidInput)
+            return false;
+        x = solver.solve(b);
+        return x.size() == A.cols() && x.allFinite();
+    } catch (const std::exception&) {
+        return false;
+    }
+#else
+    (void)A;
+    (void)b;
+    (void)x;
+    return false;
+#endif
+}
+
+bool solveSpqrSystem(const SparseMatrixd& A,
+                     const VectorXd& b,
+                     VectorXd& x) noexcept
+{
+#if defined(VELA_HAS_SPQR)
+    try {
+        using LongSparseMatrix = Eigen::SparseMatrix<
+            Real, Eigen::ColMajor, SuiteSparse_long>;
+        LongSparseMatrix matrix = A;
+        matrix.makeCompressed();
+        VectorXd rhs = b;
+        cholmod_sparse cholmodMatrix = Eigen::viewAsCholmod(matrix);
+        cholmod_dense cholmodRhs = Eigen::viewAsCholmod(rhs);
+        cholmod_common common;
+        if (!cholmod_l_start(&common))
+            return false;
+        cholmod_dense* cholmodSolution =
+            SuiteSparseQR_min2norm<Real, SuiteSparse_long>(
+                SPQR_ORDERING_DEFAULT,
+                1.0e-10,
+                &cholmodMatrix,
+                &cholmodRhs,
+                &common);
+        if (cholmodSolution == nullptr) {
+            cholmod_l_finish(&common);
+            return false;
+        }
+        x.resize(static_cast<Eigen::Index>(cholmodSolution->nrow));
+        const Real* values = static_cast<const Real*>(cholmodSolution->x);
+        for (Eigen::Index i = 0; i < x.size(); ++i)
+            x(i) = values[i];
+        cholmod_l_free_dense(&cholmodSolution, &common);
+        cholmod_l_finish(&common);
+        return x.size() == A.cols() && x.allFinite();
+    } catch (const std::exception&) {
+        return false;
+    }
+#else
+    (void)A;
+    (void)b;
+    (void)x;
+    return false;
+#endif
+}
 
 VectorXd LinearSolver::solve(const SparseMatrixd& A, const VectorXd& b)
 {

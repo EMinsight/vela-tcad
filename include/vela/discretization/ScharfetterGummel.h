@@ -243,10 +243,31 @@ Real sgElectronFermiDiracContinuityFlux(
     Real n0, Real n1, Real eta0, Real eta1, Real driftPotential,
     Real quasiFermi0, Real quasiFermi1, Real Vt, Real coef);
 
+/// Fermi-Dirac electron flux when the transported density has an additional
+/// multiplicative quantum factor. The generalized Einstein factor is formed
+/// from the underlying Fermi densities, while qmDensity enters the flux.
+Real sgElectronFermiDiracQuantumContinuityFlux(
+    Real qmDensity0, Real qmDensity1,
+    Real fermiDensity0, Real fermiDensity1,
+    Real eta0, Real eta1, Real driftPotential,
+    Real quasiFermi0, Real quasiFermi1, Real Vt, Real coef);
+
 /// Hole counterpart of sgElectronFermiDiracContinuityFlux.
 Real sgHoleFermiDiracContinuityFlux(
     Real p0, Real p1, Real eta0, Real eta1, Real driftPotential,
     Real quasiFermi0, Real quasiFermi1, Real Vt, Real coef);
+
+/// Extended-precision references for diagnostics of sub-ULP quasi-Fermi
+/// drops.  The drop is supplied directly so callers can form it from
+/// increment/reference components without first reconstructing an absolute
+/// quasi-Fermi potential in double precision.
+long double sgElectronFermiDiracQuantumContinuityFluxLongDouble(
+    Real qmDensity1, Real fermiDensity0, Real fermiDensity1,
+    Real eta0, Real eta1, Real driftPotential,
+    long double quasiFermiDrop, Real Vt, Real coef);
+long double sgHoleFermiDiracContinuityFluxLongDouble(
+    Real p0, Real p1, Real eta0, Real eta1, Real driftPotential,
+    long double quasiFermiDrop, Real Vt, Real coef);
 
 /**
  * @brief Scharfetter-Gummel edge fluxes for drift-diffusion.

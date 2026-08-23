@@ -188,7 +188,8 @@ inline bool localAdUsesFieldMobility(const std::string& model)
 {
     return model == "caughey_thomas_field" ||
            model == "caughey_thomas_field_surface" ||
-           model == "masetti_field";
+           model == "masetti_field" ||
+           model == "masetti_field_lombardi";
 }
 
 inline bool localAdSupportedMobility(const std::string& model)
@@ -196,8 +197,10 @@ inline bool localAdSupportedMobility(const std::string& model)
     return model == "constant" ||
            model == "caughey_thomas" ||
            model == "caughey_thomas_field" ||
+           model == "caughey_thomas_field_surface" ||
            model == "masetti" ||
-           model == "masetti_field";
+           model == "masetti_field" ||
+           model == "masetti_field_lombardi";
 }
 
 template <typename Scalar>
@@ -224,6 +227,16 @@ inline Scalar localAdEndpointAveragedMobility(
     }
     const Material& material =
         cellMaterials.at(static_cast<std::size_t>(cellId));
+    const Real surfaceField =
+        isSurfaceMobilityModel(mobilityConfig) &&
+            cellId < mobilityConfig.surface.cellNormalFields.size()
+        ? mobilityConfig.surface.cellNormalFields[cellId]
+        : 0.0;
+    const Real surfaceDistance =
+        isSurfaceMobilityModel(mobilityConfig) &&
+            cellId < mobilityConfig.surface.cellDistances.size()
+        ? mobilityConfig.surface.cellDistances[cellId]
+        : 0.0;
     const auto lowFieldAt = [&](Index node, int localNode) {
         const Real mobilityDoping = nodeMobilityDopingConcentration(
             mesh, doping, node, cellId, &mobilityConfig);
@@ -236,7 +249,8 @@ inline Scalar localAdEndpointAveragedMobility(
                 static_cast<Real>(
                     localAdValue(p[static_cast<std::size_t>(localNode)])),
                 0.0,
-                0.0)
+                surfaceField,
+                surfaceDistance)
             : mobility.holeMobility(
                 material,
                 mobilityDoping,
@@ -245,7 +259,8 @@ inline Scalar localAdEndpointAveragedMobility(
                 static_cast<Real>(
                     localAdValue(p[static_cast<std::size_t>(localNode)])),
                 0.0,
-                0.0);
+                surfaceField,
+                surfaceDistance);
     };
     const Real low0 = lowFieldAt(node0, localNode0);
     const Real low1 = lowFieldAt(node1, localNode1);
@@ -438,6 +453,152 @@ struct ElementEdgeGssLauxLocalSourceIntegrals {
     std::array<Scalar, 3> hole{};
     std::array<Scalar, 3> combined{};
 };
+
+template <typename Scalar>
+inline Scalar localAdAvalancheMidpointAux2(const Scalar& argument)
+{
+    return Scalar(1.0) /
+        (Scalar(1.0) + localAdLimitedExp(argument));
+}
+
+/// Complete nine-column local derivative of the legacy triangle GSS source.
+///
+/// This is deliberately kept separate from the element-edge GSS/Laux bundle:
+/// the legacy source uses cell GradQF for alpha, edge GradQF for |J|, the GSS
+/// logistic midpoint density, Genius truncated edge volumes, and a symmetric
+/// endpoint split.  All state-dependent factors are carried by Scalar so a
+/// Tri3LocalForwardDual evaluation differentiates alpha, density, high-field
+/// mobility, edge field, and source partition in one pass.
+template <typename Scalar>
+inline ElementEdgeGssLauxLocalSourceIntegrals<Scalar>
+triangleGssAvalancheSourceIntegralsLocal(
+    const ImpactIonizationModelConfig& impactConfig,
+    const MobilityModelConfig& mobilityConfig,
+    const MobilityModel& mobility,
+    const std::vector<Index>& cellEdgeIds,
+    const DeviceMesh& mesh,
+    const DopingModel& doping,
+    const std::vector<Material>& cellMaterials,
+    Index cellId,
+    const std::array<Scalar, 3>& psi,
+    const std::array<Scalar, 3>& phin,
+    const std::array<Scalar, 3>& phip,
+    const std::array<Scalar, 3>& n,
+    const std::array<Scalar, 3>& p,
+    Real Vt,
+    Real fieldFactor)
+{
+    if (impactConfig.sourceMappingMode !=
+            "triangle_gss_gradqf_truncated" ||
+        impactConfig.generation != "current_density" ||
+        impactConfig.currentApproximation != "cell_reconstructed" ||
+        impactConfig.cellReconstructedMidpointDensity != "gss_logistic" ||
+        impactConfig.quasiFermiGradientDiscretization != "cell_gradient" ||
+        impactConfig.sourceVolumePolicy != "genius_truncated" ||
+        impactConfig.edgeSourcePartition != "symmetric") {
+        throw std::invalid_argument(
+            "triangle GSS local AD requires the canonical legacy profile");
+    }
+    const Cell& cell = mesh.getCell(cellId);
+    if (cell.type != CellType::Tri3 || cell.node_ids.size() != 3) {
+        throw std::invalid_argument(
+            "triangle GSS local AD requires Tri3 cells");
+    }
+
+    const auto electricGradient = localAdTri3Gradient(mesh, cell, psi);
+    const auto electronGradient = localAdTri3Gradient(mesh, cell, phin);
+    const auto holeGradient = localAdTri3Gradient(mesh, cell, phip);
+    const Scalar electronCellField =
+        localAdNorm2(electronGradient[0], electronGradient[1]) *
+        Scalar(fieldFactor);
+    const Scalar holeCellField =
+        localAdNorm2(holeGradient[0], holeGradient[1]) *
+        Scalar(fieldFactor);
+    Scalar electronImpactField = electronCellField;
+    Scalar holeImpactField = holeCellField;
+    if (cellUsesContactElectricFieldFallback(
+            impactConfig, mesh, cell)) {
+        electronImpactField = localAdContactElectricFallbackImpactField(
+            impactConfig, mesh, cell, electricGradient,
+            electronCellField, psi, fieldFactor);
+        holeImpactField = localAdContactElectricFallbackImpactField(
+            impactConfig, mesh, cell, electricGradient,
+            holeCellField, psi, fieldFactor);
+    }
+    const Scalar electronAlpha = localAdImpactCoefficient(
+        impactConfig, CarrierType::Electron, electronImpactField);
+    const Scalar holeAlpha = localAdImpactCoefficient(
+        impactConfig, CarrierType::Hole, holeImpactField);
+
+    ElementEdgeGssLauxLocalSourceIntegrals<Scalar> source{};
+    for (int localEdge = 0; localEdge < 3; ++localEdge) {
+        const std::size_t local = static_cast<std::size_t>(localEdge);
+        const std::size_t next =
+            static_cast<std::size_t>((localEdge + 1) % 3);
+        const Index node0 = cell.node_ids[local];
+        const Index node1 = cell.node_ids[next];
+        const Index edgeId =
+            edgeIdForNodePair(mesh, cellEdgeIds, node0, node1);
+        if (edgeId >= mesh.numEdges()) {
+            throw std::runtime_error(
+                "triangle GSS local AD could not map a cell edge");
+        }
+        const Real edgeLength = mesh.getEdge(edgeId).length;
+        if (edgeLength <= 1.0e-30) {
+            throw std::invalid_argument(
+                "degenerate triangle edge cannot evaluate a GSS source");
+        }
+
+        const Scalar electronEdgeField =
+            localAdAbs(phin[next] - phin[local]) *
+            Scalar(fieldFactor / edgeLength);
+        const Scalar holeEdgeField =
+            localAdAbs(phip[next] - phip[local]) *
+            Scalar(fieldFactor / edgeLength);
+        const Scalar electronMobility = localAdEndpointAveragedMobility(
+            mobilityConfig, mobility, mesh, doping, cellMaterials, cellId,
+            node0, node1, localEdge, (localEdge + 1) % 3,
+            CarrierType::Electron, electronEdgeField, n, p);
+        const Scalar holeMobility = localAdEndpointAveragedMobility(
+            mobilityConfig, mobility, mesh, doping, cellMaterials, cellId,
+            node0, node1, localEdge, (localEdge + 1) % 3,
+            CarrierType::Hole, holeEdgeField, n, p);
+
+        const Scalar electronArgument =
+            (psi[next] - psi[local]) / Scalar(2.0 * Vt);
+        const Scalar holeArgument = -electronArgument;
+        const Scalar electronMidpointDensity =
+            n[local] * localAdAvalancheMidpointAux2(electronArgument) +
+            n[next] * localAdAvalancheMidpointAux2(-electronArgument);
+        const Scalar holeMidpointDensity =
+            p[local] * localAdAvalancheMidpointAux2(holeArgument) +
+            p[next] * localAdAvalancheMidpointAux2(-holeArgument);
+        const Scalar partialVolume(
+            geniusTri3TruncatedPartialVolumeWithEdge(
+                mesh, cell, node0, node1) *
+            impactConfig.sourceGeometryScale);
+        const Scalar electronIntegral = electronAlpha *
+            electronMobility * electronMidpointDensity *
+            electronEdgeField * partialVolume;
+        const Scalar holeIntegral = holeAlpha *
+            holeMobility * holeMidpointDensity *
+            holeEdgeField * partialVolume;
+        const Scalar combined = electronIntegral + holeIntegral;
+        source.electron[local] = source.electron[local] +
+            Scalar(0.5) * electronIntegral;
+        source.electron[next] = source.electron[next] +
+            Scalar(0.5) * electronIntegral;
+        source.hole[local] = source.hole[local] +
+            Scalar(0.5) * holeIntegral;
+        source.hole[next] = source.hole[next] +
+            Scalar(0.5) * holeIntegral;
+        source.combined[local] = source.combined[local] +
+            Scalar(0.5) * combined;
+        source.combined[next] = source.combined[next] +
+            Scalar(0.5) * combined;
+    }
+    return source;
+}
 
 template <typename Scalar>
 inline ElementEdgeGssLauxLocalSourceIntegrals<Scalar>

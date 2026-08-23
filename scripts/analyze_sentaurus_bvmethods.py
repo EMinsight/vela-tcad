@@ -83,6 +83,30 @@ def optional_column(
     return [row[index] for row in rows]
 
 
+def column_alias(
+    datasets: list[str], rows: list[list[float]], names: tuple[str, ...],
+) -> list[float]:
+    for name in names:
+        if name in datasets:
+            return column(datasets, rows, name)
+    raise ValueError(f"missing all dataset aliases {names!r}")
+
+
+def optional_column_alias(
+    datasets: list[str], rows: list[list[float]], names: tuple[str, ...],
+) -> list[float | None]:
+    for name in names:
+        if name in datasets:
+            return optional_column(datasets, rows, name)
+    return [None] * len(rows)
+
+
+IMPACT_GENERATION_DATASETS = (
+    "IntegrSemiconductor ImpactIonization",
+    "IntegrSemiconductor AvalancheGeneration",
+)
+
+
 def write_curve(
     path: Path,
     datasets: list[str],
@@ -93,8 +117,8 @@ def write_curve(
     current = column(datasets, rows, "drain TotalCurrent")
     phi_e = optional_column(datasets, rows, "PhiElectron")
     phi_h = optional_column(datasets, rows, "PhiHole")
-    integrated = optional_column(
-        datasets, rows, "IntegrSemiconductor AvalancheGeneration")
+    integrated = optional_column_alias(
+        datasets, rows, IMPACT_GENERATION_DATASETS)
 
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="") as handle:
@@ -151,8 +175,8 @@ def analyze_method(
         return result
 
     if method == "ABA_coupled":
-        generation = column(
-            datasets, rows, "IntegrSemiconductor AvalancheGeneration")
+        generation = column_alias(
+            datasets, rows, IMPACT_GENERATION_DATASETS)
         avalanche_current = [
             value * 1.0e-12 * ELEMENTARY_CHARGE_C for value in generation
         ]

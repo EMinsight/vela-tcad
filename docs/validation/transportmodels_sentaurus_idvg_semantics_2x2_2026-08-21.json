@@ -1,0 +1,137 @@
+{
+  "schema": "vela.transportmodels.sentaurus_idvg_semantics_2x2.v1",
+  "as_of": "2026-08-21",
+  "status": "complete",
+  "sentaurus_banner": "****************************************************************************\n***                           Sentaurus Device                           ***\n***                        Version T-2022.03-SP2                         ***\n***                      (0.7745337, x86_64, Linux)                      ***\n***                                                                      ***",
+  "design": {
+    "direct_quantum_correction": [
+      false,
+      true
+    ],
+    "fermi_bgn_correction": [
+      "default",
+      "NoFermi"
+    ],
+    "gate_biases_V": [
+      -0.2,
+      -0.04,
+      0.12,
+      0.28,
+      1.0
+    ],
+    "fixed_drain_bias_V": 1.1,
+    "current_plot_intervals": 40
+  },
+  "five_point_comparison": [
+    {
+      "gate_bias_V": -0.2,
+      "default_default_A_per_um": 3.24296348009132e-10,
+      "default_default_delta_vs_default_dex": 0.0,
+      "directqc_default_A_per_um": 3.20441719515677e-10,
+      "directqc_default_delta_vs_default_dex": -0.005193004460887852,
+      "default_nofermi_A_per_um": 5.20082735507746e-10,
+      "default_nofermi_delta_vs_default_dex": 0.20513037932975162,
+      "directqc_nofermi_A_per_um": 5.18714953321309e-10,
+      "directqc_nofermi_delta_vs_default_dex": 0.2039867098632402,
+      "directqc_effect_default_bgn_dex": -0.005193004460887852,
+      "nofermi_effect_default_dg_dex": 0.20513037932975162,
+      "interaction_dex": 0.00404933499437643
+    },
+    {
+      "gate_bias_V": -0.04,
+      "default_default_A_per_um": 2.97693349400415e-08,
+      "default_default_delta_vs_default_dex": 0.0,
+      "directqc_default_A_per_um": 2.94603922454116e-08,
+      "directqc_default_delta_vs_default_dex": -0.004530607540931185,
+      "default_nofermi_A_per_um": 4.74662800496611e-08,
+      "default_nofermi_delta_vs_default_dex": 0.20261606480252417,
+      "directqc_nofermi_A_per_um": 4.73914422744392e-08,
+      "directqc_nofermi_delta_vs_default_dex": 0.20193079345584003,
+      "directqc_effect_default_bgn_dex": -0.004530607540931185,
+      "nofermi_effect_default_dg_dex": 0.20261606480252417,
+      "interaction_dex": 0.00384533619424704
+    },
+    {
+      "gate_bias_V": 0.12,
+      "default_default_A_per_um": 2.25398350908295e-06,
+      "default_default_delta_vs_default_dex": 0.0,
+      "directqc_default_A_per_um": 2.23540972927005e-06,
+      "directqc_default_delta_vs_default_dex": -0.003593597476310092,
+      "default_nofermi_A_per_um": 3.35396969901449e-06,
+      "default_nofermi_delta_vs_default_dex": 0.1726084004388396,
+      "directqc_nofermi_A_per_um": 3.3506529817708e-06,
+      "directqc_nofermi_delta_vs_default_dex": 0.17217871716416505,
+      "directqc_effect_default_bgn_dex": -0.003593597476310092,
+      "nofermi_effect_default_dg_dex": 0.1726084004388396,
+      "interaction_dex": 0.0031639142016355315
+    },
+    {
+      "gate_bias_V": 0.28,
+      "default_default_A_per_um": 3.92970755591278e-05,
+      "default_default_delta_vs_default_dex": 0.0,
+      "directqc_default_A_per_um": 3.91898532350759e-05,
+      "directqc_default_delta_vs_default_dex": -0.0011865948472281637,
+      "default_nofermi_A_per_um": 4.70470048147384e-05,
+      "default_nofermi_delta_vs_default_dex": 0.07817174795278656,
+      "directqc_nofermi_A_per_um": 4.71000167139491e-05,
+      "directqc_nofermi_delta_vs_default_dex": 0.07866082933553763,
+      "directqc_effect_default_bgn_dex": -0.0011865948472281637,
+      "nofermi_effect_default_dg_dex": 0.07817174795278656,
+      "interaction_dex": 0.001675676229979231
+    },
+    {
+      "gate_bias_V": 1.0,
+      "default_default_A_per_um": 0.000632443746545901,
+      "default_default_delta_vs_default_dex": 0.0,
+      "directqc_default_A_per_um": 0.000638417241068837,
+      "directqc_default_delta_vs_default_dex": 0.004082704307962512,
+      "default_nofermi_A_per_um": 0.000649523786522284,
+      "default_nofermi_delta_vs_default_dex": 0.011573157475535554,
+      "directqc_nofermi_A_per_um": 0.000656418651735279,
+      "directqc_nofermi_delta_vs_default_dex": 0.016159010037592014,
+      "directqc_effect_default_bgn_dex": 0.004082704307962512,
+      "nofermi_effect_default_dg_dex": 0.011573157475535554,
+      "interaction_dex": 0.0005031482540939474
+    }
+  ],
+  "artifacts": {
+    "default_default": {
+      "deck": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\sentaurus_vm_runs\\idvg_semantics_2x2_20260821\\raw\\bundle\\default_default\\idvg_2x2_des.cmd",
+      "plot": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\sentaurus_vm_runs\\idvg_semantics_2x2_20260821\\raw\\bundle\\default_default\\IdVgs_n7_des.plt",
+      "log": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\sentaurus_vm_runs\\idvg_semantics_2x2_20260821\\raw\\bundle\\default_default\\n7_des.log",
+      "curve_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\sentaurus_vm_runs\\idvg_semantics_2x2_20260821\\default_default_full_curve.csv",
+      "curve_sha256": "01C0F26F67A87BEE30A753A33F7532CA74F367CB4212C411C9D36204F8786630",
+      "plot_sha256": "6654DB3534AFBC19C03FDFD85DF217BC6B149F577475EBCD3ACE5AC3C3DF6F7F",
+      "log_sha256": "6925A7729D97562D7B1A58B5FDAF6D651723F33465604D5F93CB19D7D46510C2"
+    },
+    "directqc_default": {
+      "deck": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\sentaurus_vm_runs\\idvg_semantics_2x2_20260821\\raw\\bundle\\directqc_default\\idvg_2x2_des.cmd",
+      "plot": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\sentaurus_vm_runs\\idvg_semantics_2x2_20260821\\raw\\bundle\\directqc_default\\IdVgs_n7_des.plt",
+      "log": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\sentaurus_vm_runs\\idvg_semantics_2x2_20260821\\raw\\bundle\\directqc_default\\n7_des.log",
+      "curve_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\sentaurus_vm_runs\\idvg_semantics_2x2_20260821\\directqc_default_full_curve.csv",
+      "curve_sha256": "CAC04F4104E2C85445C828DF44A36A9BB62A59357E7BFECA70C4FAB82E510D65",
+      "plot_sha256": "45FDDA4E49BD700D09EF202D83073E0EC5CDA27817AD1DDDF5C95BF63D7A45E1",
+      "log_sha256": "4ECC3F841389829743F013AAD9AF114B65985B9095FED4D342873DED768343FD"
+    },
+    "default_nofermi": {
+      "deck": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\sentaurus_vm_runs\\idvg_semantics_2x2_20260821\\raw\\bundle\\default_nofermi\\idvg_2x2_des.cmd",
+      "plot": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\sentaurus_vm_runs\\idvg_semantics_2x2_20260821\\raw\\bundle\\default_nofermi\\IdVgs_n7_des.plt",
+      "log": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\sentaurus_vm_runs\\idvg_semantics_2x2_20260821\\raw\\bundle\\default_nofermi\\n7_des.log",
+      "curve_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\sentaurus_vm_runs\\idvg_semantics_2x2_20260821\\default_nofermi_full_curve.csv",
+      "curve_sha256": "7DA42C65ED3C15C64D5FA21C6055CCE5B658F97E947C216E5B8E3C4EEB2D409B",
+      "plot_sha256": "7F9BF298F8202CDDE13F6938C2EB22F5F086EF730E077FE0B1FA567C546D917A",
+      "log_sha256": "15603E66506A8845E17B4AC07C7BD40C33BA542E3AE2F8E81234459226E01B87"
+    },
+    "directqc_nofermi": {
+      "deck": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\sentaurus_vm_runs\\idvg_semantics_2x2_20260821\\raw\\bundle\\directqc_nofermi\\idvg_2x2_des.cmd",
+      "plot": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\sentaurus_vm_runs\\idvg_semantics_2x2_20260821\\raw\\bundle\\directqc_nofermi\\IdVgs_n7_des.plt",
+      "log": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\sentaurus_vm_runs\\idvg_semantics_2x2_20260821\\raw\\bundle\\directqc_nofermi\\n7_des.log",
+      "curve_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\sentaurus_vm_runs\\idvg_semantics_2x2_20260821\\directqc_nofermi_full_curve.csv",
+      "curve_sha256": "012E38E9C20DF041ECC12C035080127E75A7DC269CF82C49FC8FE54568DD13BD",
+      "plot_sha256": "45217B1395C070E3ED7615A5CB8BF676AD8D5AA97A93799F610DE588501CB54F",
+      "log_sha256": "24DF34A744B31C26656EBA9437FE30E063BB88375BFFCBCBA98954CCACA5CD0D"
+    },
+    "png": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\sentaurus_vm_runs\\idvg_semantics_2x2_20260821\\sentaurus_idvg_semantics_2x2.png",
+    "svg": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\sentaurus_vm_runs\\idvg_semantics_2x2_20260821\\sentaurus_idvg_semantics_2x2.svg"
+  }
+}

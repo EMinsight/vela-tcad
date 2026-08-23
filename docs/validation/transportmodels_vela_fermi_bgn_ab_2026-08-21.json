@@ -1,0 +1,160 @@
+{
+  "schema": "vela.transportmodels.vela_fermi_bgn_ab.v1",
+  "as_of": "2026-08-21",
+  "status": "complete",
+  "execution": [
+    {
+      "name": "dd_off",
+      "runner_exit_code": 0,
+      "resumed_after_points": 0,
+      "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\vela_fermi_bgn_ab_2026-08-21\\dd_off\\config.json",
+      "console": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\vela_fermi_bgn_ab_2026-08-21\\dd_off\\console.log"
+    },
+    {
+      "name": "dd_on",
+      "runner_exit_code": 0,
+      "resumed_after_points": 0,
+      "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\vela_fermi_bgn_ab_2026-08-21\\dd_on\\config.json",
+      "console": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\vela_fermi_bgn_ab_2026-08-21\\dd_on\\console.log"
+    },
+    {
+      "name": "dg_off",
+      "runner_exit_code": 0,
+      "resumed_after_points": 0,
+      "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\vela_fermi_bgn_ab_2026-08-21\\dg_off\\config.json",
+      "console": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\vela_fermi_bgn_ab_2026-08-21\\dg_off\\console.log"
+    },
+    {
+      "name": "dg_on",
+      "runner_exit_code": 0,
+      "resumed_after_points": 0,
+      "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\vela_fermi_bgn_ab_2026-08-21\\dg_on\\config.json",
+      "console": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\vela_fermi_bgn_ab_2026-08-21\\dg_on\\console.log"
+    }
+  ],
+  "design": {
+    "gate_biases_V": [
+      -0.2,
+      -0.04,
+      0.12,
+      0.28,
+      1.0
+    ],
+    "fixed_drain_bias_V": 1.1
+  },
+  "variants": {
+    "dd_off": {
+      "branch": "dd",
+      "fermi_statistics_correction": false,
+      "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\vela_fermi_bgn_ab_2026-08-21\\dd_off\\config.json",
+      "curve_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\vela_fermi_bgn_ab_2026-08-21\\dd_off\\curve_combined.csv",
+      "curve_sha256": "EE22726EDB16FDB441CC3AEA356BDC438B047200DE589C0C5E7BA79F8C88C4F7",
+      "completed_points": 5,
+      "all_converged": true
+    },
+    "dd_on": {
+      "branch": "dd",
+      "fermi_statistics_correction": true,
+      "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\vela_fermi_bgn_ab_2026-08-21\\dd_on\\config.json",
+      "curve_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\vela_fermi_bgn_ab_2026-08-21\\dd_on\\curve_combined.csv",
+      "curve_sha256": "8292036BE0448D2ED4408E03F7B5A716D09AE2941957CE31B3B03A77BD740422",
+      "completed_points": 5,
+      "all_converged": true
+    },
+    "dg_off": {
+      "branch": "dg",
+      "fermi_statistics_correction": false,
+      "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\vela_fermi_bgn_ab_2026-08-21\\dg_off\\config.json",
+      "curve_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\vela_fermi_bgn_ab_2026-08-21\\dg_off\\curve_combined.csv",
+      "curve_sha256": "20F404BFA917E9E5BADE28105EFD60C616CBA133652C7EDEFEBFC1378DBC9F60",
+      "completed_points": 5,
+      "all_converged": true
+    },
+    "dg_on": {
+      "branch": "dg",
+      "fermi_statistics_correction": true,
+      "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\vela_fermi_bgn_ab_2026-08-21\\dg_on\\config.json",
+      "curve_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\vela_fermi_bgn_ab_2026-08-21\\dg_on\\curve_combined.csv",
+      "curve_sha256": "6AD4931F2CBFE1F0722E9807FB065ABAB52CFF703D296CDDDBE343F69501CBCC",
+      "completed_points": 5,
+      "all_converged": true
+    }
+  },
+  "comparison": [
+    {
+      "gate_bias_V": -0.2,
+      "vela_dd_off_A_per_um": 3.5907933389181755e-10,
+      "vela_dd_on_A_per_um": 2.1943572520908386e-10,
+      "vela_dg_off_A_per_um": 4.886943876087455e-10,
+      "vela_dg_on_A_per_um": 3.117510608146526e-10,
+      "sentaurus_default_A_per_um": 3.24296348009132e-10,
+      "sentaurus_nofermi_A_per_um": 5.20082735507746e-10,
+      "vela_dd_on_off_dex": -0.21388307661630626,
+      "vela_dg_on_off_dex": -0.1952294114652707,
+      "sentaurus_default_nofermi_dex": -0.20513037932975167,
+      "vela_dg_on_vs_sentaurus_default_dex": -0.017134118036394037,
+      "vela_dg_off_vs_sentaurus_nofermi_dex": -0.027035085900874996
+    },
+    {
+      "gate_bias_V": -0.04,
+      "vela_dd_off_A_per_um": 4.754887784731078e-08,
+      "vela_dd_on_A_per_um": 2.917132149066249e-08,
+      "vela_dg_off_A_per_um": 4.457113437962593e-08,
+      "vela_dg_on_A_per_um": 2.877557025518475e-08,
+      "sentaurus_default_A_per_um": 2.97693349400415e-08,
+      "sentaurus_nofermi_A_per_um": 4.74662800496611e-08,
+      "vela_dd_on_off_dex": -0.21218416850112176,
+      "vela_dg_on_off_dex": -0.19002974850523371,
+      "sentaurus_default_nofermi_dex": -0.20261606480252417,
+      "vela_dg_on_vs_sentaurus_default_dex": -0.01474519347909873,
+      "vela_dg_off_vs_sentaurus_nofermi_dex": -0.027331509776389165
+    },
+    {
+      "gate_bias_V": 0.12,
+      "vela_dd_off_A_per_um": 4.6890084822111395e-06,
+      "vela_dd_on_A_per_um": 3.1308588724917817e-06,
+      "vela_dg_off_A_per_um": 3.1638554422121553e-06,
+      "vela_dg_on_A_per_um": 2.179440781737912e-06,
+      "sentaurus_default_A_per_um": 2.25398350908295e-06,
+      "sentaurus_nofermi_A_per_um": 3.35396969901449e-06,
+      "vela_dd_on_off_dex": -0.17541752668596114,
+      "vela_dg_on_off_dex": -0.161871559031037,
+      "sentaurus_default_nofermi_dex": -0.17260840043883957,
+      "vela_dg_on_vs_sentaurus_default_dex": -0.014605661110385889,
+      "vela_dg_off_vs_sentaurus_nofermi_dex": -0.025342502518188464
+    },
+    {
+      "gate_bias_V": 0.28,
+      "vela_dd_off_A_per_um": 6.305477769489424e-05,
+      "vela_dd_on_A_per_um": 5.35018630381277e-05,
+      "vela_dg_off_A_per_um": 4.5402531170601064e-05,
+      "vela_dg_on_A_per_um": 3.835305771856158e-05,
+      "sentaurus_default_A_per_um": 3.92970755591278e-05,
+      "sentaurus_nofermi_A_per_um": 4.70470048147384e-05,
+      "vela_dd_on_off_dex": -0.07134909362901658,
+      "vela_dg_on_off_dex": -0.07328007122213066,
+      "sentaurus_default_nofermi_dex": -0.0781717479527865,
+      "vela_dg_on_vs_sentaurus_default_dex": -0.010560237876410873,
+      "vela_dg_off_vs_sentaurus_nofermi_dex": -0.015451914607066726
+    },
+    {
+      "gate_bias_V": 1.0,
+      "vela_dd_off_A_per_um": 0.0007375483590115915,
+      "vela_dd_on_A_per_um": 0.0007195161320512103,
+      "vela_dg_off_A_per_um": 0.0006347515982207712,
+      "vela_dg_on_A_per_um": 0.0006194971920752714,
+      "sentaurus_default_A_per_um": 0.000632443746545901,
+      "sentaurus_nofermi_A_per_um": 0.000649523786522284,
+      "vela_dd_on_off_dex": -0.010749965509497271,
+      "vela_dg_on_off_dex": -0.010564460804184132,
+      "sentaurus_default_nofermi_dex": -0.011573157475535582,
+      "vela_dg_on_vs_sentaurus_default_dex": -0.008982560492221129,
+      "vela_dg_off_vs_sentaurus_nofermi_dex": -0.009991257163572596
+    }
+  ],
+  "sentaurus_oracle": "D:\\code-repo\\vela-tcad\\docs\\validation\\transportmodels_sentaurus_idvg_semantics_2x2_2026-08-21.json",
+  "artifacts": {
+    "png": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\vela_fermi_bgn_ab_2026-08-21\\vela_fermi_bgn_ab.png",
+    "svg": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\vela_fermi_bgn_ab_2026-08-21\\vela_fermi_bgn_ab.svg"
+  }
+}

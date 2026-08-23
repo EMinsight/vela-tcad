@@ -614,13 +614,15 @@ def apply_solver_physics(deck: dict[str, Any],
             "electron": {
                 "tau_min_s": 0.0,
                 "tau_max_s": 3.0e-8,
-                "reference_doping_m3": 1.0e22,
+                # Vela v1 unit_scaling decks interpret this legacy-suffixed
+                # field in the active internal concentration unit (cm^-3).
+                "reference_doping_m3": 1.0e16,
                 "gamma": 1.0,
             },
             "hole": {
                 "tau_min_s": 0.0,
                 "tau_max_s": 3.0e-6,
-                "reference_doping_m3": 1.0e22,
+                "reference_doping_m3": 1.0e16,
                 "gamma": 1.0,
             },
         }

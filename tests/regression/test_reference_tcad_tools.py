@@ -11479,6 +11479,9 @@ LOOKUP_TABLE default
                         "mode": "psi_minus_phin",
                         "amplitude_V": 1.0e-6,
                         "exclude_contacts": False,
+                        "node_ids": [0],
+                        "node_index_base": 0,
+                        "adjacent_cell_rings": 0,
                     }
                 ],
             }, indent=2) + "\n")
@@ -11501,7 +11504,8 @@ LOOKUP_TABLE default
         self.assertIn("analytic_norm", rows[0])
         self.assertIn("finite_difference_norm", rows[0])
         self.assertLess(float(rows[0]["relative_error"]), 1.0e-4)
-        self.assertGreater(int(rows[0]["selected_nodes"]), 0)
+        self.assertEqual(int(rows[0]["selected_nodes"]), 1)
+        self.assertEqual(status["directions"][0]["selected_node_ids"], [0])
 
     def test_runner_writes_newton_block_step_probe_for_external_state(self) -> None:
         exe_name = "vela_example_runner.exe" if sys.platform.startswith("win") else "vela_example_runner"

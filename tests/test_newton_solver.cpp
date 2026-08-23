@@ -38,6 +38,8 @@ TEST_CASE("Newton JSON parses Sentaurus electron density-gradient controls",
         {"electron_quantum_potential", {
             {"enabled", true},
             {"coupling_mode", "frozen"},
+            {"transport_coupling", "sentaurus_exponential"},
+            {"transport_coupling_weight", 0.75},
             {"formulation", "density_based"},
             {"gamma", 3.6},
             {"effective_mass_ratio", 1.0},
@@ -83,6 +85,10 @@ TEST_CASE("Newton JSON parses Sentaurus electron density-gradient controls",
     });
     REQUIRE(cfg.electronQuantumPotential.enabled);
     REQUIRE(cfg.electronQuantumPotential.couplingMode == "frozen");
+    REQUIRE(cfg.electronQuantumPotential.transportCoupling ==
+            "sentaurus_exponential");
+    REQUIRE(cfg.electronQuantumPotential.transportCouplingWeight ==
+            Catch::Approx(0.75));
     REQUIRE(cfg.electronQuantumPotential.formulation == "density_based");
     REQUIRE(cfg.electronQuantumPotential.gamma == Catch::Approx(3.6));
     REQUIRE(cfg.electronQuantumPotential.effectiveMassRatio ==
@@ -160,6 +166,33 @@ TEST_CASE("Newton JSON parses Sentaurus electron density-gradient controls",
             Catch::Approx(3.15));
 }
 
+TEST_CASE("Newton JSON rejects unknown density-gradient transport coupling",
+          "[newton][density_gradient]")
+{
+    REQUIRE_THROWS_AS(
+        newtonConfigFromJson(nlohmann::json{
+            {"electron_quantum_potential", {
+                {"enabled", true},
+                {"transport_coupling", "unknown"},
+            }},
+        }),
+        std::invalid_argument);
+}
+
+TEST_CASE("Newton JSON parses and validates Sentaurus-default SRH density coupling",
+          "[newton][density_gradient][srh][json]")
+{
+    const NewtonConfig cfg = newtonConfigFromJson(nlohmann::json{
+        {"srh_density_coupling", "sentaurus_default"},
+    });
+    REQUIRE(cfg.srhDopingDependence.densityCoupling == "sentaurus_default");
+    REQUIRE_THROWS_AS(
+        newtonConfigFromJson(nlohmann::json{
+            {"srh_density_coupling", "unknown"},
+        }),
+        std::invalid_argument);
+}
+
 TEST_CASE("Newton JSON rejects explicit oxide plus WKB quantum closure",
           "[newton][density_gradient]")
 {
@@ -202,14 +235,112 @@ TEST_CASE("Frozen electron quantum potential shifts density and preserves flat-Q
 
     CoupledDDBoundaryConditions boundaries;
     const auto diagnostics = assembler.sgEdgeFluxDiagnostics(x, boundaries);
-    for (const auto& edge : diagnostics)
+    for (const auto& edge : diagnostics) {
         REQUIRE(std::abs(edge.electronFlux) < 1.0e-12);
+        REQUIRE(edge.electronDensity0_m3 == Catch::Approx(density(edge.node0)));
+        REQUIRE(edge.electronDensity1_m3 == Catch::Approx(density(edge.node1)));
+    }
 
     const SparseMatrixd analytic = assembler.assembleJacobian(x, boundaries);
     const SparseMatrixd finiteDifference =
         assembler.finiteDifferenceJacobian(x, boundaries, 1.0e-7);
     const Real denominator = std::max<Real>(finiteDifference.norm(), 1.0e-30);
     REQUIRE((analytic - finiteDifference).norm() / denominator < 5.0e-5);
+}
+
+TEST_CASE("Sentaurus exponential DG coupling multiplies classical Fermi density",
+          "[newton][density_gradient][fermi]")
+{
+    const DeviceMesh mesh = makePNMesh();
+    MaterialDatabase materials;
+    DopingModel doping(mesh.numNodes());
+    const Real thermalVoltage = constants::Vt_300;
+    const MobilityModelConfig mobility;
+    const RecombinationModelConfig recombination =
+        recombinationModelConfig({"none"});
+    const CarrierStatisticsConfig statistics{"fermi_dirac"};
+
+    DensityGradientQuantumPotentialConfig directConfig;
+    directConfig.enabled = true;
+    directConfig.transportCoupling = "direct_band_edge";
+    DensityGradientQuantumPotentialConfig exponentialConfig = directConfig;
+    exponentialConfig.transportCoupling = "sentaurus_exponential";
+    DensityGradientQuantumPotentialConfig classicalConfig;
+
+    auto makeAssembler = [&](const DensityGradientQuantumPotentialConfig& config) {
+        return CoupledDDAssembler(
+            mesh, materials, doping, thermalVoltage, mobility, recombination,
+            {}, {}, {}, {}, {}, {}, statistics, config);
+    };
+    CoupledDDAssembler direct = makeAssembler(directConfig);
+    CoupledDDAssembler exponential = makeAssembler(exponentialConfig);
+    CoupledDDAssembler classical = makeAssembler(classicalConfig);
+    const VectorXd quantum =
+        VectorXd::Constant(static_cast<int>(mesh.numNodes()), 0.04);
+    direct.setElectronQuantumPotential(quantum);
+    exponential.setElectronQuantumPotential(quantum);
+
+    CoupledDDState state;
+    state.psi = VectorXd::Constant(static_cast<int>(mesh.numNodes()), 0.8);
+    state.phin = VectorXd::Zero(static_cast<int>(mesh.numNodes()));
+    state.phip = VectorXd::Zero(static_cast<int>(mesh.numNodes()));
+    const VectorXd directDensity = direct.electronDensity(direct.pack(state));
+    const VectorXd exponentialDensity =
+        exponential.electronDensity(exponential.pack(state));
+    const VectorXd classicalDensity =
+        classical.electronDensity(classical.pack(state));
+
+    REQUIRE(exponentialDensity(0) / classicalDensity(0) ==
+            Catch::Approx(std::exp(-0.04 / thermalVoltage)).epsilon(1.0e-12));
+    REQUIRE(std::abs(exponentialDensity(0) / directDensity(0) - 1.0) > 1.0e-3);
+
+    CoupledDDBoundaryConditions boundaries;
+    const auto diagnostics = exponential.sgEdgeFluxDiagnostics(
+        exponential.pack(state), boundaries);
+    for (const auto& edge : diagnostics)
+        REQUIRE(std::abs(edge.electronFlux) < 1.0e-12);
+}
+
+TEST_CASE("SG edge diagnostic converts native line flux to particles per metre",
+          "[newton][sg][unit_scaling]")
+{
+    const DeviceMesh mesh = makePNMesh();
+    MaterialDatabase materials;
+    DopingModel doping(mesh.numNodes());
+    DDScalingSpec scaling;
+    scaling.enabled = true;
+    scaling.V0 = 1.0;
+    scaling.C0 = 1.0;
+    scaling.D0 = 1.0;
+    scaling.L0 = 1.0;
+    scaling.mu0 = 1.0;
+    scaling.unitSystem = PhysicalUnitSystem::tcadInternal();
+    scaling.fieldFromCoordinateDeltaFactor =
+        scaling.unitSystem.fieldFromCoordinateDeltaFactor();
+    scaling.currentDensityLineIntegralFactor =
+        scaling.unitSystem.currentDensityAM2PerInternal() *
+        scaling.unitSystem.lengthMPerInternal();
+    CoupledDDAssembler assembler(
+        mesh, materials, doping, constants::Vt_300, {},
+        recombinationModelConfig({"none"}), {}, {}, {}, {}, scaling);
+    CoupledDDState state;
+    state.psi = VectorXd::Zero(static_cast<int>(mesh.numNodes()));
+    state.phin = VectorXd::Zero(static_cast<int>(mesh.numNodes()));
+    state.phip = VectorXd::Zero(static_cast<int>(mesh.numNodes()));
+    state.phin(1) = 0.01;
+    CoupledDDBoundaryConditions boundaries;
+    const auto diagnostics = assembler.sgEdgeFluxDiagnostics(
+        assembler.pack(state), boundaries);
+    bool foundNonzero = false;
+    for (const auto& edge : diagnostics) {
+        if (std::abs(edge.electronFlux) < 1.0e-30)
+            continue;
+        foundNonzero = true;
+        REQUIRE(edge.electronParticleLineFlux_per_m_s ==
+                Catch::Approx(
+                    edge.electronFlux * scaling.currentDensityLineIntegralFactor));
+    }
+    REQUIRE(foundNonzero);
 }
 
 static DeviceMesh makePNMesh()
@@ -411,7 +542,7 @@ TEST_CASE("NewtonSolver: pseudo-arclength corrector advances a converged device 
     REQUIRE(f1.lpNorm<Eigen::Infinity>() < 1.0e-6);
 }
 
-TEST_CASE("NewtonSolver: arclength system applies quasi-Fermi update caps",
+TEST_CASE("NewtonSolver: arclength quasi-Fermi cap uniformly scales bordered update",
           "[newton][arclength][scaling]")
 {
     DeviceMesh mesh = makePNMesh();
@@ -447,12 +578,14 @@ TEST_CASE("NewtonSolver: arclength system applies quasi-Fermi update caps",
 
     cappedSystem.limitUpdate(x, deltaX, deltaLambda);
 
-    REQUIRE(deltaX(interiorNode) == Catch::Approx(2.0));
-    REQUIRE(deltaLambda == Catch::Approx(0.25));
+    const Real expectedScale =
+        cappedCfg.quasiFermiUpdateLimitMinority_V / (2.0 * potentialScale);
+    REQUIRE(deltaX(interiorNode) == Catch::Approx(2.0 * expectedScale));
+    REQUIRE(deltaLambda == Catch::Approx(0.25 * expectedScale));
     REQUIRE(std::abs(deltaX(N + interiorNode) * potentialScale) ==
             Catch::Approx(cappedCfg.quasiFermiUpdateLimitMinority_V).margin(1.0e-12));
     REQUIRE(std::abs(deltaX(2 * N + interiorNode) * potentialScale) ==
-            Catch::Approx(cappedCfg.quasiFermiUpdateLimit_V).margin(1.0e-12));
+            Catch::Approx(cappedCfg.quasiFermiUpdateLimitMinority_V).margin(1.0e-12));
 }
 TEST_CASE("NewtonSolver: high-doping unit-scaled PN cold start reaches near-zero 0V current",
           "[newton][scaling][bgn]")
@@ -725,6 +858,248 @@ TEST_CASE("ContactCurrent: referenced quasi-Fermi increments preserve residual c
             Catch::Approx(sgFlux.holeCurrent).epsilon(1.0e-12));
     REQUIRE(residual.totalCurrent ==
             Catch::Approx(sgFlux.totalCurrent).epsilon(1.0e-12));
+}
+
+TEST_CASE("ContactCurrent: electron reference preserves a sub-ULP contact drop",
+          "[contact_current][residual][qf-reference][deep-off]")
+{
+    DeviceMesh mesh = makePNMesh();
+    MaterialDatabase matdb;
+    DopingModel doping = makePNDoping(mesh);
+    MobilityModelConfig mobility = mobilityModelConfig("constant");
+    BandgapNarrowingConfig bgn;
+    bgn.model = "old_slotboom";
+    CoupledDDAssembler assembler(
+        mesh, matdb, doping, constants::Vt_300, mobility,
+        recombinationModelConfig({"none"}), bgn);
+    assembler.setQuasiFermiReferences(1.1, 0.0);
+
+    const int N = static_cast<int>(mesh.numNodes());
+    CoupledDDState state;
+    state.psi = VectorXd::LinSpaced(N, -0.02, 0.03);
+    state.phin = VectorXd::Constant(N, 1.1);
+    state.phip = VectorXd::Zero(N);
+    VectorXd x = assembler.pack(state);
+    x(N + 4) = 5.0e-18;
+
+    DDSolution solution;
+    const CoupledDDState physical = assembler.unpack(x);
+    solution.psi = physical.psi;
+    solution.phin = physical.phin;
+    solution.phip = physical.phip;
+    solution.phinIncrement = x.segment(N, N);
+    solution.phipIncrement = x.segment(2 * N, N);
+    solution.electronQfReference_V = 1.1;
+    solution.holeQfReference_V = 0.0;
+    solution.n = assembler.electronDensity(x);
+    solution.p = assembler.holeDensity(x);
+
+    // The physical output cannot represent this drop around 1.1 V, while the
+    // reference-coordinate state still retains it for residual and terminal
+    // current evaluation.
+    REQUIRE(solution.phin(0) == solution.phin(4));
+    REQUIRE(solution.phinIncrement(0) != solution.phinIncrement(4));
+
+    ContactCurrent current(
+        mesh, matdb, doping, mobility, constants::T0, {}, bgn);
+    const ContactCurrentResult sgFlux = current.compute(solution, "anode");
+    const ContactCurrentResult residual =
+        current.computeFromResidual(assembler, x, "anode");
+    CAPTURE(sgFlux.electronCurrent, residual.electronCurrent,
+            sgFlux.totalCurrent, residual.totalCurrent,
+            residual.electronCurrent / sgFlux.electronCurrent);
+    REQUIRE(sgFlux.electronCurrent != 0.0);
+    REQUIRE(residual.electronCurrent ==
+            Catch::Approx(sgFlux.electronCurrent).epsilon(1.0e-12));
+    REQUIRE(residual.totalCurrent ==
+            Catch::Approx(sgFlux.totalCurrent).epsilon(1.0e-12));
+}
+
+TEST_CASE("ContactCurrent: contact-basin references preserve local sub-ULP flux",
+          "[contact_current][qf-reference][contact-basin][precision]")
+{
+    DeviceMesh mesh = makePNMesh();
+    MaterialDatabase matdb;
+    DopingModel doping = makePNDoping(mesh);
+    MobilityModelConfig mobility = mobilityModelConfig("constant");
+    BandgapNarrowingConfig bgn;
+    bgn.model = "old_slotboom";
+    CoupledDDAssembler assembler(
+        mesh, matdb, doping, constants::Vt_300, mobility,
+        recombinationModelConfig({"none"}), bgn);
+    assembler.setQuasiFermiReferences(1.1, 0.0);
+
+    const int N = static_cast<int>(mesh.numNodes());
+    CoupledDDState state;
+    state.psi = VectorXd::LinSpaced(N, -0.02, 0.03);
+    state.phin = VectorXd::Constant(N, 1.1);
+    state.phip = VectorXd::Zero(N);
+    VectorXd x = assembler.pack(state);
+    x(N + 4) = 5.0e-18;
+
+    DDSolution global;
+    const CoupledDDState physical = assembler.unpack(x);
+    global.psi = physical.psi;
+    global.phin = physical.phin;
+    global.phip = physical.phip;
+    global.phinIncrement = x.segment(N, N);
+    global.phipIncrement = x.segment(2 * N, N);
+    global.electronQfReference_V = 1.1;
+    global.holeQfReference_V = 0.0;
+    global.n = assembler.electronDensity(x);
+    global.p = assembler.holeDensity(x);
+
+    DDSolution partitioned = global;
+    partitioned.electronQfReference.resize(N);
+    partitioned.electronQfReference << 1.1, 0.0, 0.0, 1.1, 1.1;
+    partitioned.holeQfReference = VectorXd::Zero(N);
+    for (int i = 0; i < N; ++i) {
+        if (partitioned.electronQfReference(i) ==
+            global.electronQfReference_V) {
+            partitioned.phinIncrement(i) = global.phinIncrement(i);
+            continue;
+        }
+        const long double physicalQf =
+            static_cast<long double>(global.electronQfReference_V) +
+            static_cast<long double>(global.phinIncrement(i));
+        partitioned.phinIncrement(i) = static_cast<Real>(
+            physicalQf - static_cast<long double>(
+                partitioned.electronQfReference(i)));
+    }
+
+    ContactCurrent current(
+        mesh, matdb, doping, mobility, constants::T0, {}, bgn,
+        CarrierStatisticsConfig{"fermi_dirac"});
+    const ContactCurrentDetailedResult globalResult =
+        current.computeDetailed(global, "anode");
+    const ContactCurrentDetailedResult partitionedResult =
+        current.computeDetailed(partitioned, "anode");
+
+    REQUIRE(globalResult.totals.electronCurrent != 0.0);
+    int sameBasinEdges = 0;
+    for (const ContactCurrentEdgeDiagnostic& partitionEdge :
+         partitionedResult.edges) {
+        const int node0 = static_cast<int>(partitionEdge.node0);
+        const int node1 = static_cast<int>(partitionEdge.node1);
+        if (partitioned.electronQfReference(node0) !=
+            partitioned.electronQfReference(node1)) {
+            continue;
+        }
+        const auto globalEdge = std::find_if(
+            globalResult.edges.begin(), globalResult.edges.end(),
+            [&](const ContactCurrentEdgeDiagnostic& candidate) {
+                return candidate.edgeId == partitionEdge.edgeId;
+            });
+        REQUIRE(globalEdge != globalResult.edges.end());
+        const Real edgeScale = std::max<Real>(
+            1.0e-300, std::abs(globalEdge->electronCurrent));
+        REQUIRE(std::abs(
+                    partitionEdge.electronCurrent -
+                    globalEdge->electronCurrent) <=
+                1.0e-13 * edgeScale);
+        ++sameBasinEdges;
+    }
+    REQUIRE(sameBasinEdges > 0);
+    const Real comparisonScale = std::max<Real>(
+        1.0e-300, std::abs(partitionedResult.totals.electronCurrent));
+    REQUIRE(std::abs(
+                partitionedResult.precision.electronCurrentCompensated -
+                partitionedResult.totals.electronCurrent) <=
+            1.0e-15 * comparisonScale);
+    REQUIRE(std::isfinite(
+        partitionedResult.precision.electronCurrentLongDoubleReference));
+    REQUIRE(partitionedResult.precision.electronCurrentLongDoubleReference != 0.0);
+}
+
+TEST_CASE("CoupledDDAssembler: nodal quasi-Fermi repartition preserves equations",
+          "[newton][qf-reference][contact-basin][invariance]")
+{
+    DeviceMesh mesh = makePNMesh();
+    MaterialDatabase matdb;
+    DopingModel doping = makePNDoping(mesh);
+    MobilityModelConfig mobility = mobilityModelConfig("constant");
+    BandgapNarrowingConfig bgn;
+    bgn.model = "old_slotboom";
+    CarrierStatisticsConfig statistics;
+    statistics.model = "fermi_dirac";
+    CoupledDDAssembler global(
+        mesh, matdb, doping, constants::Vt_300, mobility,
+        recombinationModelConfig({"none"}), bgn, {}, {}, {}, {}, {}, statistics);
+    CoupledDDAssembler partitioned(
+        mesh, matdb, doping, constants::Vt_300, mobility,
+        recombinationModelConfig({"none"}), bgn, {}, {}, {}, {}, {}, statistics);
+    global.setQuasiFermiReferences(1.1, 0.0);
+    VectorXd electronReference(5);
+    electronReference << 0.0, 1.1, 1.1, 0.0, 0.0;
+    const VectorXd holeReference = VectorXd::Zero(5);
+    partitioned.setQuasiFermiReferenceFields(
+        electronReference, holeReference);
+
+    CoupledDDState state;
+    state.psi = VectorXd::LinSpaced(5, -0.03, 0.08);
+    state.phin.resize(5);
+    state.phin << 0.0, 1.1, 1.1, 0.0, 0.27;
+    state.phip = VectorXd::LinSpaced(5, -0.01, 0.02);
+    const VectorXd globalX = global.pack(state);
+    const VectorXd partitionedX = partitioned.pack(state);
+    const CoupledDDBoundaryConditions bcs;
+
+    const VectorXd globalResidual = global.residual(globalX, bcs);
+    const VectorXd partitionedResidual = partitioned.residual(partitionedX, bcs);
+    const Real residualScale = std::max<Real>(1.0, globalResidual.norm());
+    REQUIRE((partitionedResidual - globalResidual).norm() <=
+            2.0e-12 * residualScale);
+    REQUIRE((partitioned.electronDensity(partitionedX) -
+             global.electronDensity(globalX)).norm() <=
+            2.0e-13 * global.electronDensity(globalX).norm());
+    REQUIRE((partitioned.holeDensity(partitionedX) -
+             global.holeDensity(globalX)).norm() <=
+            2.0e-13 * global.holeDensity(globalX).norm());
+
+    const SparseMatrixd globalJacobian = global.assembleJacobian(globalX, bcs);
+    const SparseMatrixd partitionedJacobian =
+        partitioned.assembleJacobian(partitionedX, bcs);
+    const Real jacobianScale = std::max<Real>(1.0, globalJacobian.norm());
+    REQUIRE((partitionedJacobian - globalJacobian).norm() <=
+            2.0e-9 * jacobianScale);
+}
+
+TEST_CASE("CoupledDDAssembler: source-basin coordinate retains sub-ULP Newton update",
+          "[newton][qf-reference][contact-basin][precision]")
+{
+    DeviceMesh mesh = makePNMesh();
+    MaterialDatabase matdb;
+    DopingModel doping = makePNDoping(mesh);
+    MobilityModelConfig mobility = mobilityModelConfig("constant");
+    CoupledDDAssembler global(
+        mesh, matdb, doping, constants::Vt_300, mobility,
+        recombinationModelConfig({"none"}));
+    CoupledDDAssembler partitioned(
+        mesh, matdb, doping, constants::Vt_300, mobility,
+        recombinationModelConfig({"none"}));
+    global.setQuasiFermiReferences(1.1, 0.0);
+    VectorXd electronReference(5);
+    electronReference << 0.0, 1.1, 1.1, 0.0, 0.0;
+    partitioned.setQuasiFermiReferenceFields(
+        electronReference, VectorXd::Zero(5));
+
+    CoupledDDState state;
+    state.psi = VectorXd::Zero(5);
+    state.phin.resize(5);
+    state.phin << 0.0, 1.1, 1.1, 0.0, 0.0;
+    state.phip = VectorXd::Zero(5);
+    VectorXd globalX = global.pack(state);
+    VectorXd partitionedX = partitioned.pack(state);
+    const int sourceInteriorRow = static_cast<int>(mesh.numNodes()) + 4;
+    const Real delta = 5.0e-18;
+    const Real globalBefore = globalX(sourceInteriorRow);
+    const Real partitionedBefore = partitionedX(sourceInteriorRow);
+    globalX(sourceInteriorRow) += delta;
+    partitionedX(sourceInteriorRow) += delta;
+
+    REQUIRE(globalX(sourceInteriorRow) == globalBefore);
+    REQUIRE(partitionedX(sourceInteriorRow) != partitionedBefore);
+    REQUIRE(partitioned.unpack(partitionedX).phin(4) == delta);
 }
 
 TEST_CASE("NewtonSolver: Gummel initial guess reduces Newton iterations", "[newton]")
@@ -1400,6 +1775,68 @@ TEST_CASE("CoupledDDAssembler: analytic Jacobian matches finite differences on s
     REQUIRE(rel < 5.0e-5);
 }
 
+TEST_CASE("CoupledDDAssembler: Sentaurus-default Fermi SRH source has analytic DG Jacobian",
+          "[newton][coupled][density_gradient][srh][fermi][jacobian]")
+{
+    DeviceMesh mesh = makePNMesh();
+    MaterialDatabase matdb;
+    DopingModel doping = makePNDoping(mesh);
+    CarrierStatisticsConfig statistics{"fermi_dirac"};
+    DensityGradientQuantumPotentialConfig quantum;
+    quantum.enabled = true;
+    quantum.couplingMode = "frozen";
+
+    RecombinationModelConfig srh =
+        recombinationModelConfig({"srh"}, 1.1e-7, 2.3e-7);
+    srh.srhDopingDependence.densityCoupling = "sentaurus_default";
+    RecombinationModelConfig none = recombinationModelConfig({"none"});
+    none.srhDopingDependence.densityCoupling = "sentaurus_default";
+    CoupledDDAssembler withSrh(
+        mesh, matdb, doping, constants::Vt_300, {}, srh, {}, {}, {}, {}, {}, {},
+        statistics, quantum);
+    CoupledDDAssembler withoutSrh(
+        mesh, matdb, doping, constants::Vt_300, {}, none, {}, {}, {}, {}, {}, {},
+        statistics, quantum);
+
+    const int N = static_cast<int>(mesh.numNodes());
+    VectorXd quantumPotential = VectorXd::LinSpaced(N, 0.018, 0.047);
+    withSrh.setElectronQuantumPotential(quantumPotential);
+    withoutSrh.setElectronQuantumPotential(quantumPotential);
+    CoupledDDState state;
+    state.psi = VectorXd::LinSpaced(N, -0.035, 0.052);
+    state.phin = VectorXd::LinSpaced(N, 0.012, -0.019);
+    state.phip = VectorXd::LinSpaced(N, -0.016, 0.014);
+    const VectorXd x = withSrh.pack(state);
+    const CoupledDDBoundaryConditions bcs;
+
+    const Eigen::MatrixXd analyticSource = Eigen::MatrixXd(
+        withSrh.assembleJacobian(x, bcs) -
+        withoutSrh.assembleJacobian(x, bcs));
+    const Eigen::MatrixXd finiteDifferenceSource = Eigen::MatrixXd(
+        withSrh.finiteDifferenceJacobian(x, bcs, 1.0e-8) -
+        withoutSrh.finiteDifferenceJacobian(x, bcs, 1.0e-8));
+    const Real relativeError =
+        (analyticSource - finiteDifferenceSource).norm() /
+        std::max<Real>(1.0e-30, finiteDifferenceSource.norm());
+    REQUIRE(finiteDifferenceSource.norm() > 0.0);
+    REQUIRE(relativeError < 2.0e-4);
+
+    RecombinationModelConfig quantumSrh = srh;
+    quantumSrh.srhDopingDependence.densityCoupling = "quantum";
+    CoupledDDAssembler quantumCoupled(
+        mesh, matdb, doping, constants::Vt_300, {}, quantumSrh, {}, {}, {}, {},
+        {}, {}, statistics, quantum);
+    quantumCoupled.setElectronQuantumPotential(quantumPotential);
+    REQUIRE((withSrh.residual(x, bcs) - quantumCoupled.residual(x, bcs)).norm() >
+            0.0);
+
+    const VectorXd zeroQuantum = VectorXd::Zero(N);
+    withSrh.setElectronQuantumPotential(zeroQuantum);
+    quantumCoupled.setElectronQuantumPotential(zeroQuantum);
+    REQUIRE((withSrh.residual(x, bcs) - quantumCoupled.residual(x, bcs)).norm() ==
+            Catch::Approx(0.0).margin(1.0e-18));
+}
+
 TEST_CASE("CoupledDDAssembler: analytic Jacobian matches finite differences with varying intrinsic density",
           "[newton][coupled][bgn]")
 {
@@ -1888,6 +2325,17 @@ TEST_CASE("NewtonSolver: evaluateDirectionalDerivative compares analytic and fin
     REQUIRE(jvp.relativeError < 1.0e-6);
     REQUIRE(jvp.perturbationPsi(4) == Catch::Approx(0.5e-6));
     REQUIRE(jvp.perturbationPhin(4) == Catch::Approx(-0.5e-6));
+
+    cfg.quasiFermiReference = "contact_majority";
+    NewtonSolver referencedSolver(mesh, matdb, doping, biases, cfg);
+    const NewtonDirectionalDerivativeEvaluation referencedJvp =
+        referencedSolver.evaluateDirectionalDerivative(state, perturbation);
+    REQUIRE(referencedJvp.perturbationNorm ==
+            Catch::Approx(jvp.perturbationNorm).epsilon(1.0e-12));
+    REQUIRE((referencedJvp.analyticJv - jvp.analyticJv).norm() <
+            1.0e-11 * std::max<Real>(1.0, jvp.analyticJv.norm()));
+    REQUIRE((referencedJvp.finiteDifferenceJv - jvp.finiteDifferenceJv).norm() <
+            1.0e-8 * std::max<Real>(1.0, jvp.finiteDifferenceJv.norm()));
 }
 
 TEST_CASE("NewtonSolver: evaluateJacobianBlockAudit reports finite block rows",
@@ -2099,7 +2547,7 @@ TEST_CASE("NewtonSolver: cell-reconstructed SG avalanche Jacobian matches midpoi
     REQUIRE(rows.front().relDiff < 5.0e-3);
 }
 
-TEST_CASE("NewtonSolver: triangle GSS avalanche Jacobian matches the nine-column cell residual",
+TEST_CASE("NewtonSolver: triangle GSS local-AD Jacobian matches the nine-column cell residual",
           "[newton][diagnostics][impact][triangle_gss]")
 {
     DeviceMesh mesh = makePNMesh();
@@ -2128,6 +2576,7 @@ TEST_CASE("NewtonSolver: triangle GSS avalanche Jacobian matches the nine-column
     cfg.impactIonization.sourceGeometryScale = 1.0;
     cfg.impactIonization.edgeSourcePartition = "symmetric";
     cfg.impactIonization.sourceMappingMode = "triangle_gss_gradqf_truncated";
+    cfg.impactIonization.sourceJacobianMode = "local_ad";
     cfg.impactIonization.electronA = 1.0;
     cfg.impactIonization.electronB = 1.0e-30;
     cfg.impactIonization.holeA = 1.0;
@@ -2146,7 +2595,56 @@ TEST_CASE("NewtonSolver: triangle GSS avalanche Jacobian matches the nine-column
     REQUIRE(rows.front().block == "sg_avalanche");
     REQUIRE(rows.front().fdNorm > 0.0);
     REQUIRE(rows.front().analyticNorm > 0.0);
-    REQUIRE(rows.front().relDiff < 5.0e-5);
+    REQUIRE(rows.front().relDiff < 2.0e-5);
+}
+
+TEST_CASE("NewtonSolver: frozen triangle GSS avalanche Jacobian keeps only the residual",
+          "[newton][diagnostics][impact][triangle_gss]")
+{
+    DeviceMesh mesh = makePNMesh();
+    MaterialDatabase matdb;
+    DopingModel doping = makePNDoping(mesh);
+    std::unordered_map<std::string, Real> biases = {
+        {"anode", -1.0},
+        {"cathode", 0.0},
+    };
+
+    NewtonConfig cfg;
+    cfg.inputScaling.mode = UnitScalingMode::UnitScaling;
+    cfg.recombination = {"none"};
+    cfg.warmStart = true;
+    cfg.mobility.model = "constant";
+    cfg.mobility.highFieldDrivingForce = "quasi_fermi_gradient";
+    cfg.impactIonization.model = "selberherr";
+    cfg.impactIonization.drivingForce = "quasi_fermi_gradient";
+    cfg.impactIonization.generation = "current_density";
+    cfg.impactIonization.currentApproximation = "cell_reconstructed";
+    cfg.impactIonization.currentMagnitudeMode = "edge_scalar_abs";
+    cfg.impactIonization.cellReconstructedMidpointDensity = "gss_logistic";
+    cfg.impactIonization.quasiFermiGradientDiscretization = "cell_gradient";
+    cfg.impactIonization.sourceVolumePolicy = "genius_truncated";
+    cfg.impactIonization.sourceVolumeFactor = 0.0;
+    cfg.impactIonization.sourceGeometryScale = 1.0;
+    cfg.impactIonization.edgeSourcePartition = "symmetric";
+    cfg.impactIonization.sourceMappingMode = "triangle_gss_gradqf_truncated";
+    cfg.impactIonization.sourceJacobianMode = "frozen";
+    cfg.impactIonization.electronA = 1.0;
+    cfg.impactIonization.electronB = 1.0e-30;
+    cfg.impactIonization.holeA = 1.0;
+    cfg.impactIonization.holeB = 1.0e-30;
+
+    DDSolution state;
+    state.psi = (VectorXd(5) << 0.05, -0.30, -0.75, -0.10, -0.42).finished();
+    state.phin = (VectorXd(5) << 0.02, -0.65, -1.10, -0.08, -0.27).finished();
+    state.phip = (VectorXd(5) << -0.15, -0.35, -0.82, -0.60, -0.24).finished();
+
+    NewtonSolver solver(mesh, matdb, doping, biases, cfg);
+    const auto rows = solver.evaluateJacobianBlockAudit(
+        state, 1.0e-7, std::vector<std::string>{"sg_avalanche"});
+
+    REQUIRE(rows.size() == 1);
+    REQUIRE(rows.front().fdNorm > 0.0);
+    REQUIRE(rows.front().analyticNorm == Catch::Approx(0.0).margin(1.0e-30));
 }
 
 TEST_CASE("NewtonSolver: arithmetic cell-reconstructed SG avalanche Jacobian matches residual",
@@ -2544,6 +3042,16 @@ TEST_CASE("NewtonSolver: evaluateCarrierTermDiagnostics decomposes continuity re
         + center.holeBoundary;
     REQUIRE(electronSum == Catch::Approx(center.electronResidual).margin(1.0e-18));
     REQUIRE(holeSum == Catch::Approx(center.holeResidual).margin(1.0e-18));
+
+    const NewtonCarrierTermDiagnosticsEvaluation solvedTerms =
+        solver.evaluateCarrierTermDiagnostics(state, true);
+    REQUIRE(solvedTerms.rows.size() == static_cast<std::size_t>(N));
+    for (int node = 0; node < N; ++node) {
+        REQUIRE(solvedTerms.rows[static_cast<std::size_t>(node)].electronResidual ==
+                Catch::Approx(solvedTerms.residual.raw(N + node)).margin(1.0e-18));
+        REQUIRE(solvedTerms.rows[static_cast<std::size_t>(node)].holeResidual ==
+                Catch::Approx(solvedTerms.residual.raw(2 * N + node)).margin(1.0e-18));
+    }
 }
 
 TEST_CASE("NewtonSolver: defaults to analytic Jacobian", "[newton]")
@@ -2554,6 +3062,12 @@ TEST_CASE("NewtonSolver: defaults to analytic Jacobian", "[newton]")
     REQUIRE_FALSE(cfg.warmStart);
     REQUIRE(cfg.quasiFermiUpdateLimit_V == Catch::Approx(0.0));
     REQUIRE(cfg.quasiFermiUpdateLimitMinority_V == Catch::Approx(0.0));
+    REQUIRE(cfg.quasiFermiUpdateLimitMode == "componentwise_poisson_recorrect");
+    REQUIRE(cfg.quasiFermiTrustRegionGrowthFactor == Catch::Approx(1.0));
+    REQUIRE(cfg.quasiFermiTrustRegionMaxMultiplier == Catch::Approx(1.0));
+    REQUIRE(cfg.quasiFermiTrustRegionExpansionThreshold == Catch::Approx(0.75));
+    REQUIRE(cfg.quasiFermiTrustRegionShrinkFactor == Catch::Approx(1.0));
+    REQUIRE(cfg.quasiFermiTrustRegionMinMultiplier == Catch::Approx(1.0));
     REQUIRE(cfg.carrierRegularizationScale == Catch::Approx(0.0));
     REQUIRE_FALSE(cfg.carrierDiagonalFloor.enabled);
     REQUIRE(cfg.contactBoundaryReconstruction == "dominant_signed_contact_mean");
@@ -2569,8 +3083,18 @@ TEST_CASE("NewtonSolver: defaults to analytic Jacobian", "[newton]")
         {"warm_start", true},
         {"quasi_fermi_update_limit_V", 0.0259},
         {"quasi_fermi_update_limit_minority_V", 0.01},
+        {"quasi_fermi_update_limit_mode", "uniform_trust_region"},
+        {"quasi_fermi_trust_region_growth_factor", 2.0},
+        {"quasi_fermi_trust_region_max_multiplier", 8.0},
+        {"quasi_fermi_trust_region_expansion_threshold", 0.8},
+        {"quasi_fermi_trust_region_shrink_factor", 0.5},
+        {"quasi_fermi_trust_region_min_multiplier", 1.0},
         {"carrier_regularization_scale", 3.0},
         {"carrier_diagonal_floor", nlohmann::json{{"enabled", true}, {"scale", 2.0}, {"minority_density_ratio", 0.25}}},
+        {"local_update_diagnostics", nlohmann::json{
+            {"enabled", true}, {"csv_file", "local_updates.csv"},
+            {"nodes", nlohmann::json::array({1, 3})},
+            {"first_iterations", 4}, {"every_iterations", 7}}},
         {"contact_boundary_reconstruction", "legacy_node_local"},
     });
     REQUIRE(debugCfg.jacobian == "finite_difference");
@@ -2578,11 +3102,26 @@ TEST_CASE("NewtonSolver: defaults to analytic Jacobian", "[newton]")
     REQUIRE(debugCfg.warmStart);
     REQUIRE(debugCfg.quasiFermiUpdateLimit_V == Catch::Approx(0.0259));
     REQUIRE(debugCfg.quasiFermiUpdateLimitMinority_V == Catch::Approx(0.01));
+    REQUIRE(debugCfg.quasiFermiUpdateLimitMode == "uniform_trust_region");
+    REQUIRE(debugCfg.quasiFermiTrustRegionGrowthFactor == Catch::Approx(2.0));
+    REQUIRE(debugCfg.quasiFermiTrustRegionMaxMultiplier == Catch::Approx(8.0));
+    REQUIRE(debugCfg.quasiFermiTrustRegionExpansionThreshold == Catch::Approx(0.8));
+    REQUIRE(debugCfg.quasiFermiTrustRegionShrinkFactor == Catch::Approx(0.5));
+    REQUIRE(debugCfg.quasiFermiTrustRegionMinMultiplier == Catch::Approx(1.0));
     REQUIRE(debugCfg.carrierRegularizationScale == Catch::Approx(3.0));
     REQUIRE(debugCfg.carrierDiagonalFloor.enabled);
     REQUIRE(debugCfg.carrierDiagonalFloor.scale == Catch::Approx(2.0));
     REQUIRE(debugCfg.carrierDiagonalFloor.minorityDensityRatio == Catch::Approx(0.25));
+    REQUIRE(debugCfg.localUpdateDiagnostics.enabled);
+    REQUIRE(debugCfg.localUpdateDiagnostics.csvFile == "local_updates.csv");
+    REQUIRE(debugCfg.localUpdateDiagnostics.nodes == std::vector<Index>{1, 3});
+    REQUIRE(debugCfg.localUpdateDiagnostics.firstIterations == 4);
+    REQUIRE(debugCfg.localUpdateDiagnostics.everyIterations == 7);
     REQUIRE(debugCfg.contactBoundaryReconstruction == "legacy_node_local");
+
+    const NewtonConfig basinCfg = newtonConfigFromJson(
+        nlohmann::json{{"quasi_fermi_reference", "contact_basin"}});
+    REQUIRE(basinCfg.quasiFermiReference == "contact_basin");
 }
 
 TEST_CASE("NewtonSolver: unit_scaling config records scaled mode and preserves analytic Jacobian",
@@ -2758,6 +3297,44 @@ TEST_CASE("NewtonSolver: evaluates residual for an externally supplied state",
     REQUIRE(residual.potentialScale > 0.0);
 }
 
+TEST_CASE("NewtonSolver: diagnostic probes preserve referenced sub-ULP increments",
+          "[newton][diagnostics][qf-reference][precision]")
+{
+    DeviceMesh mesh = makePNMesh();
+    MaterialDatabase matdb;
+    DopingModel doping = makePNDoping(mesh);
+    NewtonConfig cfg = newtonConfig();
+    cfg.quasiFermiReference = "contact_majority";
+    cfg.warmStart = true;
+    const std::unordered_map<std::string, Real> biases = {
+        {"anode", 0.0}, {"cathode", 1.1}};
+    NewtonSolver solver(mesh, matdb, doping, biases, cfg);
+
+    const int n = static_cast<int>(mesh.numNodes());
+    DDSolution zero;
+    zero.psi = VectorXd::Constant(n, 1.1);
+    zero.phin = VectorXd::Constant(n, 1.1);
+    zero.phip = VectorXd::Zero(n);
+    zero.phinIncrement = VectorXd::Zero(n);
+    zero.phipIncrement = VectorXd::Zero(n);
+    zero.electronQfReference = VectorXd::Constant(n, 1.1);
+    zero.holeQfReference = VectorXd::Zero(n);
+    zero.electronQfReference_V = 1.1;
+    zero.holeQfReference_V = 0.0;
+    zero.n = VectorXd::Zero(n);
+    zero.p = VectorXd::Zero(n);
+
+    DDSolution perturbed = zero;
+    const Real subUlpIncrement = 6.0e-17;
+    REQUIRE(1.1 + subUlpIncrement == 1.1);
+    perturbed.phinIncrement(4) = subUlpIncrement;
+
+    const NewtonResidualEvaluation zeroResidual = solver.evaluateResidual(zero);
+    const NewtonResidualEvaluation perturbedResidual =
+        solver.evaluateResidual(perturbed);
+    REQUIRE((perturbedResidual.raw - zeroResidual.raw).norm() > 0.0);
+}
+
 TEST_CASE("NewtonSolver: reports maximum contact majority quasi-Fermi drop", "[newton][contact][diagnostics]")
 {
     DeviceMesh mesh = makePNMesh();
@@ -2791,6 +3368,9 @@ TEST_CASE("NewtonSolver: parses block residual norm controls", "[newton][config]
 {
     const NewtonConfig cfg = newtonConfigFromJson(nlohmann::json{
         {"residual_norm", "block"},
+        {"line_search_mode", "block_filter"},
+        {"residual_filter_gamma", 2.0e-4},
+        {"residual_filter_envelope_factor", 1.75},
         {"max_update", 0.25},
         {"stall_residual_floor", 2.0e-8},
         {"poisson_line_search_stall_residual_floor", 3.0e-7},
@@ -2805,6 +3385,9 @@ TEST_CASE("NewtonSolver: parses block residual norm controls", "[newton][config]
     });
 
     REQUIRE(cfg.residualNorm == "block");
+    REQUIRE(cfg.lineSearchMode == "block_filter");
+    REQUIRE(cfg.residualFilterGamma == Catch::Approx(2.0e-4));
+    REQUIRE(cfg.residualFilterEnvelopeFactor == Catch::Approx(1.75));
     REQUIRE(cfg.maxUpdate == Catch::Approx(0.25));
     REQUIRE(cfg.stallResidualFloor == Catch::Approx(2.0e-8));
     REQUIRE(cfg.poissonLineSearchStallResidualFloor == Catch::Approx(3.0e-7));
@@ -2841,6 +3424,15 @@ TEST_CASE("NewtonSolver: parses block residual norm controls", "[newton][config]
         newtonConfigFromJson(nlohmann::json{{"residual_norm", "unknown"}}),
         std::invalid_argument);
     REQUIRE_THROWS_AS(
+        newtonConfigFromJson(nlohmann::json{{"line_search_mode", "unknown"}}),
+        std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        newtonConfigFromJson(nlohmann::json{{"residual_filter_gamma", 0.0}}),
+        std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        newtonConfigFromJson(nlohmann::json{{"residual_filter_envelope_factor", 0.5}}),
+        std::invalid_argument);
+    REQUIRE_THROWS_AS(
         newtonConfigFromJson(nlohmann::json{{"max_update", -1.0}}),
         std::invalid_argument);
     REQUIRE_THROWS_AS(
@@ -2854,6 +3446,29 @@ TEST_CASE("NewtonSolver: parses block residual norm controls", "[newton][config]
         std::invalid_argument);
     REQUIRE_THROWS_AS(
         newtonConfigFromJson(nlohmann::json{{"quasi_fermi_update_limit_minority_V", -1.0}}),
+        std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        newtonConfigFromJson(nlohmann::json{{"quasi_fermi_update_limit_mode", "unknown"}}),
+        std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        newtonConfigFromJson(nlohmann::json{{"quasi_fermi_trust_region_growth_factor", 0.5}}),
+        std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        newtonConfigFromJson(nlohmann::json{{"quasi_fermi_trust_region_max_multiplier", 0.5}}),
+        std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        newtonConfigFromJson(nlohmann::json{{"quasi_fermi_trust_region_expansion_threshold", 0.0}}),
+        std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        newtonConfigFromJson(nlohmann::json{{"quasi_fermi_trust_region_shrink_factor", 0.0}}),
+        std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        newtonConfigFromJson(nlohmann::json{
+            {"quasi_fermi_trust_region_max_multiplier", 2.0},
+            {"quasi_fermi_trust_region_min_multiplier", 3.0}}),
+        std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        newtonConfigFromJson(nlohmann::json{{"quasi_fermi_trust_region_min_multiplier", 0.0}}),
         std::invalid_argument);
     REQUIRE_THROWS_AS(
         newtonConfigFromJson(nlohmann::json{{"carrier_regularization_scale", -1.0}}),
@@ -3234,6 +3849,55 @@ TEST_CASE("NewtonSolver: minority quasi-Fermi update limit caps only the minorit
     REQUIRE(std::abs(minorityPhinDelta) == Catch::Approx(minorityLimit).margin(1.0e-12));
     REQUIRE(std::abs(minorityPhipDelta) == Catch::Approx(globalLimit).margin(1.0e-12));
     REQUIRE(std::abs(minorityPhinDelta) < std::abs(globalPhinDelta));
+}
+
+TEST_CASE("NewtonSolver: uniform quasi-Fermi trust region preserves the complete Newton direction",
+          "[newton][line_search][scaling][trust-region]")
+{
+    DeviceMesh mesh = makePNMesh();
+    MaterialDatabase matdb;
+    DopingModel doping = makePNDoping(mesh);
+    const std::unordered_map<std::string, Real> biases = {
+        {"anode", -0.05},
+        {"cathode", 0.0},
+    };
+
+    NewtonConfig seedCfg = newtonConfig();
+    seedCfg.maxIter = 0;
+    seedCfg.reltol = 0.0;
+    seedCfg.abstol = 0.0;
+    seedCfg.warmStart = true;
+    seedCfg.inputScaling = UnitScalingConfig{UnitScalingMode::UnitScaling};
+    DDSolution initial = runNewton(mesh, matdb, doping, biases, seedCfg).solution;
+    initial.phin(4) = 0.18;
+    initial.phip(4) = -0.16;
+
+    NewtonConfig rawCfg = newtonConfig();
+    rawCfg.warmStart = true;
+    rawCfg.inputScaling = UnitScalingConfig{UnitScalingMode::UnitScaling};
+    const NewtonStepEvaluation raw =
+        NewtonSolver(mesh, matdb, doping, biases, rawCfg).evaluateStep(initial);
+
+    NewtonConfig trustCfg = rawCfg;
+    trustCfg.quasiFermiUpdateLimit_V = 0.01;
+    trustCfg.quasiFermiUpdateLimitMode = "uniform_trust_region";
+    const NewtonStepEvaluation trust =
+        NewtonSolver(mesh, matdb, doping, biases, trustCfg).evaluateStep(initial);
+
+    const Real maxRawQf = std::max(
+        raw.deltaPhin.cwiseAbs().maxCoeff(),
+        raw.deltaPhip.cwiseAbs().maxCoeff());
+    REQUIRE(maxRawQf > trustCfg.quasiFermiUpdateLimit_V);
+    const Real expectedScale = trustCfg.quasiFermiUpdateLimit_V / maxRawQf;
+
+    REQUIRE(trust.deltaPhin.cwiseAbs().maxCoeff() <=
+            trustCfg.quasiFermiUpdateLimit_V + 1.0e-12);
+    REQUIRE(trust.deltaPhip.cwiseAbs().maxCoeff() <=
+            trustCfg.quasiFermiUpdateLimit_V + 1.0e-12);
+    REQUIRE((trust.deltaPsi - expectedScale * raw.deltaPsi).norm() < 1.0e-11);
+    REQUIRE((trust.deltaPhin - expectedScale * raw.deltaPhin).norm() < 1.0e-11);
+    REQUIRE((trust.deltaPhip - expectedScale * raw.deltaPhip).norm() < 1.0e-11);
+    REQUIRE(trust.stepNorm == Catch::Approx(expectedScale * raw.stepNorm).epsilon(1.0e-10));
 }
 
 TEST_CASE("NewtonSolver: max-iteration exit honors stall residual floor", "[newton][line_search]")

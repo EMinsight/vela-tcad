@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/catch_approx.hpp>
 
 #include "vela/core/PhysicalConstants.h"
 #include "vela/equation/AssemblerUtils.h"
@@ -203,6 +204,56 @@ TEST_CASE("interface intrinsic density prefers silicon when oxide cells are orde
     REQUIRE(ni.at(1) == matdb.getMaterial("Si").ni);
     REQUIRE(ni.at(2) == 0.0);
     REQUIRE(ni.at(3) == matdb.getMaterial("Si").ni);
+}
+
+TEST_CASE("triangle GSS avalanche excludes oxide cells at a shared interface",
+          "[mos_mixed][impact][triangle_gss]")
+{
+    const DeviceMesh mesh = makeHorizontalInterfaceMesh();
+    const MaterialDatabase matdb;
+    const DopingModel doping = DopingModel::fromMeshAndRegions(
+        mesh, {{"channel", 1.0e21, 0.0}, {"gate_oxide", 0.0, 0.0}});
+    const auto edgeCells = detail::buildEdgeCellMap(mesh);
+    const auto cellEdges = detail::buildCellEdgeMap(edgeCells, mesh);
+    const auto materials = detail::buildCellMaterials(
+        mesh, matdb, constants::T0);
+
+    MobilityModelConfig mobilityConfig = mobilityModelConfig("masetti_field");
+    mobilityConfig.highFieldDrivingForce = "quasi_fermi_gradient";
+    const auto mobility = makeMobilityModel(mobilityConfig);
+    ImpactIonizationModelConfig impactConfig;
+    impactConfig.model = "selberherr";
+    impactConfig.drivingForce = "quasi_fermi_gradient";
+    impactConfig.generation = "current_density";
+    impactConfig.currentApproximation = "cell_reconstructed";
+    impactConfig.sourceMappingMode = "triangle_gss_gradqf_truncated";
+    impactConfig.sourceGeometryScale = 1.0;
+    impactConfig.electronA = 1.0;
+    impactConfig.electronB = 1.0e-30;
+    impactConfig.holeA = 1.0;
+    impactConfig.holeB = 1.0e-30;
+    const auto impact = makeImpactIonizationModel(impactConfig);
+
+    VectorXd psi(4);
+    psi << 0.0, 0.1, -0.5, 0.8;
+    VectorXd phin(4);
+    phin << 0.0, -0.2, -0.6, -0.4;
+    VectorXd phip(4);
+    phip << -0.1, -0.3, -0.8, -0.5;
+    const VectorXd n = VectorXd::Constant(4, 1.0e16);
+    const VectorXd p = VectorXd::Constant(4, 1.0e16);
+
+    const auto siliconRecords = detail::triangleGssAvalancheSourceRecordsForCell(
+        impactConfig, *impact, mobilityConfig, *mobility, cellEdges.at(0),
+        mesh, doping, materials, 0, psi, phin, phip, n, p,
+        constants::Vt_300);
+    const auto oxideRecords = detail::triangleGssAvalancheSourceRecordsForCell(
+        impactConfig, *impact, mobilityConfig, *mobility, cellEdges.at(1),
+        mesh, doping, materials, 1, psi, phin, phip, n, p,
+        constants::Vt_300);
+
+    REQUIRE(siliconRecords.size() == 3);
+    REQUIRE(oxideRecords.empty());
 }
 
 
@@ -448,6 +499,162 @@ TEST_CASE("mixed Si/SiO2 MOS coupled DD residual and Jacobian are finite",
                 REQUIRE(residual(holeRow) == state.phip(static_cast<int>(node)));
                 REQUIRE(jacobian.coeff(electronRow, electronRow) == 1.0);
                 REQUIRE(jacobian.coeff(holeRow, holeRow) == 1.0);
+            }
+        }
+    }
+}
+
+TEST_CASE("mixed Si/SiO2 MOS carrier gauges are quasi-Fermi reference invariant",
+          "[mos_mixed][dd][qf-reference]")
+{
+    for (const std::filesystem::path& exampleDir : mosExampleDirs()) {
+        DYNAMIC_SECTION(exampleDir.filename().string()) {
+            const nlohmann::json cfg =
+                readJson(exampleDir / "simulation_iv.json");
+            JsonMeshReader reader;
+            DeviceMesh mesh = reader.read((exampleDir / "mesh.json").string());
+            MaterialDatabase matdb;
+            DopingModel doping = dopingFromDeck(mesh, cfg);
+
+            CoupledDDAssembler absolute(
+                mesh, matdb, doping, constants::Vt_300, 1.0e-6, 1.0e-6);
+            CoupledDDAssembler referenced(
+                mesh, matdb, doping, constants::Vt_300, 1.0e-6, 1.0e-6);
+            referenced.setQuasiFermiReferences(1.1, -0.7);
+
+            const int nNodes = static_cast<int>(mesh.numNodes());
+            CoupledDDState state;
+            state.psi = VectorXd::LinSpaced(nNodes, -0.15, 0.35);
+            state.phin = VectorXd::LinSpaced(
+                nNodes, 1.1 - 2.0e-4, 1.1 + 3.0e-4);
+            state.phip = VectorXd::LinSpaced(
+                nNodes, -0.7 + 4.0e-4, -0.7 - 1.0e-4);
+
+            const VectorXd absoluteX = absolute.pack(state);
+            const VectorXd referencedX = referenced.pack(state);
+            const CoupledDDBoundaryConditions bcs;
+            const VectorXd absoluteResidual = absolute.residual(absoluteX, bcs);
+            const VectorXd referencedResidual =
+                referenced.residual(referencedX, bcs);
+            const Real residualScale =
+                std::max<Real>(1.0, absoluteResidual.norm());
+            REQUIRE((referencedResidual - absoluteResidual).norm()
+                    <= 5.0e-12 * residualScale);
+
+            const Eigen::MatrixXd absoluteJacobian(
+                absolute.assembleJacobian(absoluteX, bcs));
+            const Eigen::MatrixXd referencedJacobian(
+                referenced.assembleJacobian(referencedX, bcs));
+            const Real jacobianScale =
+                std::max<Real>(1.0, absoluteJacobian.norm());
+            Eigen::Index maxDifferenceRow = 0;
+            Eigen::Index maxDifferenceColumn = 0;
+            const Real maxJacobianDifference =
+                (referencedJacobian - absoluteJacobian).cwiseAbs().maxCoeff(
+                    &maxDifferenceRow, &maxDifferenceColumn);
+            CAPTURE(maxDifferenceRow, maxDifferenceColumn,
+                    maxJacobianDifference, jacobianScale);
+            REQUIRE((referencedJacobian - absoluteJacobian).norm()
+                    <= 5.0e-12 * jacobianScale);
+
+            const auto absoluteTerms =
+                absolute.carrierContinuityTermDiagnostics(absoluteX, bcs);
+            const auto referencedTerms =
+                referenced.carrierContinuityTermDiagnostics(referencedX, bcs);
+            REQUIRE(referencedTerms.size() == absoluteTerms.size());
+            for (std::size_t i = 0; i < absoluteTerms.size(); ++i) {
+                CAPTURE(i);
+                REQUIRE(referencedTerms[i].electronResidual ==
+                        Catch::Approx(absoluteTerms[i].electronResidual)
+                            .epsilon(5.0e-12).margin(1.0e-12));
+                REQUIRE(referencedTerms[i].holeResidual ==
+                        Catch::Approx(absoluteTerms[i].holeResidual)
+                            .epsilon(5.0e-12).margin(1.0e-12));
+            }
+
+            const std::vector<Index> oxideGateOnlyNodes =
+                contactNodesOnlyInRegion(mesh, "gate", "gate_oxide");
+            REQUIRE_FALSE(oxideGateOnlyNodes.empty());
+            for (Index node : oxideGateOnlyNodes) {
+                const int ii = static_cast<int>(node);
+                REQUIRE(referencedTerms[node].electronGauge ==
+                        Catch::Approx(state.phin(ii)).margin(1.0e-15));
+                REQUIRE(referencedTerms[node].holeGauge ==
+                        Catch::Approx(state.phip(ii)).margin(1.0e-15));
+            }
+        }
+    }
+}
+
+TEST_CASE("local-AD avalanche keeps pure oxide carrier rows as unit gauges",
+          "[mos_mixed][dd][impact][local_ad]")
+{
+    for (const std::filesystem::path& exampleDir : mosExampleDirs()) {
+        DYNAMIC_SECTION(exampleDir.filename().string()) {
+            const nlohmann::json cfg = readJson(exampleDir / "simulation_iv.json");
+            JsonMeshReader reader;
+            DeviceMesh mesh = reader.read((exampleDir / "mesh.json").string());
+            MaterialDatabase matdb;
+            DopingModel doping = dopingFromDeck(mesh, cfg);
+
+            MobilityModelConfig mobility = mobilityModelConfig("masetti_field");
+            mobility.highFieldDrivingForce = "quasi_fermi_gradient";
+            RecombinationModelConfig recombination;
+            recombination.mechanisms = {"none"};
+            ImpactIonizationModelConfig impact;
+            impact.model = "selberherr";
+            impact.drivingForce = "quasi_fermi_gradient";
+            impact.generation = "current_density";
+            impact.currentApproximation = "cell_reconstructed";
+            impact.currentMagnitudeMode = "edge_scalar_abs";
+            impact.cellReconstructedMidpointDensity = "gss_logistic";
+            impact.quasiFermiGradientDiscretization = "cell_gradient";
+            impact.sourceVolumePolicy = "genius_truncated";
+            impact.sourceVolumeFactor = 0.0;
+            impact.sourceGeometryScale = 1.0;
+            impact.edgeSourcePartition = "symmetric";
+            impact.sourceMappingMode = "triangle_gss_gradqf_truncated";
+            impact.sourceJacobianMode = "local_ad";
+            impact.electronA = 1.0;
+            impact.electronB = 1.0e-30;
+            impact.holeA = 1.0;
+            impact.holeB = 1.0e-30;
+
+            CoupledDDAssembler assembler(
+                mesh, matdb, doping, constants::Vt_300, mobility,
+                recombination, {}, impact);
+            const int nNodes = static_cast<int>(mesh.numNodes());
+            CoupledDDState state;
+            state.psi = VectorXd::LinSpaced(nNodes, 0.2, -2.0);
+            state.phin = VectorXd::LinSpaced(nNodes, 0.0, -1.2);
+            state.phip = VectorXd::LinSpaced(nNodes, -0.1, -0.8);
+            const VectorXd x = assembler.pack(state);
+            const CoupledDDBoundaryConditions bcs;
+            const VectorXd residual = assembler.residual(x, bcs);
+            const SparseMatrixd jacobian = assembler.assembleJacobian(x, bcs);
+
+            const std::vector<Index> oxideOnlyNodes =
+                contactNodesOnlyInRegion(mesh, "gate", "gate_oxide");
+            REQUIRE_FALSE(oxideOnlyNodes.empty());
+            for (Index node : oxideOnlyNodes) {
+                for (const int row : {
+                         nNodes + static_cast<int>(node),
+                         2 * nNodes + static_cast<int>(node)}) {
+                    INFO("pure oxide carrier row " << row);
+                    int numericEntries = 0;
+                    for (int outer = 0; outer < jacobian.outerSize(); ++outer) {
+                        for (SparseMatrixd::InnerIterator entry(jacobian, outer);
+                             entry; ++entry) {
+                            if (entry.row() != row || entry.value() == 0.0)
+                                continue;
+                            ++numericEntries;
+                            REQUIRE(entry.col() == row);
+                            REQUIRE(entry.value() == 1.0);
+                        }
+                    }
+                    REQUIRE(numericEntries == 1);
+                    REQUIRE(residual(row) == x(row));
+                }
             }
         }
     }

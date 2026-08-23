@@ -61,16 +61,28 @@ struct ContactCurrentEdgeDiagnostic {
     Real electronContinuityFlux = 0.0;
     Real holeContinuityFlux = 0.0;
     Real electronCurrent = 0.0;
+    Real electronCurrentLongDoubleReference = 0.0;
     Real electronDriftCurrent = 0.0;
     Real electronDiffusionCurrent = 0.0;
     Real holeCurrent = 0.0;
+    Real holeCurrentLongDoubleReference = 0.0;
     Real holeDriftCurrent = 0.0;
     Real holeDiffusionCurrent = 0.0;
     Real totalCurrent = 0.0;
 };
 
+struct ContactCurrentPrecisionDiagnostic {
+    Real electronCurrentCompensated = 0.0;
+    Real holeCurrentCompensated = 0.0;
+    Real totalCurrentCompensated = 0.0;
+    Real electronCurrentLongDoubleReference = 0.0;
+    Real holeCurrentLongDoubleReference = 0.0;
+    Real totalCurrentLongDoubleReference = 0.0;
+};
+
 struct ContactCurrentDetailedResult {
     ContactCurrentResult totals;
+    ContactCurrentPrecisionDiagnostic precision;
     std::vector<ContactCurrentEdgeDiagnostic> edges;
 };
 
@@ -83,7 +95,9 @@ public:
                    Real temperature_K = constants::T0,
                    DDScalingSpec scaling = {},
                    BandgapNarrowingConfig bandgapNarrowingConfig = {},
-                   CarrierStatisticsConfig carrierStatistics = {});
+                   CarrierStatisticsConfig carrierStatistics = {},
+                   DensityGradientQuantumPotentialConfig
+                       electronQuantumPotential = {});
 
     ContactCurrentResult compute(const DDSolution& solution,
                                  const std::string& contactName) const;
@@ -109,7 +123,9 @@ public:
                                         Real temperature_K = constants::T0,
                                         DDScalingSpec scaling = {},
                                         const BandgapNarrowingConfig& bandgapNarrowingConfig = {},
-                                        const CarrierStatisticsConfig& carrierStatistics = {});
+                                        const CarrierStatisticsConfig& carrierStatistics = {},
+                                        const DensityGradientQuantumPotentialConfig&
+                                            electronQuantumPotential = {});
 
 private:
     const DeviceMesh& mesh_;
@@ -125,6 +141,7 @@ private:
     std::vector<Real> Nc_;
     std::vector<Real> Nv_;
     CarrierStatisticsConfig carrierStatistics_;
+    DensityGradientQuantumPotentialConfig electronQuantumPotentialConfig_;
 };
 
 } // namespace vela

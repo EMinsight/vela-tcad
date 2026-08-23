@@ -1,0 +1,167 @@
+{
+  "schema": "vela.transportmodels.dd_dg_srh_corrected_regression.v1",
+  "as_of": "2026-08-23",
+  "status": "partial",
+  "completed_points": 4,
+  "expected_points": 84,
+  "configuration": {
+    "silicon_intrinsic_density_cm3": 14638914958.767616,
+    "bandgap_narrowing": {
+      "model": "old_slotboom",
+      "fermi_statistics_correction": true
+    },
+    "srh_reference_doping_cm3": 1e+16,
+    "bias_direction": {
+      "idvg": "2.2 V to -1.0 V",
+      "idvd": "2.0 V to 0.0 V"
+    }
+  },
+  "execution": [
+    {
+      "name": "idvd",
+      "runner_exit_code": 1,
+      "resumed_after_points": 0,
+      "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_dg_srh_corrected_regression_2026-08-23\\dd\\idvd\\config.json",
+      "console": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_dg_srh_corrected_regression_2026-08-23\\dd\\idvd\\console.log",
+      "branch": "dd",
+      "curve": "idvd"
+    },
+    {
+      "name": "idvg",
+      "runner_exit_code": 1,
+      "resumed_after_points": 0,
+      "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_dg_srh_corrected_regression_2026-08-23\\dd\\idvg\\config.json",
+      "console": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_dg_srh_corrected_regression_2026-08-23\\dd\\idvg\\console.log",
+      "branch": "dd",
+      "curve": "idvg"
+    },
+    {
+      "name": "idvd",
+      "runner_exit_code": 1,
+      "resumed_after_points": 0,
+      "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_dg_srh_corrected_regression_2026-08-23\\dg\\idvd\\config.json",
+      "console": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_dg_srh_corrected_regression_2026-08-23\\dg\\idvd\\console.log",
+      "branch": "dg",
+      "curve": "idvd"
+    },
+    {
+      "name": "idvg",
+      "runner_exit_code": 1,
+      "resumed_after_points": 1,
+      "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_dg_srh_corrected_regression_2026-08-23\\dg\\idvg\\config.json",
+      "console": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_dg_srh_corrected_regression_2026-08-23\\dg\\idvg\\console.log",
+      "branch": "dg",
+      "curve": "idvg"
+    }
+  ],
+  "branches": [
+    {
+      "branch": "dd",
+      "complete": false,
+      "curves": [
+        {
+          "name": "idvg",
+          "expected_points": 21,
+          "completed_points": 1,
+          "aligned_points": 1,
+          "all_converged": false,
+          "candidate_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_dg_srh_corrected_regression_2026-08-23\\dd\\idvg\\curve_combined.csv",
+          "reference_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\generated\\reference_curves\\transportmodels_sentaurus2022_dd_idvg_reference.csv",
+          "aligned": [
+            {
+              "bias_V": 2.2,
+              "current_A_per_um": 0.0,
+              "converged": false,
+              "iterations": 5,
+              "sentaurus_A_per_um": 0.00181040907111,
+              "absolute_relative_error": 1.0,
+              "absolute_log_error_dex": 27.257776716997903
+            }
+          ],
+          "metrics": null,
+          "candidate_sha256": "EB26923842DD8528415902A93875F961607D35D95DC26B132126254F8742C015",
+          "reference_sha256": "9C7190637E9CF250726A0B7B20E42EF40AC3E165C3817F3D90C014889D76BC47"
+        },
+        {
+          "name": "idvd",
+          "expected_points": 21,
+          "completed_points": 1,
+          "aligned_points": 1,
+          "all_converged": false,
+          "candidate_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_dg_srh_corrected_regression_2026-08-23\\dd\\idvd\\curve_combined.csv",
+          "reference_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\generated\\reference_curves\\transportmodels_sentaurus2022_dd_idvd_reference.csv",
+          "aligned": [
+            {
+              "bias_V": 2.0,
+              "current_A_per_um": 0.0,
+              "converged": false,
+              "iterations": 3,
+              "sentaurus_A_per_um": 0.000808310849704,
+              "absolute_relative_error": 1.0,
+              "absolute_log_error_dex": 26.907578408236823
+            }
+          ],
+          "metrics": null,
+          "candidate_sha256": "F225909E429CA8A335A18B1B5359E06E6CCE25E4D95A372A5799169AB3933130",
+          "reference_sha256": "FD55B7E953AAADF9EBC2AB672024BB2B677F88D2C1E5B389AE51E8BCFE8085FF"
+        }
+      ]
+    },
+    {
+      "branch": "dg",
+      "complete": false,
+      "curves": [
+        {
+          "name": "idvg",
+          "expected_points": 21,
+          "completed_points": 1,
+          "aligned_points": 1,
+          "all_converged": false,
+          "candidate_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_dg_srh_corrected_regression_2026-08-23\\dg\\idvg\\curve_combined.csv",
+          "reference_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\generated\\reference_curves\\transportmodels_sentaurus2022_dg_idvg_reference.csv",
+          "aligned": [
+            {
+              "bias_V": 2.2,
+              "current_A_per_um": 0.0016438280547755825,
+              "converged": true,
+              "iterations": 37,
+              "sentaurus_A_per_um": 0.00168607324102,
+              "absolute_relative_error": 0.025055368424482548,
+              "absolute_log_error_dex": 0.011020047772252628
+            }
+          ],
+          "metrics": null,
+          "candidate_sha256": "5EF5F4A51270801BF1AEDE7D904CD241DDFCA448C89B294456DD5A4100A5DE81",
+          "reference_sha256": "FC39DF966515307C22151B3364F3A187C3AFBAABC1839C80CA5244EA7FB51A4A"
+        },
+        {
+          "name": "idvd",
+          "expected_points": 21,
+          "completed_points": 1,
+          "aligned_points": 1,
+          "all_converged": false,
+          "candidate_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_dg_srh_corrected_regression_2026-08-23\\dg\\idvd\\curve_combined.csv",
+          "reference_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\generated\\reference_curves\\transportmodels_sentaurus2022_dg_idvd_reference.csv",
+          "aligned": [
+            {
+              "bias_V": 2.0,
+              "current_A_per_um": 0.0,
+              "converged": false,
+              "iterations": 6,
+              "sentaurus_A_per_um": 0.000705525753105,
+              "absolute_relative_error": 1.0,
+              "absolute_log_error_dex": 26.848512870999315
+            }
+          ],
+          "metrics": null,
+          "candidate_sha256": "4406E2242AE18FF80F92C81609501948BE58259CCB70A93DB0D444F674D3D5DF",
+          "reference_sha256": "5A559F6B16824343883FCB8447D5D3FEB8B6EE79305AF042508BAEDBE4121699"
+        }
+      ]
+    }
+  ],
+  "artifacts": {
+    "png": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_dg_srh_corrected_regression_2026-08-23\\dd_dg_idvg_idvd_comparison.png",
+    "svg": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_dg_srh_corrected_regression_2026-08-23\\dd_dg_idvg_idvd_comparison.svg"
+  }
+}

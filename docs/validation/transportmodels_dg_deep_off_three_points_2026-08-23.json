@@ -1,0 +1,120 @@
+{
+  "schema": "vela.transportmodels.dg_deep_off_three_points.v2",
+  "generated_at": "2026-08-23T21:15:59+08:00",
+  "status": "complete",
+  "summary": {
+    "all_points_kcl_resolved": true,
+    "id_to_kcl_range": [
+      390.81747200666206,
+      576.8654559256624
+    ],
+    "remaining_id_relative_error_range": [
+      0.06615310384410507,
+      0.13874386641055675
+    ],
+    "classical_srh_contract_explained_fraction_range": [
+      0.880663892477273,
+      0.9072080272272812
+    ],
+    "classical_srh_contract_remaining_gap_range": [
+      0.012880972520587827,
+      0.01347900271936895
+    ],
+    "classification": "numerical_closure_resolved_srh_density_contract_dominates"
+  },
+  "points": [
+    {
+      "bias_V": -1.0,
+      "bias_label": "-1.00 V",
+      "sentaurus_A_per_um": 1.63697016902e-15,
+      "sentaurus_display": "1.63697 x 10^-15",
+      "vela_A_per_um": 1.4098505985714227e-15,
+      "vela_display": "1.40985 x 10^-15",
+      "relative_error": 0.13874386641055675,
+      "log_error_dex": 0.06486767216755318,
+      "electron_residual": 2.892724511812093e-18,
+      "hole_residual": 5.785049912673638e-23,
+      "carrier_row_violations": 0,
+      "carrier_row_max_ratio": 0.0007117313495859574,
+      "kcl_A_per_um": 3.556645964558336e-18,
+      "kcl_display": "3.55665 x 10^-18",
+      "id_to_kcl": 396.3989142075033,
+      "hard_acceptance": true
+    },
+    {
+      "bias_V": -0.84,
+      "bias_label": "-0.84 V",
+      "sentaurus_A_per_um": 1.6376302263e-15,
+      "sentaurus_display": "1.63763 x 10^-15",
+      "vela_A_per_um": 1.434403489080593e-15,
+      "vela_display": "1.43440 x 10^-15",
+      "relative_error": 0.12409806191631542,
+      "log_error_dex": 0.05754451270522409,
+      "electron_residual": 3.3835778194300283e-18,
+      "hole_residual": 5.675096280957413e-24,
+      "carrier_row_violations": 0,
+      "carrier_row_max_ratio": 0.0009054825403760772,
+      "kcl_A_per_um": 3.6702644887282354e-18,
+      "kcl_display": "3.67026 x 10^-18",
+      "id_to_kcl": 390.81747200666206,
+      "hard_acceptance": true
+    },
+    {
+      "bias_V": -0.68,
+      "bias_label": "-0.68 V",
+      "sentaurus_A_per_um": 2.1629695198e-15,
+      "sentaurus_display": "2.16297 x 10^-15",
+      "vela_A_per_um": 2.0198823725450364e-15,
+      "vela_display": "2.01988 x 10^-15",
+      "relative_error": 0.06615310384410507,
+      "log_error_dex": 0.029724320349174604,
+      "electron_residual": 2.406371420886441e-16,
+      "hole_residual": 1.1490617937645227e-19,
+      "carrier_row_violations": 0,
+      "carrier_row_max_ratio": 0.000674464452190849,
+      "kcl_A_per_um": 3.5014791608623e-18,
+      "kcl_display": "3.50148 x 10^-18",
+      "id_to_kcl": 576.8654559256624,
+      "hard_acceptance": true
+    }
+  ],
+  "srh_contract": [
+    {
+      "bias_V": -1.0,
+      "bias_label": "-1.00 V",
+      "sentaurus_srh_display": "1.62636 x 10^-15",
+      "current_contract_srh_display": "1.40059 x 10^-15",
+      "classical_contract_srh_display": "1.64731 x 10^-15",
+      "current_contract_gap": 0.13881559078540145,
+      "classical_contract_gap": 0.012880972520587827,
+      "explained_fraction": 0.9072080272272812,
+      "bgn_abs_error_meV": 0.8460341204953165
+    },
+    {
+      "bias_V": -0.84,
+      "bias_label": "-0.84 V",
+      "sentaurus_srh_display": "1.61795 x 10^-15",
+      "current_contract_srh_display": "1.41543 x 10^-15",
+      "classical_contract_srh_display": "1.63909 x 10^-15",
+      "current_contract_gap": 0.12517029642079996,
+      "classical_contract_gap": 0.013069521894536607,
+      "explained_fraction": 0.8955860753848562,
+      "bgn_abs_error_meV": 0.8422124408997799
+    },
+    {
+      "bias_V": -0.68,
+      "bias_label": "-0.68 V",
+      "sentaurus_srh_display": "1.61126 x 10^-15",
+      "current_contract_srh_display": "1.42927 x 10^-15",
+      "classical_contract_srh_display": "1.63298 x 10^-15",
+      "current_contract_gap": 0.11294991096304983,
+      "classical_contract_gap": 0.01347900271936895,
+      "explained_fraction": 0.880663892477273,
+      "bgn_abs_error_meV": 0.8398907761422474
+    }
+  ],
+  "artifacts": {
+    "artifact_json": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_dg_deep_off_three_points_20260823\\artifact.json",
+    "report_html": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_dg_deep_off_three_points_20260823\\transportmodels_dg_deep_off_three_points_report.html"
+  }
+}

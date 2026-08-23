@@ -1,0 +1,53 @@
+{
+  "schema": "vela.transportmodels.dg_discretization_self_consistent.v1",
+  "status": "pass",
+  "as_of": "2026-08-21",
+  "sentaurus_current_A_per_um": 0.000705525753105,
+  "results": [
+    {
+      "name": "p1_direct",
+      "label": "P1 direct control",
+      "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_discretization_self_consistent_2026-08-21\\p1_direct\\config.json",
+      "config_sha256": "57AA7BDFCF5C29DA8A3F3D31D7A920EBAEFDFEDC1E4B1A7AFE31CBAB94E39640",
+      "runtime_log": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_discretization_self_consistent_2026-08-21\\p1_direct\\config.log",
+      "runner_exit_code": null,
+      "output_row": false,
+      "converged": false,
+      "failure_reason": "empty output CSV",
+      "last_outer_iteration": 33,
+      "last_inner_iterations": 60,
+      "last_inner_converged": false,
+      "last_inner_residual": 9770.207781,
+      "last_outer_raw_change_V": 3.308438798,
+      "qualification_status": "stopped_after_19_minute_qualification_window"
+    },
+    {
+      "name": "sentaurus_box",
+      "label": "Sentaurus box contender",
+      "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_discretization_self_consistent_2026-08-21\\sentaurus_box\\config.json",
+      "config_sha256": "D54810185CA3773B772C31521EF042C6939954CD548B513E3594E67A115C7671",
+      "runtime_log": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_discretization_self_consistent_2026-08-21\\sentaurus_box\\config.log",
+      "runner_exit_code": 0,
+      "output_row": true,
+      "converged": true,
+      "current_A_per_um": 0.0007122957086645862,
+      "absolute_relative_error": 0.0095956179200996,
+      "iterations": 26,
+      "newton_iterations": 26,
+      "newton_convergence_reason": "stall_residual_floor+electron_density_gradient",
+      "failure_reason": "",
+      "mean_electron_mobility_m2_V_s": 111.27619138881487,
+      "min_electron_mobility_m2_V_s": 0.12684586751576904,
+      "max_electric_field_V_per_cm": 6108520.363551767,
+      "mean_electron_high_field_drive_V_per_cm": 1910491.9610768915,
+      "last_outer_iteration": 17,
+      "last_inner_iterations": 22,
+      "last_inner_converged": true,
+      "last_inner_residual": 0.0,
+      "last_outer_raw_change_V": 0.0009360317564,
+      "endpoint_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_discretization_self_consistent_2026-08-21\\sentaurus_box\\endpoint.csv",
+      "endpoint_sha256": "5486225DAEF45EF2BCBE20FAE485C06C1D908E57F09F295558C7DD74B0D06889",
+      "qualification_status": "converged"
+    }
+  ]
+}

@@ -35,7 +35,8 @@ LineSearchResult BacktrackingLineSearch::search(
     const VectorXd& currentResidual,
     const ResidualFunction& residualFunction,
     const AcceptFunction& acceptFunction,
-    const NormFunction& normFunction) const
+    const NormFunction& normFunction,
+    const DecreaseAcceptFunction& decreaseAcceptFunction) const
 {
     ScopedPerformanceTimer timer("newton.line_search");
     incrementPerformanceCounter("newton.line_search_calls");
@@ -72,7 +73,10 @@ LineSearchResult BacktrackingLineSearch::search(
         const bool finite = candidate.allFinite() && residual.allFinite() && std::isfinite(norm);
         const bool acceptedByCaller = !acceptFunction || acceptFunction(candidate, residual);
         const Real target = (1.0 - cfg_.sufficientDecrease * alpha) * currentNorm;
-        const bool sufficientDecrease = !cfg_.enabled || norm <= target || norm < currentNorm;
+        const bool sufficientDecrease = !cfg_.enabled ||
+            (decreaseAcceptFunction
+                ? decreaseAcceptFunction(residual, alpha)
+                : (norm <= target || norm < currentNorm));
         const bool accepted = finite && acceptedByCaller && sufficientDecrease;
         const std::string rejectionReason = accepted
             ? std::string{}

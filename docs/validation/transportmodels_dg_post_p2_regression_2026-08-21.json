@@ -1,0 +1,102 @@
+{
+  "schema": "vela.transportmodels.dg_phase7_regression.v1",
+  "as_of": "2026-08-21",
+  "status": "partial",
+  "acceptance_status": "fail",
+  "execution": [
+    {
+      "name": "idvg",
+      "runner_exit_code": 1,
+      "resumed_after_points": 1,
+      "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_post_p2_regression_2026-08-21\\idvg\\config.json",
+      "console": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_post_p2_regression_2026-08-21\\idvg\\console.log"
+    },
+    {
+      "name": "idvd",
+      "runner_exit_code": 1,
+      "resumed_after_points": 0,
+      "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_post_p2_regression_2026-08-21\\idvd\\config.json",
+      "console": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_post_p2_regression_2026-08-21\\idvd\\console.log"
+    }
+  ],
+  "configuration": {
+    "materials": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_parameter_fixed_state_sweep_2026-08-21\\materials_sentaurus2022_dg_band_drive.json",
+    "discretization": "sentaurus_box",
+    "interface": "neutral_continuous",
+    "mobility": "masetti_field_lombardi",
+    "outer_absolute_tolerance_V": 0.01
+  },
+  "curves": [
+    {
+      "name": "idvg",
+      "expected_points": 21,
+      "completed_points": 1,
+      "aligned_points": 1,
+      "all_converged": false,
+      "candidate_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_post_p2_regression_2026-08-21\\idvg\\curve_combined.csv",
+      "reference_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\generated\\reference_curves\\transportmodels_sentaurus2022_dg_idvg_reference.csv",
+      "aligned": [
+        {
+          "bias_V": 2.2,
+          "current_A_per_um": 0.0016406189993127117,
+          "converged": true,
+          "iterations": 38,
+          "sentaurus_A_per_um": 0.00168607324102,
+          "absolute_relative_error": 0.026958640112092865,
+          "absolute_log_error_dex": 0.01186869931095691
+        }
+      ],
+      "metrics": null,
+      "candidate_sha256": "88627B72A3BD3EE1FA2ADDC71D4B3E34514F6C4B840AC3EB5E6BD74721A206F6",
+      "reference_sha256": "FC39DF966515307C22151B3364F3A187C3AFBAABC1839C80CA5244EA7FB51A4A"
+    },
+    {
+      "name": "idvd",
+      "expected_points": 21,
+      "completed_points": 1,
+      "aligned_points": 1,
+      "all_converged": false,
+      "candidate_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_post_p2_regression_2026-08-21\\idvd\\curve_combined.csv",
+      "reference_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\generated\\reference_curves\\transportmodels_sentaurus2022_dg_idvd_reference.csv",
+      "aligned": [
+        {
+          "bias_V": 2.0,
+          "current_A_per_um": 0.0,
+          "converged": false,
+          "iterations": 4,
+          "sentaurus_A_per_um": 0.000705525753105,
+          "absolute_relative_error": 1.0,
+          "absolute_log_error_dex": 26.848512870999315
+        }
+      ],
+      "metrics": null,
+      "candidate_sha256": "6447FEA48A67ED34BEF912C14FBEF1F80C160203C0BA0D0848099996FCDB842D",
+      "reference_sha256": "5A559F6B16824343883FCB8447D5D3FEB8B6EE79305AF042508BAEDBE4121699"
+    }
+  ],
+  "spatial": {
+    "vela_state_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_discretization_self_consistent_2026-08-21\\sentaurus_box\\endpoint_final_state.csv",
+    "bias": {
+      "gate_V": 1.0,
+      "drain_V": 2.0
+    },
+    "outer_absolute_tolerance_V": 0.001,
+    "surface_node_count": 59,
+    "quantum_potential_absolute_error_mV": {
+      "median": 11.934653082622509,
+      "p95": 14.7858019347612,
+      "p99": 15.377846437721185,
+      "max": 15.536960242993642
+    },
+    "electron_density_absolute_log_error_dex": {
+      "median": 0.005337482614027778,
+      "p95": 0.08288261878081966,
+      "p99": 0.1654056963501579,
+      "max": 0.17745871603605323
+    }
+  },
+  "artifacts": {
+    "png": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_post_p2_regression_2026-08-21\\dg_idvg_idvd_comparison.png",
+    "svg": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_post_p2_regression_2026-08-21\\dg_idvg_idvd_comparison.svg"
+  }
+}

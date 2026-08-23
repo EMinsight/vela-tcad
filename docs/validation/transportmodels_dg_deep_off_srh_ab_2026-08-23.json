@@ -1,0 +1,172 @@
+{
+  "schema": "vela.transportmodels.dg_deep_off_srh_ab.v1",
+  "status": "complete",
+  "method": "Each A/B variant evaluates Vela production SRH terms on the same immutable Sentaurus electrostatic, quasi-Fermi, quantum-potential and density state. The mesh and barycentric source integration are unchanged.",
+  "rows": [
+    {
+      "bias_V": -1.0,
+      "variant": "baseline_fermi_oldslotboom",
+      "sentaurus_exported_srh_A_per_um": 1.6263580995494346e-15,
+      "vela_formula_srh_A_per_um": 1.3990216272395667e-15,
+      "relative_gap_fraction": 0.13978254381544203,
+      "signed_ratio_vela_over_sentaurus": 0.860217456184558,
+      "carrier_terms_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_dg_deep_off_strict_20260823\\srh_ab\\m1p00\\baseline_fermi_oldslotboom\\carrier_terms.csv"
+    },
+    {
+      "bias_V": -1.0,
+      "variant": "no_fermi_bgn_correction",
+      "sentaurus_exported_srh_A_per_um": 1.6263580995494346e-15,
+      "vela_formula_srh_A_per_um": 1.3602053556464138e-15,
+      "relative_gap_fraction": 0.16364953325885337,
+      "signed_ratio_vela_over_sentaurus": 0.8363504667411467,
+      "carrier_terms_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_dg_deep_off_strict_20260823\\srh_ab\\m1p00\\no_fermi_bgn_correction\\carrier_terms.csv"
+    },
+    {
+      "bias_V": -1.0,
+      "variant": "boltzmann",
+      "sentaurus_exported_srh_A_per_um": 1.6263580995494346e-15,
+      "vela_formula_srh_A_per_um": 1.3990216269873245e-15,
+      "relative_gap_fraction": 0.13978254397053838,
+      "signed_ratio_vela_over_sentaurus": 0.8602174560294616,
+      "carrier_terms_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_dg_deep_off_strict_20260823\\srh_ab\\m1p00\\boltzmann\\carrier_terms.csv"
+    },
+    {
+      "bias_V": -1.0,
+      "variant": "boltzmann_no_fermi_bgn_correction",
+      "sentaurus_exported_srh_A_per_um": 1.6263580995494346e-15,
+      "vela_formula_srh_A_per_um": 1.3602053554090914e-15,
+      "relative_gap_fraction": 0.16364953340477603,
+      "signed_ratio_vela_over_sentaurus": 0.8363504665952239,
+      "carrier_terms_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_dg_deep_off_strict_20260823\\srh_ab\\m1p00\\boltzmann_no_fermi_bgn_correction\\carrier_terms.csv"
+    },
+    {
+      "bias_V": -1.0,
+      "variant": "net_doping_lifetime",
+      "sentaurus_exported_srh_A_per_um": 1.6263580995494346e-15,
+      "vela_formula_srh_A_per_um": 9.072270777615808e-16,
+      "relative_gap_fraction": 0.4421726199089127,
+      "signed_ratio_vela_over_sentaurus": 0.5578273800910873,
+      "carrier_terms_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_dg_deep_off_strict_20260823\\srh_ab\\m1p00\\net_doping_lifetime\\carrier_terms.csv"
+    },
+    {
+      "bias_V": -1.0,
+      "variant": "constant_lifetime",
+      "sentaurus_exported_srh_A_per_um": 1.6263580995494346e-15,
+      "vela_formula_srh_A_per_um": 1.6382221446053577e-18,
+      "relative_gap_fraction": 0.9989927051458967,
+      "signed_ratio_vela_over_sentaurus": 0.0010072948541032937,
+      "carrier_terms_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_dg_deep_off_strict_20260823\\srh_ab\\m1p00\\constant_lifetime\\carrier_terms.csv"
+    },
+    {
+      "bias_V": -0.84,
+      "variant": "baseline_fermi_oldslotboom",
+      "sentaurus_exported_srh_A_per_um": 1.6179474222595338e-15,
+      "vela_formula_srh_A_per_um": 1.4138602499823932e-15,
+      "relative_gap_fraction": 0.12613955773181054,
+      "signed_ratio_vela_over_sentaurus": 0.8738604422681895,
+      "carrier_terms_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_dg_deep_off_strict_20260823\\srh_ab\\m0p84\\baseline_fermi_oldslotboom\\carrier_terms.csv"
+    },
+    {
+      "bias_V": -0.84,
+      "variant": "no_fermi_bgn_correction",
+      "sentaurus_exported_srh_A_per_um": 1.6179474222595338e-15,
+      "vela_formula_srh_A_per_um": 1.374763365123499e-15,
+      "relative_gap_fraction": 0.15030405425438217,
+      "signed_ratio_vela_over_sentaurus": 0.8496959457456178,
+      "carrier_terms_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_dg_deep_off_strict_20260823\\srh_ab\\m0p84\\no_fermi_bgn_correction\\carrier_terms.csv"
+    },
+    {
+      "bias_V": -0.84,
+      "variant": "boltzmann",
+      "sentaurus_exported_srh_A_per_um": 1.6179474222595338e-15,
+      "vela_formula_srh_A_per_um": 1.4138602497763662e-15,
+      "relative_gap_fraction": 0.12613955785914904,
+      "signed_ratio_vela_over_sentaurus": 0.8738604421408509,
+      "carrier_terms_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_dg_deep_off_strict_20260823\\srh_ab\\m0p84\\boltzmann\\carrier_terms.csv"
+    },
+    {
+      "bias_V": -0.84,
+      "variant": "boltzmann_no_fermi_bgn_correction",
+      "sentaurus_exported_srh_A_per_um": 1.6179474222595338e-15,
+      "vela_formula_srh_A_per_um": 1.3747633649294086e-15,
+      "relative_gap_fraction": 0.15030405437434305,
+      "signed_ratio_vela_over_sentaurus": 0.849695945625657,
+      "carrier_terms_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_dg_deep_off_strict_20260823\\srh_ab\\m0p84\\boltzmann_no_fermi_bgn_correction\\carrier_terms.csv"
+    },
+    {
+      "bias_V": -0.84,
+      "variant": "net_doping_lifetime",
+      "sentaurus_exported_srh_A_per_um": 1.6179474222595338e-15,
+      "vela_formula_srh_A_per_um": 9.236801428538195e-16,
+      "relative_gap_fraction": 0.42910373344279623,
+      "signed_ratio_vela_over_sentaurus": 0.5708962665572038,
+      "carrier_terms_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_dg_deep_off_strict_20260823\\srh_ab\\m0p84\\net_doping_lifetime\\carrier_terms.csv"
+    },
+    {
+      "bias_V": -0.84,
+      "variant": "constant_lifetime",
+      "sentaurus_exported_srh_A_per_um": 1.6179474222595338e-15,
+      "vela_formula_srh_A_per_um": 1.6442102359093235e-18,
+      "relative_gap_fraction": 0.9989837678200859,
+      "signed_ratio_vela_over_sentaurus": 0.0010162321799141733,
+      "carrier_terms_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_dg_deep_off_strict_20260823\\srh_ab\\m0p84\\constant_lifetime\\carrier_terms.csv"
+    },
+    {
+      "bias_V": -0.68,
+      "variant": "baseline_fermi_oldslotboom",
+      "sentaurus_exported_srh_A_per_um": 1.6112580936131013e-15,
+      "vela_formula_srh_A_per_um": 1.4276768737019912e-15,
+      "relative_gap_fraction": 0.11393656959044078,
+      "signed_ratio_vela_over_sentaurus": 0.8860634304095593,
+      "carrier_terms_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_dg_deep_off_strict_20260823\\srh_ab\\m0p68\\baseline_fermi_oldslotboom\\carrier_terms.csv"
+    },
+    {
+      "bias_V": -0.68,
+      "variant": "no_fermi_bgn_correction",
+      "sentaurus_exported_srh_A_per_um": 1.6112580936131013e-15,
+      "vela_formula_srh_A_per_um": 1.3882805591983809e-15,
+      "relative_gap_fraction": 0.1383872238088892,
+      "signed_ratio_vela_over_sentaurus": 0.8616127761911108,
+      "carrier_terms_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_dg_deep_off_strict_20260823\\srh_ab\\m0p68\\no_fermi_bgn_correction\\carrier_terms.csv"
+    },
+    {
+      "bias_V": -0.68,
+      "variant": "boltzmann",
+      "sentaurus_exported_srh_A_per_um": 1.6112580936131013e-15,
+      "vela_formula_srh_A_per_um": 1.4276768734864062e-15,
+      "relative_gap_fraction": 0.11393656972423997,
+      "signed_ratio_vela_over_sentaurus": 0.8860634302757601,
+      "carrier_terms_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_dg_deep_off_strict_20260823\\srh_ab\\m0p68\\boltzmann\\carrier_terms.csv"
+    },
+    {
+      "bias_V": -0.68,
+      "variant": "boltzmann_no_fermi_bgn_correction",
+      "sentaurus_exported_srh_A_per_um": 1.6112580936131013e-15,
+      "vela_formula_srh_A_per_um": 1.388280558994379e-15,
+      "relative_gap_fraction": 0.13838722393549946,
+      "signed_ratio_vela_over_sentaurus": 0.8616127760645005,
+      "carrier_terms_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_dg_deep_off_strict_20260823\\srh_ab\\m0p68\\boltzmann_no_fermi_bgn_correction\\carrier_terms.csv"
+    },
+    {
+      "bias_V": -0.68,
+      "variant": "net_doping_lifetime",
+      "sentaurus_exported_srh_A_per_um": 1.6112580936131013e-15,
+      "vela_formula_srh_A_per_um": 9.390355364850188e-16,
+      "relative_gap_fraction": 0.4172035254890071,
+      "signed_ratio_vela_over_sentaurus": 0.5827964745109929,
+      "carrier_terms_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_dg_deep_off_strict_20260823\\srh_ab\\m0p68\\net_doping_lifetime\\carrier_terms.csv"
+    },
+    {
+      "bias_V": -0.68,
+      "variant": "constant_lifetime",
+      "sentaurus_exported_srh_A_per_um": 1.6112580936131013e-15,
+      "vela_formula_srh_A_per_um": 1.6685311635843964e-18,
+      "relative_gap_fraction": 0.9989644544407886,
+      "signed_ratio_vela_over_sentaurus": 0.0010355455592113523,
+      "carrier_terms_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_dg_deep_off_strict_20260823\\srh_ab\\m0p68\\constant_lifetime\\carrier_terms.csv"
+    }
+  ],
+  "artifacts": {
+    "csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_dg_deep_off_strict_20260823\\srh_ab\\srh_ab_summary.csv"
+  }
+}

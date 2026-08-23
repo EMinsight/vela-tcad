@@ -1,0 +1,127 @@
+{
+  "schema": "vela.transportmodels.dg_parity_baseline.v1",
+  "scope": {
+    "sentaurus_version": "T-2022.03-SP2",
+    "device": "TransportModels MOS",
+    "curves": [
+      "DD Id-Vg",
+      "DD Id-Vd",
+      "DG Id-Vg",
+      "DG Id-Vd"
+    ],
+    "curve_points_each": 21,
+    "spatial_oracle": {
+      "gate_bias_V": 1.0,
+      "drain_bias_V": 2.0
+    }
+  },
+  "status": "frozen",
+  "artifact_hashes": {
+    "dd_workflow_manifest": {
+      "path": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\workflow_dd_vector_run01\\workflow_manifest.json",
+      "sha256": "3CB75B60CEC7C683FEDAF05028A8B5C12765AA98CABDA089E9C26E49DE5F22DB"
+    },
+    "dg_idvg_candidate": {
+      "path": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\workflow_dg_outer80_resume_m036_run01\\dg_idvg_curve_comparison_candidate.csv",
+      "sha256": "412DBE55FA53E774F82D44F214DD22AC8CD5B952AA36EEDE4248937E932C768D"
+    },
+    "dg_idvd_candidate": {
+      "path": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\workflow_dg_idvd_resume_1p9_direct2p0_fixed1p5_outer200_run01\\dg_idvd_curve_comparison_candidate.csv",
+      "sha256": "FD1B5E7A4E9480ADCA8283797C4B228A4EABF34382AABC05E244A90DDEB77FD5"
+    },
+    "dg_idvd_2V_state": {
+      "path": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\workflow_dg_idvd_resume_1p9_direct2p0_fixed1p5_outer200_run01\\dg_idvd_curve_state_bias_2p000000.csv",
+      "sha256": "BDB95E6C7CC3FF538D3AE452F20C2172CEA4780DF06BF9065258ED922C4F1B53"
+    },
+    "dg_final_workflow_manifest": {
+      "path": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\workflow_dg_idvd_resume_1p9_direct2p0_fixed1p5_outer200_run01\\workflow_manifest.json",
+      "sha256": "14709AEDD4F6E9648454AC77EEEB585E98ABCD67E642F2EB5C9705C07542969B"
+    },
+    "dg_bias_regime_analysis": {
+      "path": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\workflow_dg_idvd_resume_1p9_direct2p0_fixed1p5_outer200_run01\\reports\\dg_bias_regime_analysis.json",
+      "sha256": "748AA319E92A1AAA8C4D3D8E19A9ED067B15398499075352732098F2F7F913B1"
+    },
+    "dg_spatial_summary": {
+      "path": "D:\\code-repo\\vela-tcad\\docs\\progress_report_2026Q3\\2026-08-19_transportmodels_dg_daily_report\\figures\\spatial_fields\\transportmodels_dg_spatial_comparison_summary.json",
+      "sha256": "B16BA81E366AC70CB77E2E8E97CFAA471EBF535F031814B1D3BC7CE3FB97671F"
+    }
+  },
+  "curve_hashes": {
+    "dd_idvg": {
+      "reference_sha256": "9C7190637E9CF250726A0B7B20E42EF40AC3E165C3817F3D90C014889D76BC47",
+      "candidate_sha256": "C09F8088ACF9E2018170FE163FA7F81B7A33B936AA4B92D06ABCDFB917000CA5"
+    },
+    "dd_idvd": {
+      "reference_sha256": "FD55B7E953AAADF9EBC2AB672024BB2B677F88D2C1E5B389AE51E8BCFE8085FF",
+      "candidate_sha256": "3078C2ED21CB548578091882D27BF313BD67E6F3C03FEA7A309E02C75A564A8A"
+    },
+    "dg_idvg": {
+      "reference_sha256": "FC39DF966515307C22151B3364F3A187C3AFBAABC1839C80CA5244EA7FB51A4A",
+      "candidate_sha256": "412DBE55FA53E774F82D44F214DD22AC8CD5B952AA36EEDE4248937E932C768D"
+    },
+    "dg_idvd": {
+      "reference_sha256": "5A559F6B16824343883FCB8447D5D3FEB8B6EE79305AF042508BAEDBE4121699",
+      "candidate_sha256": "FD1B5E7A4E9480ADCA8283797C4B228A4EABF34382AABC05E244A90DDEB77FD5"
+    }
+  },
+  "current_metrics": {
+    "dd_idvd": {
+      "points": 20,
+      "median_relative_error": 0.0071793505349024254,
+      "max_relative_error": 0.00866355593992324,
+      "median_absolute_log_error_dex": 0.003106812938295809,
+      "max_absolute_log_error_dex": 0.0037463296017990373,
+      "endpoint_relative_error": 0.00701961102506031
+    },
+    "dd_idvg_on": {
+      "points": 13,
+      "median_absolute_log_error_dex": 0.007451201716927136,
+      "max_absolute_log_error_dex": 0.0737019369145819,
+      "max_relative_error": 0.184955215758771
+    },
+    "dg_idvd": {
+      "points": 20,
+      "median_relative_error": 0.10104022888180161,
+      "max_relative_error": 0.10721943195688317,
+      "median_absolute_log_error_dex": 0.041803184379391414,
+      "max_absolute_log_error_dex": 0.04423369914807962,
+      "endpoint_relative_error": 0.09842375630524136
+    },
+    "dg_idvg_off": {
+      "points": 3,
+      "median_absolute_log_error_dex": 8.395088069467045,
+      "max_absolute_log_error_dex": 8.515958530944994,
+      "max_relative_error": 0.999999996951814
+    },
+    "dg_idvg_transition": {
+      "points": 5,
+      "median_absolute_log_error_dex": 0.13193514936532813,
+      "max_absolute_log_error_dex": 0.33915095994953387,
+      "max_relative_error": 0.5420173348741384
+    },
+    "dg_idvg_on": {
+      "points": 13,
+      "median_absolute_log_error_dex": 0.03669976230662635,
+      "max_absolute_log_error_dex": 0.08201439456040527,
+      "max_relative_error": 0.20785386839769548
+    },
+    "dg_quantum_potential_surface_p99_absolute_error_mV": 186.86729403962048,
+    "dg_electron_density_surface_p99_absolute_log_error_dex": 2.41806749599761
+  },
+  "target_acceptance": {
+    "dd_control_idvd_max_relative_error": 0.02,
+    "dd_control_idvg_on_max_relative_error": 0.2,
+    "dg_idvd_max_relative_error": 0.05,
+    "dg_idvd_endpoint_relative_error": 0.03,
+    "dg_idvg_on_max_relative_error": 0.1,
+    "dg_idvg_transition_max_absolute_log_error_dex": 0.15,
+    "dg_quantum_potential_surface_p95_absolute_error_mV": 20.0,
+    "dg_electron_density_surface_p95_absolute_log_error_dex": 0.2
+  },
+  "qualification_policy": {
+    "deep_off_idvg": "excluded from ordinary relative-error gates",
+    "curve_bias_alignment_tolerance_V": 1e-12,
+    "dd_is_non_regression_control": true,
+    "targets_are_not_claimed_as_current_passes": true
+  }
+}

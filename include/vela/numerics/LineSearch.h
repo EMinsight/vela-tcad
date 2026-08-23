@@ -50,6 +50,7 @@ public:
     using ResidualFunction = std::function<VectorXd(const VectorXd&)>;
     using AcceptFunction = std::function<bool(const VectorXd&, const VectorXd&)>;
     using NormFunction = std::function<Real(const VectorXd&)>;
+    using DecreaseAcceptFunction = std::function<bool(const VectorXd&, Real)>;
 
     explicit BacktrackingLineSearch(LineSearchConfig cfg = {});
 
@@ -58,7 +59,8 @@ public:
                             const VectorXd& currentResidual,
                             const ResidualFunction& residualFunction,
                             const AcceptFunction& acceptFunction = {},
-                            const NormFunction& normFunction = {}) const;
+                            const NormFunction& normFunction = {},
+                            const DecreaseAcceptFunction& decreaseAcceptFunction = {}) const;
 
 private:
     LineSearchConfig cfg_;

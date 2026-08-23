@@ -1,0 +1,50 @@
+{
+  "schema": "vela.transportmodels.dg_deep_off_classical_srh_contract.v1",
+  "status": "complete",
+  "manual_contract": {
+    "source": "Sentaurus Device User Guide T-2022.03, pages 369 and 474",
+    "finding": "Default density-gradient coupling keeps classical and quantum-mechanical carrier densities distinct. The deep-off oracle is reproduced by using the classical electron density in the SRH denominator while retaining the quasi-Fermi-splitting numerator."
+  },
+  "fermi_factor_ab_note": "The fixed-state Fermi-versus-Boltzmann SRH A/B changed each integral by less than 2e-10 relative, so the classical-density audit uses gamma_n=gamma_p=1.",
+  "points": [
+    {
+      "gate_bias_V": -1.0,
+      "sentaurus_srh_A_per_um": 1.6263580995494427e-15,
+      "vela_current_quantum_density_denominator_A_per_um": 1.400594239131864e-15,
+      "vela_classical_electron_density_denominator_A_per_um": 1.6473071735383745e-15,
+      "current_contract_relative_gap_fraction": 0.13881559078540145,
+      "classical_contract_relative_gap_fraction": 0.012880972520587827,
+      "explained_fraction_of_current_contract_gap": 0.9072080272272812,
+      "srh_weighted_bgn_abs_error_eV": 0.0008460341204953165,
+      "srh_weighted_bgn_signed_error_eV": 0.0008460341204953165,
+      "node_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_dg_deep_off_strict_20260823\\classical_srh_contract\\m1p00_node_contract.csv"
+    },
+    {
+      "gate_bias_V": -0.84,
+      "sentaurus_srh_A_per_um": 1.6179474222595405e-15,
+      "vela_current_quantum_density_denominator_A_per_um": 1.4154284638220446e-15,
+      "vela_classical_electron_density_denominator_A_per_um": 1.6390932215189706e-15,
+      "current_contract_relative_gap_fraction": 0.12517029642079996,
+      "classical_contract_relative_gap_fraction": 0.013069521894536607,
+      "explained_fraction_of_current_contract_gap": 0.8955860753848562,
+      "srh_weighted_bgn_abs_error_eV": 0.0008422124408997799,
+      "srh_weighted_bgn_signed_error_eV": 0.0008422124408997799,
+      "node_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_dg_deep_off_strict_20260823\\classical_srh_contract\\m0p84_node_contract.csv"
+    },
+    {
+      "gate_bias_V": -0.68,
+      "sentaurus_srh_A_per_um": 1.6112580936131052e-15,
+      "vela_current_quantum_density_denominator_A_per_um": 1.4292666354010116e-15,
+      "vela_classical_electron_density_denominator_A_per_um": 1.6329762458385215e-15,
+      "current_contract_relative_gap_fraction": 0.11294991096304983,
+      "classical_contract_relative_gap_fraction": 0.01347900271936895,
+      "explained_fraction_of_current_contract_gap": 0.880663892477273,
+      "srh_weighted_bgn_abs_error_eV": 0.0008398907761422474,
+      "srh_weighted_bgn_signed_error_eV": 0.0008398907761422474,
+      "node_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_dg_deep_off_strict_20260823\\classical_srh_contract\\m0p68_node_contract.csv"
+    }
+  ],
+  "artifacts": {
+    "summary_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_dg_deep_off_strict_20260823\\classical_srh_contract\\classical_srh_contract_summary.csv"
+  }
+}

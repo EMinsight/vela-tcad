@@ -46,6 +46,7 @@ option(VELA_ENABLE_PYTHON "Build the pybind11 Python API" OFF)
 option(VELA_ENABLE_HDF5 "Build Sentaurus HDF5/TDR import tools when HDF5 is available" ON)
 option(VELA_ENABLE_GPROF "Instrument Vela targets for GNU gprof" OFF)
 option(VELA_ENABLE_LTO "Enable conservative link-time optimization for Vela targets" OFF)
+option(VELA_ENABLE_UMFPACK "Use SuiteSparse UMFPACK for robust bordered solves when available" ON)
 set(VELA_SPARSELU_ORDERING "COLAMD" CACHE STRING
     "Eigen SparseLU column ordering (COLAMD or AMD)")
 set_property(CACHE VELA_SPARSELU_ORDERING PROPERTY STRINGS COLAMD AMD)
@@ -131,6 +132,60 @@ if(VELA_ENABLE_HDF5)
     endif()
 endif()
 
+if(VELA_ENABLE_UMFPACK)
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(UMFPACK QUIET IMPORTED_TARGET umfpack)
+        pkg_check_modules(SPQR QUIET IMPORTED_TARGET spqr)
+        pkg_check_modules(CHOLMOD QUIET IMPORTED_TARGET cholmod)
+    endif()
+    if(TARGET PkgConfig::SPQR)
+        message(STATUS "SuiteSparse SPQR bordered solver enabled")
+    else()
+        message(STATUS "SuiteSparse SPQR bordered solver disabled: package not found")
+    endif()
+    if(TARGET PkgConfig::UMFPACK)
+        message(STATUS "SuiteSparse UMFPACK bordered solver enabled")
+    else()
+        message(STATUS "SuiteSparse UMFPACK bordered solver disabled: package not found")
+    endif()
+endif()
+
+if(MINGW AND (TARGET PkgConfig::UMFPACK OR TARGET PkgConfig::SPQR))
+    set(_vela_suitesparse_runtime_dlls
+        libsuitesparseconfig.dll
+        libopenblas.dll
+        libgomp-1.dll
+        libgfortran-5.dll
+        libquadmath-0.dll)
+    if(TARGET PkgConfig::UMFPACK)
+        list(APPEND _vela_suitesparse_runtime_dlls
+            libumfpack.dll
+            libamd.dll)
+    endif()
+    if(TARGET PkgConfig::SPQR)
+        list(APPEND _vela_suitesparse_runtime_dlls
+            libspqr.dll
+            libcholmod.dll
+            libamd.dll
+            libcamd.dll
+            libccolamd.dll
+            libcolamd.dll)
+    endif()
+    list(REMOVE_DUPLICATES _vela_suitesparse_runtime_dlls)
+    foreach(_vela_runtime_dll IN LISTS _vela_suitesparse_runtime_dlls)
+        find_file(_vela_runtime_path_${_vela_runtime_dll}
+            NAMES ${_vela_runtime_dll}
+            PATHS "${VELA_MINGW_RUNTIME_DIR}"
+            NO_DEFAULT_PATH
+            REQUIRED)
+        configure_file(
+            "${_vela_runtime_path_${_vela_runtime_dll}}"
+            "${CMAKE_CURRENT_BINARY_DIR}/${_vela_runtime_dll}"
+            COPYONLY)
+    endforeach()
+endif()
+
 # ---------------------------------------------------------------------------
 # Library: vela_core
 # ---------------------------------------------------------------------------
@@ -197,6 +252,14 @@ target_link_libraries(vela_core
         Boost::headers
 )
 target_compile_definitions(vela_core PUBLIC VELA_VERSION="${PROJECT_VERSION}")
+if(TARGET PkgConfig::UMFPACK)
+    target_link_libraries(vela_core PUBLIC PkgConfig::UMFPACK)
+    target_compile_definitions(vela_core PUBLIC VELA_HAS_UMFPACK=1)
+endif()
+if(TARGET PkgConfig::SPQR AND TARGET PkgConfig::CHOLMOD)
+    target_link_libraries(vela_core PUBLIC PkgConfig::SPQR PkgConfig::CHOLMOD)
+    target_compile_definitions(vela_core PUBLIC VELA_HAS_SPQR=1)
+endif()
 
 if(VELA_SPARSELU_ORDERING STREQUAL "AMD")
     target_compile_definitions(vela_core PUBLIC VELA_SPARSELU_ORDERING_AMD=1)
@@ -462,6 +525,9 @@ target_link_libraries(test_dc_sweep PRIVATE vela_core Catch2::Catch2WithMain)
 add_executable(test_pseudo_arclength tests/test_pseudo_arclength.cpp)
 target_link_libraries(test_pseudo_arclength PRIVATE vela_core Catch2::Catch2WithMain)
 
+add_executable(test_coupled_load_line tests/test_coupled_load_line.cpp)
+target_link_libraries(test_coupled_load_line PRIVATE vela_core Catch2::Catch2WithMain)
+
 add_executable(test_solution_validation tests/test_solution_validation.cpp)
 add_executable(test_stored_charge tests/test_stored_charge.cpp)
 target_link_libraries(test_stored_charge PRIVATE vela_core Catch2::Catch2WithMain)
@@ -538,6 +604,9 @@ add_test(NAME dc_sweep COMMAND test_dc_sweep [dc_sweep])
 vela_catch_discover_tests(test_pseudo_arclength)
 add_test(NAME pseudo_arclength COMMAND test_pseudo_arclength [arclength])
 vela_set_windows_msys2_test_path(pseudo_arclength)
+vela_catch_discover_tests(test_coupled_load_line)
+add_test(NAME coupled_load_line COMMAND test_coupled_load_line [coupled_load_line])
+vela_set_windows_msys2_test_path(coupled_load_line)
 vela_catch_discover_tests(test_solution_validation)
 vela_catch_discover_tests(test_stored_charge)
 vela_catch_discover_tests(test_electric_field_diagnostics)
@@ -617,6 +686,27 @@ add_test(NAME sentaurus_import_tools
     COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/regression/test_sentaurus_import_tools.py)
 vela_set_windows_msys2_test_path(sentaurus_import_tools)
+
+add_test(NAME slot_ldmos_bvds_preparation
+    COMMAND ${Python3_EXECUTABLE} -m unittest
+            tests.regression.test_prepare_slot_ldmos_bvds)
+set_tests_properties(slot_ldmos_bvds_preparation PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+vela_set_windows_msys2_test_path(slot_ldmos_bvds_preparation)
+
+add_test(NAME slot_ldmos_bvds_reference_analysis
+    COMMAND ${Python3_EXECUTABLE} -m unittest
+            tests.regression.test_analyze_slot_ldmos_bvds_reference)
+set_tests_properties(slot_ldmos_bvds_reference_analysis PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+vela_set_windows_msys2_test_path(slot_ldmos_bvds_reference_analysis)
+
+add_test(NAME slot_ldmos_jvp_audit_preparation
+    COMMAND ${Python3_EXECUTABLE} -m unittest
+            tests.regression.test_prepare_slot_ldmos_jvp_audit)
+set_tests_properties(slot_ldmos_jvp_audit_preparation PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+vela_set_windows_msys2_test_path(slot_ldmos_jvp_audit_preparation)
 
 add_test(NAME sentaurus_vm_reference_runner
     COMMAND ${Python3_EXECUTABLE} -m unittest

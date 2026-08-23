@@ -31,6 +31,25 @@ struct EquilibriumCarrierState {
     Real p = 0.0;         ///< Hole density [m^-3].
 };
 
+/**
+ * @brief Carrier-degeneracy factors and cancellation-free SRH numerator.
+ *
+ * Sentaurus Device Eq. 47/48 defines gamma = F_{1/2}(eta) exp(-eta).
+ * With those factors the generalized SRH numerator is
+ *
+ *   n p - gamma_n gamma_p ni^2
+ *     = gamma_n gamma_p ni^2 expm1((phip-phin)/Vt).
+ *
+ * Keeping the quasi-Fermi splitting in the latter form avoids subtracting two
+ * nearly equal carrier products around equilibrium and in deep depletion.
+ */
+struct GeneralizedSrhCarrierState {
+    Real electronDegeneracy = 1.0;
+    Real holeDegeneracy = 1.0;
+    Real equilibriumProduct = 0.0;
+    Real excessProduct = 0.0;
+};
+
 /// Validate `config.model` and return the resolved enumeration.
 CarrierStatisticsModel carrierStatisticsModel(const CarrierStatisticsConfig& config);
 
@@ -119,6 +138,16 @@ Real equilibriumCarrierProduct(
 
 Real equilibriumCarrierProduct(
     Real n, Real p, Real ni, Real Nc, Real Nv, Real Vt,
+    CarrierStatisticsModel model);
+
+GeneralizedSrhCarrierState generalizedSrhCarrierState(
+    Real n, Real p, Real ni, Real Nc, Real Nv,
+    Real quasiFermiSplitting_V, Real Vt,
+    const CarrierStatisticsConfig& config);
+
+GeneralizedSrhCarrierState generalizedSrhCarrierState(
+    Real n, Real p, Real ni, Real Nc, Real Nv,
+    Real quasiFermiSplitting_V, Real Vt,
     CarrierStatisticsModel model);
 
 /// Temperature-adjusted intrinsic density for a material using temperature_K.

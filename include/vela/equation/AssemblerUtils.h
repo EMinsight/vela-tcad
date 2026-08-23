@@ -913,6 +913,26 @@ inline void updateSurfaceMobilityCellGeometry(
                     mesh.getCell(adjacentCell).region_id).name);
             if (regions.size() < 2 || edge.length <= 1.0e-30)
                 continue;
+            // A configured interface is an exact physical selector, not only
+            // a per-cell applicability test.  Filter the geometry candidates
+            // here so internal same-region edges do not participate in the
+            // nearest-interface search.  This also changes the preprocessing
+            // cost from O(cells * all_edges) to O(cells * selected_interface).
+            if (!config.surface.surfaceInterface.empty()) {
+                if (config.surface.surfaceInterface.size() != 2)
+                    throw std::invalid_argument(
+                        "surface mobility surface_interface must contain exactly two region names.");
+                const std::string& interfaceA =
+                    config.surface.surfaceInterface.at(0);
+                const std::string& interfaceB =
+                    config.surface.surfaceInterface.at(1);
+                const bool hasA = std::find(
+                    regions.begin(), regions.end(), interfaceA) != regions.end();
+                const bool hasB = std::find(
+                    regions.begin(), regions.end(), interfaceB) != regions.end();
+                if (!hasA || !hasB)
+                    continue;
+            }
             const Node& a = mesh.getNode(edge.n0);
             const Node& b = mesh.getNode(edge.n1);
             interfaces.push_back({
@@ -1130,13 +1150,27 @@ inline Real nodeMobility(const std::vector<std::vector<Index>>& nodeCells,
         const Real baseMobility = (carrier == CarrierType::Electron) ? material.mun : material.mup;
         if (baseMobility <= 0.0)
             continue;
+        const bool hasSurfaceGeometry =
+            mobilityConfig != nullptr &&
+            c < mobilityConfig->surface.cellNormalFields.size() &&
+            c < mobilityConfig->surface.cellDistances.size() &&
+            std::isfinite(mobilityConfig->surface.cellNormalFields[c]) &&
+            std::isfinite(mobilityConfig->surface.cellDistances[c]);
+        const Real surfaceNormalField = hasSurfaceGeometry
+            ? mobilityConfig->surface.cellNormalFields[c]
+            : std::numeric_limits<Real>::quiet_NaN();
+        const Real surfaceDistance = hasSurfaceGeometry
+            ? mobilityConfig->surface.cellDistances[c]
+            : std::numeric_limits<Real>::quiet_NaN();
         const Real mobilityDoping = nodeMobilityDopingConcentration(
             mesh, doping, nodeId, c, mobilityConfig);
         const Real modelMobility = (carrier == CarrierType::Electron)
             ? mobility.electronMobility(
-                material, mobilityDoping, 0.0, 0.0, drivingField)
+                material, mobilityDoping, 0.0, 0.0, drivingField,
+                surfaceNormalField, surfaceDistance)
             : mobility.holeMobility(
-                material, mobilityDoping, 0.0, 0.0, drivingField);
+                material, mobilityDoping, 0.0, 0.0, drivingField,
+                surfaceNormalField, surfaceDistance);
         if (modelMobility <= 0.0)
             continue;
         sum += modelMobility;
@@ -1815,6 +1849,14 @@ inline void validateImpactIonizationDrivingForce(const ImpactIonizationModelConf
             "'edge_F_edge_alpha_edge_G_to_node', 'cell_F_cell_alpha_cell_G_to_node', "
             "'nodal_eparallel_p1', 'triangle_gss_gradqf_truncated', or "
             "'element_vertex_box_measure'.");
+    }
+    if (config.sourceJacobianMode != "local_ad" &&
+        config.sourceJacobianMode != "finite_difference" &&
+        config.sourceJacobianMode != "frozen") {
+        throw std::invalid_argument(
+            std::string(context) +
+            ": impact_ionization.source_jacobian must be "
+            "'local_ad', 'finite_difference', or 'frozen'.");
     }
     if (config.sourceMappingMode == "nodal_eparallel_p1" &&
         (config.couplingMode != "postprocess_only" ||
@@ -3155,6 +3197,19 @@ triangleGssAvalancheSourceRecordsForCell(
         throw std::invalid_argument(
             "triangle GSS avalanche source requires Tri3 cells; unsupported cell " +
             std::to_string(cellId));
+    }
+
+    // Keep the primal triangle-GSS source on exactly the same material
+    // support as its local-AD/finite-difference Jacobian.  Doping-based
+    // mobility models can otherwise return a finite mobility for an
+    // insulator cell whose vertices are shared with silicon, which creates a
+    // nonzero oxide-side avalanche residual with no corresponding Jacobian
+    // contribution.
+    const Material& material =
+        cellMaterials.at(static_cast<std::size_t>(cellId));
+    if (material.ni <= 0.0 ||
+        (material.mun <= 0.0 && material.mup <= 0.0)) {
+        return {};
     }
 
     bool electronGradientValid = false;

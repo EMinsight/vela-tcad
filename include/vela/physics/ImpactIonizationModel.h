@@ -29,6 +29,7 @@ struct ImpactIonizationModelConfig {
     std::string sourceVolumePolicy = "genius_truncated"; ///< SG edge-current source support: genius_truncated, genius_conservative, edge_half_box, or edge_box.
     Real sourceVolumeFactor = 0.0; ///< Diagnostic SG source-volume override; 0 uses sourceVolumePolicy presets.
     std::string sourceMappingMode = "node_F_node_alpha_node_G"; ///< Coupled current-density avalanche source mapping diagnostic mode.
+    std::string sourceJacobianMode = "finite_difference"; ///< Avalanche-source Jacobian: local_ad, finite_difference, or frozen.
     std::string edgeSourcePartition = "symmetric"; ///< SG edge-current source split: symmetric or qf_gradient.
     Real quasiFermiCarrierTruncation = 0.0; ///< GSS-style floor n,p >= value*ni when rebuilding qF gradients; 0 disables.
     Real minimumField = 0.0; ///< Charon-style avalanche cutoff field [V/m]; 0 disables.

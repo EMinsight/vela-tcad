@@ -44,6 +44,10 @@ struct PseudoArclengthConfig {
     Real dampingFactor = 1.0;
     /// Maximum number of residual-monotone backtracking halvings per corrector step.
     int maxLineSearchSteps = 10;
+    /// Relative residual increase tolerated by the corrector line search. Zero
+    /// preserves strict monotonic decrease. This is useful with deliberately
+    /// approximate (for example frozen-source) Jacobians.
+    Real lineSearchRelativeIncreaseTolerance = 0.0;
     /// Optional absolute cap on a bordered-Newton continuation-parameter update.
     /// Zero disables the cap. This is a numerical trust region on lambda, not a
     /// clamp on the accepted branch or on the device state.
@@ -62,6 +66,20 @@ struct ArclengthTangent {
     Real lambdaDot = 0.0;
 };
 
+/// Value and first derivatives of a scalar functional evaluated on an
+/// arclength state.  The load-line solver uses this for the terminal-current
+/// row of a directly assembled bordered Newton system.
+struct ArclengthScalarLinearization {
+    Real value = 0.0;
+    VectorXd stateDerivative;
+    Real parameterDerivative = 0.0;
+};
+
+struct ArclengthScalarFunctional {
+    std::function<Real(const VectorXd&, Real)> value;
+    std::function<ArclengthScalarLinearization(const VectorXd&, Real)> linearize;
+};
+
 /// Outcome of a single attempted arclength step.
 struct ArclengthStepResult {
     bool converged = false;
@@ -70,6 +88,19 @@ struct ArclengthStepResult {
     int correctorIterations = 0;
     int retries = 0;
     Real residualNorm = 0.0;    ///< max(||F||_inf, |N|) at the accepted point.
+    Real equationResidualNorm = 0.0; ///< ||F||_inf at the last corrector state.
+    Real arclengthResidual = 0.0;    ///< Signed N at the last corrector state.
+    Real bestTrialResidualNorm = std::numeric_limits<Real>::infinity();
+    Real bestTrialEquationResidualNorm = std::numeric_limits<Real>::infinity();
+    Real bestTrialArclengthResidual = std::numeric_limits<Real>::infinity();
+    Real bestTrialAlpha = 0.0;
+    Real smallestTrialAlpha = 0.0;
+    int lineSearchAttempts = 0;
+    Real rawStateUpdateNorm = 0.0;
+    Real limitedStateUpdateNorm = 0.0;
+    Real updateLimitChangeNorm = 0.0;
+    Real rawParameterUpdate = 0.0;
+    Real limitedParameterUpdate = 0.0;
     std::string failureReason;
 };
 
@@ -84,10 +115,23 @@ struct ArclengthSystem {
     std::function<VectorXd(const VectorXd&, Real)> residual;
     /// Parameter sensitivity dF/dlambda evaluated at (x, lambda), size n.
     std::function<VectorXd(const VectorXd&, Real)> parameterDerivative;
+    /// Optional direct assembly of J=dF/dx.  Schur-complement continuation
+    /// only needs solveJacobian, while a circuit border must be able to retain
+    /// J inside one augmented sparse matrix even when J itself is singular.
+    std::function<SparseMatrixd(const VectorXd& x, Real lambda)> jacobian;
     /// Solve J(x, lambda) * y = b where J = dF/dx. Writes the solution into y and
     /// returns false if the Jacobian is singular or the solve otherwise failed.
     std::function<bool(const VectorXd& x, Real lambda, const VectorXd& b, VectorXd& y)>
         solveJacobian;
+    /// Optional batched solve for two right-hand sides at the same (x, lambda).
+    /// Device integrations can use this to assemble and factor J only once.
+    std::function<bool(const VectorXd& x,
+                       Real lambda,
+                       const VectorXd& b1,
+                       const VectorXd& b2,
+                       VectorXd& y1,
+                       VectorXd& y2)>
+        solveJacobianPair;
     /// Optional in-place limiter for the bordered-Newton update before line search.
     std::function<void(const VectorXd& x, VectorXd& deltaX, Real& deltaLambda)>
         limitUpdate;
@@ -127,6 +171,12 @@ public:
         if (config_.maxLineSearchSteps < 0) {
             throw std::invalid_argument(
                 "PseudoArclengthContinuation: maxLineSearchSteps must be non-negative.");
+        }
+        if (config_.lineSearchRelativeIncreaseTolerance < 0.0 ||
+            !std::isfinite(config_.lineSearchRelativeIncreaseTolerance)) {
+            throw std::invalid_argument(
+                "PseudoArclengthContinuation: lineSearchRelativeIncreaseTolerance "
+                "must be finite and non-negative.");
         }
         if (config_.maxParameterUpdate < 0.0 ||
             !std::isfinite(config_.maxParameterUpdate)) {
@@ -230,10 +280,21 @@ public:
         for (int retry = 0; retry <= config_.maxStepRetries; ++retry) {
             result.retries = retry;
             if (!(deltaS > 0.0) || deltaS < config_.minStep) {
-                result.failureReason = "arclength step shrank below min_step";
+                constexpr const char* minStepReason =
+                    "arclength step shrank below min_step";
+                if (result.failureReason.empty()) {
+                    result.failureReason = minStepReason;
+                } else {
+                    result.failureReason += "; ";
+                    result.failureReason += minStepReason;
+                }
                 result.arclengthStep = deltaS;
                 return result;
             }
+            // A retry is a fresh corrector attempt.  Retain the previous cause
+            // only when the next shrink crosses minStep (handled above), not
+            // when a later retry fails for a different reason.
+            result.failureReason.clear();
 
             // Tangent predictor.
             ArclengthState current;
@@ -254,7 +315,23 @@ public:
                 }
                 const Real arclengthResidual = arclengthResidualNorm(
                     anchor, tangent, current, deltaS, stateWeight, theta2);
-                residualNorm = std::max(infinityNorm(f), std::abs(arclengthResidual));
+                const Real equationResidualNorm = infinityNorm(f);
+                residualNorm = std::max(equationResidualNorm, std::abs(arclengthResidual));
+                result.equationResidualNorm = equationResidualNorm;
+                result.arclengthResidual = arclengthResidual;
+                result.bestTrialResidualNorm = std::numeric_limits<Real>::infinity();
+                result.bestTrialEquationResidualNorm =
+                    std::numeric_limits<Real>::infinity();
+                result.bestTrialArclengthResidual =
+                    std::numeric_limits<Real>::infinity();
+                result.bestTrialAlpha = 0.0;
+                result.smallestTrialAlpha = 0.0;
+                result.lineSearchAttempts = 0;
+                result.rawStateUpdateNorm = 0.0;
+                result.limitedStateUpdateNorm = 0.0;
+                result.updateLimitChangeNorm = 0.0;
+                result.rawParameterUpdate = 0.0;
+                result.limitedParameterUpdate = 0.0;
                 if (!std::isfinite(residualNorm)) {
                     result.failureReason = "non-finite corrector residual";
                     break;
@@ -275,12 +352,21 @@ public:
                 VectorXd a(current.x.size());
                 VectorXd zStep(current.x.size());
                 const VectorXd negF = -f;
-                if (!system_.solveJacobian(current.x, current.lambda, negF, a)) {
-                    result.failureReason = "Jacobian solve failed for corrector residual";
-                    break;
-                }
-                if (!system_.solveJacobian(current.x, current.lambda, fLambda, zStep)) {
-                    result.failureReason = "Jacobian solve failed for parameter derivative";
+                const bool pairSolved = system_.solveJacobianPair
+                    ? system_.solveJacobianPair(
+                          current.x,
+                          current.lambda,
+                          negF,
+                          fLambda,
+                          a,
+                          zStep)
+                    : (system_.solveJacobian(
+                           current.x, current.lambda, negF, a) &&
+                       system_.solveJacobian(
+                           current.x, current.lambda, fLambda, zStep));
+                if (!pairSolved) {
+                    result.failureReason =
+                        "Jacobian solve failed for bordered corrector RHS pair";
                     break;
                 }
 
@@ -293,17 +379,9 @@ public:
                 }
                 Real deltaLambda =
                     (-arclengthResidual - stateWeight * tangent.xDot.dot(a)) / denom;
-                VectorXd deltaX = a - zStep * deltaLambda;
-                if (!deltaX.allFinite() || !std::isfinite(deltaLambda)) {
+                if (!std::isfinite(deltaLambda)) {
                     result.failureReason = "non-finite bordered corrector update";
                     break;
-                }
-                if (system_.limitUpdate) {
-                    system_.limitUpdate(current.x, deltaX, deltaLambda);
-                    if (!deltaX.allFinite() || !std::isfinite(deltaLambda)) {
-                        result.failureReason = "non-finite limited corrector update";
-                        break;
-                    }
                 }
                 if (config_.maxParameterUpdate > 0.0) {
                     deltaLambda = std::clamp(
@@ -311,10 +389,34 @@ public:
                         -config_.maxParameterUpdate,
                         config_.maxParameterUpdate);
                 }
-
+                // Keep the state and parameter components on the same
+                // bordered-Newton solve after applying the lambda trust
+                // region.  Reusing deltaX from the uncapped deltaLambda would
+                // violate J*deltaX + F_lambda*deltaLambda = -F.
+                VectorXd deltaX = a - zStep * deltaLambda;
+                if (!deltaX.allFinite()) {
+                    result.failureReason = "non-finite bordered corrector update";
+                    break;
+                }
+                const VectorXd rawDeltaX = deltaX;
+                const Real rawDeltaLambda = deltaLambda;
+                result.rawStateUpdateNorm = infinityNorm(rawDeltaX);
+                result.rawParameterUpdate = rawDeltaLambda;
+                if (system_.limitUpdate) {
+                    system_.limitUpdate(current.x, deltaX, deltaLambda);
+                    if (!deltaX.allFinite() || !std::isfinite(deltaLambda)) {
+                        result.failureReason = "non-finite limited corrector update";
+                        break;
+                    }
+                }
+                result.limitedStateUpdateNorm = infinityNorm(deltaX);
+                result.updateLimitChangeNorm = infinityNorm(deltaX - rawDeltaX);
+                result.limitedParameterUpdate = deltaLambda;
                 bool accepted = false;
                 Real alpha = config_.dampingFactor;
                 for (int ls = 0; ls <= config_.maxLineSearchSteps; ++ls) {
+                    result.lineSearchAttempts = ls + 1;
+                    result.smallestTrialAlpha = alpha;
                     ArclengthState trial;
                     trial.x = current.x + alpha * deltaX;
                     trial.lambda = current.lambda + alpha * deltaLambda;
@@ -327,9 +429,20 @@ public:
                     }
                     const Real trialArclengthResidual = arclengthResidualNorm(
                         anchor, tangent, trial, deltaS, stateWeight, theta2);
+                    const Real trialEquationResidualNorm = infinityNorm(trialF);
                     const Real trialNorm = std::max(
-                        infinityNorm(trialF), std::abs(trialArclengthResidual));
-                    if (std::isfinite(trialNorm) && trialNorm < residualNorm) {
+                        trialEquationResidualNorm, std::abs(trialArclengthResidual));
+                    if (std::isfinite(trialNorm) &&
+                        trialNorm < result.bestTrialResidualNorm) {
+                        result.bestTrialResidualNorm = trialNorm;
+                        result.bestTrialEquationResidualNorm =
+                            trialEquationResidualNorm;
+                        result.bestTrialArclengthResidual = trialArclengthResidual;
+                        result.bestTrialAlpha = alpha;
+                    }
+                    const Real acceptedResidual = residualNorm *
+                        (1.0 + config_.lineSearchRelativeIncreaseTolerance);
+                    if (std::isfinite(trialNorm) && trialNorm <= acceptedResidual) {
                         current = std::move(trial);
                         accepted = true;
                         break;
@@ -349,6 +462,12 @@ public:
                 result.correctorIterations = iter;
                 result.residualNorm = residualNorm;
                 return result;
+            }
+            result.correctorIterations = iter;
+            result.residualNorm = residualNorm;
+            if (result.failureReason.empty()) {
+                result.failureReason =
+                    "corrector failed to converge within iteration budget";
             }
             deltaS *= config_.shrinkFactor;
         }

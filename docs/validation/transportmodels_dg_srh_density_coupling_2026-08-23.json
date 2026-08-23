@@ -1,0 +1,484 @@
+{
+  "schema": "vela.transportmodels.dg_srh_density_coupling_regression.v1",
+  "as_of": "2026-08-23",
+  "execution_status": "complete",
+  "completed_points": 42,
+  "expected_points": 42,
+  "runner": {
+    "path": "D:\\code-repo\\vela-tcad\\build-release\\vela_example_runner.exe",
+    "sha256": "2cc86fa83fc0ec70e74b45314ca7e8bd201972a38adda37255e452e2fdba745e"
+  },
+  "manifest": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_srh_density_coupling_sentaurus_default_2026-08-23\\full_21_point_curves\\runs\\dg\\workflow_manifest.json",
+  "quantum_contract": {
+    "source": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_quantum_contract_regression_2026-08-23\\runs\\dg\\03_dg_idvg_curve.json",
+    "srh_density_coupling": "sentaurus_default"
+  },
+  "srh_density_coupling": "sentaurus_default",
+  "curves": [
+    {
+      "name": "idvg",
+      "completed_points": 21,
+      "candidate_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_srh_density_coupling_sentaurus_default_2026-08-23\\full_21_point_curves\\runs\\dg\\dg_idvg_curve_comparison_candidate.csv",
+      "aligned_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_srh_density_coupling_sentaurus_default_2026-08-23\\full_21_point_curves\\dg_idvg_aligned.csv",
+      "aligned": [
+        {
+          "bias_V": -1.0,
+          "vela_A_per_um": 1.653124309667913e-15,
+          "sentaurus_A_per_um": 1.63697016902e-15,
+          "absolute_relative_error": 0.009868317061381655,
+          "absolute_log_error_dex": 0.004264747146933701,
+          "numerical_status": "resolved",
+          "four_terminal_kcl_residual_A_per_um": 4.370191311529887e-18,
+          "id_to_kcl_residual_ratio": 378.2727555442414,
+          "silicon_srh_integral_A_per_um": NaN,
+          "resolved_by_kcl": true,
+          "deep_off_acceptance": "pass"
+        },
+        {
+          "bias_V": -0.84,
+          "vela_A_per_um": 1.6556909827547012e-15,
+          "sentaurus_A_per_um": 1.6376302263e-15,
+          "absolute_relative_error": 0.011028592514139726,
+          "absolute_log_error_dex": 0.004763437881331711,
+          "numerical_status": "resolved",
+          "four_terminal_kcl_residual_A_per_um": 4.388948685406208e-18,
+          "id_to_kcl_residual_ratio": 377.24090697621426,
+          "silicon_srh_integral_A_per_um": NaN,
+          "resolved_by_kcl": true,
+          "deep_off_acceptance": "pass"
+        },
+        {
+          "bias_V": -0.68,
+          "vela_A_per_um": 2.2212067611263366e-15,
+          "sentaurus_A_per_um": 2.1629695198e-15,
+          "absolute_relative_error": 0.02692467036323363,
+          "absolute_log_error_dex": 0.011538587272596601,
+          "numerical_status": "resolved",
+          "four_terminal_kcl_residual_A_per_um": 4.1313848977058124e-18,
+          "id_to_kcl_residual_ratio": 537.6421747486633,
+          "silicon_srh_integral_A_per_um": NaN,
+          "resolved_by_kcl": true,
+          "deep_off_acceptance": "pass"
+        },
+        {
+          "bias_V": -0.52,
+          "vela_A_per_um": 4.619047376460659e-14,
+          "sentaurus_A_per_um": 4.28231613291e-14,
+          "absolute_relative_error": 0.07863297176097006,
+          "absolute_log_error_dex": 0.03287369171237664,
+          "numerical_status": "resolved",
+          "four_terminal_kcl_residual_A_per_um": 9.48678108376807e-17,
+          "id_to_kcl_residual_ratio": 486.89300782579164,
+          "silicon_srh_integral_A_per_um": NaN
+        },
+        {
+          "bias_V": -0.36,
+          "vela_A_per_um": 3.811885402504135e-12,
+          "sentaurus_A_per_um": 3.55356782721e-12,
+          "absolute_relative_error": 0.07269245666740135,
+          "absolute_log_error_dex": 0.03047522660987667,
+          "numerical_status": "resolved",
+          "four_terminal_kcl_residual_A_per_um": 9.624748373382324e-16,
+          "id_to_kcl_residual_ratio": 3960.5039577409375,
+          "silicon_srh_integral_A_per_um": NaN
+        },
+        {
+          "bias_V": -0.2,
+          "vela_A_per_um": 3.4613789404969276e-10,
+          "sentaurus_A_per_um": 3.24296345753e-10,
+          "absolute_relative_error": 0.06735058406525606,
+          "absolute_log_error_dex": 0.028307092073930562,
+          "numerical_status": "resolved",
+          "four_terminal_kcl_residual_A_per_um": 1.6096242392175224e-13,
+          "id_to_kcl_residual_ratio": 2150.426699699545,
+          "silicon_srh_integral_A_per_um": NaN
+        },
+        {
+          "bias_V": -0.04,
+          "vela_A_per_um": 3.1549809584324444e-08,
+          "sentaurus_A_per_um": 2.97693349194e-08,
+          "absolute_relative_error": 0.05980901722342984,
+          "absolute_log_error_dex": 0.025227610322411387,
+          "numerical_status": "resolved",
+          "four_terminal_kcl_residual_A_per_um": 1.4312597284371547e-11,
+          "id_to_kcl_residual_ratio": 2204.3385248304894,
+          "silicon_srh_integral_A_per_um": NaN
+        },
+        {
+          "bias_V": 0.12,
+          "vela_A_per_um": 2.3505342289831137e-06,
+          "sentaurus_A_per_um": 2.25398350903e-06,
+          "absolute_relative_error": 0.042835592880918774,
+          "absolute_log_error_dex": 0.018215845595621616,
+          "numerical_status": "resolved",
+          "four_terminal_kcl_residual_A_per_um": 9.714325345976042e-10,
+          "id_to_kcl_residual_ratio": 2419.657717102067,
+          "silicon_srh_integral_A_per_um": NaN
+        },
+        {
+          "bias_V": 0.28,
+          "vela_A_per_um": 3.9666872445631245e-05,
+          "sentaurus_A_per_um": 3.92970755664e-05,
+          "absolute_relative_error": 0.009410290050881813,
+          "absolute_log_error_dex": 0.004067727670837407,
+          "numerical_status": "resolved",
+          "four_terminal_kcl_residual_A_per_um": 1.5481930885609776e-08,
+          "id_to_kcl_residual_ratio": 2562.1398738125754,
+          "silicon_srh_integral_A_per_um": NaN
+        },
+        {
+          "bias_V": 0.44,
+          "vela_A_per_um": 0.0001355738012746959,
+          "sentaurus_A_per_um": 0.000136001393612,
+          "absolute_relative_error": 0.0031440290863782036,
+          "absolute_log_error_dex": 0.001367585475728017,
+          "numerical_status": "resolved",
+          "four_terminal_kcl_residual_A_per_um": 5.2170492188288484e-08,
+          "id_to_kcl_residual_ratio": 2598.6682430634655,
+          "silicon_srh_integral_A_per_um": NaN
+        },
+        {
+          "bias_V": 0.6,
+          "vela_A_per_um": 0.000261954793069122,
+          "sentaurus_A_per_um": 0.000264290477403,
+          "absolute_relative_error": 0.008837565230609684,
+          "absolute_log_error_dex": 0.003855166157336054,
+          "numerical_status": "resolved",
+          "four_terminal_kcl_residual_A_per_um": 1.0060509688752971e-07,
+          "id_to_kcl_residual_ratio": 2603.7924635366267,
+          "silicon_srh_integral_A_per_um": NaN
+        },
+        {
+          "bias_V": 0.76,
+          "vela_A_per_um": 0.0004022504501299259,
+          "sentaurus_A_per_um": 0.000407175318994,
+          "absolute_relative_error": 0.012095204778722585,
+          "absolute_log_error_dex": 0.005284906528054911,
+          "numerical_status": "resolved",
+          "four_terminal_kcl_residual_A_per_um": 1.550965057536825e-07,
+          "id_to_kcl_residual_ratio": 2593.5494044512034,
+          "silicon_srh_integral_A_per_um": NaN
+        },
+        {
+          "bias_V": 0.92,
+          "vela_A_per_um": 0.0005483654003334995,
+          "sentaurus_A_per_um": 0.000556661027804,
+          "absolute_relative_error": 0.01490247575481666,
+          "absolute_log_error_dex": 0.006520772400926855,
+          "numerical_status": "resolved",
+          "four_terminal_kcl_residual_A_per_um": 2.1092440227055984e-07,
+          "id_to_kcl_residual_ratio": 2599.8196246164666,
+          "silicon_srh_integral_A_per_um": NaN
+        },
+        {
+          "bias_V": 1.08,
+          "vela_A_per_um": 0.0006967786606250576,
+          "sentaurus_A_per_um": 0.000708407117184,
+          "absolute_relative_error": 0.016414934684968827,
+          "absolute_log_error_dex": 0.007188074179469872,
+          "numerical_status": "resolved",
+          "four_terminal_kcl_residual_A_per_um": 2.723108725511477e-07,
+          "id_to_kcl_residual_ratio": 2558.7618081396395,
+          "silicon_srh_integral_A_per_um": NaN
+        },
+        {
+          "bias_V": 1.24,
+          "vela_A_per_um": 0.0008441457696085074,
+          "sentaurus_A_per_um": 0.000859781742167,
+          "absolute_relative_error": 0.018185978826537483,
+          "absolute_log_error_dex": 0.007970770082162737,
+          "numerical_status": "resolved",
+          "four_terminal_kcl_residual_A_per_um": 3.562271459038334e-07,
+          "id_to_kcl_residual_ratio": 2369.6840044761548,
+          "silicon_srh_integral_A_per_um": NaN
+        },
+        {
+          "bias_V": 1.4,
+          "vela_A_per_um": 0.000988987469235618,
+          "sentaurus_A_per_um": 0.00100906605515,
+          "absolute_relative_error": 0.01989818784598533,
+          "absolute_log_error_dex": 0.008728807817693696,
+          "numerical_status": "resolved",
+          "four_terminal_kcl_residual_A_per_um": 4.3468442367943485e-07,
+          "id_to_kcl_residual_ratio": 2275.1849741111564,
+          "silicon_srh_integral_A_per_um": NaN
+        },
+        {
+          "bias_V": 1.56,
+          "vela_A_per_um": 0.001130102497909571,
+          "sentaurus_A_per_um": 0.00115502845489,
+          "absolute_relative_error": 0.021580383474451154,
+          "absolute_log_error_dex": 0.009474848629787758,
+          "numerical_status": "resolved",
+          "four_terminal_kcl_residual_A_per_um": 5.214845946424302e-07,
+          "id_to_kcl_residual_ratio": 2167.08702331745,
+          "silicon_srh_integral_A_per_um": NaN
+        },
+        {
+          "bias_V": 1.72,
+          "vela_A_per_um": 0.0012665286818746148,
+          "sentaurus_A_per_um": 0.00129672226467,
+          "absolute_relative_error": 0.023284541044777365,
+          "absolute_log_error_dex": 0.010231938434781984,
+          "numerical_status": "resolved",
+          "four_terminal_kcl_residual_A_per_um": 6.154040350596655e-07,
+          "id_to_kcl_residual_ratio": 2058.044162404331,
+          "silicon_srh_integral_A_per_um": NaN
+        },
+        {
+          "bias_V": 1.88,
+          "vela_A_per_um": 0.0013974584813899926,
+          "sentaurus_A_per_um": 0.00143320604937,
+          "absolute_relative_error": 0.024942378659175462,
+          "absolute_log_error_dex": 0.010969718772308124,
+          "numerical_status": "resolved",
+          "four_terminal_kcl_residual_A_per_um": 7.122687402465221e-07,
+          "id_to_kcl_residual_ratio": 1961.9820475433482,
+          "silicon_srh_integral_A_per_um": NaN
+        },
+        {
+          "bias_V": 2.04,
+          "vela_A_per_um": 0.0015222841652864846,
+          "sentaurus_A_per_um": 0.00156340100874,
+          "absolute_relative_error": 0.026299614253577065,
+          "absolute_log_error_dex": 0.011574657941206823,
+          "numerical_status": "resolved",
+          "four_terminal_kcl_residual_A_per_um": 8.082084022750496e-07,
+          "id_to_kcl_residual_ratio": 1883.5292493883535,
+          "silicon_srh_integral_A_per_um": NaN
+        },
+        {
+          "bias_V": 2.2,
+          "vela_A_per_um": 0.001640383227942299,
+          "sentaurus_A_per_um": 0.00168607324102,
+          "absolute_relative_error": 0.027098474708050352,
+          "absolute_log_error_dex": 0.011931115730236641,
+          "numerical_status": "resolved",
+          "four_terminal_kcl_residual_A_per_um": 9.019086595541482e-07,
+          "id_to_kcl_residual_ratio": 1818.7908615415781,
+          "silicon_srh_integral_A_per_um": NaN
+        }
+      ],
+      "metrics": {
+        "deep_off": {
+          "max_relative_error": 0.02692467036323363,
+          "max_absolute_log_error_dex": 0.011538587272596601,
+          "median_absolute_log_error_dex": 0.004763437881331711
+        },
+        "transition": {
+          "max_relative_error": 0.07863297176097006,
+          "max_absolute_log_error_dex": 0.03287369171237664,
+          "median_absolute_log_error_dex": 0.028307092073930562
+        },
+        "on": {
+          "max_relative_error": 0.027098474708050352,
+          "max_absolute_log_error_dex": 0.011931115730236641,
+          "median_absolute_log_error_dex": 0.007970770082162737
+        }
+      }
+    },
+    {
+      "name": "idvd",
+      "completed_points": 21,
+      "candidate_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_srh_density_coupling_sentaurus_default_2026-08-23\\full_21_point_curves\\runs\\dg\\dg_idvd_curve_comparison_candidate.csv",
+      "aligned_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_srh_density_coupling_sentaurus_default_2026-08-23\\full_21_point_curves\\dg_idvd_aligned.csv",
+      "aligned": [
+        {
+          "bias_V": 0.0,
+          "vela_A_per_um": 1.3487941758105864e-26,
+          "sentaurus_A_per_um": 1.05222660117e-18,
+          "absolute_relative_error": 0.9999999871815236,
+          "absolute_log_error_dex": 7.892163594958085
+        },
+        {
+          "bias_V": 0.1,
+          "vela_A_per_um": 0.0002214661049895338,
+          "sentaurus_A_per_um": 0.000226278453874,
+          "absolute_relative_error": 0.021267375669562785,
+          "absolute_log_error_dex": 0.009335934997238393
+        },
+        {
+          "bias_V": 0.2,
+          "vela_A_per_um": 0.0003721044549270954,
+          "sentaurus_A_per_um": 0.000381128302526,
+          "absolute_relative_error": 0.023676666201636987,
+          "absolute_log_error_dex": 0.010406331073330222
+        },
+        {
+          "bias_V": 0.3,
+          "vela_A_per_um": 0.0004639719195572097,
+          "sentaurus_A_per_um": 0.000475537820085,
+          "absolute_relative_error": 0.0243217259264951,
+          "absolute_log_error_dex": 0.010693365559441226
+        },
+        {
+          "bias_V": 0.4,
+          "vela_A_per_um": 0.0005143314517606482,
+          "sentaurus_A_per_um": 0.000526531813316,
+          "absolute_relative_error": 0.023171176454687685,
+          "absolute_log_error_dex": 0.010181534032470019
+        },
+        {
+          "bias_V": 0.5,
+          "vela_A_per_um": 0.0005417508311242359,
+          "sentaurus_A_per_um": 0.000553683686146,
+          "absolute_relative_error": 0.021551754766019122,
+          "absolute_log_error_dex": 0.009462141292373438
+        },
+        {
+          "bias_V": 0.6,
+          "vela_A_per_um": 0.0005603187731799963,
+          "sentaurus_A_per_um": 0.000571914636028,
+          "absolute_relative_error": 0.020275513367760588,
+          "absolute_log_error_dex": 0.008896037325853978
+        },
+        {
+          "bias_V": 0.7,
+          "vela_A_per_um": 0.0005755503835006683,
+          "sentaurus_A_per_um": 0.000586840188357,
+          "absolute_relative_error": 0.01923829533205661,
+          "absolute_log_error_dex": 0.008436500183012008
+        },
+        {
+          "bias_V": 0.8,
+          "vela_A_per_um": 0.0005888805667253827,
+          "sentaurus_A_per_um": 0.000599829346452,
+          "absolute_relative_error": 0.01825315782126942,
+          "absolute_log_error_dex": 0.008000486977898458
+        },
+        {
+          "bias_V": 0.9,
+          "vela_A_per_um": 0.0006008518222457708,
+          "sentaurus_A_per_um": 0.000611507902732,
+          "absolute_relative_error": 0.017425908052245264,
+          "absolute_log_error_dex": 0.007634691323185283
+        },
+        {
+          "bias_V": 1.0,
+          "vela_A_per_um": 0.0006119169619533538,
+          "sentaurus_A_per_um": 0.000622314854558,
+          "absolute_relative_error": 0.016708411390937046,
+          "absolute_log_error_dex": 0.007317675915969879
+        },
+        {
+          "bias_V": 1.1,
+          "vela_A_per_um": 0.0006223183380728147,
+          "sentaurus_A_per_um": 0.000632443746546,
+          "absolute_relative_error": 0.016009974845168102,
+          "absolute_log_error_dex": 0.0070093040505399
+        },
+        {
+          "bias_V": 1.2,
+          "vela_A_per_um": 0.0006321637684158286,
+          "sentaurus_A_per_um": 0.000641999938182,
+          "absolute_relative_error": 0.015321138182700075,
+          "absolute_log_error_dex": 0.006705385016079202
+        },
+        {
+          "bias_V": 1.3,
+          "vela_A_per_um": 0.0006415554202079145,
+          "sentaurus_A_per_um": 0.000651037036904,
+          "absolute_relative_error": 0.014563866813438436,
+          "absolute_log_error_dex": 0.0063715174053000645
+        },
+        {
+          "bias_V": 1.4,
+          "vela_A_per_um": 0.0006505487002996838,
+          "sentaurus_A_per_um": 0.00065957148438,
+          "absolute_relative_error": 0.01367976677887715,
+          "absolute_log_error_dex": 0.005982057734994939
+        },
+        {
+          "bias_V": 1.5,
+          "vela_A_per_um": 0.0006591899861207796,
+          "sentaurus_A_per_um": 0.00066771906093,
+          "absolute_relative_error": 0.012773448158483153,
+          "absolute_log_error_dex": 0.005583172634998856
+        },
+        {
+          "bias_V": 1.6,
+          "vela_A_per_um": 0.0006675151065367006,
+          "sentaurus_A_per_um": 0.000675629303417,
+          "absolute_relative_error": 0.012009835629185736,
+          "absolute_log_error_dex": 0.005247378874662978
+        },
+        {
+          "bias_V": 1.7,
+          "vela_A_per_um": 0.0006755716893936824,
+          "sentaurus_A_per_um": 0.000683350558521,
+          "absolute_relative_error": 0.011383423969322097,
+          "absolute_log_error_dex": 0.004972112044063337
+        },
+        {
+          "bias_V": 1.8,
+          "vela_A_per_um": 0.0006834262934837724,
+          "sentaurus_A_per_um": 0.000690899222169,
+          "absolute_relative_error": 0.010816235487669485,
+          "absolute_log_error_dex": 0.004723020333960548
+        },
+        {
+          "bias_V": 1.9,
+          "vela_A_per_um": 0.0006911100718876512,
+          "sentaurus_A_per_um": 0.000698287371628,
+          "absolute_relative_error": 0.010278432679679561,
+          "absolute_log_error_dex": 0.004486965790213571
+        },
+        {
+          "bias_V": 2.0,
+          "vela_A_per_um": 0.0006986413623619927,
+          "sentaurus_A_per_um": 0.000705525753105,
+          "absolute_relative_error": 0.009757816369862254,
+          "absolute_log_error_dex": 0.004258576966787331
+        }
+      ],
+      "metrics": {
+        "max_relative_error": 0.0243217259264951,
+        "median_relative_error": 0.016359193118052576,
+        "endpoint_relative_error": 0.009757816369862254
+      }
+    }
+  ],
+  "continuation_history": [],
+  "prior_baseline": {
+    "report": "D:\\code-repo\\vela-tcad\\docs\\validation\\transportmodels_dd_dg_srh_corrected_cold_regression_2026-08-23.json",
+    "idvg_transition_max_log_error_dex": 0.4382303767505533,
+    "idvg_on_max_relative_error": 0.09153528046027844,
+    "idvd_max_relative_error": 0.08669227596095709,
+    "idvd_endpoint_relative_error": 0.07724981445148489
+  },
+  "artifacts": {
+    "png": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_srh_density_coupling_sentaurus_default_2026-08-23\\full_21_point_curves\\dg_quantum_contract_idvg_idvd_comparison.png",
+    "svg": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_srh_density_coupling_sentaurus_default_2026-08-23\\full_21_point_curves\\dg_quantum_contract_idvg_idvd_comparison.svg"
+  },
+  "acceptance": {
+    "main_curve_pass": true,
+    "main_gates": {
+      "idvg_transition": true,
+      "idvg_on": true,
+      "idvd_full": true
+    },
+    "deep_off": {
+      "policy": "separate log-current plus KCL-resolution branch",
+      "points": [
+        {
+          "bias_V": -1.0,
+          "absolute_log_error_dex": 0.004264747146933701,
+          "id_to_kcl_residual_ratio": 378.2727555442414,
+          "status": "pass"
+        },
+        {
+          "bias_V": -0.84,
+          "absolute_log_error_dex": 0.004763437881331711,
+          "id_to_kcl_residual_ratio": 377.24090697621426,
+          "status": "pass"
+        },
+        {
+          "bias_V": -0.68,
+          "absolute_log_error_dex": 0.011538587272596601,
+          "id_to_kcl_residual_ratio": 537.6421747486633,
+          "status": "pass"
+        }
+      ]
+    }
+  }
+}

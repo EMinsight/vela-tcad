@@ -50,6 +50,19 @@ class SentaurusBVMethodsAnalysisTest(unittest.TestCase):
         self.assertAlmostEqual(result["hole_bv_V"], 5.25)
         self.assertAlmostEqual(result["bv_V"], 5.25)
 
+    def test_integrated_impact_generation_accepts_2018_and_2022_names(self) -> None:
+        rows = [[1.0], [2.0]]
+        for name in MODULE.IMPACT_GENERATION_DATASETS:
+            self.assertEqual(
+                [1.0, 2.0],
+                MODULE.column_alias([name], rows, MODULE.IMPACT_GENERATION_DATASETS),
+            )
+            self.assertEqual(
+                [1.0, 2.0],
+                MODULE.optional_column_alias(
+                    [name], rows, MODULE.IMPACT_GENERATION_DATASETS),
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

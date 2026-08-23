@@ -15,6 +15,14 @@ struct RecombinationRateDerivatives {
     Real dRateDExcess = 0.0; ///< Partial derivative wrt n*p-ni^2 [m^3/s]
 };
 
+struct GeneralizedRecombinationRateDerivatives {
+    Real dRateDn = 0.0; ///< Partial derivative at fixed generalized excess product [s^-1]
+    Real dRateDp = 0.0; ///< Partial derivative at fixed generalized excess product [s^-1]
+    Real dRateDExcess = 0.0; ///< Partial derivative wrt generalized excess product [m^3/s]
+    Real dRateDElectronDegeneracy = 0.0; ///< Partial derivative wrt gamma_n [m^-3 s^-1]
+    Real dRateDHoleDegeneracy = 0.0; ///< Partial derivative wrt gamma_p [m^-3 s^-1]
+};
+
 struct RecombinationLinearization {
     Real diagonal = 0.0; ///< Coefficient multiplying the solved carrier [s^-1]
     Real rhs = 0.0;      ///< Source contribution moved to the RHS [m^-3 s^-1]
@@ -38,6 +46,11 @@ struct SRHDopingDependenceConfig {
     Real referenceTemperature_K = 300.0;
     Real electronTemperatureExponent = 0.0;
     Real holeTemperatureExponent = 0.0;
+    /// Electron density used by SRH under density-gradient quantum correction:
+    /// ``quantum`` preserves the legacy Vela behavior; ``sentaurus_default``
+    /// evaluates the SRH denominator and generalized Fermi factors with the
+    /// classical density while transport and Poisson retain the quantum density.
+    std::string densityCoupling = "quantum";
 };
 
 struct RecombinationModelConfig {
@@ -72,6 +85,15 @@ public:
                                   Real p,
                                   Real ni,
                                   Real dopingConcentration = 0.0) const;
+    Real srhRateGeneralizedFromExcessProduct(
+        Real excessProduct,
+        Real n,
+        Real p,
+        Real n1,
+        Real p1,
+        Real electronDegeneracy,
+        Real holeDegeneracy,
+        Real dopingConcentration = 0.0) const;
     Real augerRate(Real n, Real p, Real ni) const;
     Real augerRateFromExcessProduct(Real excessProduct,
                                     Real n,
@@ -83,12 +105,35 @@ public:
                                     Real p,
                                     Real ni,
                                     Real dopingConcentration = 0.0) const;
+    Real totalRateGeneralizedFromExcessProduct(
+        Real excessProduct,
+        Real n,
+        Real p,
+        Real n1,
+        Real p1,
+        Real electronDegeneracy,
+        Real holeDegeneracy,
+        Real dopingConcentration = 0.0) const;
     RecombinationRateDerivatives totalRateDerivativesFromExcessProduct(
         Real excessProduct,
         Real n,
         Real p,
         Real ni,
         Real dopingConcentration = 0.0) const;
+    GeneralizedRecombinationRateDerivatives
+    srhRateGeneralizedDerivativesFromExcessProduct(
+        Real excessProduct,
+        Real n,
+        Real p,
+        Real n1,
+        Real p1,
+        Real electronDegeneracy,
+        Real holeDegeneracy,
+        Real dopingConcentration = 0.0) const;
+    RecombinationRateDerivatives augerRateDerivativesFromExcessProduct(
+        Real excessProduct,
+        Real n,
+        Real p) const;
 
     RecombinationLinearization electronLinearization(
         Real n, Real p, Real ni, Real dopingConcentration = 0.0) const;
@@ -98,6 +143,10 @@ public:
 private:
     Real srhDenominator(Real n, Real p, Real ni,
                         Real dopingConcentration) const;
+    Real srhGeneralizedDenominator(
+        Real n, Real p, Real n1, Real p1,
+        Real electronDegeneracy, Real holeDegeneracy,
+        Real dopingConcentration) const;
 
     RecombinationModelConfig config_;
     BandToBandTunnelingModel bandToBand_;

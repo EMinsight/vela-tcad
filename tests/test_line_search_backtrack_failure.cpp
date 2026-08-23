@@ -205,3 +205,32 @@ TEST_CASE("BacktrackingLineSearch: optionally records per-attempt diagnostics", 
     REQUIRE(result.history[2].sufficientDecrease);
     REQUIRE(result.history[2].accepted);
 }
+
+TEST_CASE("BacktrackingLineSearch: custom decrease policy may accept block tradeoff",
+          "[line_search][residual_filter]")
+{
+    BacktrackingLineSearch search;
+    VectorXd x = VectorXd::Zero(1);
+    VectorXd step = VectorXd::Ones(1);
+    VectorXd currentResidual(2);
+    currentResidual << 1.0, 1.0;
+
+    const LineSearchResult result = search.search(
+        x,
+        step,
+        currentResidual,
+        [](const VectorXd&) {
+            VectorXd residual(2);
+            residual << 0.5, 2.0;
+            return residual;
+        },
+        {},
+        {},
+        [](const VectorXd& residual, Real alpha) {
+            return alpha == Catch::Approx(1.0) && residual(0) < 1.0;
+        });
+
+    REQUIRE(result.accepted);
+    REQUIRE(result.damping == Catch::Approx(1.0));
+    REQUIRE(result.residualNorm > currentResidual.norm());
+}

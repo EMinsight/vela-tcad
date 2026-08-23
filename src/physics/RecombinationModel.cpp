@@ -60,6 +60,12 @@ RecombinationModel::RecombinationModel(RecombinationModelConfig config)
     : config_(std::move(config))
     , bandToBand_(config_.bandToBand)
 {
+    if (config_.srhDopingDependence.densityCoupling != "quantum" &&
+        config_.srhDopingDependence.densityCoupling != "sentaurus_default") {
+        throw std::invalid_argument(
+            "RecombinationModel: SRH density coupling must be 'quantum' or "
+            "'sentaurus_default'.");
+    }
     for (const std::string& mechanism : config_.mechanisms) {
         if (mechanism == "srh") {
             srhEnabled_ = true;
@@ -138,8 +144,19 @@ Real RecombinationModel::srhDopingConcentration(
 Real RecombinationModel::srhDenominator(
     Real n, Real p, Real ni, Real dopingConcentration) const
 {
-    return holeLifetime(dopingConcentration) * (n + ni) +
-           electronLifetime(dopingConcentration) * (p + ni);
+    return srhGeneralizedDenominator(
+        n, p, ni, ni, 1.0, 1.0, dopingConcentration);
+}
+
+Real RecombinationModel::srhGeneralizedDenominator(
+    Real n, Real p, Real n1, Real p1,
+    Real electronDegeneracy, Real holeDegeneracy,
+    Real dopingConcentration) const
+{
+    return holeLifetime(dopingConcentration)
+            * (n + electronDegeneracy * n1)
+         + electronLifetime(dopingConcentration)
+            * (p + holeDegeneracy * p1);
 }
 
 Real RecombinationModel::srhRate(
@@ -155,9 +172,25 @@ Real RecombinationModel::srhRateFromExcessProduct(Real excessProduct,
                                                   Real ni,
                                                   Real dopingConcentration) const
 {
+    return srhRateGeneralizedFromExcessProduct(
+        excessProduct, n, p, ni, ni, 1.0, 1.0, dopingConcentration);
+}
+
+Real RecombinationModel::srhRateGeneralizedFromExcessProduct(
+    Real excessProduct,
+    Real n,
+    Real p,
+    Real n1,
+    Real p1,
+    Real electronDegeneracy,
+    Real holeDegeneracy,
+    Real dopingConcentration) const
+{
     if (!srhEnabled_)
         return 0.0;
-    const Real den = srhDenominator(n, p, ni, dopingConcentration);
+    const Real den = srhGeneralizedDenominator(
+        n, p, n1, p1, electronDegeneracy, holeDegeneracy,
+        dopingConcentration);
     if (std::abs(den) < 1.0e-100)
         return 0.0;
     return limitedExcessValue(excessProduct) / den;
@@ -194,8 +227,25 @@ Real RecombinationModel::totalRateFromExcessProduct(Real excessProduct,
                                                     Real ni,
                                                     Real dopingConcentration) const
 {
-    return srhRateFromExcessProduct(
-               excessProduct, n, p, ni, dopingConcentration)
+    return totalRateGeneralizedFromExcessProduct(
+        excessProduct, n, p, ni, ni, 1.0, 1.0,
+        dopingConcentration);
+}
+
+Real RecombinationModel::totalRateGeneralizedFromExcessProduct(
+    Real excessProduct,
+    Real n,
+    Real p,
+    Real n1,
+    Real p1,
+    Real electronDegeneracy,
+    Real holeDegeneracy,
+    Real dopingConcentration) const
+{
+    return srhRateGeneralizedFromExcessProduct(
+               excessProduct, n, p, n1, p1,
+               electronDegeneracy, holeDegeneracy,
+               dopingConcentration)
          + augerRateFromExcessProduct(excessProduct, n, p);
 }
 
@@ -231,6 +281,60 @@ RecombinationRateDerivatives RecombinationModel::totalRateDerivativesFromExcessP
         derivatives.dRateDp += config_.augerCp * excessProduct;
     }
 
+    return derivatives;
+}
+
+GeneralizedRecombinationRateDerivatives
+RecombinationModel::srhRateGeneralizedDerivativesFromExcessProduct(
+    Real excessProduct,
+    Real n,
+    Real p,
+    Real n1,
+    Real p1,
+    Real electronDegeneracy,
+    Real holeDegeneracy,
+    Real dopingConcentration) const
+{
+    GeneralizedRecombinationRateDerivatives derivatives;
+    if (!srhEnabled_)
+        return derivatives;
+
+    const Real den = srhGeneralizedDenominator(
+        n, p, n1, p1, electronDegeneracy, holeDegeneracy,
+        dopingConcentration);
+    if (std::abs(den) < 1.0e-100)
+        return derivatives;
+
+    const Real limitedExcess = limitedExcessValue(excessProduct);
+    const Real invDen = 1.0 / den;
+    const Real common = -limitedExcess * invDen * invDen;
+    derivatives.dRateDExcess = invDen;
+    derivatives.dRateDn = common * holeLifetime(dopingConcentration);
+    derivatives.dRateDp = common * electronLifetime(dopingConcentration);
+    derivatives.dRateDElectronDegeneracy =
+        common * holeLifetime(dopingConcentration) * n1;
+    derivatives.dRateDHoleDegeneracy =
+        common * electronLifetime(dopingConcentration) * p1;
+    return derivatives;
+}
+
+RecombinationRateDerivatives
+RecombinationModel::augerRateDerivativesFromExcessProduct(
+    Real excessProduct,
+    Real n,
+    Real p) const
+{
+    RecombinationRateDerivatives derivatives;
+    if (!augerEnabled_)
+        return derivatives;
+
+    const Real limitedN = limitedAugerCarrier(n);
+    const Real limitedP = limitedAugerCarrier(p);
+    const Real limitedExcess = limitedExcessValue(excessProduct);
+    derivatives.dRateDExcess =
+        config_.augerCn * limitedN + config_.augerCp * limitedP;
+    derivatives.dRateDn = config_.augerCn * limitedExcess;
+    derivatives.dRateDp = config_.augerCp * limitedExcess;
     return derivatives;
 }
 

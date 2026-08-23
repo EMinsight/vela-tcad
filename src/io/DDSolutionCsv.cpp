@@ -2,9 +2,12 @@
 
 #include "vela/io/CsvUtils.h"
 
+#include <algorithm>
 #include <cmath>
 #include <fstream>
 #include <iomanip>
+#include <limits>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -15,6 +18,14 @@ namespace {
 
 std::string formatRestartReal(Real value)
 {
+    if (!std::isfinite(value)) {
+        throw std::runtime_error(
+            "DCSweep: cannot write non-finite restart-state value.");
+    }
+    if (value != 0.0 &&
+        std::abs(value) < std::numeric_limits<Real>::min()) {
+        return "0";
+    }
     std::ostringstream oss;
     oss << std::setprecision(17) << value;
     return oss.str();
@@ -58,6 +69,17 @@ long long parseRestartStateNodeId(const std::string& nodeIdText)
     return parsedNodeId;
 }
 
+std::optional<std::size_t> columnIndex(
+    const std::vector<std::string>& header,
+    const std::string& name)
+{
+    for (std::size_t i = 0; i < header.size(); ++i) {
+        if (header[i] == name)
+            return i;
+    }
+    return std::nullopt;
+}
+
 } // namespace
 
 DDSolution readDDSolutionStateCsv(const std::filesystem::path& path,
@@ -72,27 +94,67 @@ DDSolution readDDSolutionStateCsv(const std::filesystem::path& path,
     if (!std::getline(input, line))
         throw std::runtime_error("DCSweep: initial_state_file is empty: " + path.string());
 
-    const std::vector<std::string> legacyHeader = {
+    const std::vector<std::string> requiredHeader = {
         "node_id", "psi", "phin", "phip", "electrons_m3", "holes_m3"};
-    const std::vector<std::string> quantumHeader = {
-        "node_id", "psi", "phin", "phip", "electrons_m3", "holes_m3",
-        "electron_quantum_potential_V"};
-    const std::vector<std::string> quantumPotentialLikeHeader = {
-        "node_id", "psi", "phin", "phip", "electrons_m3", "holes_m3",
-        "electron_quantum_potential_V",
-        "electron_quantum_potential_like_V"};
     const std::vector<std::string> header = splitCsvLine(
         line,
         "DCSweep: initial_state_file does not support quoted fields.");
-    const bool hasQuantumPotential =
-        header == quantumHeader || header == quantumPotentialLikeHeader;
-    const bool hasQuantumPotentialLike = header == quantumPotentialLikeHeader;
-    if (header != legacyHeader && !hasQuantumPotential)
+    if (header.size() < requiredHeader.size() ||
+        !std::equal(requiredHeader.begin(), requiredHeader.end(), header.begin())) {
         throw std::runtime_error(
             "DCSweep: initial_state_file header must be "
             "node_id,psi,phin,phip,electrons_m3,holes_m3 with optional "
-            "electron_quantum_potential_V and optional "
-            "electron_quantum_potential_like_V");
+            "restart-state columns");
+    }
+
+    const std::vector<std::string> optionalColumns = {
+        "electron_quantum_potential_V",
+        "electron_quantum_potential_like_V",
+        "electron_qf_increment_V",
+        "hole_qf_increment_V",
+        "electron_qf_reference_V",
+        "hole_qf_reference_V"};
+    for (std::size_t i = requiredHeader.size(); i < header.size(); ++i) {
+        if (std::find(optionalColumns.begin(), optionalColumns.end(), header[i]) ==
+            optionalColumns.end()) {
+            throw std::runtime_error(
+                "DCSweep: initial_state_file has unsupported column '" +
+                header[i] + "'");
+        }
+        if (std::count(header.begin(), header.end(), header[i]) != 1) {
+            throw std::runtime_error(
+                "DCSweep: initial_state_file has duplicate column '" +
+                header[i] + "'");
+        }
+    }
+    const auto quantumPotentialColumn =
+        columnIndex(header, "electron_quantum_potential_V");
+    const auto quantumPotentialLikeColumn =
+        columnIndex(header, "electron_quantum_potential_like_V");
+    const auto electronIncrementColumn =
+        columnIndex(header, "electron_qf_increment_V");
+    const auto holeIncrementColumn =
+        columnIndex(header, "hole_qf_increment_V");
+    const auto electronReferenceColumn =
+        columnIndex(header, "electron_qf_reference_V");
+    const auto holeReferenceColumn =
+        columnIndex(header, "hole_qf_reference_V");
+    const int qfCoordinateColumnCount =
+        static_cast<int>(electronIncrementColumn.has_value()) +
+        static_cast<int>(holeIncrementColumn.has_value()) +
+        static_cast<int>(electronReferenceColumn.has_value()) +
+        static_cast<int>(holeReferenceColumn.has_value());
+    if (qfCoordinateColumnCount != 0 && qfCoordinateColumnCount != 4) {
+        throw std::runtime_error(
+            "DCSweep: initial_state_file must provide all four quasi-Fermi "
+            "increment/reference columns together.");
+    }
+    if (quantumPotentialLikeColumn && !quantumPotentialColumn) {
+        throw std::runtime_error(
+            "DCSweep: electron_quantum_potential_like_V requires "
+            "electron_quantum_potential_V.");
+    }
+    const bool hasReferencedQf = qfCoordinateColumnCount == 4;
 
     DDSolution solution;
     solution.psi = VectorXd::Zero(static_cast<int>(expectedNodeCount));
@@ -104,9 +166,15 @@ DDSolution readDDSolutionStateCsv(const std::filesystem::path& path,
     solution.p = VectorXd::Zero(static_cast<int>(expectedNodeCount));
     solution.electronQuantumPotential =
         VectorXd::Zero(static_cast<int>(expectedNodeCount));
-    if (hasQuantumPotentialLike) {
+    if (quantumPotentialLikeColumn) {
         solution.electronQuantumPotentialLike =
             VectorXd::Zero(static_cast<int>(expectedNodeCount));
+    }
+    if (hasReferencedQf) {
+        solution.phinIncrement = VectorXd::Zero(static_cast<int>(expectedNodeCount));
+        solution.phipIncrement = VectorXd::Zero(static_cast<int>(expectedNodeCount));
+        solution.electronQfReference = VectorXd::Zero(static_cast<int>(expectedNodeCount));
+        solution.holeQfReference = VectorXd::Zero(static_cast<int>(expectedNodeCount));
     }
     solution.iters = 0;
     solution.converged = true;
@@ -143,13 +211,24 @@ DDSolution readDDSolutionStateCsv(const std::filesystem::path& path,
             parseRestartStateReal(row.at(4), "electrons_m3", nodeId));
         solution.p(rowIndex) = units.m3ToInternalConcentration(
             parseRestartStateReal(row.at(5), "holes_m3", nodeId));
-        if (hasQuantumPotential) {
+        if (quantumPotentialColumn) {
             solution.electronQuantumPotential(rowIndex) = parseRestartStateReal(
-                row.at(6), "electron_quantum_potential_V", nodeId);
+                row.at(*quantumPotentialColumn), "electron_quantum_potential_V", nodeId);
         }
-        if (hasQuantumPotentialLike) {
+        if (quantumPotentialLikeColumn) {
             solution.electronQuantumPotentialLike(rowIndex) = parseRestartStateReal(
-                row.at(7), "electron_quantum_potential_like_V", nodeId);
+                row.at(*quantumPotentialLikeColumn),
+                "electron_quantum_potential_like_V", nodeId);
+        }
+        if (hasReferencedQf) {
+            solution.phinIncrement(rowIndex) = parseRestartStateReal(
+                row.at(*electronIncrementColumn), "electron_qf_increment_V", nodeId);
+            solution.phipIncrement(rowIndex) = parseRestartStateReal(
+                row.at(*holeIncrementColumn), "hole_qf_increment_V", nodeId);
+            solution.electronQfReference(rowIndex) = parseRestartStateReal(
+                row.at(*electronReferenceColumn), "electron_qf_reference_V", nodeId);
+            solution.holeQfReference(rowIndex) = parseRestartStateReal(
+                row.at(*holeReferenceColumn), "hole_qf_reference_V", nodeId);
         }
     }
 
@@ -158,6 +237,31 @@ DDSolution readDDSolutionStateCsv(const std::filesystem::path& path,
             throw std::runtime_error(
                 "DCSweep: initial_state_file missing row for node id " +
                 std::to_string(nodeId));
+        }
+    }
+    if (hasReferencedQf && expectedNodeCount > 0) {
+        solution.electronQfReference_V = solution.electronQfReference(0);
+        solution.holeQfReference_V = solution.holeQfReference(0);
+        for (int i = 0; i < solution.phin.size(); ++i) {
+            const Real reconstructedElectronQf =
+                solution.electronQfReference(i) + solution.phinIncrement(i);
+            const Real reconstructedHoleQf =
+                solution.holeQfReference(i) + solution.phipIncrement(i);
+            const Real electronTolerance = 32.0 * std::numeric_limits<Real>::epsilon() *
+                std::max({Real{1.0}, std::abs(solution.phin(i)),
+                          std::abs(reconstructedElectronQf)});
+            const Real holeTolerance = 32.0 * std::numeric_limits<Real>::epsilon() *
+                std::max({Real{1.0}, std::abs(solution.phip(i)),
+                          std::abs(reconstructedHoleQf)});
+            if (std::abs(solution.phin(i) - reconstructedElectronQf) >
+                    electronTolerance ||
+                std::abs(solution.phip(i) - reconstructedHoleQf) >
+                    holeTolerance) {
+                throw std::runtime_error(
+                    "DCSweep: initial_state_file physical and referenced "
+                    "quasi-Fermi values are inconsistent at node id " +
+                    std::to_string(i));
+            }
         }
     }
     return solution;
@@ -187,11 +291,33 @@ void writeDDSolutionStateCsv(const std::filesystem::path& path,
     const bool hasQuantumPotentialLike =
         hasQuantumPotential &&
         solution.electronQuantumPotentialLike.size() == fieldSize;
+    const bool hasReferencedQf =
+        solution.phinIncrement.size() == fieldSize &&
+        solution.phipIncrement.size() == fieldSize;
+    const bool hasElectronReferenceField =
+        solution.electronQfReference.size() == fieldSize;
+    const bool hasHoleReferenceField =
+        solution.holeQfReference.size() == fieldSize;
+    if ((solution.phinIncrement.size() != 0 || solution.phipIncrement.size() != 0) &&
+        !hasReferencedQf) {
+        throw std::runtime_error(
+            "DCSweep: cannot write restart state with partial quasi-Fermi increments.");
+    }
+    if ((solution.electronQfReference.size() != 0 && !hasElectronReferenceField) ||
+        (solution.holeQfReference.size() != 0 && !hasHoleReferenceField)) {
+        throw std::runtime_error(
+            "DCSweep: cannot write restart state with inconsistent quasi-Fermi "
+            "reference field sizes.");
+    }
     output << "node_id,psi,phin,phip,electrons_m3,holes_m3";
     if (hasQuantumPotential)
         output << ",electron_quantum_potential_V";
     if (hasQuantumPotentialLike)
         output << ",electron_quantum_potential_like_V";
+    if (hasReferencedQf) {
+        output << ",electron_qf_increment_V,hole_qf_increment_V"
+                  ",electron_qf_reference_V,hole_qf_reference_V";
+    }
     output << '\n';
     for (int i = 0; i < fieldSize; ++i) {
         output << i << ','
@@ -205,6 +331,18 @@ void writeDDSolutionStateCsv(const std::filesystem::path& path,
         if (hasQuantumPotentialLike)
             output << ',' << formatRestartReal(
                 solution.electronQuantumPotentialLike(i));
+        if (hasReferencedQf) {
+            const Real electronReference = hasElectronReferenceField
+                ? solution.electronQfReference(i)
+                : solution.electronQfReference_V;
+            const Real holeReference = hasHoleReferenceField
+                ? solution.holeQfReference(i)
+                : solution.holeQfReference_V;
+            output << ',' << formatRestartReal(solution.phinIncrement(i))
+                   << ',' << formatRestartReal(solution.phipIncrement(i))
+                   << ',' << formatRestartReal(electronReference)
+                   << ',' << formatRestartReal(holeReference);
+        }
         output << '\n';
     }
 }

@@ -1,0 +1,175 @@
+{
+  "schema": "vela.transportmodels.dg_surface_mobility_frozen_q.v1",
+  "status": "pass",
+  "as_of": "2026-08-21",
+  "sentaurus_current_A_per_um": 0.000705525753105,
+  "sentaurus_channel": {
+    "node_count": 59,
+    "enormal_V_per_cm": {
+      "median": 159463.20240555127,
+      "p95": 1705195.52612768
+    },
+    "electron_mobility_cm2_V_s": {
+      "median": 44.00187036550283,
+      "p05": 5.985075279431248
+    },
+    "electron_drive_V_per_cm": {
+      "median": 32399.007475138704,
+      "p95": 1514839.9649744232
+    }
+  },
+  "results": [
+    {
+      "name": "implicit_all_interfaces",
+      "label": "Lombardi implicit interfaces",
+      "runner_exit_code": 0,
+      "probe_exit_code": 0,
+      "converged": true,
+      "current_A_per_um": 0.0007148076513665678,
+      "current_absolute_relative_error": 0.013156002060475283,
+      "aggregate": {
+        "mean_electron_mobility_m2_V_s": 110.33217572579075,
+        "min_electron_mobility_m2_V_s": 0.12788525567777717,
+        "mean_electron_high_field_drive_V_per_cm": 1910571.9884532988,
+        "max_electric_field_V_per_cm": 6416457.75784559
+      },
+      "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_surface_mobility_frozen_q_2026-08-21\\implicit_all_interfaces\\config.json",
+      "config_sha256": "CED5E733081F0AC588F47C3845688FD7C481885A0D7FB6FAD5CBA78872BB1C06",
+      "endpoint_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_surface_mobility_frozen_q_2026-08-21\\implicit_all_interfaces\\endpoint.csv",
+      "endpoint_sha256": "A5264981F8C3D7E7913E2B3B43817CC72A933F27F6D26DC28FB88C27711B1438",
+      "edge_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_surface_mobility_frozen_q_2026-08-21\\implicit_all_interfaces\\edge_mobility.csv",
+      "edge_sha256": "4991DABCE08809CCE09E656C82AB5582BAF4A8AF4DC0A1109DF5383EC171AE81",
+      "state_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_surface_mobility_frozen_q_2026-08-21\\implicit_all_interfaces\\endpoint_final_state.csv",
+      "channel": {
+        "edge_count": 58,
+        "enormal_V_per_cm": {
+          "median": 250641.64129845804,
+          "p95": 1732456.6114680483
+        },
+        "electron_mobility_cm2_V_s": {
+          "median": 18.93805,
+          "p05": 2.042123
+        },
+        "electron_drive_V_per_cm": {
+          "median": 8893.435000000001,
+          "p95": 1071083.249999999
+        }
+      }
+    },
+    {
+      "name": "explicit_channel_interface",
+      "label": "Lombardi explicit channel",
+      "runner_exit_code": 0,
+      "probe_exit_code": 0,
+      "converged": true,
+      "current_A_per_um": 0.0007199181148234454,
+      "current_absolute_relative_error": 0.020399484576012924,
+      "aggregate": {
+        "mean_electron_mobility_m2_V_s": 110.6693406191188,
+        "min_electron_mobility_m2_V_s": 0.12776569968589802,
+        "mean_electron_high_field_drive_V_per_cm": 1910505.9923897267,
+        "max_electric_field_V_per_cm": 6414502.409503065
+      },
+      "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_surface_mobility_frozen_q_2026-08-21\\explicit_channel_interface\\config.json",
+      "config_sha256": "54C06436B70B8D150E147255F86FF03ED32BF4C50598576E764AD3F62ABEF67D",
+      "endpoint_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_surface_mobility_frozen_q_2026-08-21\\explicit_channel_interface\\endpoint.csv",
+      "endpoint_sha256": "69323C1919CD1B06D75D0DB77CD12587F0BB6A91F5EDA01E306799644C8D42E9",
+      "edge_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_surface_mobility_frozen_q_2026-08-21\\explicit_channel_interface\\edge_mobility.csv",
+      "edge_sha256": "388939CFFA7D7A65C42DBE63D4A73911AB59EA93A00DB5405BE7558F94DDEBED",
+      "state_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_surface_mobility_frozen_q_2026-08-21\\explicit_channel_interface\\endpoint_final_state.csv",
+      "channel": {
+        "edge_count": 58,
+        "enormal_V_per_cm": {
+          "median": 250636.39250969884,
+          "p95": 1732129.5790816501
+        },
+        "electron_mobility_cm2_V_s": {
+          "median": 18.93785,
+          "p05": 2.038703
+        },
+        "electron_drive_V_per_cm": {
+          "median": 8939.14,
+          "p95": 1072212.3499999992
+        }
+      }
+    },
+    {
+      "name": "no_enormal",
+      "label": "No Enormal",
+      "runner_exit_code": 0,
+      "probe_exit_code": 0,
+      "converged": true,
+      "current_A_per_um": 0.000831853654835175,
+      "current_absolute_relative_error": 0.17905498300268877,
+      "aggregate": {
+        "mean_electron_mobility_m2_V_s": 128.7729245849959,
+        "min_electron_mobility_m2_V_s": 4.263994424329772,
+        "mean_electron_high_field_drive_V_per_cm": 1909064.5737238964,
+        "max_electric_field_V_per_cm": 6355149.76793947
+      },
+      "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_surface_mobility_frozen_q_2026-08-21\\no_enormal\\config.json",
+      "config_sha256": "859C9A308D6CBE916731D1C2585FEA09723E9AEE4A0B9D4307E49D53C501BAC8",
+      "endpoint_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_surface_mobility_frozen_q_2026-08-21\\no_enormal\\endpoint.csv",
+      "endpoint_sha256": "8CCFD5F0BEC5A5097C8B6C97A78090B0D09F821FB3FC2D7C92A6BEBDD8E0F3CB",
+      "edge_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_surface_mobility_frozen_q_2026-08-21\\no_enormal\\edge_mobility.csv",
+      "edge_sha256": "A8F7269A6CC6C501E450B03032EE162B3C6877D83F35D01B394413385DBB188B",
+      "state_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_surface_mobility_frozen_q_2026-08-21\\no_enormal\\endpoint_final_state.csv",
+      "channel": {
+        "edge_count": 58,
+        "enormal_V_per_cm": {
+          "median": 250418.51856239262,
+          "p95": 1727524.3673351174
+        },
+        "electron_mobility_cm2_V_s": {
+          "median": 47.0582,
+          "p05": 9.840233000000001
+        },
+        "electron_drive_V_per_cm": {
+          "median": 10204.349999999999,
+          "p95": 1089062.549999999
+        }
+      }
+    },
+    {
+      "name": "no_high_field",
+      "label": "No high-field saturation",
+      "runner_exit_code": 0,
+      "probe_exit_code": 0,
+      "converged": true,
+      "current_A_per_um": 0.001910563222773155,
+      "current_absolute_relative_error": 1.7079992677302243,
+      "aggregate": {
+        "mean_electron_mobility_m2_V_s": 138.1144161159202,
+        "min_electron_mobility_m2_V_s": 0.19780758523289313,
+        "mean_electron_high_field_drive_V_per_cm": 1921284.3730537032,
+        "max_electric_field_V_per_cm": 5988142.01805667
+      },
+      "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_surface_mobility_frozen_q_2026-08-21\\no_high_field\\config.json",
+      "config_sha256": "C29813828250B0BF54514C00A7C772C5849B97BE94CCF04087BBC086C2464B04",
+      "endpoint_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_surface_mobility_frozen_q_2026-08-21\\no_high_field\\endpoint.csv",
+      "endpoint_sha256": "79D302D3C058A1874609B8D5C503E08CF81C961CE1E9CFECBB516A6BB79D07E2",
+      "edge_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_surface_mobility_frozen_q_2026-08-21\\no_high_field\\edge_mobility.csv",
+      "edge_sha256": "D7DDBDFF05352C6C1DB3696D600D455375F8532492D6D1E57E92D3599E639C56",
+      "state_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_surface_mobility_frozen_q_2026-08-21\\no_high_field\\endpoint_final_state.csv",
+      "channel": {
+        "edge_count": 58,
+        "enormal_V_per_cm": {
+          "median": 248244.05253006396,
+          "p95": 1564008.4901872054
+        },
+        "electron_mobility_cm2_V_s": {
+          "median": 19.071199999999997,
+          "p05": 2.8351375000000005
+        },
+        "electron_drive_V_per_cm": {
+          "median": 22950.449999999997,
+          "p95": 823395.2
+        }
+      }
+    }
+  ],
+  "artifacts": {
+    "png": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_surface_mobility_frozen_q_2026-08-21\\surface_mobility_comparison.png",
+    "svg": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_surface_mobility_frozen_q_2026-08-21\\surface_mobility_comparison.svg"
+  }
+}

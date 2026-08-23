@@ -513,6 +513,42 @@ TEST_CASE("DDSolution restart CSV preserves density-gradient states",
     REQUIRE(restored.electronQuantumPotentialLike(3) == Catch::Approx(-3.8));
 }
 
+TEST_CASE("DDSolution restart CSV preserves cancellation-free quasi-Fermi coordinates",
+          "[dc_sweep][restart][quasi_fermi_reference]")
+{
+    const std::filesystem::path dir = makeUniqueSweepDir();
+    std::filesystem::create_directories(dir);
+    const ScopedDirectoryCleanup cleanup{dir};
+    const std::filesystem::path statePath = dir / "referenced_qf_state.csv";
+    DDSolution state;
+    state.psi = VectorXd::LinSpaced(4, 0.0, 0.3);
+    state.phinIncrement = VectorXd::LinSpaced(4, -2.0e-17, 1.0e-17);
+    state.phipIncrement = VectorXd::LinSpaced(4, 3.0e-17, -3.0e-17);
+    state.electronQfReference.resize(4);
+    state.electronQfReference << 0.0, 0.0, 1.1, 1.1;
+    state.holeQfReference = VectorXd::Constant(4, -0.2);
+    state.phin = state.electronQfReference + state.phinIncrement;
+    state.phip = state.holeQfReference + state.phipIncrement;
+    state.n = VectorXd::Constant(4, 1.0e20);
+    state.p = VectorXd::Constant(4, 2.0e20);
+
+    writeDDSolutionStateCsv(statePath, state);
+    const DDSolution restored = readDDSolutionStateCsv(statePath, 4);
+
+    REQUIRE(restored.phinIncrement.size() == 4);
+    REQUIRE(restored.phipIncrement.size() == 4);
+    REQUIRE(restored.electronQfReference.size() == 4);
+    REQUIRE(restored.holeQfReference.size() == 4);
+    REQUIRE(restored.phinIncrement(0) == state.phinIncrement(0));
+    REQUIRE(restored.phipIncrement(3) == state.phipIncrement(3));
+    REQUIRE(restored.electronQfReference(2) == Catch::Approx(1.1));
+    REQUIRE(restored.holeQfReference(1) == Catch::Approx(-0.2));
+    REQUIRE(restored.electronQfReference(0) + restored.phinIncrement(0) ==
+            restored.phin(0));
+    REQUIRE(restored.electronQfReference(2) + restored.phinIncrement(2) ==
+            restored.phin(2));
+}
+
 TEST_CASE("DCSweep frozen-state replay can explicitly compute terminal current",
           "[dc_sweep][frozen_state][current]")
 {
@@ -700,6 +736,120 @@ TEST_CASE("DCSweep: external resistor records a closed inner/outer load line",
         resumedRows.begin() + 1,
         resumedRows.end(),
         [&](const auto& row) { return row.at(resumedCol) == "1"; }));
+}
+
+TEST_CASE("DCSweep: coupled external resistor closes device and circuit residuals",
+          "[dc_sweep][external_circuit][coupled_newton][integration]")
+{
+    const auto dir = makeUniqueSweepDir();
+    const ScopedDirectoryCleanup cleanup{dir};
+    std::filesystem::create_directories(dir);
+    const auto meshPath = writePNMeshMicrometers(dir);
+    const auto csvPath = dir / "coupled_external_resistor.csv";
+    const auto restartPath = dir / "coupled_external_resistor_state.csv";
+    const auto cfgPath = writeUnitScalingSweepConfig(
+        dir,
+        meshPath,
+        csvPath,
+        {
+            {"start", 0.0},
+            {"stop", 0.25},
+            {"step", 0.25},
+            // The first explicit segment is shorter than the configured
+            // initial outer step. The controller must clamp the proposal to
+            // the segment instead of rejecting an otherwise valid sweep.
+            {"bias_points", {0.0, 0.025, 0.25}},
+            {"write_vtk", false},
+            {"write_state_file", restartPath.string()},
+            {"external_circuit", {
+                {"mode", "series_resistor"},
+                {"solver", "coupled_newton"},
+                {"resistance_ohm_um", 1.0e3},
+                {"initial_inner_voltage_V", 0.0},
+                {"max_inner_voltage_step_V", 0.1},
+                {"residual_tolerance_V", 1.0e-7},
+                {"coupled_equation_tolerance", 1.0e-5},
+                {"current_directional_step", 1.0e-5},
+                {"coupled_initial_outer_step_V", 0.05},
+                {"coupled_min_outer_step_V", 0.005},
+                {"coupled_max_outer_step_V", 0.1},
+                {"coupled_outer_growth_factor", 1.5},
+                {"coupled_outer_shrink_factor", 0.5},
+                {"coupled_max_step_retries", 8},
+                {"coupled_line_search_mode", "residual_filter"},
+                // This toy device has intentionally uncalibrated raw PDE
+                // units. The block-filter policy itself is covered by the
+                // dedicated CoupledLoadLine test using production-like scales.
+                {"coupled_filter_envelope_factor", 1.0e8},
+                {"coupled_inexact_device_forcing", {
+                    {"enabled", true},
+                    {"max_equation_tolerance", 1.0e-4},
+                    {"load_activation_ratio", 100.0}
+                }},
+                {"max_iterations", 40}
+            }}
+        },
+        {
+            {"method", "newton"},
+            {"warm_start", true},
+            {"line_search", true}
+        });
+
+    DCSweep sweep;
+    const DCSweepResult result = sweep.runWithResult(cfgPath.string());
+    REQUIRE(result.points.size() > 2);
+    REQUIRE(std::filesystem::is_regular_file(restartPath));
+    for (const DCSweepPoint& point : result.points) {
+        REQUIRE(point.converged);
+        REQUIRE(point.solverMethod == "coupled_load_line_newton");
+        REQUIRE(point.boundaryControlMode == "external_resistor");
+        REQUIRE(std::abs(point.loadLineResidual_V) <= 1.0e-7);
+        REQUIRE(point.boundaryControlEvaluations >= 1);
+    }
+    REQUIRE(result.points.back().outerVoltage_V ==
+            Catch::Approx(0.25).margin(1.0e-12));
+
+    const auto restartCsvPath = dir / "coupled_external_resistor_restart.csv";
+    const auto restartCfgPath = writeUnitScalingSweepConfig(
+        dir,
+        meshPath,
+        restartCsvPath,
+        {
+            {"start", 0.25},
+            {"stop", 0.5},
+            {"step", 0.25},
+            {"bias_points", {0.25, 0.5}},
+            {"write_vtk", false},
+            {"initial_state_file", restartPath.string()},
+            {"external_circuit", {
+                {"mode", "series_resistor"},
+                {"solver", "coupled_newton"},
+                {"resistance_ohm_um", 1.0e3},
+                {"initial_inner_voltage_V", result.points.back().innerVoltage_V},
+                {"max_inner_voltage_step_V", 0.1},
+                {"residual_tolerance_V", 1.0e-7},
+                {"coupled_equation_tolerance", 1.0e-5},
+                {"current_directional_step", 1.0e-5},
+                {"coupled_initial_outer_step_V", 0.05},
+                {"coupled_min_outer_step_V", 0.005},
+                {"coupled_max_outer_step_V", 0.1},
+                {"coupled_line_search_mode", "residual_filter"},
+                {"coupled_filter_envelope_factor", 1.0e8},
+                {"max_iterations", 40}
+            }}
+        },
+        {
+            {"method", "newton"},
+            {"warm_start", true},
+            {"line_search", true}
+        });
+    const DCSweepResult restarted = sweep.runWithResult(restartCfgPath.string());
+    REQUIRE(restarted.points.size() > 2);
+    REQUIRE(restarted.points.front().innerVoltage_V ==
+            Catch::Approx(result.points.back().innerVoltage_V).margin(1.0e-7));
+    REQUIRE(restarted.points.back().outerVoltage_V ==
+            Catch::Approx(0.5).margin(1.0e-12));
+    REQUIRE(std::abs(restarted.points.back().loadLineResidual_V) <= 1.0e-7);
 }
 
 TEST_CASE("DCSweep: external resistor restores an interrupted persisted bracket",
@@ -1080,6 +1230,9 @@ TEST_CASE("DCSweep: PN diode forward sweep writes CSV and finite monotonic IV da
                                                      "current_hole_diffusion", "current_total", "converged", "iterations",
                                                      "solver_method", "gummel_iterations", "newton_iterations",
                                                      "handoff_stage", "newton_convergence_reason",
+                                                     "final_psi_residual_norm",
+                                                     "final_electron_continuity_residual_norm",
+                                                     "final_hole_continuity_residual_norm",
                                                      "carrier_row_violations", "carrier_row_max_ratio",
                                                      "carrier_row_recovery_attempted",
                                                      "carrier_row_recovery_electron_rows",
@@ -1606,11 +1759,10 @@ TEST_CASE("DCSweep: VTK transport diagnostics include mobility decomposition fie
         {"step", 0.05},
         {"write_vtk", true},
         {"vtk_prefix", vtkPrefix.string()},
-        {"solver", {
-            {"mobility", {
-                {"model", "masetti_field"},
-                {"high_field_driving_force", "quasi_fermi_gradient"},
-            }},
+    }, {
+        {"mobility", {
+            {"model", "masetti_field_lombardi"},
+            {"high_field_driving_force", "quasi_fermi_gradient"},
         }},
     });
 
@@ -1631,6 +1783,8 @@ TEST_CASE("DCSweep: VTK transport diagnostics include mobility decomposition fie
     REQUIRE(content.find("HoleHighFieldDrive") != std::string::npos);
     REQUIRE(content.find("ElectronMobilityLimiter") != std::string::npos);
     REQUIRE(content.find("HoleMobilityLimiter") != std::string::npos);
+    REQUIRE(content.find("CellSurfaceNormalField") != std::string::npos);
+    REQUIRE(content.find("SurfaceNormalField") != std::string::npos);
 }
 
 TEST_CASE("DCSweep: contact-edge diagnostics are opt-in and write per-edge rows",
@@ -2748,7 +2902,8 @@ TEST_CASE("DCSweep: continuation predictor config is validated",
                 {"corrector_tolerance", 1.0e-8},
                 {"max_step_retries", 6},
                 {"parameter_scale", 1.0},
-                {"bias_finite_difference_step_V", 1.0e-4}
+                {"bias_finite_difference_step_V", 1.0e-4},
+                {"source_jacobian", "finite_difference"}
             }}
         });
         const DCSweepResult result = sweep.runWithResult(cfgPath.string());
@@ -2766,6 +2921,7 @@ TEST_CASE("DCSweep: continuation predictor config is validated",
                 {"state_weight", 0.25},
                 {"damping_factor", 0.5},
                 {"max_line_search_steps", 4},
+                {"line_search_relative_increase_tolerance", 1.0e-4},
                 {"max_parameter_update", 0.02}
             }}
         });
@@ -2950,6 +3106,7 @@ TEST_CASE("DCSweep: terminal balance diagnostics reuse one solution for two cont
     const auto meshPath = writePNMeshMicrometers(dir);
     const auto csvPath = dir / "iv_unit_scaling.csv";
     const auto balancePath = dir / "iv_terminal_balance.csv";
+    const auto srhBalancePath = dir / "iv_srh_balance.csv";
     const auto edgeDiagPath = dir / "iv_contact_edges.csv";
     const auto cfgPath = writeUnitScalingSweepConfig(dir, meshPath, csvPath, {
         {"start", 0.0},
@@ -2961,6 +3118,15 @@ TEST_CASE("DCSweep: terminal balance diagnostics reuse one solution for two cont
                 {"enabled", true},
                 {"contacts", {"anode", "cathode"}},
                 {"csv_file", balancePath.string()}
+            }},
+            {"srh_balance", {
+                {"enabled", true},
+                {"material", "Si"},
+                {"drain_contact", "anode"},
+                {"substrate_contact", "cathode"},
+                {"kcl_contacts", {"anode", "cathode"}},
+                {"resolution_margin_ratio", 10.0},
+                {"csv_file", srhBalancePath.string()}
             }},
             {"contact_edge", {
                 {"enabled", true},
@@ -2999,6 +3165,23 @@ TEST_CASE("DCSweep: terminal balance diagnostics reuse one solution for two cont
         minusUmPairSum += csvReal(row, minusUmCol);
     }
     REQUIRE(std::abs(minusUmPairSum) <= 1.0e-24);
+
+    REQUIRE(std::filesystem::exists(srhBalancePath));
+    const auto srhRows = readCsvRows(srhBalancePath);
+    REQUIRE(srhRows.size() == 2);
+    const auto& srhHeader = srhRows.front();
+    const auto& srhRow = srhRows.back();
+    REQUIRE(csvReal(srhRow, csvColumnIndex(srhHeader, "material_cell_count")) > 0.0);
+    REQUIRE(std::isfinite(csvReal(
+        srhRow, csvColumnIndex(srhHeader, "srh_net_current_A_per_um"))));
+    REQUIRE(std::isfinite(csvReal(
+        srhRow, csvColumnIndex(srhHeader, "four_terminal_kcl_residual_A_per_um"))));
+    REQUIRE(csvReal(srhRow, csvColumnIndex(srhHeader, "resolution_margin_ratio")) ==
+            Catch::Approx(10.0));
+    const std::string numericalStatus =
+        srhRow.at(csvColumnIndex(srhHeader, "numerical_status"));
+    REQUIRE((numericalStatus == "resolved" ||
+             numericalStatus == "numerically_unresolved"));
 
     REQUIRE(std::filesystem::exists(edgeDiagPath));
     const auto edgeRows = readCsvRows(edgeDiagPath);
@@ -3436,6 +3619,9 @@ TEST_CASE("DCSweep: curve output schemas distinguish IV, CV, and BV modes", "[dc
                                                          "current_hole_diffusion", "current_total", "converged", "iterations",
                                                          "solver_method", "gummel_iterations", "newton_iterations",
                                                          "handoff_stage", "newton_convergence_reason",
+                                                         "final_psi_residual_norm",
+                                                         "final_electron_continuity_residual_norm",
+                                                         "final_hole_continuity_residual_norm",
                                                          "carrier_row_violations", "carrier_row_max_ratio",
                                                          "carrier_row_recovery_attempted",
                                                          "carrier_row_recovery_electron_rows",
@@ -3499,6 +3685,9 @@ TEST_CASE("DCSweep: curve output schemas distinguish IV, CV, and BV modes", "[dc
                                                          "current_hole_diffusion", "current_total", "converged", "iterations",
                                                          "solver_method", "gummel_iterations", "newton_iterations",
                                                          "handoff_stage", "newton_convergence_reason",
+                                                         "final_psi_residual_norm",
+                                                         "final_electron_continuity_residual_norm",
+                                                         "final_hole_continuity_residual_norm",
                                                          "carrier_row_violations", "carrier_row_max_ratio",
                                                          "carrier_row_recovery_attempted",
                                                          "carrier_row_recovery_electron_rows",
@@ -3564,6 +3753,9 @@ TEST_CASE("DCSweep: curve output schemas distinguish IV, CV, and BV modes", "[dc
                                                          "current_hole_diffusion", "current_total", "converged", "iterations",
                                                          "solver_method", "gummel_iterations", "newton_iterations",
                                                          "handoff_stage", "newton_convergence_reason",
+                                                         "final_psi_residual_norm",
+                                                         "final_electron_continuity_residual_norm",
+                                                         "final_hole_continuity_residual_norm",
                                                          "carrier_row_violations", "carrier_row_max_ratio",
                                                          "carrier_row_recovery_attempted",
                                                          "carrier_row_recovery_electron_rows",
@@ -3615,6 +3807,9 @@ TEST_CASE("DCSweep: LDMOS BV diagnostic deck writes complete schema", "[dc_sweep
                                                      "current_hole_diffusion", "current_total", "converged", "iterations",
                                                      "solver_method", "gummel_iterations", "newton_iterations",
                                                      "handoff_stage", "newton_convergence_reason",
+                                                     "final_psi_residual_norm",
+                                                     "final_electron_continuity_residual_norm",
+                                                     "final_hole_continuity_residual_norm",
                                                      "carrier_row_violations", "carrier_row_max_ratio",
                                                      "carrier_row_recovery_attempted",
                                                      "carrier_row_recovery_electron_rows",
@@ -3685,6 +3880,9 @@ TEST_CASE("DCSweep: BV reverse start failure records failed diagnostic row", "[d
                                                      "current_hole_diffusion", "current_total", "converged", "iterations",
                                                      "solver_method", "gummel_iterations", "newton_iterations",
                                                      "handoff_stage", "newton_convergence_reason",
+                                                     "final_psi_residual_norm",
+                                                     "final_electron_continuity_residual_norm",
+                                                     "final_hole_continuity_residual_norm",
                                                      "carrier_row_violations", "carrier_row_max_ratio",
                                                      "carrier_row_recovery_attempted",
                                                      "carrier_row_recovery_electron_rows",
@@ -4020,6 +4218,27 @@ TEST_CASE("DDSolution CSV writes physical m3 densities in unit scaling mode", "[
     const DDSolution loaded = readDDSolutionStateCsv(path, 1, scaling);
     REQUIRE(loaded.n(0) == Catch::Approx(solution.n(0)));
     REQUIRE(loaded.p(0) == Catch::Approx(solution.p(0)));
+}
+
+TEST_CASE("DDSolution CSV canonicalizes finite subnormal restart values",
+          "[dc_sweep][restart]")
+{
+    const auto dir = makeUniqueSweepDir();
+    const ScopedDirectoryCleanup cleanup{dir};
+    std::filesystem::create_directories(dir);
+    const auto path = dir / "subnormal_state.csv";
+
+    DDSolution solution;
+    solution.psi = VectorXd::Zero(1);
+    solution.phin = VectorXd::Zero(1);
+    solution.phip = VectorXd::Constant(
+        1, 4.0 * std::numeric_limits<Real>::denorm_min());
+    solution.n = VectorXd::Constant(1, 1.0e16);
+    solution.p = VectorXd::Constant(1, 1.0e16);
+
+    writeDDSolutionStateCsv(path, solution);
+    const DDSolution loaded = readDDSolutionStateCsv(path, 1);
+    REQUIRE(loaded.phip(0) == 0.0);
 }
 
 TEST_CASE("DCSweep: write_state_every_point_prefix stores accepted states", "[dc_sweep]")
@@ -4924,8 +5143,10 @@ TEST_CASE("DCSweep: nonlinear trace records rejected attempts before determinist
                 {"enabled", true},
                 {"attempts_csv_file", (dir / (name + "_attempts.csv")).string()},
                 {"iterations_csv_file", (dir / (name + "_iterations.csv")).string()},
-                {"rejected_state_directory",
-                 (dir / "rejected_states").string()}
+                // Exercise config-relative directory resolution. The trace
+                // must report files below the deck directory, independent of
+                // the process working directory.
+                {"rejected_state_directory", "rejected_states"}
             };
         }
         const auto cfgPath = writeSweepConfig(dir, meshPath, csvPath, {

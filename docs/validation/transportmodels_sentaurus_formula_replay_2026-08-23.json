@@ -1,0 +1,2168 @@
+{
+  "schema": "vela.transportmodels.sentaurus_formula_replay.v1",
+  "as_of": "2026-08-23",
+  "status": "complete",
+  "runner": "D:\\code-repo\\vela-tcad\\build\\vela_example_runner.exe",
+  "runner_sha256": "F6AF88CE20607BCAB7040FB357EA0C2F6D8F8782A49555020494DF2CE47878F2",
+  "case_count": 12,
+  "cases": [
+    {
+      "group": "dg_idvg_transition",
+      "bias_kind": "gate",
+      "bias_V": -0.2,
+      "gate_bias_V": -0.2,
+      "drain_bias_V": 1.1,
+      "density": {
+        "electron_density_abs_error_dex": {
+          "count": 2564,
+          "median": 0.006750069329751085,
+          "p95": 0.008395705719211043,
+          "maximum": 0.01949337457023148
+        },
+        "hole_density_abs_error_dex": {
+          "count": 2564,
+          "median": 0.007322505231363241,
+          "p95": 0.03928081912949248,
+          "maximum": 0.03975340737896049
+        }
+      },
+      "transport": {
+        "electron_mobility_abs_error_dex": {
+          "count": 7511,
+          "median": 0.015589583011899943,
+          "p95": 0.40522280043660813,
+          "maximum": 2.499301804526471
+        },
+        "electron_drive_abs_error_dex": {
+          "count": 4388,
+          "median": 5.901302187855368,
+          "p95": 8.145813039475634,
+          "maximum": 9.390753563026083
+        },
+        "electron_sg_line_current_abs_error_dex": {
+          "count": 4406,
+          "median": 0.07012526430471322,
+          "p95": 0.7669632263876216,
+          "maximum": 3.5207570034974847
+        },
+        "current_carrying_edges": {
+          "definition": "Sentaurus projected electron line current exceeds 1e-3 of its maximum",
+          "edge_count": 2709,
+          "electron_mobility_abs_error_dex": {
+            "count": 2709,
+            "median": 0.00739205311449509,
+            "p95": 0.3292946971317082,
+            "maximum": 1.5273860776151422
+          },
+          "electron_drive_abs_error_dex": {
+            "count": 1784,
+            "median": 6.666686607951244,
+            "p95": 8.537096933164529,
+            "maximum": 10.291347291696916
+          },
+          "electron_sg_line_current_abs_error_dex": {
+            "count": 2687,
+            "median": 0.03121573829784996,
+            "p95": 0.5494215098402878,
+            "maximum": 2.01215825884596
+          }
+        },
+        "sg_current_comparison_note": "Sentaurus nodal J projected on the primal edge and integrated over the Vela dual couple; use as a spatial diagnostic, not an exact discretization identity."
+      },
+      "srh": {
+        "normalized_total_variation_distance": 0.09081351510436668,
+        "top50_node_overlap": 0.88,
+        "sentaurus_signed_area_weighted_sum_cm-1_s-1": -9807521604049754.0,
+        "vela_signed_scaled_integral": -3.042729668363803e-11
+      },
+      "statuses": {
+        "sg": {
+          "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_transition\\gate_m0p20\\sg_edge_flux.json",
+          "converged": true,
+          "edge_count": 9770,
+          "nodes": 3315,
+          "simulation_type": "sg_edge_flux_probe"
+        },
+        "mobility": {
+          "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_transition\\gate_m0p20\\edge_mobility.json",
+          "converged": true,
+          "edge_count": 9770,
+          "high_field_driving_force": "quasi_fermi_gradient",
+          "mobility_model": "masetti_field_lombardi",
+          "nodes": 3315,
+          "simulation_type": "edge_mobility_probe",
+          "temperature_K": 300.0
+        },
+        "carrier_terms": {
+          "adjusted_block_residuals": {
+            "combined": 112.91542150917829,
+            "phin": 1.517295154302395e-05,
+            "phip": 3.021857191759046e-12,
+            "psi": 112.91542150917726
+          },
+          "block_residuals": {
+            "combined": 112.91542150917829,
+            "phin": 1.5172951543023964e-05,
+            "phip": 3.0218571917590478e-12,
+            "psi": 112.91542150917726
+          },
+          "carrier_term_probe": {
+            "electron_impact_scale": 1.0,
+            "hole_impact_scale": 1.0,
+            "solved_equation_terms": false
+          },
+          "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_transition\\gate_m0p20\\newton_carrier_term.json",
+          "converged": true,
+          "nodes": 3315,
+          "potential_scale": 0.025851999786435535,
+          "row_count": 3315,
+          "scaled_state": true,
+          "simulation_type": "newton_carrier_term_probe"
+        }
+      },
+      "artifacts": {
+        "sentaurus_state": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_transition\\gate_m0p20\\sentaurus_state_for_vela.csv",
+        "sg_edges": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_transition\\gate_m0p20\\sg_edge_flux.csv",
+        "edge_mobility": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_transition\\gate_m0p20\\edge_mobility.csv",
+        "edge_formula_comparison": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_transition\\gate_m0p20\\sentaurus_vela_edge_formula_comparison.csv",
+        "carrier_terms": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_transition\\gate_m0p20\\newton_carrier_term.csv",
+        "summary": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_transition\\gate_m0p20\\formula_replay_summary.json"
+      }
+    },
+    {
+      "group": "dg_idvg_transition",
+      "bias_kind": "gate",
+      "bias_V": -0.04,
+      "gate_bias_V": -0.04,
+      "drain_bias_V": 1.1,
+      "density": {
+        "electron_density_abs_error_dex": {
+          "count": 2564,
+          "median": 0.006730734026556107,
+          "p95": 0.008357468710080161,
+          "maximum": 0.018561967349388198
+        },
+        "hole_density_abs_error_dex": {
+          "count": 2564,
+          "median": 0.007322703088795457,
+          "p95": 0.0392808218030152,
+          "maximum": 0.03975340737896049
+        }
+      },
+      "transport": {
+        "electron_mobility_abs_error_dex": {
+          "count": 7511,
+          "median": 0.015977849241202602,
+          "p95": 0.38638866942485184,
+          "maximum": 2.3872685814624317
+        },
+        "electron_drive_abs_error_dex": {
+          "count": 5373,
+          "median": 4.543312043176032,
+          "p95": 7.014791498483854,
+          "maximum": 9.359417173282573
+        },
+        "electron_sg_line_current_abs_error_dex": {
+          "count": 4177,
+          "median": 0.0666286241444709,
+          "p95": 0.8396173400139906,
+          "maximum": 3.962020137785398
+        },
+        "current_carrying_edges": {
+          "definition": "Sentaurus projected electron line current exceeds 1e-3 of its maximum",
+          "edge_count": 2721,
+          "electron_mobility_abs_error_dex": {
+            "count": 2721,
+            "median": 0.007411641353388454,
+            "p95": 0.2756484769800678,
+            "maximum": 1.4984459032394004
+          },
+          "electron_drive_abs_error_dex": {
+            "count": 1823,
+            "median": 4.689499289808914,
+            "p95": 6.574800643332884,
+            "maximum": 8.328517443632089
+          },
+          "electron_sg_line_current_abs_error_dex": {
+            "count": 2697,
+            "median": 0.031177631216179336,
+            "p95": 0.46623231634581075,
+            "maximum": 1.857515494761257
+          }
+        },
+        "sg_current_comparison_note": "Sentaurus nodal J projected on the primal edge and integrated over the Vela dual couple; use as a spatial diagnostic, not an exact discretization identity."
+      },
+      "srh": {
+        "normalized_total_variation_distance": 0.08871218465767451,
+        "top50_node_overlap": 0.88,
+        "sentaurus_signed_area_weighted_sum_cm-1_s-1": -9707003676413286.0,
+        "vela_signed_scaled_integral": -3.018124516116894e-11
+      },
+      "statuses": {
+        "sg": {
+          "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_transition\\gate_m0p04\\sg_edge_flux.json",
+          "converged": true,
+          "edge_count": 9770,
+          "nodes": 3315,
+          "simulation_type": "sg_edge_flux_probe"
+        },
+        "mobility": {
+          "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_transition\\gate_m0p04\\edge_mobility.json",
+          "converged": true,
+          "edge_count": 9770,
+          "high_field_driving_force": "quasi_fermi_gradient",
+          "mobility_model": "masetti_field_lombardi",
+          "nodes": 3315,
+          "simulation_type": "edge_mobility_probe",
+          "temperature_K": 300.0
+        },
+        "carrier_terms": {
+          "adjusted_block_residuals": {
+            "combined": 111.14215623051612,
+            "phin": 0.001037403367332617,
+            "phip": 3.0190750640812338e-12,
+            "psi": 111.14215622567455
+          },
+          "block_residuals": {
+            "combined": 111.14215623051612,
+            "phin": 0.0010374033673326186,
+            "phip": 3.0190750640812338e-12,
+            "psi": 111.14215622567455
+          },
+          "carrier_term_probe": {
+            "electron_impact_scale": 1.0,
+            "hole_impact_scale": 1.0,
+            "solved_equation_terms": false
+          },
+          "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_transition\\gate_m0p04\\newton_carrier_term.json",
+          "converged": true,
+          "nodes": 3315,
+          "potential_scale": 0.025851999786435535,
+          "row_count": 3315,
+          "scaled_state": true,
+          "simulation_type": "newton_carrier_term_probe"
+        }
+      },
+      "artifacts": {
+        "sentaurus_state": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_transition\\gate_m0p04\\sentaurus_state_for_vela.csv",
+        "sg_edges": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_transition\\gate_m0p04\\sg_edge_flux.csv",
+        "edge_mobility": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_transition\\gate_m0p04\\edge_mobility.csv",
+        "edge_formula_comparison": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_transition\\gate_m0p04\\sentaurus_vela_edge_formula_comparison.csv",
+        "carrier_terms": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_transition\\gate_m0p04\\newton_carrier_term.csv",
+        "summary": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_transition\\gate_m0p04\\formula_replay_summary.json"
+      }
+    },
+    {
+      "group": "dg_idvg_transition",
+      "bias_kind": "gate",
+      "bias_V": 0.12,
+      "gate_bias_V": 0.12,
+      "drain_bias_V": 1.1,
+      "density": {
+        "electron_density_abs_error_dex": {
+          "count": 2564,
+          "median": 0.006721554645331196,
+          "p95": 0.00835205434540658,
+          "maximum": 0.017246952739956356
+        },
+        "hole_density_abs_error_dex": {
+          "count": 2564,
+          "median": 0.007322731527272808,
+          "p95": 0.03928082446281064,
+          "maximum": 0.03975340737896049
+        }
+      },
+      "transport": {
+        "electron_mobility_abs_error_dex": {
+          "count": 7511,
+          "median": 0.015888220500610784,
+          "p95": 0.3688344298116666,
+          "maximum": 2.26587263423965
+        },
+        "electron_drive_abs_error_dex": {
+          "count": 5560,
+          "median": 2.7690262584984,
+          "p95": 5.27452227754635,
+          "maximum": 7.534885047127984
+        },
+        "electron_sg_line_current_abs_error_dex": {
+          "count": 3824,
+          "median": 0.058009773902808925,
+          "p95": 0.871989220362205,
+          "maximum": 3.623591006219895
+        },
+        "current_carrying_edges": {
+          "definition": "Sentaurus projected electron line current exceeds 1e-3 of its maximum",
+          "edge_count": 2732,
+          "electron_mobility_abs_error_dex": {
+            "count": 2732,
+            "median": 0.007355123232955285,
+            "p95": 0.23277383818262826,
+            "maximum": 1.3410940864154766
+          },
+          "electron_drive_abs_error_dex": {
+            "count": 1879,
+            "median": 2.774146044744253,
+            "p95": 4.667566070835834,
+            "maximum": 6.449346027214338
+          },
+          "electron_sg_line_current_abs_error_dex": {
+            "count": 2706,
+            "median": 0.0304245331779861,
+            "p95": 0.43788966106895655,
+            "maximum": 3.1983699043870595
+          }
+        },
+        "sg_current_comparison_note": "Sentaurus nodal J projected on the primal edge and integrated over the Vela dual couple; use as a spatial diagnostic, not an exact discretization identity."
+      },
+      "srh": {
+        "normalized_total_variation_distance": 0.08775822042048473,
+        "top50_node_overlap": 0.88,
+        "sentaurus_signed_area_weighted_sum_cm-1_s-1": -9664045338834640.0,
+        "vela_signed_scaled_integral": -3.0078439325758884e-11
+      },
+      "statuses": {
+        "sg": {
+          "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_transition\\gate_p0p12\\sg_edge_flux.json",
+          "converged": true,
+          "edge_count": 9770,
+          "nodes": 3315,
+          "simulation_type": "sg_edge_flux_probe"
+        },
+        "mobility": {
+          "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_transition\\gate_p0p12\\edge_mobility.json",
+          "converged": true,
+          "edge_count": 9770,
+          "high_field_driving_force": "quasi_fermi_gradient",
+          "mobility_model": "masetti_field_lombardi",
+          "nodes": 3315,
+          "simulation_type": "edge_mobility_probe",
+          "temperature_K": 300.0
+        },
+        "carrier_terms": {
+          "adjusted_block_residuals": {
+            "combined": 109.83120631202107,
+            "phin": 0.05866212965131074,
+            "phip": 3.0190244609910036e-12,
+            "psi": 109.83119064595576
+          },
+          "block_residuals": {
+            "combined": 109.83120631202107,
+            "phin": 0.05866212965131083,
+            "phip": 3.019024460991005e-12,
+            "psi": 109.83119064595576
+          },
+          "carrier_term_probe": {
+            "electron_impact_scale": 1.0,
+            "hole_impact_scale": 1.0,
+            "solved_equation_terms": false
+          },
+          "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_transition\\gate_p0p12\\newton_carrier_term.json",
+          "converged": true,
+          "nodes": 3315,
+          "potential_scale": 0.025851999786435535,
+          "row_count": 3315,
+          "scaled_state": true,
+          "simulation_type": "newton_carrier_term_probe"
+        }
+      },
+      "artifacts": {
+        "sentaurus_state": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_transition\\gate_p0p12\\sentaurus_state_for_vela.csv",
+        "sg_edges": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_transition\\gate_p0p12\\sg_edge_flux.csv",
+        "edge_mobility": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_transition\\gate_p0p12\\edge_mobility.csv",
+        "edge_formula_comparison": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_transition\\gate_p0p12\\sentaurus_vela_edge_formula_comparison.csv",
+        "carrier_terms": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_transition\\gate_p0p12\\newton_carrier_term.csv",
+        "summary": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_transition\\gate_p0p12\\formula_replay_summary.json"
+      }
+    },
+    {
+      "group": "dg_idvg_transition",
+      "bias_kind": "gate",
+      "bias_V": 0.28,
+      "gate_bias_V": 0.28,
+      "drain_bias_V": 1.1,
+      "density": {
+        "electron_density_abs_error_dex": {
+          "count": 2564,
+          "median": 0.006708942604369383,
+          "p95": 0.008536688934952963,
+          "maximum": 0.016280663171581722
+        },
+        "hole_density_abs_error_dex": {
+          "count": 2564,
+          "median": 0.007322658772724644,
+          "p95": 0.03928082705783946,
+          "maximum": 0.03975340737896049
+        }
+      },
+      "transport": {
+        "electron_mobility_abs_error_dex": {
+          "count": 7511,
+          "median": 0.015793854443041155,
+          "p95": 0.36441412795872097,
+          "maximum": 2.149209902654591
+        },
+        "electron_drive_abs_error_dex": {
+          "count": 5832,
+          "median": 1.5948651189054672,
+          "p95": 4.08127751363391,
+          "maximum": 6.299506058816958
+        },
+        "electron_sg_line_current_abs_error_dex": {
+          "count": 3823,
+          "median": 0.057919822446878655,
+          "p95": 0.8866837414444493,
+          "maximum": 3.8507855674831557
+        },
+        "current_carrying_edges": {
+          "definition": "Sentaurus projected electron line current exceeds 1e-3 of its maximum",
+          "edge_count": 2736,
+          "electron_mobility_abs_error_dex": {
+            "count": 2736,
+            "median": 0.007160886768018293,
+            "p95": 0.2349867409432756,
+            "maximum": 1.5263282263510627
+          },
+          "electron_drive_abs_error_dex": {
+            "count": 2005,
+            "median": 1.5120923659267151,
+            "p95": 3.3947551821883404,
+            "maximum": 5.207958957053177
+          },
+          "electron_sg_line_current_abs_error_dex": {
+            "count": 2710,
+            "median": 0.030334274478956175,
+            "p95": 0.426043327291975,
+            "maximum": 1.7556310216292588
+          }
+        },
+        "sg_current_comparison_note": "Sentaurus nodal J projected on the primal edge and integrated over the Vela dual couple; use as a spatial diagnostic, not an exact discretization identity."
+      },
+      "srh": {
+        "normalized_total_variation_distance": 0.0869885068700443,
+        "top50_node_overlap": 0.88,
+        "sentaurus_signed_area_weighted_sum_cm-1_s-1": -9707743483951108.0,
+        "vela_signed_scaled_integral": -3.0226348285254333e-11
+      },
+      "statuses": {
+        "sg": {
+          "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_transition\\gate_p0p28\\sg_edge_flux.json",
+          "converged": true,
+          "edge_count": 9770,
+          "nodes": 3315,
+          "simulation_type": "sg_edge_flux_probe"
+        },
+        "mobility": {
+          "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_transition\\gate_p0p28\\edge_mobility.json",
+          "converged": true,
+          "edge_count": 9770,
+          "high_field_driving_force": "quasi_fermi_gradient",
+          "mobility_model": "masetti_field_lombardi",
+          "nodes": 3315,
+          "simulation_type": "edge_mobility_probe",
+          "temperature_K": 300.0
+        },
+        "carrier_terms": {
+          "adjusted_block_residuals": {
+            "combined": 108.99022773752348,
+            "phin": 0.8040153851833882,
+            "phip": 3.0163320380880187e-12,
+            "psi": 108.98726210680596
+          },
+          "block_residuals": {
+            "combined": 108.99022773752348,
+            "phin": 0.8040153851833889,
+            "phip": 3.016332038088019e-12,
+            "psi": 108.98726210680596
+          },
+          "carrier_term_probe": {
+            "electron_impact_scale": 1.0,
+            "hole_impact_scale": 1.0,
+            "solved_equation_terms": false
+          },
+          "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_transition\\gate_p0p28\\newton_carrier_term.json",
+          "converged": true,
+          "nodes": 3315,
+          "potential_scale": 0.025851999786435535,
+          "row_count": 3315,
+          "scaled_state": true,
+          "simulation_type": "newton_carrier_term_probe"
+        }
+      },
+      "artifacts": {
+        "sentaurus_state": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_transition\\gate_p0p28\\sentaurus_state_for_vela.csv",
+        "sg_edges": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_transition\\gate_p0p28\\sg_edge_flux.csv",
+        "edge_mobility": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_transition\\gate_p0p28\\edge_mobility.csv",
+        "edge_formula_comparison": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_transition\\gate_p0p28\\sentaurus_vela_edge_formula_comparison.csv",
+        "carrier_terms": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_transition\\gate_p0p28\\newton_carrier_term.csv",
+        "summary": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_transition\\gate_p0p28\\formula_replay_summary.json"
+      }
+    },
+    {
+      "group": "dg_idvg_transition",
+      "bias_kind": "gate",
+      "bias_V": 1.0,
+      "gate_bias_V": 1.0,
+      "drain_bias_V": 1.1,
+      "density": {
+        "electron_density_abs_error_dex": {
+          "count": 2564,
+          "median": 0.006608362870980322,
+          "p95": 0.008128511153575423,
+          "maximum": 0.011314902437081997
+        },
+        "hole_density_abs_error_dex": {
+          "count": 2564,
+          "median": 0.00732082158819658,
+          "p95": 0.039280838098290576,
+          "maximum": 0.03975340737896049
+        }
+      },
+      "transport": {
+        "electron_mobility_abs_error_dex": {
+          "count": 7511,
+          "median": 0.01606625860691624,
+          "p95": 0.34463283080996665,
+          "maximum": 1.774411588351847
+        },
+        "electron_drive_abs_error_dex": {
+          "count": 6263,
+          "median": 0.6401252541912905,
+          "p95": 2.8879798971088118,
+          "maximum": 5.1057598044827595
+        },
+        "electron_sg_line_current_abs_error_dex": {
+          "count": 3808,
+          "median": 0.056270090721051824,
+          "p95": 0.8944723776176103,
+          "maximum": 2.7347914517403114
+        },
+        "current_carrying_edges": {
+          "definition": "Sentaurus projected electron line current exceeds 1e-3 of its maximum",
+          "edge_count": 2740,
+          "electron_mobility_abs_error_dex": {
+            "count": 2740,
+            "median": 0.007805794032235136,
+            "p95": 0.22388263502202704,
+            "maximum": 1.1197119945882898
+          },
+          "electron_drive_abs_error_dex": {
+            "count": 2190,
+            "median": 0.4686368009964883,
+            "p95": 2.1823821575615203,
+            "maximum": 4.001582409851122
+          },
+          "electron_sg_line_current_abs_error_dex": {
+            "count": 2714,
+            "median": 0.029718048885315484,
+            "p95": 0.3583969474626746,
+            "maximum": 2.009884149080258
+          }
+        },
+        "sg_current_comparison_note": "Sentaurus nodal J projected on the primal edge and integrated over the Vela dual couple; use as a spatial diagnostic, not an exact discretization identity."
+      },
+      "srh": {
+        "normalized_total_variation_distance": 0.08675590502592084,
+        "top50_node_overlap": 0.88,
+        "sentaurus_signed_area_weighted_sum_cm-1_s-1": -1.0144415247975426e+16,
+        "vela_signed_scaled_integral": -3.1544474711294624e-11
+      },
+      "statuses": {
+        "sg": {
+          "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_transition\\gate_p1p00\\sg_edge_flux.json",
+          "converged": true,
+          "edge_count": 9770,
+          "nodes": 3315,
+          "simulation_type": "sg_edge_flux_probe"
+        },
+        "mobility": {
+          "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_transition\\gate_p1p00\\edge_mobility.json",
+          "converged": true,
+          "edge_count": 9770,
+          "high_field_driving_force": "quasi_fermi_gradient",
+          "mobility_model": "masetti_field_lombardi",
+          "nodes": 3315,
+          "simulation_type": "edge_mobility_probe",
+          "temperature_K": 300.0
+        },
+        "carrier_terms": {
+          "adjusted_block_residuals": {
+            "combined": 111.17469146794612,
+            "phin": 4.649436108355109,
+            "phip": 3.0142005684878564e-12,
+            "psi": 111.0774269006414
+          },
+          "block_residuals": {
+            "combined": 111.17469146794612,
+            "phin": 4.64943610835511,
+            "phip": 3.014200568487858e-12,
+            "psi": 111.0774269006414
+          },
+          "carrier_term_probe": {
+            "electron_impact_scale": 1.0,
+            "hole_impact_scale": 1.0,
+            "solved_equation_terms": false
+          },
+          "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_transition\\gate_p1p00\\newton_carrier_term.json",
+          "converged": true,
+          "nodes": 3315,
+          "potential_scale": 0.025851999786435535,
+          "row_count": 3315,
+          "scaled_state": true,
+          "simulation_type": "newton_carrier_term_probe"
+        }
+      },
+      "artifacts": {
+        "sentaurus_state": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_transition\\gate_p1p00\\sentaurus_state_for_vela.csv",
+        "sg_edges": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_transition\\gate_p1p00\\sg_edge_flux.csv",
+        "edge_mobility": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_transition\\gate_p1p00\\edge_mobility.csv",
+        "edge_formula_comparison": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_transition\\gate_p1p00\\sentaurus_vela_edge_formula_comparison.csv",
+        "carrier_terms": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_transition\\gate_p1p00\\newton_carrier_term.csv",
+        "summary": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_transition\\gate_p1p00\\formula_replay_summary.json"
+      }
+    },
+    {
+      "group": "dg_idvd",
+      "bias_kind": "drain",
+      "bias_V": 0.2,
+      "gate_bias_V": 1.0,
+      "drain_bias_V": 0.2,
+      "density": {
+        "electron_density_abs_error_dex": {
+          "count": 2564,
+          "median": 0.006568955499513862,
+          "p95": 0.007971166887013048,
+          "maximum": 0.009388748591206308
+        },
+        "hole_density_abs_error_dex": {
+          "count": 2564,
+          "median": 0.007320244465596759,
+          "p95": 0.03928085124958683,
+          "maximum": 0.039753407378957384
+        }
+      },
+      "transport": {
+        "electron_mobility_abs_error_dex": {
+          "count": 7511,
+          "median": 0.016888826018662595,
+          "p95": 0.3029907922897619,
+          "maximum": 0.8498205039965337
+        },
+        "electron_drive_abs_error_dex": {
+          "count": 6154,
+          "median": 1.1102399369807974,
+          "p95": 3.0084642319898194,
+          "maximum": 5.1709383813668595
+        },
+        "electron_sg_line_current_abs_error_dex": {
+          "count": 4027,
+          "median": 0.0574671767202439,
+          "p95": 0.7885136579308922,
+          "maximum": 2.71090417939173
+        },
+        "current_carrying_edges": {
+          "definition": "Sentaurus projected electron line current exceeds 1e-3 of its maximum",
+          "edge_count": 2787,
+          "electron_mobility_abs_error_dex": {
+            "count": 2787,
+            "median": 0.008409672228601561,
+            "p95": 0.21828390437990236,
+            "maximum": 0.7054963659418276
+          },
+          "electron_drive_abs_error_dex": {
+            "count": 2177,
+            "median": 0.7246583019664157,
+            "p95": 2.3540897580645135,
+            "maximum": 4.2089197376463865
+          },
+          "electron_sg_line_current_abs_error_dex": {
+            "count": 2761,
+            "median": 0.029739953712391798,
+            "p95": 0.294444645871938,
+            "maximum": 1.2062930590150436
+          }
+        },
+        "sg_current_comparison_note": "Sentaurus nodal J projected on the primal edge and integrated over the Vela dual couple; use as a spatial diagnostic, not an exact discretization identity."
+      },
+      "srh": {
+        "normalized_total_variation_distance": 0.09011046979523804,
+        "top50_node_overlap": 0.94,
+        "sentaurus_signed_area_weighted_sum_cm-1_s-1": -4006764258750159.0,
+        "vela_signed_scaled_integral": -1.1486725721073574e-11
+      },
+      "statuses": {
+        "sg": {
+          "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvd\\drain_p0p20\\sg_edge_flux.json",
+          "converged": true,
+          "edge_count": 9770,
+          "nodes": 3315,
+          "simulation_type": "sg_edge_flux_probe"
+        },
+        "mobility": {
+          "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvd\\drain_p0p20\\edge_mobility.json",
+          "converged": true,
+          "edge_count": 9770,
+          "high_field_driving_force": "quasi_fermi_gradient",
+          "mobility_model": "masetti_field_lombardi",
+          "nodes": 3315,
+          "simulation_type": "edge_mobility_probe",
+          "temperature_K": 300.0
+        },
+        "carrier_terms": {
+          "adjusted_block_residuals": {
+            "combined": 114.67006862919649,
+            "phin": 2.4091861959962273,
+            "phip": 1.0550906664025566e-12,
+            "psi": 114.6447576703691
+          },
+          "block_residuals": {
+            "combined": 114.67006862919649,
+            "phin": 2.409186195996228,
+            "phip": 1.0550906664025582e-12,
+            "psi": 114.6447576703691
+          },
+          "carrier_term_probe": {
+            "electron_impact_scale": 1.0,
+            "hole_impact_scale": 1.0,
+            "solved_equation_terms": false
+          },
+          "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvd\\drain_p0p20\\newton_carrier_term.json",
+          "converged": true,
+          "nodes": 3315,
+          "potential_scale": 0.025851999786435535,
+          "row_count": 3315,
+          "scaled_state": true,
+          "simulation_type": "newton_carrier_term_probe"
+        }
+      },
+      "artifacts": {
+        "sentaurus_state": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvd\\drain_p0p20\\sentaurus_state_for_vela.csv",
+        "sg_edges": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvd\\drain_p0p20\\sg_edge_flux.csv",
+        "edge_mobility": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvd\\drain_p0p20\\edge_mobility.csv",
+        "edge_formula_comparison": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvd\\drain_p0p20\\sentaurus_vela_edge_formula_comparison.csv",
+        "carrier_terms": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvd\\drain_p0p20\\newton_carrier_term.csv",
+        "summary": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvd\\drain_p0p20\\formula_replay_summary.json"
+      }
+    },
+    {
+      "group": "dg_idvd",
+      "bias_kind": "drain",
+      "bias_V": 0.5,
+      "gate_bias_V": 1.0,
+      "drain_bias_V": 0.5,
+      "density": {
+        "electron_density_abs_error_dex": {
+          "count": 2564,
+          "median": 0.00657917028955346,
+          "p95": 0.008031806761536585,
+          "maximum": 0.009667756024477114
+        },
+        "hole_density_abs_error_dex": {
+          "count": 2564,
+          "median": 0.007317325110053563,
+          "p95": 0.039280846724993004,
+          "maximum": 0.039753407378957384
+        }
+      },
+      "transport": {
+        "electron_mobility_abs_error_dex": {
+          "count": 7511,
+          "median": 0.017142242736273516,
+          "p95": 0.33312133569237223,
+          "maximum": 1.3852125103556105
+        },
+        "electron_drive_abs_error_dex": {
+          "count": 6218,
+          "median": 0.8406925006870665,
+          "p95": 2.914798380443129,
+          "maximum": 5.080858472846428
+        },
+        "electron_sg_line_current_abs_error_dex": {
+          "count": 3927,
+          "median": 0.05568474982728722,
+          "p95": 0.8547151589124333,
+          "maximum": 3.7314986403202175
+        },
+        "current_carrying_edges": {
+          "definition": "Sentaurus projected electron line current exceeds 1e-3 of its maximum",
+          "edge_count": 2768,
+          "electron_mobility_abs_error_dex": {
+            "count": 2768,
+            "median": 0.008130534386972421,
+            "p95": 0.17688884481129583,
+            "maximum": 0.7602761054985971
+          },
+          "electron_drive_abs_error_dex": {
+            "count": 2187,
+            "median": 0.5414142847439645,
+            "p95": 2.188315539253172,
+            "maximum": 4.051702100590737
+          },
+          "electron_sg_line_current_abs_error_dex": {
+            "count": 2742,
+            "median": 0.02867146477004956,
+            "p95": 0.3055392750986873,
+            "maximum": 1.454047556040586
+          }
+        },
+        "sg_current_comparison_note": "Sentaurus nodal J projected on the primal edge and integrated over the Vela dual couple; use as a spatial diagnostic, not an exact discretization identity."
+      },
+      "srh": {
+        "normalized_total_variation_distance": 0.0885636541071074,
+        "top50_node_overlap": 0.94,
+        "sentaurus_signed_area_weighted_sum_cm-1_s-1": -6414004488584180.0,
+        "vela_signed_scaled_integral": -1.969482676614676e-11
+      },
+      "statuses": {
+        "sg": {
+          "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvd\\drain_p0p50\\sg_edge_flux.json",
+          "converged": true,
+          "edge_count": 9770,
+          "nodes": 3315,
+          "simulation_type": "sg_edge_flux_probe"
+        },
+        "mobility": {
+          "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvd\\drain_p0p50\\edge_mobility.json",
+          "converged": true,
+          "edge_count": 9770,
+          "high_field_driving_force": "quasi_fermi_gradient",
+          "mobility_model": "masetti_field_lombardi",
+          "nodes": 3315,
+          "simulation_type": "edge_mobility_probe",
+          "temperature_K": 300.0
+        },
+        "carrier_terms": {
+          "adjusted_block_residuals": {
+            "combined": 112.71868830320115,
+            "phin": 3.2235752572290233,
+            "phip": 1.7153020638903349e-12,
+            "psi": 112.67258431115884
+          },
+          "block_residuals": {
+            "combined": 112.71868830320115,
+            "phin": 3.2235752572290246,
+            "phip": 1.7153020638903353e-12,
+            "psi": 112.67258431115884
+          },
+          "carrier_term_probe": {
+            "electron_impact_scale": 1.0,
+            "hole_impact_scale": 1.0,
+            "solved_equation_terms": false
+          },
+          "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvd\\drain_p0p50\\newton_carrier_term.json",
+          "converged": true,
+          "nodes": 3315,
+          "potential_scale": 0.025851999786435535,
+          "row_count": 3315,
+          "scaled_state": true,
+          "simulation_type": "newton_carrier_term_probe"
+        }
+      },
+      "artifacts": {
+        "sentaurus_state": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvd\\drain_p0p50\\sentaurus_state_for_vela.csv",
+        "sg_edges": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvd\\drain_p0p50\\sg_edge_flux.csv",
+        "edge_mobility": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvd\\drain_p0p50\\edge_mobility.csv",
+        "edge_formula_comparison": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvd\\drain_p0p50\\sentaurus_vela_edge_formula_comparison.csv",
+        "carrier_terms": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvd\\drain_p0p50\\newton_carrier_term.csv",
+        "summary": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvd\\drain_p0p50\\formula_replay_summary.json"
+      }
+    },
+    {
+      "group": "dg_idvd",
+      "bias_kind": "drain",
+      "bias_V": 1.0,
+      "gate_bias_V": 1.0,
+      "drain_bias_V": 1.0,
+      "density": {
+        "electron_density_abs_error_dex": {
+          "count": 2564,
+          "median": 0.006607154217497246,
+          "p95": 0.008116744134949805,
+          "maximum": 0.010559495038776845
+        },
+        "hole_density_abs_error_dex": {
+          "count": 2564,
+          "median": 0.007319760363332151,
+          "p95": 0.03928083953422379,
+          "maximum": 0.039753407378957384
+        }
+      },
+      "transport": {
+        "electron_mobility_abs_error_dex": {
+          "count": 7511,
+          "median": 0.016435163267409347,
+          "p95": 0.3441830090575,
+          "maximum": 1.7289075530101226
+        },
+        "electron_drive_abs_error_dex": {
+          "count": 6257,
+          "median": 0.6592274532651778,
+          "p95": 2.8912594258641655,
+          "maximum": 5.112385253500518
+        },
+        "electron_sg_line_current_abs_error_dex": {
+          "count": 3826,
+          "median": 0.05566341519547585,
+          "p95": 0.8858242311189656,
+          "maximum": 2.925289372295815
+        },
+        "current_carrying_edges": {
+          "definition": "Sentaurus projected electron line current exceeds 1e-3 of its maximum",
+          "edge_count": 2742,
+          "electron_mobility_abs_error_dex": {
+            "count": 2742,
+            "median": 0.00778340748531825,
+            "p95": 0.2134469141765497,
+            "maximum": 1.0661000249704715
+          },
+          "electron_drive_abs_error_dex": {
+            "count": 2189,
+            "median": 0.4657342209730859,
+            "p95": 2.1710361351288205,
+            "maximum": 4.007454482426432
+          },
+          "electron_sg_line_current_abs_error_dex": {
+            "count": 2716,
+            "median": 0.029550675128081294,
+            "p95": 0.3450923393680583,
+            "maximum": 1.7180194323201803
+          }
+        },
+        "sg_current_comparison_note": "Sentaurus nodal J projected on the primal edge and integrated over the Vela dual couple; use as a spatial diagnostic, not an exact discretization identity."
+      },
+      "srh": {
+        "normalized_total_variation_distance": 0.08567683971439266,
+        "top50_node_overlap": 0.9,
+        "sentaurus_signed_area_weighted_sum_cm-1_s-1": -9656515349594012.0,
+        "vela_signed_scaled_integral": -3.00225939209267e-11
+      },
+      "statuses": {
+        "sg": {
+          "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvd\\drain_p1p00\\sg_edge_flux.json",
+          "converged": true,
+          "edge_count": 9770,
+          "nodes": 3315,
+          "simulation_type": "sg_edge_flux_probe"
+        },
+        "mobility": {
+          "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvd\\drain_p1p00\\edge_mobility.json",
+          "converged": true,
+          "edge_count": 9770,
+          "high_field_driving_force": "quasi_fermi_gradient",
+          "mobility_model": "masetti_field_lombardi",
+          "nodes": 3315,
+          "simulation_type": "edge_mobility_probe",
+          "temperature_K": 300.0
+        },
+        "carrier_terms": {
+          "adjusted_block_residuals": {
+            "combined": 111.19121538393813,
+            "phin": 4.007064401235629,
+            "phip": 2.750513211643839e-12,
+            "psi": 111.118989436737
+          },
+          "block_residuals": {
+            "combined": 111.19121538393813,
+            "phin": 4.00706440123563,
+            "phip": 2.7505132116438422e-12,
+            "psi": 111.118989436737
+          },
+          "carrier_term_probe": {
+            "electron_impact_scale": 1.0,
+            "hole_impact_scale": 1.0,
+            "solved_equation_terms": false
+          },
+          "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvd\\drain_p1p00\\newton_carrier_term.json",
+          "converged": true,
+          "nodes": 3315,
+          "potential_scale": 0.025851999786435535,
+          "row_count": 3315,
+          "scaled_state": true,
+          "simulation_type": "newton_carrier_term_probe"
+        }
+      },
+      "artifacts": {
+        "sentaurus_state": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvd\\drain_p1p00\\sentaurus_state_for_vela.csv",
+        "sg_edges": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvd\\drain_p1p00\\sg_edge_flux.csv",
+        "edge_mobility": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvd\\drain_p1p00\\edge_mobility.csv",
+        "edge_formula_comparison": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvd\\drain_p1p00\\sentaurus_vela_edge_formula_comparison.csv",
+        "carrier_terms": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvd\\drain_p1p00\\newton_carrier_term.csv",
+        "summary": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvd\\drain_p1p00\\formula_replay_summary.json"
+      }
+    },
+    {
+      "group": "dg_idvd",
+      "bias_kind": "drain",
+      "bias_V": 2.0,
+      "gate_bias_V": 1.0,
+      "drain_bias_V": 2.0,
+      "density": {
+        "electron_density_abs_error_dex": {
+          "count": 2564,
+          "median": 0.006613597988512243,
+          "p95": 0.008267323959069726,
+          "maximum": 0.01815962366696766
+        },
+        "hole_density_abs_error_dex": {
+          "count": 2564,
+          "median": 0.007321618564111176,
+          "p95": 0.0392808274693148,
+          "maximum": 0.039753407378957384
+        }
+      },
+      "transport": {
+        "electron_mobility_abs_error_dex": {
+          "count": 7511,
+          "median": 0.015316324519514257,
+          "p95": 0.3515816641308817,
+          "maximum": 2.078606184476533
+        },
+        "electron_drive_abs_error_dex": {
+          "count": 6287,
+          "median": 0.47534359691367944,
+          "p95": 2.77485696234786,
+          "maximum": 5.156001994510129
+        },
+        "electron_sg_line_current_abs_error_dex": {
+          "count": 3757,
+          "median": 0.0592691587934393,
+          "p95": 0.9040484481790888,
+          "maximum": 3.7824964763701816
+        },
+        "current_carrying_edges": {
+          "definition": "Sentaurus projected electron line current exceeds 1e-3 of its maximum",
+          "edge_count": 2720,
+          "electron_mobility_abs_error_dex": {
+            "count": 2720,
+            "median": 0.008384404435721304,
+            "p95": 0.25107768414873677,
+            "maximum": 1.5178184287555814
+          },
+          "electron_drive_abs_error_dex": {
+            "count": 2176,
+            "median": 0.42999832004417526,
+            "p95": 2.094543742306319,
+            "maximum": 3.9634808838130544
+          },
+          "electron_sg_line_current_abs_error_dex": {
+            "count": 2694,
+            "median": 0.03084212662467345,
+            "p95": 0.4527633033778,
+            "maximum": 1.990295741794562
+          }
+        },
+        "sg_current_comparison_note": "Sentaurus nodal J projected on the primal edge and integrated over the Vela dual couple; use as a spatial diagnostic, not an exact discretization identity."
+      },
+      "srh": {
+        "normalized_total_variation_distance": 0.08214192290964441,
+        "top50_node_overlap": 0.86,
+        "sentaurus_signed_area_weighted_sum_cm-1_s-1": -1.6115263330460568e+16,
+        "vela_signed_scaled_integral": -5.064904985663097e-11
+      },
+      "statuses": {
+        "sg": {
+          "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvd\\drain_p2p00\\sg_edge_flux.json",
+          "converged": true,
+          "edge_count": 9770,
+          "nodes": 3315,
+          "simulation_type": "sg_edge_flux_probe"
+        },
+        "mobility": {
+          "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvd\\drain_p2p00\\edge_mobility.json",
+          "converged": true,
+          "edge_count": 9770,
+          "high_field_driving_force": "quasi_fermi_gradient",
+          "mobility_model": "masetti_field_lombardi",
+          "nodes": 3315,
+          "simulation_type": "edge_mobility_probe",
+          "temperature_K": 300.0
+        },
+        "carrier_terms": {
+          "adjusted_block_residuals": {
+            "combined": 114.99197428540162,
+            "phin": 5.562088981854529,
+            "phip": 4.798858338340597e-12,
+            "psi": 114.85737815313564
+          },
+          "block_residuals": {
+            "combined": 114.99197428540162,
+            "phin": 5.562088981854532,
+            "phip": 4.798858338340604e-12,
+            "psi": 114.85737815313564
+          },
+          "carrier_term_probe": {
+            "electron_impact_scale": 1.0,
+            "hole_impact_scale": 1.0,
+            "solved_equation_terms": false
+          },
+          "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvd\\drain_p2p00\\newton_carrier_term.json",
+          "converged": true,
+          "nodes": 3315,
+          "potential_scale": 0.025851999786435535,
+          "row_count": 3315,
+          "scaled_state": true,
+          "simulation_type": "newton_carrier_term_probe"
+        }
+      },
+      "artifacts": {
+        "sentaurus_state": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvd\\drain_p2p00\\sentaurus_state_for_vela.csv",
+        "sg_edges": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvd\\drain_p2p00\\sg_edge_flux.csv",
+        "edge_mobility": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvd\\drain_p2p00\\edge_mobility.csv",
+        "edge_formula_comparison": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvd\\drain_p2p00\\sentaurus_vela_edge_formula_comparison.csv",
+        "carrier_terms": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvd\\drain_p2p00\\newton_carrier_term.csv",
+        "summary": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvd\\drain_p2p00\\formula_replay_summary.json"
+      }
+    },
+    {
+      "group": "dg_idvg_deep_off",
+      "bias_kind": "gate",
+      "bias_V": -1.0,
+      "gate_bias_V": -1.0,
+      "drain_bias_V": 1.1,
+      "density": {
+        "electron_density_abs_error_dex": {
+          "count": 2564,
+          "median": 0.006756398345299175,
+          "p95": 0.008697450246240022,
+          "maximum": 0.01999950556359309
+        },
+        "hole_density_abs_error_dex": {
+          "count": 2564,
+          "median": 0.007322119625943646,
+          "p95": 0.03928080570978979,
+          "maximum": 0.03975340737896049
+        }
+      },
+      "transport": {
+        "electron_mobility_abs_error_dex": {
+          "count": 7511,
+          "median": 0.01637919515040509,
+          "p95": 0.4586126259175861,
+          "maximum": 2.6431861656241455
+        },
+        "electron_drive_abs_error_dex": {
+          "count": 1881,
+          "median": 0.42797221002331565,
+          "p95": 8.473365979336197,
+          "maximum": 9.62439189220944
+        },
+        "electron_sg_line_current_abs_error_dex": {
+          "count": 5113,
+          "median": 0.27009260239112187,
+          "p95": 1.9695402581143229,
+          "maximum": 4.078254425675807
+        },
+        "current_carrying_edges": {
+          "definition": "Sentaurus projected electron line current exceeds 1e-3 of its maximum",
+          "edge_count": 2185,
+          "electron_mobility_abs_error_dex": {
+            "count": 2185,
+            "median": 0.011034889606282405,
+            "p95": 0.3885742165926694,
+            "maximum": 1.0077697824664376
+          },
+          "electron_drive_abs_error_dex": {
+            "count": 2159,
+            "median": 12.525903693776293,
+            "p95": 13.866114099806392,
+            "maximum": 29.173892336270658
+          },
+          "electron_sg_line_current_abs_error_dex": {
+            "count": 1995,
+            "median": 0.2631039062281708,
+            "p95": 1.616533476736626,
+            "maximum": 2.7419692319500086
+          }
+        },
+        "sg_current_comparison_note": "Sentaurus nodal J projected on the primal edge and integrated over the Vela dual couple; use as a spatial diagnostic, not an exact discretization identity."
+      },
+      "srh": {
+        "normalized_total_variation_distance": 0.13537604568004835,
+        "top50_node_overlap": 0.84,
+        "sentaurus_signed_area_weighted_sum_cm-1_s-1": -1.0150928836660558e+16,
+        "vela_signed_scaled_integral": -2.9858797029939044e-11
+      },
+      "statuses": {
+        "sg": {
+          "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_deep_off\\gate_m1p00\\sg_edge_flux.json",
+          "converged": true,
+          "edge_count": 9770,
+          "nodes": 3315,
+          "simulation_type": "sg_edge_flux_probe"
+        },
+        "mobility": {
+          "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_deep_off\\gate_m1p00\\edge_mobility.json",
+          "converged": true,
+          "edge_count": 9770,
+          "high_field_driving_force": "quasi_fermi_gradient",
+          "mobility_model": "masetti_field_lombardi",
+          "nodes": 3315,
+          "simulation_type": "edge_mobility_probe",
+          "temperature_K": 300.0
+        },
+        "carrier_terms": {
+          "adjusted_block_residuals": {
+            "combined": 127.94380004325566,
+            "phin": 7.752102934717598e-10,
+            "phip": 3.1303860184659974e-12,
+            "psi": 127.94380004325566
+          },
+          "block_residuals": {
+            "combined": 127.94380004325566,
+            "phin": 7.752102934717607e-10,
+            "phip": 3.1303860184659986e-12,
+            "psi": 127.94380004325566
+          },
+          "carrier_term_probe": {
+            "electron_impact_scale": 1.0,
+            "hole_impact_scale": 1.0,
+            "solved_equation_terms": false
+          },
+          "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_deep_off\\gate_m1p00\\newton_carrier_term.json",
+          "converged": true,
+          "nodes": 3315,
+          "potential_scale": 0.025851999786435535,
+          "row_count": 3315,
+          "scaled_state": true,
+          "simulation_type": "newton_carrier_term_probe"
+        },
+        "feedback": {
+          "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_deep_off\\gate_m1p00\\newton_feedback_substitution.json",
+          "contract": {
+            "baseline_state": "converged_vela_avalanche_on_exact_state",
+            "boundary_rows": "baseline_preserved",
+            "jacobian": "single_production_baseline_jacobian",
+            "production_defaults_changed": false,
+            "replacement_state": "sentaurus_avalanche_on_exact_state",
+            "substitution": "frozen_residual_operator_inputs"
+          },
+          "converged": true,
+          "nodes": 3315,
+          "simulation_type": "newton_feedback_substitution_probe",
+          "variants": [
+            {
+              "block_residuals": {
+                "combined": 127.94380004325566,
+                "phin": 7.752102934717607e-10,
+                "phip": 3.1303860184659986e-12,
+                "psi": 127.94380004325566
+              },
+              "carrier_only_raw_step_norm": 545.5485025021931,
+              "carrier_only_step_norm": 18.166474212573224,
+              "production_trial_block_residuals": {
+                "combined": 1.4307738424153698,
+                "phin": 2.355662241014474e-10,
+                "phip": 1.3817095572424888e-12,
+                "psi": 1.4307738424153698
+              },
+              "raw_step_norm": 1912.702650570423,
+              "replaces_density": false,
+              "replaces_quasi_fermi": false,
+              "step_norm": 33.47479286878153,
+              "variant": "baseline"
+            },
+            {
+              "block_residuals": {
+                "combined": 101.66714081310808,
+                "phin": 7.71401697926482e-10,
+                "phip": 3.1299771676607984e-12,
+                "psi": 101.66714081310808
+              },
+              "carrier_only_raw_step_norm": 545.6459939661586,
+              "carrier_only_step_norm": 18.172220629548146,
+              "production_trial_block_residuals": {
+                "combined": 88.08786087765853,
+                "phin": 2.418899227885259e-10,
+                "phip": 1.3961376837569977e-12,
+                "psi": 88.08786087765853
+              },
+              "raw_step_norm": 1153.501758830648,
+              "replaces_density": true,
+              "replaces_quasi_fermi": false,
+              "step_norm": 26.79668367770893,
+              "variant": "electron_density_only"
+            },
+            {
+              "block_residuals": {
+                "combined": 114.17847933788828,
+                "phin": 7.752102934761596e-10,
+                "phip": 3.222608073280303e-12,
+                "psi": 114.17847933788828
+              },
+              "carrier_only_raw_step_norm": 545.7030605202899,
+              "carrier_only_step_norm": 17.91052344489917,
+              "production_trial_block_residuals": {
+                "combined": 57.744013411038644,
+                "phin": 2.3976780631242537e-10,
+                "phip": 1.3737210778482584e-12,
+                "psi": 57.744013411038644
+              },
+              "raw_step_norm": 1894.7815819138345,
+              "replaces_density": true,
+              "replaces_quasi_fermi": false,
+              "step_norm": 33.41922611644167,
+              "variant": "hole_density_only"
+            },
+            {
+              "block_residuals": {
+                "combined": 83.68582135294092,
+                "phin": 7.714016979472721e-10,
+                "phip": 3.2222251106234258e-12,
+                "psi": 83.68582135294092
+              },
+              "carrier_only_raw_step_norm": 545.8008243067873,
+              "carrier_only_step_norm": 17.915793404756084,
+              "production_trial_block_residuals": {
+                "combined": 105.31759197097497,
+                "phin": 2.395399380656018e-10,
+                "phip": 1.3876407586611458e-12,
+                "psi": 105.31759197097497
+              },
+              "raw_step_norm": 1054.4275336477958,
+              "replaces_density": true,
+              "replaces_quasi_fermi": false,
+              "step_norm": 26.62314562643918,
+              "variant": "density_only"
+            },
+            {
+              "block_residuals": {
+                "combined": 127.94380004325566,
+                "phin": 7.772995991239278e-10,
+                "phip": 3.1303860184659986e-12,
+                "psi": 127.94380004325566
+              },
+              "carrier_only_raw_step_norm": 545.5485025021931,
+              "carrier_only_step_norm": 18.166474212573224,
+              "production_trial_block_residuals": {
+                "combined": 1.4307738424147771,
+                "phin": 2.356687362939427e-10,
+                "phip": 1.3817110610039253e-12,
+                "psi": 1.4307738424147771
+              },
+              "raw_step_norm": 3769.459375328985,
+              "replaces_density": false,
+              "replaces_quasi_fermi": true,
+              "step_norm": 33.4951972955332,
+              "variant": "electron_qfp_only"
+            },
+            {
+              "block_residuals": {
+                "combined": 127.94380004325566,
+                "phin": 7.752102934717607e-10,
+                "phip": 3.130386018465977e-12,
+                "psi": 127.94380004325566
+              },
+              "carrier_only_raw_step_norm": 545.5485025021931,
+              "carrier_only_step_norm": 18.166474212573227,
+              "production_trial_block_residuals": {
+                "combined": 1.4307738424153698,
+                "phin": 2.355662241014474e-10,
+                "phip": 1.381709557242485e-12,
+                "psi": 1.4307738424153698
+              },
+              "raw_step_norm": 1912.702650570423,
+              "replaces_density": false,
+              "replaces_quasi_fermi": true,
+              "step_norm": 33.47479286878152,
+              "variant": "hole_qfp_only"
+            },
+            {
+              "block_residuals": {
+                "combined": 127.94380004325566,
+                "phin": 7.772995991239278e-10,
+                "phip": 3.130386018465977e-12,
+                "psi": 127.94380004325566
+              },
+              "carrier_only_raw_step_norm": 545.5485025021931,
+              "carrier_only_step_norm": 18.166474212573227,
+              "production_trial_block_residuals": {
+                "combined": 1.4307738424147771,
+                "phin": 2.356687362939427e-10,
+                "phip": 1.3817110610039255e-12,
+                "psi": 1.4307738424147771
+              },
+              "raw_step_norm": 3769.459375328985,
+              "replaces_density": false,
+              "replaces_quasi_fermi": true,
+              "step_norm": 33.49519729553277,
+              "variant": "qfp_only"
+            },
+            {
+              "block_residuals": {
+                "combined": 83.68582135294092,
+                "phin": 7.73533190600585e-10,
+                "phip": 3.2222251106234048e-12,
+                "psi": 83.68582135294092
+              },
+              "carrier_only_raw_step_norm": 545.8008243067873,
+              "carrier_only_step_norm": 17.91579340475608,
+              "production_trial_block_residuals": {
+                "combined": 105.31759197097577,
+                "phin": 2.396258780683223e-10,
+                "phip": 1.387640347165505e-12,
+                "psi": 105.31759197097577
+              },
+              "raw_step_norm": 3919.336728083956,
+              "replaces_density": true,
+              "replaces_quasi_fermi": true,
+              "step_norm": 26.62353697357221,
+              "variant": "density_qfp"
+            }
+          ]
+        }
+      },
+      "artifacts": {
+        "sentaurus_state": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_deep_off\\gate_m1p00\\sentaurus_state_for_vela.csv",
+        "sg_edges": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_deep_off\\gate_m1p00\\sg_edge_flux.csv",
+        "edge_mobility": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_deep_off\\gate_m1p00\\edge_mobility.csv",
+        "edge_formula_comparison": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_deep_off\\gate_m1p00\\sentaurus_vela_edge_formula_comparison.csv",
+        "carrier_terms": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_deep_off\\gate_m1p00\\newton_carrier_term.csv",
+        "feedback": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_deep_off\\gate_m1p00\\newton_feedback_substitution.csv",
+        "summary": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_deep_off\\gate_m1p00\\formula_replay_summary.json"
+      },
+      "feedback_substitution": {
+        "baseline": {
+          "electron_recombination_sum": -2.9858797029939044e-11,
+          "electron_flux_sum": 1.7278023947533527e-10,
+          "electron_residual_l2": 7.752102934717609e-10
+        },
+        "electron_density_only": {
+          "electron_recombination_sum": -2.9877917176648405e-11,
+          "electron_flux_sum": 1.7295867645172132e-10,
+          "electron_residual_l2": 7.714016979264824e-10
+        },
+        "hole_density_only": {
+          "electron_recombination_sum": -2.987087137730771e-11,
+          "electron_flux_sum": 1.7278023947533527e-10,
+          "electron_residual_l2": 7.752102934761599e-10
+        },
+        "density_only": {
+          "electron_recombination_sum": -2.9889991524151384e-11,
+          "electron_flux_sum": 1.7295867645172132e-10,
+          "electron_residual_l2": 7.714016979472725e-10
+        },
+        "electron_qfp_only": {
+          "electron_recombination_sum": -2.9858797029939044e-11,
+          "electron_flux_sum": 1.726259243111245e-10,
+          "electron_residual_l2": 7.772995991239281e-10
+        },
+        "hole_qfp_only": {
+          "electron_recombination_sum": -2.9858797029939044e-11,
+          "electron_flux_sum": 1.7278023947533527e-10,
+          "electron_residual_l2": 7.752102934717609e-10
+        },
+        "qfp_only": {
+          "electron_recombination_sum": -2.9858797029939044e-11,
+          "electron_flux_sum": 1.726259243111245e-10,
+          "electron_residual_l2": 7.772995991239281e-10
+        },
+        "density_qfp": {
+          "electron_recombination_sum": -2.9889991524151384e-11,
+          "electron_flux_sum": 1.7280436128751058e-10,
+          "electron_residual_l2": 7.735331906005854e-10
+        }
+      }
+    },
+    {
+      "group": "dg_idvg_deep_off",
+      "bias_kind": "gate",
+      "bias_V": -0.84,
+      "gate_bias_V": -0.84,
+      "drain_bias_V": 1.1,
+      "density": {
+        "electron_density_abs_error_dex": {
+          "count": 2564,
+          "median": 0.0067562744362144045,
+          "p95": 0.008664641789924763,
+          "maximum": 0.019985542715637905
+        },
+        "hole_density_abs_error_dex": {
+          "count": 2564,
+          "median": 0.007322291153384786,
+          "p95": 0.03928080840032358,
+          "maximum": 0.03975340737896049
+        }
+      },
+      "transport": {
+        "electron_mobility_abs_error_dex": {
+          "count": 7511,
+          "median": 0.016292851776904538,
+          "p95": 0.4571581134465206,
+          "maximum": 2.667160884300794
+        },
+        "electron_drive_abs_error_dex": {
+          "count": 1882,
+          "median": 0.41676897618684805,
+          "p95": 8.485699483681636,
+          "maximum": 9.781893176676512
+        },
+        "electron_sg_line_current_abs_error_dex": {
+          "count": 5146,
+          "median": 0.2649555600800131,
+          "p95": 1.87526912059707,
+          "maximum": 4.160847496459089
+        },
+        "current_carrying_edges": {
+          "definition": "Sentaurus projected electron line current exceeds 1e-3 of its maximum",
+          "edge_count": 1996,
+          "electron_mobility_abs_error_dex": {
+            "count": 1996,
+            "median": 0.011056664150119744,
+            "p95": 0.4086843176076137,
+            "maximum": 1.097408763008409
+          },
+          "electron_drive_abs_error_dex": {
+            "count": 1958,
+            "median": 12.44299414254339,
+            "p95": 13.797305523843,
+            "maximum": 15.99228408366158
+          },
+          "electron_sg_line_current_abs_error_dex": {
+            "count": 1836,
+            "median": 0.2695747290850603,
+            "p95": 1.5442180132540608,
+            "maximum": 2.86470678568444
+          }
+        },
+        "sg_current_comparison_note": "Sentaurus nodal J projected on the primal edge and integrated over the Vela dual couple; use as a spatial diagnostic, not an exact discretization identity."
+      },
+      "srh": {
+        "normalized_total_variation_distance": 0.12350050512181557,
+        "top50_node_overlap": 0.86,
+        "sentaurus_signed_area_weighted_sum_cm-1_s-1": -1.009843351803328e+16,
+        "vela_signed_scaled_integral": -3.017443114769373e-11
+      },
+      "statuses": {
+        "sg": {
+          "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_deep_off\\gate_m0p84\\sg_edge_flux.json",
+          "converged": true,
+          "edge_count": 9770,
+          "nodes": 3315,
+          "simulation_type": "sg_edge_flux_probe"
+        },
+        "mobility": {
+          "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_deep_off\\gate_m0p84\\edge_mobility.json",
+          "converged": true,
+          "edge_count": 9770,
+          "high_field_driving_force": "quasi_fermi_gradient",
+          "mobility_model": "masetti_field_lombardi",
+          "nodes": 3315,
+          "simulation_type": "edge_mobility_probe",
+          "temperature_K": 300.0
+        },
+        "carrier_terms": {
+          "adjusted_block_residuals": {
+            "combined": 124.20607402044445,
+            "phin": 2.6701101425508458e-08,
+            "phip": 3.0915067942272864e-12,
+            "psi": 124.20607402044445
+          },
+          "block_residuals": {
+            "combined": 124.20607402044445,
+            "phin": 2.6701101425508465e-08,
+            "phip": 3.091506794227283e-12,
+            "psi": 124.20607402044445
+          },
+          "carrier_term_probe": {
+            "electron_impact_scale": 1.0,
+            "hole_impact_scale": 1.0,
+            "solved_equation_terms": false
+          },
+          "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_deep_off\\gate_m0p84\\newton_carrier_term.json",
+          "converged": true,
+          "nodes": 3315,
+          "potential_scale": 0.025851999786435535,
+          "row_count": 3315,
+          "scaled_state": true,
+          "simulation_type": "newton_carrier_term_probe"
+        },
+        "feedback": {
+          "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_deep_off\\gate_m0p84\\newton_feedback_substitution.json",
+          "contract": {
+            "baseline_state": "converged_vela_avalanche_on_exact_state",
+            "boundary_rows": "baseline_preserved",
+            "jacobian": "single_production_baseline_jacobian",
+            "production_defaults_changed": false,
+            "replacement_state": "sentaurus_avalanche_on_exact_state",
+            "substitution": "frozen_residual_operator_inputs"
+          },
+          "converged": true,
+          "nodes": 3315,
+          "simulation_type": "newton_feedback_substitution_probe",
+          "variants": [
+            {
+              "block_residuals": {
+                "combined": 124.20607402044445,
+                "phin": 2.6701101425508465e-08,
+                "phip": 3.091506794227283e-12,
+                "psi": 124.20607402044445
+              },
+              "carrier_only_raw_step_norm": 219.30518131594656,
+              "carrier_only_step_norm": 18.040354601302976,
+              "production_trial_block_residuals": {
+                "combined": 1.259592584686034,
+                "phin": 3.316548763877566e-10,
+                "phip": 1.3597704444537548e-12,
+                "psi": 1.259592584686034
+              },
+              "raw_step_norm": 491.17392714541546,
+              "replaces_density": false,
+              "replaces_quasi_fermi": false,
+              "step_norm": 32.842692432487766,
+              "variant": "baseline"
+            },
+            {
+              "block_residuals": {
+                "combined": 95.92803135177218,
+                "phin": 2.6991495436535687e-08,
+                "phip": 3.091103544931731e-12,
+                "psi": 95.92803135177218
+              },
+              "carrier_only_raw_step_norm": 219.2124766540702,
+              "carrier_only_step_norm": 18.04357001395784,
+              "production_trial_block_residuals": {
+                "combined": 88.07833165596904,
+                "phin": 3.043072827609548e-10,
+                "phip": 1.3735319913663682e-12,
+                "psi": 88.07833165596904
+              },
+              "raw_step_norm": 4051.5882328662096,
+              "replaces_density": true,
+              "replaces_quasi_fermi": false,
+              "step_norm": 26.13264458946709,
+              "variant": "electron_density_only"
+            },
+            {
+              "block_residuals": {
+                "combined": 109.9739121007444,
+                "phin": 2.6701101425508825e-08,
+                "phip": 3.1862908596147886e-12,
+                "psi": 109.9739121007444
+              },
+              "carrier_only_raw_step_norm": 219.43351092706504,
+              "carrier_only_step_norm": 17.78373578786257,
+              "production_trial_block_residuals": {
+                "combined": 57.740005730461604,
+                "phin": 3.3024809624042357e-10,
+                "phip": 1.3516022943396985e-12,
+                "psi": 57.740005730461604
+              },
+              "raw_step_norm": 898.9501708083242,
+              "replaces_density": true,
+              "replaces_quasi_fermi": false,
+              "step_norm": 32.73934645121437,
+              "variant": "hole_density_only"
+            },
+            {
+              "block_residuals": {
+                "combined": 76.61135502128076,
+                "phin": 2.6991495436536524e-08,
+                "phip": 3.1859137294714333e-12,
+                "psi": 76.61135502128076
+              },
+              "carrier_only_raw_step_norm": 219.34129646678647,
+              "carrier_only_step_norm": 17.786249516534884,
+              "production_trial_block_residuals": {
+                "combined": 105.30961098342016,
+                "phin": 3.0422580455887597e-10,
+                "phip": 1.3647647134074953e-12,
+                "psi": 105.30961098342016
+              },
+              "raw_step_norm": 4034.3577542711823,
+              "replaces_density": true,
+              "replaces_quasi_fermi": false,
+              "step_norm": 25.98837381621451,
+              "variant": "density_only"
+            },
+            {
+              "block_residuals": {
+                "combined": 124.20607402044445,
+                "phin": 2.670232504598999e-08,
+                "phip": 3.091506794227283e-12,
+                "psi": 124.20607402044445
+              },
+              "carrier_only_raw_step_norm": 219.30518131594656,
+              "carrier_only_step_norm": 18.040354601302976,
+              "production_trial_block_residuals": {
+                "combined": 1.259592584685688,
+                "phin": 3.304076610409819e-10,
+                "phip": 1.3597858603231141e-12,
+                "psi": 1.259592584685688
+              },
+              "raw_step_norm": 1187.8732877308175,
+              "replaces_density": false,
+              "replaces_quasi_fermi": true,
+              "step_norm": 32.86045249542673,
+              "variant": "electron_qfp_only"
+            },
+            {
+              "block_residuals": {
+                "combined": 124.20607402044445,
+                "phin": 2.6701101425508465e-08,
+                "phip": 3.091506794227283e-12,
+                "psi": 124.20607402044445
+              },
+              "carrier_only_raw_step_norm": 219.30518131594658,
+              "carrier_only_step_norm": 18.04035460130298,
+              "production_trial_block_residuals": {
+                "combined": 1.259592584686034,
+                "phin": 3.316548763877566e-10,
+                "phip": 1.3597704444537476e-12,
+                "psi": 1.259592584686034
+              },
+              "raw_step_norm": 491.1739271454154,
+              "replaces_density": false,
+              "replaces_quasi_fermi": true,
+              "step_norm": 32.842692432487446,
+              "variant": "hole_qfp_only"
+            },
+            {
+              "block_residuals": {
+                "combined": 124.20607402044445,
+                "phin": 2.670232504598999e-08,
+                "phip": 3.091506794227283e-12,
+                "psi": 124.20607402044445
+              },
+              "carrier_only_raw_step_norm": 219.30518131594656,
+              "carrier_only_step_norm": 18.04035460130298,
+              "production_trial_block_residuals": {
+                "combined": 1.259592584685688,
+                "phin": 3.304076610409819e-10,
+                "phip": 1.359785860323109e-12,
+                "psi": 1.259592584685688
+              },
+              "raw_step_norm": 1187.8732877308175,
+              "replaces_density": false,
+              "replaces_quasi_fermi": true,
+              "step_norm": 32.86045249542635,
+              "variant": "qfp_only"
+            },
+            {
+              "block_residuals": {
+                "combined": 76.61135502128076,
+                "phin": 2.6992734685720618e-08,
+                "phip": 3.1859137294714385e-12,
+                "psi": 76.61135502128076
+              },
+              "carrier_only_raw_step_norm": 219.34129646678647,
+              "carrier_only_step_norm": 17.786249516534884,
+              "production_trial_block_residuals": {
+                "combined": 105.3096109834247,
+                "phin": 3.0504962825366896e-10,
+                "phip": 1.3647646219172582e-12,
+                "psi": 105.3096109834247
+              },
+              "raw_step_norm": 3515.108682181501,
+              "replaces_density": true,
+              "replaces_quasi_fermi": true,
+              "step_norm": 25.988344464997663,
+              "variant": "density_qfp"
+            }
+          ]
+        }
+      },
+      "artifacts": {
+        "sentaurus_state": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_deep_off\\gate_m0p84\\sentaurus_state_for_vela.csv",
+        "sg_edges": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_deep_off\\gate_m0p84\\sg_edge_flux.csv",
+        "edge_mobility": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_deep_off\\gate_m0p84\\edge_mobility.csv",
+        "edge_formula_comparison": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_deep_off\\gate_m0p84\\sentaurus_vela_edge_formula_comparison.csv",
+        "carrier_terms": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_deep_off\\gate_m0p84\\newton_carrier_term.csv",
+        "feedback": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_deep_off\\gate_m0p84\\newton_feedback_substitution.csv",
+        "summary": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_deep_off\\gate_m0p84\\formula_replay_summary.json"
+      },
+      "feedback_substitution": {
+        "baseline": {
+          "electron_recombination_sum": -3.017443114769373e-11,
+          "electron_flux_sum": 9.292111684865682e-11,
+          "electron_residual_l2": 2.6701101425508455e-08
+        },
+        "electron_density_only": {
+          "electron_recombination_sum": -3.019328659836529e-11,
+          "electron_flux_sum": 9.282422119457892e-11,
+          "electron_residual_l2": 2.6991495436535693e-08
+        },
+        "hole_density_only": {
+          "electron_recombination_sum": -3.018650682608744e-11,
+          "electron_flux_sum": 9.292111684865682e-11,
+          "electron_residual_l2": 2.6701101425508815e-08
+        },
+        "density_only": {
+          "electron_recombination_sum": -3.0205362276942224e-11,
+          "electron_flux_sum": 9.282422119457892e-11,
+          "electron_residual_l2": 2.6991495436536524e-08
+        },
+        "electron_qfp_only": {
+          "electron_recombination_sum": -3.017443114769373e-11,
+          "electron_flux_sum": 9.256037935263315e-11,
+          "electron_residual_l2": 2.6702325045989982e-08
+        },
+        "hole_qfp_only": {
+          "electron_recombination_sum": -3.017443114769373e-11,
+          "electron_flux_sum": 9.292111684865682e-11,
+          "electron_residual_l2": 2.6701101425508455e-08
+        },
+        "qfp_only": {
+          "electron_recombination_sum": -3.017443114769373e-11,
+          "electron_flux_sum": 9.256037935263315e-11,
+          "electron_residual_l2": 2.6702325045989982e-08
+        },
+        "density_qfp": {
+          "electron_recombination_sum": -3.0205362276942224e-11,
+          "electron_flux_sum": 9.246344596363204e-11,
+          "electron_residual_l2": 2.6992734685720618e-08
+        }
+      }
+    },
+    {
+      "group": "dg_idvg_deep_off",
+      "bias_kind": "gate",
+      "bias_V": -0.68,
+      "gate_bias_V": -0.68,
+      "drain_bias_V": 1.1,
+      "density": {
+        "electron_density_abs_error_dex": {
+          "count": 2564,
+          "median": 0.006756326785089861,
+          "p95": 0.008588235860005788,
+          "maximum": 0.019952025049651212
+        },
+        "hole_density_abs_error_dex": {
+          "count": 2564,
+          "median": 0.007321872934585194,
+          "p95": 0.039280811087375626,
+          "maximum": 0.03975340737896049
+        }
+      },
+      "transport": {
+        "electron_mobility_abs_error_dex": {
+          "count": 7511,
+          "median": 0.016036110146122606,
+          "p95": 0.44431274794999354,
+          "maximum": 2.6670468641223235
+        },
+        "electron_drive_abs_error_dex": {
+          "count": 1881,
+          "median": 0.38371567071847856,
+          "p95": 8.401473574077098,
+          "maximum": 9.920943317995132
+        },
+        "electron_sg_line_current_abs_error_dex": {
+          "count": 5205,
+          "median": 0.17578210666554916,
+          "p95": 1.4295153897200907,
+          "maximum": 4.246683522042616
+        },
+        "current_carrying_edges": {
+          "definition": "Sentaurus projected electron line current exceeds 1e-3 of its maximum",
+          "edge_count": 3219,
+          "electron_mobility_abs_error_dex": {
+            "count": 3219,
+            "median": 0.010854504023620981,
+            "p95": 0.39199633105388976,
+            "maximum": 1.0665440899690657
+          },
+          "electron_drive_abs_error_dex": {
+            "count": 2834,
+            "median": 12.069721794384694,
+            "p95": 13.599682907961466,
+            "maximum": 14.511565759363322
+          },
+          "electron_sg_line_current_abs_error_dex": {
+            "count": 3060,
+            "median": 0.20764728523311327,
+            "p95": 1.4201655235743662,
+            "maximum": 2.63194444108162
+          }
+        },
+        "sg_current_comparison_note": "Sentaurus nodal J projected on the primal edge and integrated over the Vela dual couple; use as a spatial diagnostic, not an exact discretization identity."
+      },
+      "srh": {
+        "normalized_total_variation_distance": 0.11290880510307383,
+        "top50_node_overlap": 0.88,
+        "sentaurus_signed_area_weighted_sum_cm-1_s-1": -1.0056682012584522e+16,
+        "vela_signed_scaled_integral": -3.0471472595195854e-11
+      },
+      "statuses": {
+        "sg": {
+          "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_deep_off\\gate_m0p68\\sg_edge_flux.json",
+          "converged": true,
+          "edge_count": 9770,
+          "nodes": 3315,
+          "simulation_type": "sg_edge_flux_probe"
+        },
+        "mobility": {
+          "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_deep_off\\gate_m0p68\\edge_mobility.json",
+          "converged": true,
+          "edge_count": 9770,
+          "high_field_driving_force": "quasi_fermi_gradient",
+          "mobility_model": "masetti_field_lombardi",
+          "nodes": 3315,
+          "simulation_type": "edge_mobility_probe",
+          "temperature_K": 300.0
+        },
+        "carrier_terms": {
+          "adjusted_block_residuals": {
+            "combined": 120.80578879800682,
+            "phin": 7.995099691078115e-10,
+            "phip": 3.0535888245769236e-12,
+            "psi": 120.80578879800682
+          },
+          "block_residuals": {
+            "combined": 120.80578879800682,
+            "phin": 7.995099691078119e-10,
+            "phip": 3.053588824576922e-12,
+            "psi": 120.80578879800682
+          },
+          "carrier_term_probe": {
+            "electron_impact_scale": 1.0,
+            "hole_impact_scale": 1.0,
+            "solved_equation_terms": false
+          },
+          "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_deep_off\\gate_m0p68\\newton_carrier_term.json",
+          "converged": true,
+          "nodes": 3315,
+          "potential_scale": 0.025851999786435535,
+          "row_count": 3315,
+          "scaled_state": true,
+          "simulation_type": "newton_carrier_term_probe"
+        },
+        "feedback": {
+          "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_deep_off\\gate_m0p68\\newton_feedback_substitution.json",
+          "contract": {
+            "baseline_state": "converged_vela_avalanche_on_exact_state",
+            "boundary_rows": "baseline_preserved",
+            "jacobian": "single_production_baseline_jacobian",
+            "production_defaults_changed": false,
+            "replacement_state": "sentaurus_avalanche_on_exact_state",
+            "substitution": "frozen_residual_operator_inputs"
+          },
+          "converged": true,
+          "nodes": 3315,
+          "simulation_type": "newton_feedback_substitution_probe",
+          "variants": [
+            {
+              "block_residuals": {
+                "combined": 120.80578879800682,
+                "phin": 7.995099691078119e-10,
+                "phip": 3.053588824576922e-12,
+                "psi": 120.80578879800682
+              },
+              "carrier_only_raw_step_norm": 119.76110162883094,
+              "carrier_only_step_norm": 17.83556398974444,
+              "production_trial_block_residuals": {
+                "combined": 1.105390645568794,
+                "phin": 2.207206782081643e-10,
+                "phip": 1.339101452101902e-12,
+                "psi": 1.105390645568794
+              },
+              "raw_step_norm": 195.37637640910967,
+              "replaces_density": false,
+              "replaces_quasi_fermi": false,
+              "step_norm": 31.840735274747498,
+              "variant": "baseline"
+            },
+            {
+              "block_residuals": {
+                "combined": 90.46736167382413,
+                "phin": 7.949757795939518e-10,
+                "phip": 3.0531853225150496e-12,
+                "psi": 90.46736167382413
+              },
+              "carrier_only_raw_step_norm": 118.37716616117237,
+              "carrier_only_step_norm": 17.84300530396617,
+              "production_trial_block_residuals": {
+                "combined": 88.06745908316768,
+                "phin": 2.0331561482708563e-10,
+                "phip": 1.3528575821924733e-12,
+                "psi": 88.06745908316768
+              },
+              "raw_step_norm": 1429.2536105440975,
+              "replaces_density": true,
+              "replaces_quasi_fermi": false,
+              "step_norm": 25.483312114984436,
+              "variant": "electron_density_only"
+            },
+            {
+              "block_residuals": {
+                "combined": 106.11858762552906,
+                "phin": 7.995099690557939e-10,
+                "phip": 3.1502026194935963e-12,
+                "psi": 106.11858762552906
+              },
+              "carrier_only_raw_step_norm": 119.77413649318743,
+              "carrier_only_step_norm": 17.582863125828762,
+              "production_trial_block_residuals": {
+                "combined": 57.73682584841058,
+                "phin": 2.220338284619793e-10,
+                "phip": 1.331017393896577e-12,
+                "psi": 57.73682584841058
+              },
+              "raw_step_norm": 319.3726110421647,
+              "replaces_density": true,
+              "replaces_quasi_fermi": false,
+              "step_norm": 31.94491107403608,
+              "variant": "hole_density_only"
+            },
+            {
+              "block_residuals": {
+                "combined": 69.65241963313957,
+                "phin": 7.949757795589133e-10,
+                "phip": 3.1498256599192676e-12,
+                "psi": 69.65241963313957
+              },
+              "carrier_only_raw_step_norm": 118.39151332194834,
+              "carrier_only_step_norm": 17.58913729832849,
+              "production_trial_block_residuals": {
+                "combined": 105.30050564622518,
+                "phin": 2.039467947950948e-10,
+                "phip": 1.344223127567088e-12,
+                "psi": 105.30050564622518
+              },
+              "raw_step_norm": 1287.0414522435783,
+              "replaces_density": true,
+              "replaces_quasi_fermi": false,
+              "step_norm": 25.277815629613272,
+              "variant": "density_only"
+            },
+            {
+              "block_residuals": {
+                "combined": 120.80578879800682,
+                "phin": 7.995099691078118e-10,
+                "phip": 3.053588824576922e-12,
+                "psi": 120.80578879800682
+              },
+              "carrier_only_raw_step_norm": 119.76110162883093,
+              "carrier_only_step_norm": 17.83556398974444,
+              "production_trial_block_residuals": {
+                "combined": 1.105390645568794,
+                "phin": 2.2072067820816365e-10,
+                "phip": 1.339101452101902e-12,
+                "psi": 1.105390645568794
+              },
+              "raw_step_norm": 195.37637640904322,
+              "replaces_density": false,
+              "replaces_quasi_fermi": true,
+              "step_norm": 31.840735274752877,
+              "variant": "electron_qfp_only"
+            },
+            {
+              "block_residuals": {
+                "combined": 120.80578879800682,
+                "phin": 7.995099691078119e-10,
+                "phip": 3.0535888245769196e-12,
+                "psi": 120.80578879800682
+              },
+              "carrier_only_raw_step_norm": 119.76110162883094,
+              "carrier_only_step_norm": 17.83556398974444,
+              "production_trial_block_residuals": {
+                "combined": 1.105390645568794,
+                "phin": 2.207206782081643e-10,
+                "phip": 1.3391014521019048e-12,
+                "psi": 1.105390645568794
+              },
+              "raw_step_norm": 195.37637640910967,
+              "replaces_density": false,
+              "replaces_quasi_fermi": true,
+              "step_norm": 31.840735274747498,
+              "variant": "hole_qfp_only"
+            },
+            {
+              "block_residuals": {
+                "combined": 120.80578879800682,
+                "phin": 7.995099691078118e-10,
+                "phip": 3.0535888245769196e-12,
+                "psi": 120.80578879800682
+              },
+              "carrier_only_raw_step_norm": 119.76110162883093,
+              "carrier_only_step_norm": 17.83556398974444,
+              "production_trial_block_residuals": {
+                "combined": 1.105390645568794,
+                "phin": 2.2072067820816365e-10,
+                "phip": 1.3391014521019048e-12,
+                "psi": 1.105390645568794
+              },
+              "raw_step_norm": 195.37637640904322,
+              "replaces_density": false,
+              "replaces_quasi_fermi": true,
+              "step_norm": 31.840735274752877,
+              "variant": "qfp_only"
+            },
+            {
+              "block_residuals": {
+                "combined": 69.65241963313957,
+                "phin": 7.949757795589134e-10,
+                "phip": 3.1498256599192656e-12,
+                "psi": 69.65241963313957
+              },
+              "carrier_only_raw_step_norm": 118.39151332194832,
+              "carrier_only_step_norm": 17.58913729832849,
+              "production_trial_block_residuals": {
+                "combined": 105.30050564622518,
+                "phin": 2.03946794795094e-10,
+                "phip": 1.3442231275670867e-12,
+                "psi": 105.30050564622518
+              },
+              "raw_step_norm": 1287.0414522435783,
+              "replaces_density": true,
+              "replaces_quasi_fermi": true,
+              "step_norm": 25.277815629614828,
+              "variant": "density_qfp"
+            }
+          ]
+        }
+      },
+      "artifacts": {
+        "sentaurus_state": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_deep_off\\gate_m0p68\\sentaurus_state_for_vela.csv",
+        "sg_edges": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_deep_off\\gate_m0p68\\sg_edge_flux.csv",
+        "edge_mobility": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_deep_off\\gate_m0p68\\edge_mobility.csv",
+        "edge_formula_comparison": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_deep_off\\gate_m0p68\\sentaurus_vela_edge_formula_comparison.csv",
+        "carrier_terms": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_deep_off\\gate_m0p68\\newton_carrier_term.csv",
+        "feedback": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_deep_off\\gate_m0p68\\newton_feedback_substitution.csv",
+        "summary": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823\\dg_idvg_deep_off\\gate_m0p68\\formula_replay_summary.json"
+      },
+      "feedback_substitution": {
+        "baseline": {
+          "electron_recombination_sum": -3.0471472595195854e-11,
+          "electron_flux_sum": 1.442884892089363e-10,
+          "electron_residual_l2": 7.99509969107812e-10
+        },
+        "electron_density_only": {
+          "electron_recombination_sum": -3.049009539777538e-11,
+          "electron_flux_sum": 1.4433676862544195e-10,
+          "electron_residual_l2": 7.949757795939519e-10
+        },
+        "hole_density_only": {
+          "electron_recombination_sum": -3.0484213671331827e-11,
+          "electron_flux_sum": 1.442884892089363e-10,
+          "electron_residual_l2": 7.99509969055794e-10
+        },
+        "density_only": {
+          "electron_recombination_sum": -3.0502836476679456e-11,
+          "electron_flux_sum": 1.4433676862544195e-10,
+          "electron_residual_l2": 7.949757795589134e-10
+        },
+        "electron_qfp_only": {
+          "electron_recombination_sum": -3.0471472595195854e-11,
+          "electron_flux_sum": 1.4428848920893626e-10,
+          "electron_residual_l2": 7.995099691078121e-10
+        },
+        "hole_qfp_only": {
+          "electron_recombination_sum": -3.0471472595195854e-11,
+          "electron_flux_sum": 1.442884892089363e-10,
+          "electron_residual_l2": 7.99509969107812e-10
+        },
+        "qfp_only": {
+          "electron_recombination_sum": -3.0471472595195854e-11,
+          "electron_flux_sum": 1.4428848920893626e-10,
+          "electron_residual_l2": 7.995099691078121e-10
+        },
+        "density_qfp": {
+          "electron_recombination_sum": -3.0502836476679456e-11,
+          "electron_flux_sum": 1.4433676862544192e-10,
+          "electron_residual_l2": 7.949757795589135e-10
+        }
+      }
+    }
+  ],
+  "output_directory": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_sentaurus_formula_replay_20260823"
+}

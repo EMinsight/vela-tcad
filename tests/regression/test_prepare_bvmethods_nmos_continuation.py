@@ -54,7 +54,7 @@ class PrepareBvmethodsContinuationTest(unittest.TestCase):
             self.assertTrue(
                 result["sweep"]["continuation"]["arclength"]["enabled"])
             self.assertEqual(
-                1.0e-15,
+                0.0,
                 result["sweep"]["continuation"]["arclength"]["state_weight"],
             )
             self.assertEqual(
@@ -73,6 +73,39 @@ class PrepareBvmethodsContinuationTest(unittest.TestCase):
             )
             self.assertEqual(6.383727168968036,
                              result["_validation_case"]["sentaurus_reference_BV_V"])
+
+    def test_explicit_state_weight_is_preserved(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state = root / "state.csv"
+            state.write_text("node_id,psi,phin,phip\n")
+            previous = root / "previous.csv"
+            previous.write_text("node_id,psi,phin,phip\n")
+            result = MODULE.prepare_config(
+                self.base(), state, previous, root / "output",
+                state_weight=6.25e-7)
+            self.assertEqual(
+                6.25e-7,
+                result["sweep"]["continuation"]["arclength"]["state_weight"],
+            )
+
+    def test_arclength_source_jacobian_does_not_change_start_solver(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state = root / "state.csv"
+            state.write_text("node_id,psi,phin,phip\n")
+            previous = root / "previous.csv"
+            previous.write_text("node_id,psi,phin,phip\n")
+            result = MODULE.prepare_config(
+                self.base(), state, previous, root / "output",
+                source_jacobian="finite_difference")
+            self.assertNotIn(
+                "source_jacobian", result["solver"]["impact_ionization"])
+            self.assertEqual(
+                "finite_difference",
+                result["sweep"]["continuation"]["arclength"]
+                      ["source_jacobian"],
+            )
 
     def test_requires_self_consistent_avalanche(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

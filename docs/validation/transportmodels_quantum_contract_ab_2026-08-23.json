@@ -1,0 +1,115 @@
+{
+  "schema": "vela.transportmodels.quantum_contract_ab.v1",
+  "as_of": "2026-08-23",
+  "status": "complete",
+  "points": [
+    {
+      "name": "idvd_vg1_vd2",
+      "gate_bias_V": 1.0,
+      "drain_bias_V": 2.0,
+      "sentaurus_current_A_per_um": 0.000705525753105,
+      "current_baseline": {
+        "converged": true,
+        "current_A_per_um": 0.0007600274866231055,
+        "current_absolute_relative_error": 0.07724981445148489,
+        "state_metrics": {
+          "qn_abs_error_mV": {
+            "median": 4.012522948029927,
+            "p95": 138.3672543962582,
+            "maximum": 211.5569818710541
+          },
+          "electron_density_abs_error_dex": {
+            "median": 0.033884883374596164,
+            "p95": 0.8515546175683353,
+            "maximum": 2.2100170385934073
+          },
+          "phin_abs_error_mV": {
+            "median": 0.2992305304818643,
+            "p95": 16.673657021984504,
+            "maximum": 179.64854696828914
+          }
+        },
+        "state": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_dg_srh_corrected_cold_regression_2026-08-23\\runs\\dg\\dg_idvd_curve_state_bias_2p000000.csv"
+      },
+      "sentaurus_box_insulator": {
+        "returncode": 0,
+        "converged": true,
+        "current_A_per_um": 0.0006986079601896096,
+        "state_metrics": {
+          "qn_abs_error_mV": {
+            "median": 0.6525570760070112,
+            "p95": 9.761656859890403,
+            "maximum": 39.10577603944042
+          },
+          "electron_density_abs_error_dex": {
+            "median": 0.00929344762956763,
+            "p95": 0.12614821556484768,
+            "maximum": 0.6158531902438318
+          },
+          "phin_abs_error_mV": {
+            "median": 0.14660746806063885,
+            "p95": 13.643701815656108,
+            "maximum": 69.47289349222375
+          }
+        },
+        "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_quantum_contract_ab_20260823\\idvd_vg1_vd2\\sentaurus_box_insulator\\config.json",
+        "state": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_quantum_contract_ab_20260823\\idvd_vg1_vd2\\sentaurus_box_insulator\\final_state.csv",
+        "current_absolute_relative_error": 0.009805160031289275
+      }
+    },
+    {
+      "name": "idvg_vgm1_vd1p1",
+      "gate_bias_V": -1.0,
+      "drain_bias_V": 1.1,
+      "sentaurus_current_A_per_um": 1.63697016902e-15,
+      "current_baseline": {
+        "converged": true,
+        "current_A_per_um": 9.6331547449558e-16,
+        "current_absolute_relative_error": 0.41152533337105035,
+        "state_metrics": {
+          "qn_abs_error_mV": {
+            "median": 3.7697721953646584,
+            "p95": 140.9631842763342,
+            "maximum": 659.3030557475847
+          },
+          "electron_density_abs_error_dex": {
+            "median": 0.0341952513024637,
+            "p95": 0.9059281104377004,
+            "maximum": 5.180119619581964
+          },
+          "phin_abs_error_mV": {
+            "median": 3.3306690738754696e-12,
+            "p95": 8.710773657156105,
+            "maximum": 442.9819112640089
+          }
+        },
+        "state": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_dg_srh_corrected_cold_regression_2026-08-23\\runs\\dg\\dg_idvg_final_bias_relax_final_state.csv"
+      },
+      "sentaurus_box_insulator": {
+        "returncode": 0,
+        "converged": true,
+        "current_A_per_um": 9.014561761203986e-16,
+        "state_metrics": {
+          "qn_abs_error_mV": {
+            "median": 0.6294387000686865,
+            "p95": 9.980410247954284,
+            "maximum": 171.92789143184606
+          },
+          "electron_density_abs_error_dex": {
+            "median": 0.008389189727490809,
+            "p95": 0.11381458994253414,
+            "maximum": 2.3057697915781
+          },
+          "phin_abs_error_mV": {
+            "median": 2.6645352591003757e-12,
+            "p95": 5.2059524327236915,
+            "maximum": 195.6798619452662
+          }
+        },
+        "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_quantum_contract_ab_20260823\\idvg_vgm1_vd1p1\\sentaurus_box_insulator\\config.json",
+        "state": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\reports\\transportmodels_quantum_contract_ab_20260823\\idvg_vgm1_vd1p1\\sentaurus_box_insulator\\final_state.csv",
+        "current_absolute_relative_error": 0.44931423114443764
+      }
+    }
+  ]
+}

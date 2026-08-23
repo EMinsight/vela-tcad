@@ -29,6 +29,17 @@ def prepare_config(
     start_V: float = 6.056459,
     initial_secant_bias_V: float = 6.0,
     stop_V: float = 6.5,
+    state_weight: float = 0.0,
+    max_corrector_iterations: int = 20,
+    corrector_tolerance: float = 1.0e-8,
+    max_step_retries: int = 12,
+    gummel_max_iter: int | None = None,
+    arclength_initial_step: float = 0.01,
+    arclength_min_step: float = 1.0e-6,
+    arclength_max_step: float = 0.1,
+    max_parameter_update: float = 0.02,
+    source_jacobian: str | None = None,
+    line_search_relative_increase_tolerance: float = 0.0,
 ) -> dict[str, Any]:
     if base.get("simulation_type") != "dc_sweep":
         raise ValueError("base config must use simulation_type=dc_sweep")
@@ -46,9 +57,31 @@ def prepare_config(
         raise ValueError("initial secant bias must be below the start voltage")
     if stop_V <= start_V:
         raise ValueError("stop voltage must exceed start voltage")
+    if state_weight < 0.0:
+        raise ValueError("state weight must be non-negative")
+    if max_corrector_iterations <= 0:
+        raise ValueError("max corrector iterations must be positive")
+    if corrector_tolerance <= 0.0:
+        raise ValueError("corrector tolerance must be positive")
+    if max_step_retries < 0:
+        raise ValueError("max step retries must be non-negative")
+    if gummel_max_iter is not None and gummel_max_iter < 0:
+        raise ValueError("Gummel max iterations must be non-negative")
+    if not 0.0 < arclength_min_step <= arclength_initial_step <= arclength_max_step:
+        raise ValueError("arclength steps must satisfy 0 < min <= initial <= max")
+    if max_parameter_update <= 0.0:
+        raise ValueError("maximum parameter update must be positive")
+    if source_jacobian not in {None, "frozen", "finite_difference"}:
+        raise ValueError("source Jacobian must be frozen or finite_difference")
+    if line_search_relative_increase_tolerance < 0.0:
+        raise ValueError("line-search relative increase tolerance must be non-negative")
 
     output_dir = output_dir.resolve()
     config = copy.deepcopy(base)
+    if gummel_max_iter is not None:
+        config["solver"].setdefault("handoff", {})["gummel_max_iter"] = (
+            gummel_max_iter
+        )
     config["output_csv"] = str(output_dir / "sweep.csv")
     config["sweep"] = {
         "mode": "bv_reverse",
@@ -92,24 +125,24 @@ def prepare_config(
             "arclength": {
                 "enabled": True,
                 "predictor": "tangent",
-                "initial_step": 0.01,
-                "min_step": 1.0e-6,
-                "max_step": 0.1,
+                "initial_step": arclength_initial_step,
+                "min_step": arclength_min_step,
+                "max_step": arclength_max_step,
                 "growth_factor": 1.2,
                 "shrink_factor": 0.5,
-                "max_corrector_iterations": 20,
-                "corrector_tolerance": 1.0e-8,
-                "max_step_retries": 12,
+                "max_corrector_iterations": max_corrector_iterations,
+                "corrector_tolerance": corrector_tolerance,
+                "max_step_retries": max_step_retries,
                 "parameter_scale": 1.0,
-                # The packed NMOS state contains thousands of scaled carrier
-                # unknowns.  The mesh-default 1/N weight makes its tangent norm
-                # dominate lambda and advances voltage by only ~1e-9 V/step.
-                # This explicit numerical weight balances state and voltage;
-                # it does not alter F(x, V) or any physical coefficient.
-                "state_weight": 1.0e-15,
+                # Zero selects the continuation core's mesh-independent 1/N
+                # state metric.  An explicit nonzero value remains available
+                # for controlled metric-sensitivity studies.
+                "state_weight": state_weight,
                 "damping_factor": 0.5,
                 "max_line_search_steps": 12,
-                "max_parameter_update": 0.02,
+                "line_search_relative_increase_tolerance":
+                    line_search_relative_increase_tolerance,
+                "max_parameter_update": max_parameter_update,
                 "bias_finite_difference_step_V": 1.0e-4,
                 "initial_secant_state_file":
                     str(initial_secant_state.resolve()),
@@ -117,6 +150,10 @@ def prepare_config(
             }
         },
     }
+    if source_jacobian is not None:
+        config["sweep"]["continuation"]["arclength"]["source_jacobian"] = (
+            source_jacobian
+        )
     config["_validation_case"] = {
         "purpose": "BVmethods NMOS non-transient continuation closure",
         "source_config": "physics copied verbatim from supplied base config",
@@ -137,14 +174,45 @@ def main() -> int:
     parser.add_argument("--start-V", type=float, default=6.056459)
     parser.add_argument("--initial-secant-bias-V", type=float, default=6.0)
     parser.add_argument("--stop-V", type=float, default=6.5)
+    parser.add_argument("--state-weight", type=float, default=0.0)
+    parser.add_argument("--max-corrector-iterations", type=int, default=20)
+    parser.add_argument("--corrector-tolerance", type=float, default=1.0e-8)
+    parser.add_argument("--max-step-retries", type=int, default=12)
+    parser.add_argument("--gummel-max-iter", type=int)
+    parser.add_argument("--arclength-initial-step", type=float, default=0.01)
+    parser.add_argument("--arclength-min-step", type=float, default=1.0e-6)
+    parser.add_argument("--arclength-max-step", type=float, default=0.1)
+    parser.add_argument("--max-parameter-update", type=float, default=0.02)
+    parser.add_argument(
+        "--source-jacobian", choices=("frozen", "finite_difference"))
+    parser.add_argument(
+        "--line-search-relative-increase-tolerance", type=float, default=0.0)
     args = parser.parse_args()
 
-    base = json.loads(args.base_config.read_text(encoding="utf-8"))
+    base_config = args.base_config.resolve()
+    base = json.loads(base_config.read_text(encoding="utf-8"))
+    for key in ("mesh_file", "materials_file", "node_doping_file"):
+        if key in base:
+            path = Path(base[key])
+            if not path.is_absolute():
+                base[key] = str((base_config.parent / path).resolve())
     config = prepare_config(
         base, args.initial_state, args.initial_secant_state, args.output_dir,
         start_V=args.start_V,
         initial_secant_bias_V=args.initial_secant_bias_V,
-        stop_V=args.stop_V)
+        stop_V=args.stop_V,
+        state_weight=args.state_weight,
+        max_corrector_iterations=args.max_corrector_iterations,
+        corrector_tolerance=args.corrector_tolerance,
+        max_step_retries=args.max_step_retries,
+        gummel_max_iter=args.gummel_max_iter,
+        arclength_initial_step=args.arclength_initial_step,
+        arclength_min_step=args.arclength_min_step,
+        arclength_max_step=args.arclength_max_step,
+        max_parameter_update=args.max_parameter_update,
+        source_jacobian=args.source_jacobian,
+        line_search_relative_increase_tolerance=
+            args.line_search_relative_increase_tolerance)
     args.output_dir.mkdir(parents=True, exist_ok=True)
     output = args.output_dir / "simulation.json"
     write_text_lf(output, json.dumps(config, indent=2) + "\n")
