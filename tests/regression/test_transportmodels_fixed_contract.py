@@ -127,6 +127,14 @@ class TransportModelsFixedContractTest(unittest.TestCase):
         self.assertTrue(overlay["rules"]["previous_accepted_state_only"])
         self.assertTrue(overlay["rules"]["pointwise_reclosure_forbidden"])
         self.assertEqual(
+            10.0,
+            overlay["deep_off_kcl_acceptance"]["min_current_to_kcl_ratio"],
+        )
+        self.assertEqual(
+            "enforce",
+            overlay["deep_off_kcl_acceptance"]["global_continuity_closure"]["mode"],
+        )
+        self.assertEqual(
             "direct_equilibrium", overlay["idvd_initialization"]["dd"]["mode"]
         )
         self.assertEqual(
@@ -153,10 +161,20 @@ class TransportModelsFixedContractTest(unittest.TestCase):
             continuous.exact_curve_biases("dg", "idvd"),
         )
 
-    def test_continuous_curve_seed_is_not_resolved_at_identical_bias(self) -> None:
-        for curve in ("idvg", "idvd"):
-            exact = continuous.exact_curve_biases("dg", curve)
-            self.assertLess(exact[0], exact[1])
+    def test_continuous_curve_process_owns_seed_to_first_target_interval(self) -> None:
+        idvg = continuous.exact_curve_biases("dg", "idvg")
+        idvg_start, idvg_nominal = continuous.curve_execution_lattice(
+            "dg", "idvg"
+        )
+        self.assertEqual(idvg[0], idvg_start)
+        self.assertEqual(idvg, idvg_nominal)
+
+        idvd = continuous.exact_curve_biases("dg", "idvd")
+        idvd_start, idvd_nominal = continuous.curve_execution_lattice(
+            "dg", "idvd"
+        )
+        self.assertEqual(idvd[1], idvd_start)
+        self.assertEqual(idvd[1:], idvd_nominal)
 
     def test_contact_basin_failure_returns_nonzero(self) -> None:
         self.assertEqual(0, dd_basin.acceptance_exit_code({"overall_pass": True}))

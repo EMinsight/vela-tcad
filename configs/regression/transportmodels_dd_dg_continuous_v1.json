@@ -24,6 +24,20 @@
     "min_step_V": 1e-5,
     "stop_on_failure": true
   },
+  "deep_off_kcl_acceptance": {
+    "contacts": [
+      "source",
+      "drain",
+      "gate",
+      "substrate"
+    ],
+    "min_current_to_kcl_ratio": 10.0,
+    "global_continuity_closure": {
+      "mode": "enforce",
+      "tolerance": 0.1,
+      "source_floor": 1e-12
+    }
+  },
   "idvd_initialization": {
     "dd": {
       "mode": "direct_equilibrium",

@@ -48,6 +48,13 @@ def exact_curve_biases(branch: str, curve: str) -> list[float]:
     return [float(value) for value in contract["bias_contract"][curve][key]]
 
 
+def curve_execution_lattice(branch: str, curve: str) -> tuple[float, list[float]]:
+    exact = exact_curve_biases(branch, curve)
+    if curve == "idvg":
+        return exact[0], exact
+    return exact[1], exact[1:]
+
+
 def patch_manifest(
     manifest: dict[str, Any], run_dir: Path, overlay_path: Path = DEFAULT_OVERLAY
 ) -> dict[str, Any]:
@@ -88,16 +95,41 @@ def patch_manifest(
         if stage["name"].endswith(("_idvg_curve", "_idvd_curve")):
             curve = "idvg" if "_idvg_" in stage["name"] else "idvd"
             exact = exact_curve_biases(stage["branch"], curve)
+            execution_start, nominal_bias_points = curve_execution_lattice(
+                stage["branch"], curve
+            )
             nominal_step = exact[1] - exact[0]
             sweep = config["sweep"]
-            # The dependency stage already solved and saved exact[0].  Start
-            # directly at exact[1], using that saved state as the immediately
-            # preceding accepted point; re-solving exact[0] is both redundant
-            # and can trigger line-search non-decrease at an identical bias.
-            adaptive_sweep(sweep, exact[1], exact[-1], nominal_step)
+            if curve == "idvg":
+                # Re-solve the gate-sweep seed in the curve process so the
+                # adaptive controller owns the deep-off exact[0] -> exact[1]
+                # interval.  A KCL rejection can then insert smaller accepted
+                # steps without an external restart or historical seed.
+                adaptive_sweep(sweep, execution_start, exact[-1], nominal_step)
+                kcl = overlay["deep_off_kcl_acceptance"]
+                fixed.deep_merge(
+                    config["solver"],
+                    {"global_continuity_closure":
+                        kcl["global_continuity_closure"]},
+                )
+                fixed.deep_merge(
+                    sweep.setdefault("continuation", {}).setdefault(
+                        "branch_acceptance", {}
+                    ),
+                    {
+                        "terminal_kcl": True,
+                        "terminal_kcl_contacts": kcl["contacts"],
+                        "min_current_to_kcl_ratio":
+                            kcl["min_current_to_kcl_ratio"],
+                    },
+                )
+            else:
+                # The drain sweep has no deep-off KCL gate at zero current;
+                # keep the verified predecessor state as its solved 0 V seed.
+                adaptive_sweep(sweep, execution_start, exact[-1], nominal_step)
             stage["execution_lattice"] = "adaptive_nominal_targets"
             stage["seed_bias_point"] = exact[0]
-            stage["nominal_bias_points"] = exact[1:]
+            stage["nominal_bias_points"] = nominal_bias_points
         elif stage["name"].endswith("_idvd_equilibrium"):
             init = overlay["idvd_initialization"][stage["branch"]]
             if init["mode"] == "continuous_gate_ramp":

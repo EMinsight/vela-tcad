@@ -1364,6 +1364,33 @@ void parseSweepContinuationConfig(const nlohmann::json& sweepJson,
                 "DCSweep: sweep.continuation.branch_acceptance.min_terminal_current_ratio "
                 "must be finite and non-negative.");
         }
+        sweep.continuation.branchAcceptance.terminalKcl =
+            branchAcceptance.value(
+                "terminal_kcl",
+                sweep.continuation.branchAcceptance.terminalKcl);
+        if (branchAcceptance.contains("terminal_kcl_contacts")) {
+            const auto& contacts = branchAcceptance.at("terminal_kcl_contacts");
+            if (!contacts.is_array()) {
+                throw std::invalid_argument(
+                    "DCSweep: sweep.continuation.branch_acceptance."
+                    "terminal_kcl_contacts must be an array.");
+            }
+            sweep.continuation.branchAcceptance.terminalKclContacts =
+                contacts.get<std::vector<std::string>>();
+        }
+        sweep.continuation.branchAcceptance.minCurrentToKclRatio =
+            branchAcceptance.value(
+                "min_current_to_kcl_ratio",
+                sweep.continuation.branchAcceptance.minCurrentToKclRatio);
+        if (sweep.continuation.branchAcceptance.terminalKcl &&
+            (!std::isfinite(
+                 sweep.continuation.branchAcceptance.minCurrentToKclRatio) ||
+             sweep.continuation.branchAcceptance.minCurrentToKclRatio <= 0.0)) {
+            throw std::invalid_argument(
+                "DCSweep: sweep.continuation.branch_acceptance."
+                "min_current_to_kcl_ratio must be finite and positive when "
+                "terminal_kcl is enabled.");
+        }
         sweep.continuation.branchAcceptance.psiPhinJump =
             branchAcceptance.value(
                 "psi_phin_jump",
@@ -2740,6 +2767,9 @@ void canonicalizeSweepContactsInPlace(const DeviceMesh& mesh,
     canonicalizeContactListInPlace(
         mesh, sweep.diagnostics.terminalBalance.contacts,
         "sweep.diagnostics.terminal_balance.contacts");
+    canonicalizeContactListInPlace(
+        mesh, sweep.continuation.branchAcceptance.terminalKclContacts,
+        "sweep.continuation.branch_acceptance.terminal_kcl_contacts");
     if (sweep.diagnostics.srhBalance.enabled) {
         canonicalizeContactNameInPlace(
             mesh, sweep.diagnostics.srhBalance.drainContact,
@@ -3249,6 +3279,7 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
     const bool continuationDiagnosticsEnabled =
         sweep.continuation.predictor.mode != "none" ||
         sweep.continuation.branchAcceptance.terminalCurrentConsistency ||
+        sweep.continuation.branchAcceptance.terminalKcl ||
         sweep.continuation.branchAcceptance.psiPhinJump ||
         sweep.continuation.branchAcceptance.carrierDensityJump ||
         sweep.continuation.arclength.enabled;
@@ -3366,6 +3397,8 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
         header.push_back("branch_acceptance_status");
         header.push_back("branch_acceptance_reason");
         header.push_back("terminal_current_consistency_ratio");
+        header.push_back("terminal_kcl_residual");
+        header.push_back("current_to_terminal_kcl_ratio");
         header.push_back("psi_phin_max_jump_V");
         header.push_back("electron_density_jump_median_dex");
         header.push_back("electron_density_jump_p95_abs_dex");
@@ -3388,6 +3421,13 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
         srhBalanceKclContacts.reserve(mesh.numContacts());
         for (const Contact& contact : mesh.contacts())
             srhBalanceKclContacts.push_back(contact.name);
+    }
+    std::vector<std::string> branchAcceptanceKclContacts =
+        sweep.continuation.branchAcceptance.terminalKclContacts;
+    if (branchAcceptanceKclContacts.empty()) {
+        branchAcceptanceKclContacts.reserve(mesh.numContacts());
+        for (const Contact& contact : mesh.contacts())
+            branchAcceptanceKclContacts.push_back(contact.name);
     }
     const std::vector<std::string> contactEdgeContacts =
         diagnosticContacts(sweep.diagnostics.contactEdge.contacts, sweep.currentContact);
@@ -4115,6 +4155,8 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
         std::string branchAcceptanceStatus;
         std::string branchAcceptanceReason;
         Real terminalCurrentConsistencyRatio = 1.0;
+        Real terminalKclResidual = 0.0;
+        Real currentToTerminalKclRatio = 0.0;
         Real psiPhinMaxJump_V = 0.0;
         Real electronDensityJumpMedianDex = 0.0;
         Real electronDensityJumpP95AbsDex = 0.0;
@@ -4511,14 +4553,19 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
     auto applyBranchAcceptance = [&](SolvePointAttempt& attempt) {
         const bool checkTerminalCurrent =
             sweep.continuation.branchAcceptance.terminalCurrentConsistency;
+        const bool checkTerminalKcl =
+            sweep.continuation.branchAcceptance.terminalKcl;
         const bool checkPsiPhinJump =
             sweep.continuation.branchAcceptance.psiPhinJump;
         const bool checkCarrierDensityJump =
             sweep.continuation.branchAcceptance.carrierDensityJump;
-        if (!checkTerminalCurrent && !checkPsiPhinJump && !checkCarrierDensityJump)
+        if (!checkTerminalCurrent && !checkTerminalKcl && !checkPsiPhinJump &&
+            !checkCarrierDensityJump)
             return;
         attempt.branchAcceptanceStatus = "not_checked";
         attempt.terminalCurrentConsistencyRatio = 1.0;
+        attempt.terminalKclResidual = 0.0;
+        attempt.currentToTerminalKclRatio = 0.0;
         attempt.psiPhinMaxJump_V = 0.0;
         attempt.electronDensityJumpMedianDex = 0.0;
         attempt.electronDensityJumpP95AbsDex = 0.0;
@@ -4541,6 +4588,44 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
                 attempt.failureReason = "branch_acceptance_failed";
                 attempt.branchAcceptanceStatus = "rejected";
                 attempt.branchAcceptanceReason = "terminal_current_inconsistent";
+                return;
+            }
+        }
+        if (checkTerminalKcl) {
+            checked = true;
+            std::vector<Real> terminalCurrents;
+            terminalCurrents.reserve(branchAcceptanceKclContacts.size());
+            Real monitoredCurrent = 0.0;
+            bool monitoredCurrentCaptured = false;
+            for (const std::string& contactName : branchAcceptanceKclContacts) {
+                const ContactCurrentDetailedResult detailed =
+                    contactCurrent.computeDetailed(attempt.solution, contactName);
+                const Real current =
+                    detailed.precision.totalCurrentLongDoubleReference;
+                terminalCurrents.push_back(current);
+                if (contactName == sweep.currentContact) {
+                    monitoredCurrent = current;
+                    monitoredCurrentCaptured = true;
+                }
+            }
+            if (!monitoredCurrentCaptured) {
+                monitoredCurrent = contactCurrent.computeDetailed(
+                    attempt.solution, sweep.currentContact)
+                    .precision.totalCurrentLongDoubleReference;
+            }
+            const TerminalKclAcceptanceEvaluation evaluation =
+                detail::evaluateTerminalKclAcceptance(
+                    monitoredCurrent,
+                    terminalCurrents,
+                    sweep.continuation.branchAcceptance.minCurrentToKclRatio);
+            attempt.terminalKclResidual = evaluation.residual;
+            attempt.currentToTerminalKclRatio =
+                evaluation.currentToResidualRatio;
+            if (!evaluation.satisfied) {
+                attempt.ok = false;
+                attempt.failureReason = "branch_acceptance_failed";
+                attempt.branchAcceptanceStatus = "rejected";
+                attempt.branchAcceptanceReason = "terminal_kcl_unresolved";
                 return;
             }
         }
@@ -5022,6 +5107,9 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
         point.branchAcceptanceReason = attempt.branchAcceptanceReason;
         point.terminalCurrentConsistencyRatio =
             attempt.terminalCurrentConsistencyRatio;
+        point.terminalKclResidual = attempt.terminalKclResidual;
+        point.currentToTerminalKclRatio =
+            attempt.currentToTerminalKclRatio;
         point.psiPhinMaxJump_V = attempt.psiPhinMaxJump_V;
         point.electronDensityJumpMedianDex = attempt.electronDensityJumpMedianDex;
         point.electronDensityJumpP95AbsDex = attempt.electronDensityJumpP95AbsDex;
@@ -5976,6 +6064,8 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
             row.push_back(point.branchAcceptanceStatus);
             row.push_back(point.branchAcceptanceReason);
             row.push_back(formatReal(point.terminalCurrentConsistencyRatio));
+            row.push_back(formatReal(point.terminalKclResidual));
+            row.push_back(formatReal(point.currentToTerminalKclRatio));
             row.push_back(formatReal(point.psiPhinMaxJump_V));
             row.push_back(formatReal(point.electronDensityJumpMedianDex));
             row.push_back(formatReal(point.electronDensityJumpP95AbsDex));
@@ -8385,6 +8475,30 @@ DCSweepResult DCSweep::runWithResult(const std::string& configFile) const
 }
 
 namespace detail {
+
+TerminalKclAcceptanceEvaluation evaluateTerminalKclAcceptance(
+    Real monitoredCurrent,
+    const std::vector<Real>& terminalCurrents,
+    Real minCurrentToResidualRatio)
+{
+    long double signedResidual = 0.0L;
+    for (const Real current : terminalCurrents)
+        signedResidual += static_cast<long double>(current);
+
+    TerminalKclAcceptanceEvaluation evaluation;
+    evaluation.residual = static_cast<Real>(std::abs(signedResidual));
+    evaluation.currentMagnitude = std::abs(monitoredCurrent);
+    if (evaluation.residual > 0.0) {
+        evaluation.currentToResidualRatio =
+            evaluation.currentMagnitude / evaluation.residual;
+    } else if (evaluation.currentMagnitude > 0.0) {
+        evaluation.currentToResidualRatio =
+            std::numeric_limits<Real>::infinity();
+    }
+    evaluation.satisfied =
+        evaluation.currentToResidualRatio >= minCurrentToResidualRatio;
+    return evaluation;
+}
 
 namespace {
 

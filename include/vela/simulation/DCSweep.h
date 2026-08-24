@@ -180,6 +180,9 @@ struct SweepPredictorConfig {
 struct SweepBranchAcceptanceConfig {
     bool terminalCurrentConsistency = false;
     Real minTerminalCurrentRatio = 0.0;
+    bool terminalKcl = false;
+    std::vector<std::string> terminalKclContacts;
+    Real minCurrentToKclRatio = 0.0;
     bool psiPhinJump = false;
     Real maxPsiPhinJump_V = 0.0;
     bool carrierDensityJump = false;
@@ -387,6 +390,8 @@ struct DCSweepPoint {
     std::string branchAcceptanceStatus;
     std::string branchAcceptanceReason;
     Real terminalCurrentConsistencyRatio = 1.0;
+    Real terminalKclResidual = 0.0;
+    Real currentToTerminalKclRatio = 0.0;
     Real psiPhinMaxJump_V = 0.0;
     Real electronDensityJumpMedianDex = 0.0;
     Real electronDensityJumpP95AbsDex = 0.0;
@@ -395,6 +400,22 @@ struct DCSweepPoint {
     std::string outputCsv;
     std::string outputVtk;
 };
+
+struct TerminalKclAcceptanceEvaluation {
+    Real residual = 0.0;
+    Real currentMagnitude = 0.0;
+    Real currentToResidualRatio = 0.0;
+    bool satisfied = true;
+};
+
+namespace detail {
+
+TerminalKclAcceptanceEvaluation evaluateTerminalKclAcceptance(
+    Real monitoredCurrent,
+    const std::vector<Real>& terminalCurrents,
+    Real minCurrentToResidualRatio);
+
+} // namespace detail
 
 struct ReleaseBVConfigAuditMetadata {
     bool enabled = false;

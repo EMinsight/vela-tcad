@@ -2845,6 +2845,22 @@ TEST_CASE("DCSweep: continuation predictor config is validated",
                 "DCSweep: sweep.continuation.branch_acceptance.min_terminal_current_ratio"));
     }
 
+    SECTION("invalid terminal KCL threshold is rejected")
+    {
+        const auto cfgPath = writeConfigWithContinuation({
+            {"branch_acceptance", {
+                {"terminal_kcl", true},
+                {"terminal_kcl_contacts", {"left", "right"}},
+                {"min_current_to_kcl_ratio", 0.0}
+            }}
+        });
+        REQUIRE_THROWS_WITH(
+            sweep.runWithResult(cfgPath.string()),
+            Catch::Matchers::ContainsSubstring(
+                "DCSweep: sweep.continuation.branch_acceptance."
+                "min_current_to_kcl_ratio"));
+    }
+
     SECTION("invalid psi-phin jump threshold is rejected")
     {
         const auto cfgPath = writeConfigWithContinuation({
@@ -4571,6 +4587,26 @@ TEST_CASE("DCSweep branch acceptance: measures psi-phin exponent jumps",
     current.phin(2) = -0.01;
 
     REQUIRE(detail::maxPsiPhinJump(previous, current) == Catch::Approx(0.16));
+}
+
+TEST_CASE("DCSweep branch acceptance: terminal KCL uses current resolution margin",
+          "[dc_sweep][continuation][branch_acceptance][terminal_kcl]")
+{
+    const auto resolved = detail::evaluateTerminalKclAcceptance(
+        1.0e-15,
+        {-2.0e-16, 1.0e-15, 2.5e-16, -1.0e-15},
+        10.0);
+    REQUIRE(resolved.residual == Catch::Approx(5.0e-17));
+    REQUIRE(resolved.currentToResidualRatio == Catch::Approx(20.0));
+    REQUIRE(resolved.satisfied);
+
+    const auto unresolved = detail::evaluateTerminalKclAcceptance(
+        1.0e-15,
+        {-2.0e-16, 1.0e-15, 4.0e-16, -1.0e-15},
+        10.0);
+    REQUIRE(unresolved.residual == Catch::Approx(2.0e-16));
+    REQUIRE(unresolved.currentToResidualRatio == Catch::Approx(5.0));
+    REQUIRE_FALSE(unresolved.satisfied);
 }
 
 TEST_CASE("DCSweep branch acceptance: measures electron density jump statistics",
