@@ -88,9 +88,14 @@ def patch_manifest(
             exact = exact_curve_biases(stage["branch"], curve)
             nominal_step = exact[1] - exact[0]
             sweep = config["sweep"]
-            adaptive_sweep(sweep, exact[0], exact[-1], nominal_step)
+            # The dependency stage already solved and saved exact[0].  Start
+            # directly at exact[1], using that saved state as the immediately
+            # preceding accepted point; re-solving exact[0] is both redundant
+            # and can trigger line-search non-decrease at an identical bias.
+            adaptive_sweep(sweep, exact[1], exact[-1], nominal_step)
             stage["execution_lattice"] = "adaptive_nominal_targets"
-            stage["nominal_bias_points"] = exact
+            stage["seed_bias_point"] = exact[0]
+            stage["nominal_bias_points"] = exact[1:]
         elif stage["name"].endswith("_idvd_equilibrium"):
             init = overlay["idvd_initialization"][stage["branch"]]
             if init["mode"] == "continuous_gate_ramp":

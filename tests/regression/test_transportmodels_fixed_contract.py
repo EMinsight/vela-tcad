@@ -153,6 +153,11 @@ class TransportModelsFixedContractTest(unittest.TestCase):
             continuous.exact_curve_biases("dg", "idvd"),
         )
 
+    def test_continuous_curve_seed_is_not_resolved_at_identical_bias(self) -> None:
+        for curve in ("idvg", "idvd"):
+            exact = continuous.exact_curve_biases("dg", curve)
+            self.assertLess(exact[0], exact[1])
+
     def test_contact_basin_failure_returns_nonzero(self) -> None:
         self.assertEqual(0, dd_basin.acceptance_exit_code({"overall_pass": True}))
         self.assertEqual(2, dd_basin.acceptance_exit_code({"overall_pass": False}))
