@@ -1,0 +1,467 @@
+{
+  "schema": "vela.transportmodels.dd.contact_basin.acceptance.v1",
+  "as_of": "2026-08-24",
+  "execution": {
+    "status": "complete",
+    "mode": "same_bias_exact_reclosure_after_sweep_stall",
+    "reported_points": 21,
+    "executed_points": 147,
+    "current_process_points": 73,
+    "resumed": true,
+    "resume_bias_V": -0.345,
+    "progress_restart_attempts": [
+      {
+        "attempt": 1,
+        "resume_bias_V": -0.345,
+        "last_converged_bias_V": -0.345,
+        "returncode": 1,
+        "made_progress": false
+      }
+    ],
+    "sweep_stalled": true,
+    "exact_reclosures": [
+      {
+        "bias_V": -1.0,
+        "seed": "monotonic contact-basin sweep",
+        "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_contact_basin_fixed_contract_v1_2026-08-24\\config.json",
+        "state": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_contact_basin_fixed_contract_v1_2026-08-24\\state_bias_m1p000000.csv",
+        "iterations": 4,
+        "reused_completed_evidence": true
+      },
+      {
+        "bias_V": -0.84,
+        "seed": "monotonic contact-basin sweep",
+        "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_contact_basin_fixed_contract_v1_2026-08-24\\config.json",
+        "state": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_contact_basin_fixed_contract_v1_2026-08-24\\state_bias_m0p840000.csv",
+        "iterations": 2,
+        "reused_completed_evidence": true
+      },
+      {
+        "bias_V": -0.68,
+        "seed": "monotonic contact-basin sweep",
+        "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_contact_basin_fixed_contract_v1_2026-08-24\\config.json",
+        "state": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_contact_basin_fixed_contract_v1_2026-08-24\\state_bias_m0p680000.csv",
+        "iterations": 2,
+        "reused_completed_evidence": true
+      },
+      {
+        "bias_V": -0.52,
+        "seed": "monotonic contact-basin sweep",
+        "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_contact_basin_fixed_contract_v1_2026-08-24\\config.json",
+        "state": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_contact_basin_fixed_contract_v1_2026-08-24\\state_bias_m0p520000.csv",
+        "iterations": 2,
+        "reused_completed_evidence": true
+      },
+      {
+        "bias_V": -0.36,
+        "seed": "monotonic contact-basin sweep",
+        "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_contact_basin_fixed_contract_v1_2026-08-24\\config.json",
+        "state": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_contact_basin_fixed_contract_v1_2026-08-24\\state_bias_m0p360000.csv",
+        "iterations": 2,
+        "reused_completed_evidence": true
+      },
+      {
+        "bias_V": -0.2,
+        "seed": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_dg_fixed_contract_v1_2026-08-24\\runs\\dd\\dd_idvg_curve_state_bias_m0p200000.csv",
+        "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_contact_basin_fixed_contract_v1_2026-08-24\\exact_reclosure\\m0p200000\\config.json",
+        "state": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_contact_basin_fixed_contract_v1_2026-08-24\\exact_reclosure\\m0p200000\\final_state.csv",
+        "iterations": 44
+      },
+      {
+        "bias_V": -0.04,
+        "seed": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_dg_fixed_contract_v1_2026-08-24\\runs\\dd\\dd_idvg_curve_state_bias_m0p040000.csv",
+        "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_contact_basin_fixed_contract_v1_2026-08-24\\exact_reclosure\\m0p040000\\config.json",
+        "state": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_contact_basin_fixed_contract_v1_2026-08-24\\exact_reclosure\\m0p040000\\final_state.csv",
+        "iterations": 52
+      },
+      {
+        "bias_V": 0.12,
+        "seed": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_dg_fixed_contract_v1_2026-08-24\\runs\\dd\\dd_idvg_curve_state_bias_0p120000.csv",
+        "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_contact_basin_fixed_contract_v1_2026-08-24\\exact_reclosure\\0p120000\\config.json",
+        "state": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_contact_basin_fixed_contract_v1_2026-08-24\\exact_reclosure\\0p120000\\final_state.csv",
+        "iterations": 59
+      },
+      {
+        "bias_V": 0.28,
+        "seed": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_dg_fixed_contract_v1_2026-08-24\\idvg_on_tail\\state_bias_0p280000.csv",
+        "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_contact_basin_fixed_contract_v1_2026-08-24\\exact_reclosure\\0p280000\\config.json",
+        "state": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_contact_basin_fixed_contract_v1_2026-08-24\\exact_reclosure\\0p280000\\final_state.csv",
+        "iterations": 48
+      },
+      {
+        "bias_V": 0.44,
+        "seed": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_dg_fixed_contract_v1_2026-08-24\\idvg_on_tail\\state_bias_0p440000.csv",
+        "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_contact_basin_fixed_contract_v1_2026-08-24\\exact_reclosure\\0p440000\\config.json",
+        "state": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_contact_basin_fixed_contract_v1_2026-08-24\\exact_reclosure\\0p440000\\final_state.csv",
+        "iterations": 83
+      },
+      {
+        "bias_V": 0.6,
+        "seed": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_dg_fixed_contract_v1_2026-08-24\\idvg_on_tail\\state_bias_0p600000.csv",
+        "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_contact_basin_fixed_contract_v1_2026-08-24\\exact_reclosure\\0p600000\\config.json",
+        "state": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_contact_basin_fixed_contract_v1_2026-08-24\\exact_reclosure\\0p600000\\final_state.csv",
+        "iterations": 100
+      },
+      {
+        "bias_V": 0.76,
+        "seed": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_dg_fixed_contract_v1_2026-08-24\\idvg_on_tail\\state_bias_0p760000.csv",
+        "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_contact_basin_fixed_contract_v1_2026-08-24\\exact_reclosure\\0p760000\\config.json",
+        "state": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_contact_basin_fixed_contract_v1_2026-08-24\\exact_reclosure\\0p760000\\final_state.csv",
+        "iterations": 100
+      },
+      {
+        "bias_V": 0.92,
+        "seed": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_dg_fixed_contract_v1_2026-08-24\\idvg_on_tail\\state_bias_0p920000.csv",
+        "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_contact_basin_fixed_contract_v1_2026-08-24\\exact_reclosure\\0p920000\\config.json",
+        "state": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_contact_basin_fixed_contract_v1_2026-08-24\\exact_reclosure\\0p920000\\final_state.csv",
+        "iterations": 70
+      },
+      {
+        "bias_V": 1.08,
+        "seed": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_dg_fixed_contract_v1_2026-08-24\\idvg_on_tail\\state_bias_1p080000.csv",
+        "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_contact_basin_fixed_contract_v1_2026-08-24\\exact_reclosure\\1p080000\\config.json",
+        "state": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_contact_basin_fixed_contract_v1_2026-08-24\\exact_reclosure\\1p080000\\final_state.csv",
+        "iterations": 49
+      },
+      {
+        "bias_V": 1.24,
+        "seed": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_dg_fixed_contract_v1_2026-08-24\\idvg_on_tail\\state_bias_1p240000.csv",
+        "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_contact_basin_fixed_contract_v1_2026-08-24\\exact_reclosure\\1p240000\\config.json",
+        "state": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_contact_basin_fixed_contract_v1_2026-08-24\\exact_reclosure\\1p240000\\final_state.csv",
+        "iterations": 100
+      },
+      {
+        "bias_V": 1.4,
+        "seed": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_dg_fixed_contract_v1_2026-08-24\\idvg_on_tail\\state_bias_1p400000.csv",
+        "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_contact_basin_fixed_contract_v1_2026-08-24\\exact_reclosure\\1p400000\\config.json",
+        "state": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_contact_basin_fixed_contract_v1_2026-08-24\\exact_reclosure\\1p400000\\final_state.csv",
+        "iterations": 84
+      },
+      {
+        "bias_V": 1.56,
+        "seed": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_dg_fixed_contract_v1_2026-08-24\\idvg_on_tail\\state_bias_1p560000.csv",
+        "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_contact_basin_fixed_contract_v1_2026-08-24\\exact_reclosure\\1p560000\\config.json",
+        "state": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_contact_basin_fixed_contract_v1_2026-08-24\\exact_reclosure\\1p560000\\final_state.csv",
+        "iterations": 67
+      },
+      {
+        "bias_V": 1.72,
+        "seed": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_dg_fixed_contract_v1_2026-08-24\\idvg_on_tail\\state_bias_1p720000.csv",
+        "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_contact_basin_fixed_contract_v1_2026-08-24\\exact_reclosure\\1p720000\\config.json",
+        "state": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_contact_basin_fixed_contract_v1_2026-08-24\\exact_reclosure\\1p720000\\final_state.csv",
+        "iterations": 100
+      },
+      {
+        "bias_V": 1.88,
+        "seed": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_dg_fixed_contract_v1_2026-08-24\\idvg_on_tail\\state_bias_1p880000.csv",
+        "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_contact_basin_fixed_contract_v1_2026-08-24\\exact_reclosure\\1p880000\\config.json",
+        "state": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_contact_basin_fixed_contract_v1_2026-08-24\\exact_reclosure\\1p880000\\final_state.csv",
+        "iterations": 100
+      },
+      {
+        "bias_V": 2.04,
+        "seed": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_dg_fixed_contract_v1_2026-08-24\\idvg_on_tail\\state_bias_2p040000.csv",
+        "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_contact_basin_fixed_contract_v1_2026-08-24\\exact_reclosure\\2p040000\\config.json",
+        "state": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_contact_basin_fixed_contract_v1_2026-08-24\\exact_reclosure\\2p040000\\final_state.csv",
+        "iterations": 100
+      },
+      {
+        "bias_V": 2.2,
+        "seed": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_dg_fixed_contract_v1_2026-08-24\\idvg_on_tail\\state_bias_2p200000.csv",
+        "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_contact_basin_fixed_contract_v1_2026-08-24\\exact_reclosure\\2p200000\\config.json",
+        "state": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_contact_basin_fixed_contract_v1_2026-08-24\\exact_reclosure\\2p200000\\final_state.csv",
+        "iterations": 100
+      }
+    ],
+    "internal_bridge_points": 126,
+    "config": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_contact_basin_fixed_contract_v1_2026-08-24\\config.json",
+    "runner": "D:\\code-repo\\vela-tcad\\build-release\\vela_example_runner.exe",
+    "runner_sha256": "2cc86fa83fc0ec70e74b45314ca7e8bd201972a38adda37255e452e2fdba745e"
+  },
+  "contracts": {
+    "base": {
+      "path": "D:\\code-repo\\vela-tcad\\configs\\regression\\transportmodels_dd_dg_sentaurus2022_v1.json",
+      "sha256": "0513b486661fb7ae788f108782d79a5ded75e3f3c7f55216c51eaf0eec14cbec"
+    },
+    "contact_basin": {
+      "path": "D:\\code-repo\\vela-tcad\\configs\\regression\\transportmodels_dd_contact_basin_v1.json",
+      "sha256": "0e96fe6240ccca93368da3a097ccd96efb6dae2e293f5932400a7516556fd094"
+    }
+  },
+  "aligned": [
+    {
+      "bias_V": -1.0,
+      "vela_A_per_um": 1.6644261791304386e-15,
+      "sentaurus_A_per_um": 1.63468406431e-15,
+      "absolute_relative_error": 0.01819441167244315,
+      "absolute_log_error_dex": 0.007830709096447563,
+      "four_terminal_kcl_residual_A_per_um": 1.3158405103702611e-18,
+      "id_to_kcl_residual_ratio": 1264.9148327726207,
+      "numerical_status": "resolved"
+    },
+    {
+      "bias_V": -0.84,
+      "vela_A_per_um": 1.6477633510784024e-15,
+      "sentaurus_A_per_um": 1.62231726668e-15,
+      "absolute_relative_error": 0.015685023466757948,
+      "absolute_log_error_dex": 0.006759048716935112,
+      "four_terminal_kcl_residual_A_per_um": 1.3629935261492164e-18,
+      "id_to_kcl_residual_ratio": 1208.9296973652758,
+      "numerical_status": "resolved"
+    },
+    {
+      "bias_V": -0.68,
+      "vela_A_per_um": 1.780526059223028e-15,
+      "sentaurus_A_per_um": 1.73863786439e-15,
+      "absolute_relative_error": 0.024092535709110692,
+      "absolute_log_error_dex": 0.010339200714161834,
+      "four_terminal_kcl_residual_A_per_um": 1.5030010006523087e-17,
+      "id_to_kcl_residual_ratio": 118.46472879594042,
+      "numerical_status": "resolved"
+    },
+    {
+      "bias_V": -0.52,
+      "vela_A_per_um": 1.6344591128647966e-14,
+      "sentaurus_A_per_um": 1.61552752286e-14,
+      "absolute_relative_error": 0.011718519020512673,
+      "absolute_log_error_dex": 0.005059699618202629,
+      "four_terminal_kcl_residual_A_per_um": 9.876788110881547e-19,
+      "id_to_kcl_residual_ratio": 16548.48817769073,
+      "numerical_status": "resolved"
+    },
+    {
+      "bias_V": -0.36,
+      "vela_A_per_um": 1.8054680182442631e-12,
+      "sentaurus_A_per_um": 1.75405423289e-12,
+      "absolute_relative_error": 0.029311400064040833,
+      "absolute_log_error_dex": 0.0125467827996264,
+      "four_terminal_kcl_residual_A_per_um": 2.940910619880547e-16,
+      "id_to_kcl_residual_ratio": 6139.146174791253,
+      "numerical_status": "resolved"
+    },
+    {
+      "bias_V": -0.2,
+      "vela_A_per_um": 2.3749522076551684e-10,
+      "sentaurus_A_per_um": 2.25252117998e-10,
+      "absolute_relative_error": 0.05435288634056507,
+      "absolute_log_error_dex": 0.022985991275483286,
+      "four_terminal_kcl_residual_A_per_um": 3.452552828120472e-14,
+      "id_to_kcl_residual_ratio": 6878.829451389058,
+      "numerical_status": "resolved"
+    },
+    {
+      "bias_V": -0.04,
+      "vela_A_per_um": 3.142195666982986e-08,
+      "sentaurus_A_per_um": 2.93427186334e-08,
+      "absolute_relative_error": 0.07086044283787384,
+      "absolute_log_error_dex": 0.029732876196374214,
+      "four_terminal_kcl_residual_A_per_um": 3.987892236765504e-12,
+      "id_to_kcl_residual_ratio": 7879.33946161884,
+      "numerical_status": "resolved"
+    },
+    {
+      "bias_V": 0.12,
+      "vela_A_per_um": 3.3180941114413897e-06,
+      "sentaurus_A_per_um": 3.08344911686e-06,
+      "absolute_relative_error": 0.07609822172786106,
+      "absolute_log_error_dex": 0.03185191371658824,
+      "four_terminal_kcl_residual_A_per_um": 3.596607825459423e-10,
+      "id_to_kcl_residual_ratio": 9225.621119860472,
+      "numerical_status": "resolved"
+    },
+    {
+      "bias_V": 0.28,
+      "vela_A_per_um": 5.477193698572931e-05,
+      "sentaurus_A_per_um": 5.32127938483e-05,
+      "absolute_relative_error": 0.02930015555796866,
+      "absolute_log_error_dex": 0.012542038410696676,
+      "four_terminal_kcl_residual_A_per_um": 4.564488381721185e-09,
+      "id_to_kcl_residual_ratio": 11999.57857381506,
+      "numerical_status": "resolved"
+    },
+    {
+      "bias_V": 0.44,
+      "vela_A_per_um": 0.0001724328631027324,
+      "sentaurus_A_per_um": 0.000171013072071,
+      "absolute_relative_error": 0.00830223686726686,
+      "absolute_log_error_dex": 0.0035907306504441294,
+      "four_terminal_kcl_residual_A_per_um": 8.559918449337595e-09,
+      "id_to_kcl_residual_ratio": 20144.217976291122,
+      "numerical_status": "resolved"
+    },
+    {
+      "bias_V": 0.6,
+      "vela_A_per_um": 0.00031992940375078,
+      "sentaurus_A_per_um": 0.000320287383837,
+      "absolute_relative_error": 0.0011176840059432135,
+      "absolute_log_error_dex": 0.00048567546272870743,
+      "four_terminal_kcl_residual_A_per_um": 2.464434157222114e-09,
+      "id_to_kcl_residual_ratio": 129818.60473456563,
+      "numerical_status": "resolved"
+    },
+    {
+      "bias_V": 0.76,
+      "vela_A_per_um": 0.0004790680180202896,
+      "sentaurus_A_per_um": 0.000482513706411,
+      "absolute_relative_error": 0.00714112023125703,
+      "absolute_log_error_dex": 0.0031124756668416964,
+      "four_terminal_kcl_residual_A_per_um": 4.650642750252786e-08,
+      "id_to_kcl_residual_ratio": 10301.114141572149,
+      "numerical_status": "resolved"
+    },
+    {
+      "bias_V": 0.92,
+      "vela_A_per_um": 0.0006414067286753716,
+      "sentaurus_A_per_um": 0.00064897090868,
+      "absolute_relative_error": 0.011655653440635416,
+      "absolute_log_error_dex": 0.005091717602877299,
+      "four_terminal_kcl_residual_A_per_um": 1.0905024418703128e-07,
+      "id_to_kcl_residual_ratio": 5881.754171731149,
+      "numerical_status": "resolved"
+    },
+    {
+      "bias_V": 1.08,
+      "vela_A_per_um": 0.0008024691221109189,
+      "sentaurus_A_per_um": 0.000814924853121,
+      "absolute_relative_error": 0.015284514838856783,
+      "absolute_log_error_dex": 0.006689232521108757,
+      "four_terminal_kcl_residual_A_per_um": 1.5890715380452701e-07,
+      "id_to_kcl_residual_ratio": 5049.924455245374,
+      "numerical_status": "resolved"
+    },
+    {
+      "bias_V": 1.24,
+      "vela_A_per_um": 0.0009597370419114224,
+      "sentaurus_A_per_um": 0.00097755728191,
+      "absolute_relative_error": 0.01822935630304903,
+      "absolute_log_error_dex": 0.007989958048975065,
+      "four_terminal_kcl_residual_A_per_um": 2.072921936371626e-07,
+      "id_to_kcl_residual_ratio": 4629.875467434699,
+      "numerical_status": "resolved"
+    },
+    {
+      "bias_V": 1.4,
+      "vela_A_per_um": 0.0011117921812975654,
+      "sentaurus_A_per_um": 0.00113520036428,
+      "absolute_relative_error": 0.020620309611406193,
+      "absolute_log_error_dex": 0.009048906284328417,
+      "four_terminal_kcl_residual_A_per_um": 2.607865979585289e-07,
+      "id_to_kcl_residual_ratio": 4263.225909616591,
+      "numerical_status": "resolved"
+    },
+    {
+      "bias_V": 1.56,
+      "vela_A_per_um": 0.001257709483040321,
+      "sentaurus_A_per_um": 0.00128675142551,
+      "absolute_relative_error": 0.022569971086815376,
+      "absolute_log_error_dex": 0.009914322571034528,
+      "four_terminal_kcl_residual_A_per_um": 3.331060490918382e-07,
+      "id_to_kcl_residual_ratio": 3775.70292244548,
+      "numerical_status": "resolved"
+    },
+    {
+      "bias_V": 1.72,
+      "vela_A_per_um": 0.0013966002103441182,
+      "sentaurus_A_per_um": 0.00143122022985,
+      "absolute_relative_error": 0.02418916305389986,
+      "absolute_log_error_dex": 0.010634363104508715,
+      "four_terminal_kcl_residual_A_per_um": 4.0419879786296766e-07,
+      "id_to_kcl_residual_ratio": 3455.230984674023,
+      "numerical_status": "resolved"
+    },
+    {
+      "bias_V": 1.88,
+      "vela_A_per_um": 0.0015273910794362537,
+      "sentaurus_A_per_um": 0.00156746606293,
+      "absolute_relative_error": 0.025566731198527988,
+      "absolute_log_error_dex": 0.011247896909220678,
+      "four_terminal_kcl_residual_A_per_um": 4.656168167738147e-07,
+      "id_to_kcl_residual_ratio": 3280.360640793228,
+      "numerical_status": "resolved"
+    },
+    {
+      "bias_V": 2.04,
+      "vela_A_per_um": 0.0016488368819053195,
+      "sentaurus_A_per_um": 0.00169421685367,
+      "absolute_relative_error": 0.026785220360887572,
+      "absolute_log_error_dex": 0.011791304316874474,
+      "four_terminal_kcl_residual_A_per_um": 4.018010577938599e-07,
+      "id_to_kcl_residual_ratio": 4103.615084933995,
+      "numerical_status": "resolved"
+    },
+    {
+      "bias_V": 2.2,
+      "vela_A_per_um": 0.0017602321362077157,
+      "sentaurus_A_per_um": 0.00181040907111,
+      "absolute_relative_error": 0.027715799541105823,
+      "absolute_log_error_dex": 0.012206771441657605,
+      "four_terminal_kcl_residual_A_per_um": 4.319322075414876e-07,
+      "id_to_kcl_residual_ratio": 4075.2509432597553,
+      "numerical_status": "resolved"
+    }
+  ],
+  "metrics": {
+    "deep_off": {
+      "max_absolute_relative_error": 0.024092535709110692,
+      "max_absolute_log_error_dex": 0.010339200714161834,
+      "median_absolute_log_error_dex": 0.007830709096447563
+    },
+    "transition": {
+      "max_absolute_relative_error": 0.07609822172786106,
+      "max_absolute_log_error_dex": 0.03185191371658824,
+      "median_absolute_log_error_dex": 0.022985991275483286
+    },
+    "on": {
+      "max_absolute_relative_error": 0.02930015555796866,
+      "max_absolute_log_error_dex": 0.012542038410696676,
+      "median_absolute_log_error_dex": 0.009048906284328417
+    }
+  },
+  "acceptance": {
+    "main_curve_pass": true,
+    "deep_off_pass": true,
+    "overall_pass": true,
+    "deep_off_points": [
+      {
+        "bias_V": -1.0,
+        "vela_A_per_um": 1.6644261791304386e-15,
+        "sentaurus_A_per_um": 1.63468406431e-15,
+        "absolute_relative_error": 0.01819441167244315,
+        "absolute_log_error_dex": 0.007830709096447563,
+        "four_terminal_kcl_residual_A_per_um": 1.3158405103702611e-18,
+        "id_to_kcl_residual_ratio": 1264.9148327726207,
+        "numerical_status": "resolved",
+        "status": "pass"
+      },
+      {
+        "bias_V": -0.84,
+        "vela_A_per_um": 1.6477633510784024e-15,
+        "sentaurus_A_per_um": 1.62231726668e-15,
+        "absolute_relative_error": 0.015685023466757948,
+        "absolute_log_error_dex": 0.006759048716935112,
+        "four_terminal_kcl_residual_A_per_um": 1.3629935261492164e-18,
+        "id_to_kcl_residual_ratio": 1208.9296973652758,
+        "numerical_status": "resolved",
+        "status": "pass"
+      },
+      {
+        "bias_V": -0.68,
+        "vela_A_per_um": 1.780526059223028e-15,
+        "sentaurus_A_per_um": 1.73863786439e-15,
+        "absolute_relative_error": 0.024092535709110692,
+        "absolute_log_error_dex": 0.010339200714161834,
+        "four_terminal_kcl_residual_A_per_um": 1.5030010006523087e-17,
+        "id_to_kcl_residual_ratio": 118.46472879594042,
+        "numerical_status": "resolved",
+        "status": "pass"
+      }
+    ]
+  },
+  "artifacts": {
+    "curve_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_contact_basin_fixed_contract_v1_2026-08-24\\dd_idvg_21_point.csv",
+    "aligned_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_contact_basin_fixed_contract_v1_2026-08-24\\dd_idvg_21_point_aligned.csv",
+    "plot_png": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_contact_basin_fixed_contract_v1_2026-08-24\\dd_idvg_21_point_comparison.png",
+    "raw_curve_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_contact_basin_fixed_contract_v1_2026-08-24\\dd_idvg_raw.csv",
+    "srh_balance_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_contact_basin_fixed_contract_v1_2026-08-24\\srh_balance.csv"
+  }
+}

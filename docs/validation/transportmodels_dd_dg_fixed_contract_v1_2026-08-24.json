@@ -1,0 +1,963 @@
+{
+  "schema": "vela.transportmodels.dd_dg.fixed_contract.acceptance.v1",
+  "as_of": "2026-08-24",
+  "contract": {
+    "id": "transportmodels-dd-dg-sentaurus2022-v1",
+    "path": "D:\\code-repo\\vela-tcad\\configs\\regression\\transportmodels_dd_dg_sentaurus2022_v1.json",
+    "sha256": "0513b486661fb7ae788f108782d79a5ded75e3f3c7f55216c51eaf0eec14cbec",
+    "materials": "D:\\code-repo\\vela-tcad\\configs\\regression\\transportmodels_sentaurus2022_materials_v1.json",
+    "materials_sha256": "e00fa2d0585aa75d624d8275b91e76b7e412ca0d60c33bf591ba9ffa44bac12f",
+    "all_stage_configs_valid": true
+  },
+  "controlled_delta": {
+    "pass": true,
+    "only_branch_delta": "solver.electron_quantum_potential"
+  },
+  "branches": {
+    "dd": {
+      "execution_status": "complete",
+      "completed_points": 42,
+      "runner": {
+        "path": "D:\\code-repo\\vela-tcad\\build-release\\vela_example_runner.exe",
+        "sha256": "2cc86fa83fc0ec70e74b45314ca7e8bd201972a38adda37255e452e2fdba745e"
+      },
+      "manifest": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_dg_fixed_contract_v1_2026-08-24\\runs\\dd\\workflow_manifest.json",
+      "curves": [
+        {
+          "branch": "dd",
+          "name": "idvg",
+          "completed_points": 21,
+          "candidate_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_dg_fixed_contract_v1_2026-08-24\\runs\\dd\\dd_idvg_curve_comparison_candidate.csv",
+          "reference_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\run02\\normalized\\dd_idvg.csv",
+          "aligned_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_dg_fixed_contract_v1_2026-08-24\\dd_idvg_aligned.csv",
+          "aligned": [
+            {
+              "bias_V": -1.0,
+              "vela_A_per_um": 1.4872975213310097e-15,
+              "sentaurus_A_per_um": 1.63468406431e-15,
+              "absolute_relative_error": 0.09016209688274053,
+              "absolute_log_error_dex": 0.04103597476942866,
+              "numerical_status": "numerically_unresolved",
+              "four_terminal_kcl_residual_A_per_um": 1.7581225333891921e-16,
+              "id_to_kcl_residual_ratio": 8.459578289255505
+            },
+            {
+              "bias_V": -0.84,
+              "vela_A_per_um": 9.682431145868715e-16,
+              "sentaurus_A_per_um": 1.62231726668e-15,
+              "absolute_relative_error": 0.4031727736163852,
+              "absolute_log_error_dex": 0.22415137320552958,
+              "numerical_status": "numerically_unresolved",
+              "four_terminal_kcl_residual_A_per_um": 6.782010410419217e-16,
+              "id_to_kcl_residual_ratio": 1.4276638577542693
+            },
+            {
+              "bias_V": -0.68,
+              "vela_A_per_um": 1.4875731539651873e-15,
+              "sentaurus_A_per_um": 1.73863786439e-15,
+              "absolute_relative_error": 0.1444031074940949,
+              "absolute_log_error_dex": 0.06773080143803689
+            },
+            {
+              "bias_V": -0.52,
+              "vela_A_per_um": 1.5867735073297396e-14,
+              "sentaurus_A_per_um": 1.61552752286e-14,
+              "absolute_relative_error": 0.017798530277810795,
+              "absolute_log_error_dex": 0.007799420345161678
+            },
+            {
+              "bias_V": -0.36,
+              "vela_A_per_um": 1.8080361693683256e-12,
+              "sentaurus_A_per_um": 1.75405423289e-12,
+              "absolute_relative_error": 0.03077552305174983,
+              "absolute_log_error_dex": 0.01316409718021383
+            },
+            {
+              "bias_V": -0.2,
+              "vela_A_per_um": 2.3749605456247177e-10,
+              "sentaurus_A_per_um": 2.25252117998e-10,
+              "absolute_relative_error": 0.05435658795705745,
+              "absolute_log_error_dex": 0.02298751599155935,
+              "numerical_status": "resolved",
+              "four_terminal_kcl_residual_A_per_um": 3.3691731326249353e-14,
+              "id_to_kcl_residual_ratio": 7049.090243024635
+            },
+            {
+              "bias_V": -0.04,
+              "vela_A_per_um": 3.142195689362339e-08,
+              "sentaurus_A_per_um": 2.93427186334e-08,
+              "absolute_relative_error": 0.07086045046475868,
+              "absolute_log_error_dex": 0.029732879289507963,
+              "numerical_status": "resolved",
+              "four_terminal_kcl_residual_A_per_um": 3.987668443267881e-12,
+              "id_to_kcl_residual_ratio": 7879.781717226521
+            },
+            {
+              "bias_V": 0.12,
+              "vela_A_per_um": 3.31809411140261e-06,
+              "sentaurus_A_per_um": 3.08344911686e-06,
+              "absolute_relative_error": 0.07609822171528433,
+              "absolute_log_error_dex": 0.0318519137115123,
+              "numerical_status": "resolved",
+              "four_terminal_kcl_residual_A_per_um": 3.596608213269207e-10,
+              "id_to_kcl_residual_ratio": 9225.620124985935
+            },
+            {
+              "bias_V": 0.28,
+              "vela_A_per_um": 5.4771751908305524e-05,
+              "sentaurus_A_per_um": 5.32127938483e-05,
+              "absolute_relative_error": 0.029296677495450233,
+              "absolute_log_error_dex": 0.012540570902989323,
+              "numerical_status": "resolved",
+              "four_terminal_kcl_residual_A_per_um": 4.564486953300702e-09,
+              "id_to_kcl_residual_ratio": 11999.541781732689
+            },
+            {
+              "bias_V": 0.44,
+              "vela_A_per_um": 0.0001724329224133339,
+              "sentaurus_A_per_um": 0.000171013072071,
+              "absolute_relative_error": 0.008302583686377056,
+              "absolute_log_error_dex": 0.003590880031844268,
+              "numerical_status": "resolved",
+              "four_terminal_kcl_residual_A_per_um": 8.559930020152146e-09,
+              "id_to_kcl_residual_ratio": 20144.197675376447
+            },
+            {
+              "bias_V": 0.6,
+              "vela_A_per_um": 0.000319929274511999,
+              "sentaurus_A_per_um": 0.000320287383837,
+              "absolute_relative_error": 0.0011180875147527843,
+              "absolute_log_error_dex": 0.00048585090049746427,
+              "numerical_status": "resolved",
+              "four_terminal_kcl_residual_A_per_um": 2.464482955137141e-09,
+              "id_to_kcl_residual_ratio": 129815.98182495683
+            },
+            {
+              "bias_V": 0.76,
+              "vela_A_per_um": 0.00047906796565481936,
+              "sentaurus_A_per_um": 0.000482513706411,
+              "absolute_relative_error": 0.007141228757646134,
+              "absolute_log_error_dex": 0.0031125231382551632,
+              "numerical_status": "resolved",
+              "four_terminal_kcl_residual_A_per_um": 4.6506381179461604e-08,
+              "id_to_kcl_residual_ratio": 10301.123276097602
+            },
+            {
+              "bias_V": 0.92,
+              "vela_A_per_um": 0.0006414066509752295,
+              "sentaurus_A_per_um": 0.00064897090868,
+              "absolute_relative_error": 0.011655773168871413,
+              "absolute_log_error_dex": 0.005091770213402569,
+              "numerical_status": "resolved",
+              "four_terminal_kcl_residual_A_per_um": 1.0905019849435855e-07,
+              "id_to_kcl_residual_ratio": 5881.755923703441
+            },
+            {
+              "bias_V": 1.08,
+              "vela_A_per_um": 0.0008024689881581843,
+              "sentaurus_A_per_um": 0.000814924853121,
+              "absolute_relative_error": 0.015284679213196496,
+              "absolute_log_error_dex": 0.006689305016033487,
+              "numerical_status": "resolved",
+              "four_terminal_kcl_residual_A_per_um": 1.5890707649463523e-07,
+              "id_to_kcl_residual_ratio": 5049.9260691217605
+            },
+            {
+              "bias_V": 1.24,
+              "vela_A_per_um": 0.0009597370266724245,
+              "sentaurus_A_per_um": 0.00097755728191,
+              "absolute_relative_error": 0.018229371891903177,
+              "absolute_log_error_dex": 0.007989964944835393,
+              "numerical_status": "resolved",
+              "four_terminal_kcl_residual_A_per_um": 2.0729218262375022e-07,
+              "id_to_kcl_residual_ratio": 4629.875639904927
+            },
+            {
+              "bias_V": 1.4,
+              "vela_A_per_um": 0.0011117921418382461,
+              "sentaurus_A_per_um": 0.00113520036428,
+              "absolute_relative_error": 0.02062034437119003,
+              "absolute_log_error_dex": 0.00904892169814886,
+              "numerical_status": "resolved",
+              "four_terminal_kcl_residual_A_per_um": 2.6078657793463883e-07,
+              "id_to_kcl_residual_ratio": 4263.226085649606
+            },
+            {
+              "bias_V": 1.56,
+              "vela_A_per_um": 0.0012577093624836638,
+              "sentaurus_A_per_um": 0.00128675142551,
+              "absolute_relative_error": 0.022570064777527283,
+              "absolute_log_error_dex": 0.00991436419995928,
+              "numerical_status": "resolved",
+              "four_terminal_kcl_residual_A_per_um": 3.331060158793654e-07,
+              "id_to_kcl_residual_ratio": 3775.702936986717
+            },
+            {
+              "bias_V": 1.72,
+              "vela_A_per_um": 0.0013966001200956533,
+              "sentaurus_A_per_um": 0.00143122022985,
+              "absolute_relative_error": 0.024189226110907486,
+              "absolute_log_error_dex": 0.0106343911686686,
+              "numerical_status": "resolved",
+              "four_terminal_kcl_residual_A_per_um": 4.0419876933075463e-07,
+              "id_to_kcl_residual_ratio": 3455.2310052998196
+            },
+            {
+              "bias_V": 1.88,
+              "vela_A_per_um": 0.0015273911407782375,
+              "sentaurus_A_per_um": 0.00156746606293,
+              "absolute_relative_error": 0.025566692064038735,
+              "absolute_log_error_dex": 0.011247879467398025,
+              "numerical_status": "resolved",
+              "four_terminal_kcl_residual_A_per_um": 4.6561685002448626e-07,
+              "id_to_kcl_residual_ratio": 3280.3605382793035
+            },
+            {
+              "bias_V": 2.04,
+              "vela_A_per_um": 0.0016488368660501204,
+              "sentaurus_A_per_um": 0.00169421685367,
+              "absolute_relative_error": 0.026785229719311236,
+              "absolute_log_error_dex": 0.011791308493045882,
+              "numerical_status": "resolved",
+              "four_terminal_kcl_residual_A_per_um": 4.0180105356834753e-07,
+              "id_to_kcl_residual_ratio": 4103.615088629051
+            },
+            {
+              "bias_V": 2.2,
+              "vela_A_per_um": 0.0017602321032883946,
+              "sentaurus_A_per_um": 0.00181040907111,
+              "absolute_relative_error": 0.02771581772446651,
+              "absolute_log_error_dex": 0.012206779563699754,
+              "numerical_status": "resolved",
+              "four_terminal_kcl_residual_A_per_um": 4.319322236356785e-07,
+              "id_to_kcl_residual_ratio": 4075.250715198077
+            }
+          ],
+          "metrics": {
+            "deep_off": {
+              "max_relative_error": 0.4031727736163852,
+              "max_absolute_log_error_dex": 0.22415137320552958,
+              "median_absolute_log_error_dex": 0.06773080143803689
+            },
+            "transition": {
+              "max_relative_error": 0.07609822171528433,
+              "max_absolute_log_error_dex": 0.0318519137115123,
+              "median_absolute_log_error_dex": 0.02298751599155935
+            },
+            "on": {
+              "max_relative_error": 0.029296677495450233,
+              "max_absolute_log_error_dex": 0.012540570902989323,
+              "median_absolute_log_error_dex": 0.00904892169814886
+            }
+          }
+        },
+        {
+          "branch": "dd",
+          "name": "idvd",
+          "completed_points": 21,
+          "candidate_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_dg_fixed_contract_v1_2026-08-24\\runs\\dd\\dd_idvd_curve_comparison_candidate.csv",
+          "reference_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\run02\\normalized\\dd_idvd.csv",
+          "aligned_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_dg_fixed_contract_v1_2026-08-24\\dd_idvd_aligned.csv",
+          "aligned": [
+            {
+              "bias_V": 0.0,
+              "vela_A_per_um": 8.462940962815964e-15,
+              "sentaurus_A_per_um": 2.01271333618e-18,
+              "absolute_relative_error": 4203.742330012122,
+              "absolute_log_error_dex": 3.6237393870346164
+            },
+            {
+              "bias_V": 0.1,
+              "vela_A_per_um": 0.00024177610333151592,
+              "sentaurus_A_per_um": 0.000243053109531,
+              "absolute_relative_error": 0.005254021238190395,
+              "absolute_log_error_dex": 0.002287807803676767
+            },
+            {
+              "bias_V": 0.2,
+              "vela_A_per_um": 0.00041634604693906977,
+              "sentaurus_A_per_um": 0.000419340539755,
+              "absolute_relative_error": 0.007140957126825313,
+              "absolute_log_error_dex": 0.0031124043220103204
+            },
+            {
+              "bias_V": 0.3,
+              "vela_A_per_um": 0.0005316087976275391,
+              "sentaurus_A_per_um": 0.000536222814304,
+              "absolute_relative_error": 0.00860466312394734,
+              "absolute_log_error_dex": 0.003753128172204967
+            },
+            {
+              "bias_V": 0.4,
+              "vela_A_per_um": 0.0006000633322092923,
+              "sentaurus_A_per_um": 0.000606090708238,
+              "absolute_relative_error": 0.00994467650928074,
+              "absolute_log_error_dex": 0.004340536699995123
+            },
+            {
+              "bias_V": 0.5,
+              "vela_A_per_um": 0.0006372256428165462,
+              "sentaurus_A_per_um": 0.000644416933085,
+              "absolute_relative_error": 0.011159375086602795,
+              "absolute_log_error_dex": 0.004873699604277526
+            },
+            {
+              "bias_V": 0.6,
+              "vela_A_per_um": 0.0006588444463500208,
+              "sentaurus_A_per_um": 0.000666887279104,
+              "absolute_relative_error": 0.012060258166545405,
+              "absolute_log_error_dex": 0.005269543861057269
+            },
+            {
+              "bias_V": 0.7,
+              "vela_A_per_um": 0.0006749017899616602,
+              "sentaurus_A_per_um": 0.000683547508787,
+              "absolute_relative_error": 0.012648307124521883,
+              "absolute_log_error_dex": 0.005528124868998674
+            },
+            {
+              "bias_V": 0.8,
+              "vela_A_per_um": 0.0006885683214590621,
+              "sentaurus_A_per_um": 0.000697644918751,
+              "absolute_relative_error": 0.013010339569573197,
+              "absolute_log_error_dex": 0.005687396916514764
+            },
+            {
+              "bias_V": 0.9,
+              "vela_A_per_um": 0.0007007790821132194,
+              "sentaurus_A_per_um": 0.00071021309427,
+              "absolute_relative_error": 0.013283354295906677,
+              "absolute_log_error_dex": 0.00580754527852001
+            },
+            {
+              "bias_V": 1.0,
+              "vela_A_per_um": 0.0007119509134902968,
+              "sentaurus_A_per_um": 0.000721670228981,
+              "absolute_relative_error": 0.013467807178947728,
+              "absolute_log_error_dex": 0.005888738149834705
+            },
+            {
+              "bias_V": 1.1,
+              "vela_A_per_um": 0.000722295216591792,
+              "sentaurus_A_per_um": 0.000732221039218,
+              "absolute_relative_error": 0.01355577359100277,
+              "absolute_log_error_dex": 0.005927464742815136
+            },
+            {
+              "bias_V": 1.2,
+              "vela_A_per_um": 0.0007319630421223147,
+              "sentaurus_A_per_um": 0.000742046281122,
+              "absolute_relative_error": 0.01358842333181577,
+              "absolute_log_error_dex": 0.00594183943989135
+            },
+            {
+              "bias_V": 1.3,
+              "vela_A_per_um": 0.0007411288558462645,
+              "sentaurus_A_per_um": 0.000751351569908,
+              "absolute_relative_error": 0.013605766556110606,
+              "absolute_log_error_dex": 0.005949475332457599
+            },
+            {
+              "bias_V": 1.4,
+              "vela_A_per_um": 0.0007499231575942797,
+              "sentaurus_A_per_um": 0.00076027312949,
+              "absolute_relative_error": 0.013613491644329366,
+              "absolute_log_error_dex": 0.005952876585434197
+            },
+            {
+              "bias_V": 1.5,
+              "vela_A_per_um": 0.0007584143737179012,
+              "sentaurus_A_per_um": 0.000768880517501,
+              "absolute_relative_error": 0.013612184916735243,
+              "absolute_log_error_dex": 0.0059523012488877924
+            },
+            {
+              "bias_V": 1.6,
+              "vela_A_per_um": 0.0007666474738388167,
+              "sentaurus_A_per_um": 0.000777217404047,
+              "absolute_relative_error": 0.013599708592660614,
+              "absolute_log_error_dex": 0.005946808110843804
+            },
+            {
+              "bias_V": 1.7,
+              "vela_A_per_um": 0.000774649922842787,
+              "sentaurus_A_per_um": 0.000785309090143,
+              "absolute_relative_error": 0.013573212680209897,
+              "absolute_log_error_dex": 0.005935142589120979
+            },
+            {
+              "bias_V": 1.8,
+              "vela_A_per_um": 0.0007824480625739543,
+              "sentaurus_A_per_um": 0.000793178875205,
+              "absolute_relative_error": 0.01352886841353697,
+              "absolute_log_error_dex": 0.00591561956145803
+            },
+            {
+              "bias_V": 1.9,
+              "vela_A_per_um": 0.0007900482586255034,
+              "sentaurus_A_per_um": 0.000800842310607,
+              "absolute_relative_error": 0.013478373755396698,
+              "absolute_log_error_dex": 0.005893389828162565
+            },
+            {
+              "bias_V": 2.0,
+              "vela_A_per_um": 0.0007974558646964485,
+              "sentaurus_A_per_um": 0.000808310849704,
+              "absolute_relative_error": 0.013429220963106598,
+              "absolute_log_error_dex": 0.005871751929796609
+            }
+          ],
+          "metrics": {
+            "max_relative_error": 0.013613491644329366,
+            "median_relative_error": 0.013448514071027163,
+            "endpoint_relative_error": 0.013429220963106598
+          }
+        }
+      ],
+      "acceptance": {
+        "main_gates": {
+          "idvg_transition": true,
+          "idvg_on": true,
+          "idvd_full": true,
+          "idvd_endpoint": true
+        },
+        "main_curve_pass": true,
+        "deep_off": {
+          "policy": "log-current error plus Id/KCL >= 10",
+          "points": [
+            {
+              "bias_V": -1.0,
+              "absolute_relative_error": 0.09016209688274053,
+              "absolute_log_error_dex": 0.04103597476942866,
+              "id_to_kcl_residual_ratio": 8.459578289255505,
+              "status": "numerically_unresolved"
+            },
+            {
+              "bias_V": -0.84,
+              "absolute_relative_error": 0.4031727736163852,
+              "absolute_log_error_dex": 0.22415137320552958,
+              "id_to_kcl_residual_ratio": 1.4276638577542693,
+              "status": "numerically_unresolved"
+            },
+            {
+              "bias_V": -0.68,
+              "absolute_relative_error": 0.1444031074940949,
+              "absolute_log_error_dex": 0.06773080143803689,
+              "id_to_kcl_residual_ratio": null,
+              "status": "numerically_unresolved"
+            }
+          ],
+          "pass": false
+        },
+        "overall_pass": false
+      }
+    },
+    "dg": {
+      "execution_status": "reused_verified_evidence",
+      "completed_points": 42,
+      "curves": [
+        {
+          "name": "idvg",
+          "completed_points": 21,
+          "candidate_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_srh_density_coupling_sentaurus_default_2026-08-23\\full_21_point_curves\\runs\\dg\\dg_idvg_curve_comparison_candidate.csv",
+          "aligned_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_srh_density_coupling_sentaurus_default_2026-08-23\\full_21_point_curves\\dg_idvg_aligned.csv",
+          "aligned": [
+            {
+              "bias_V": -1.0,
+              "vela_A_per_um": 1.653124309667913e-15,
+              "sentaurus_A_per_um": 1.63697016902e-15,
+              "absolute_relative_error": 0.009868317061381655,
+              "absolute_log_error_dex": 0.004264747146933701,
+              "numerical_status": "resolved",
+              "four_terminal_kcl_residual_A_per_um": 4.370191311529887e-18,
+              "id_to_kcl_residual_ratio": 378.2727555442414,
+              "silicon_srh_integral_A_per_um": null,
+              "resolved_by_kcl": true,
+              "deep_off_acceptance": "pass"
+            },
+            {
+              "bias_V": -0.84,
+              "vela_A_per_um": 1.6556909827547012e-15,
+              "sentaurus_A_per_um": 1.6376302263e-15,
+              "absolute_relative_error": 0.011028592514139726,
+              "absolute_log_error_dex": 0.004763437881331711,
+              "numerical_status": "resolved",
+              "four_terminal_kcl_residual_A_per_um": 4.388948685406208e-18,
+              "id_to_kcl_residual_ratio": 377.24090697621426,
+              "silicon_srh_integral_A_per_um": null,
+              "resolved_by_kcl": true,
+              "deep_off_acceptance": "pass"
+            },
+            {
+              "bias_V": -0.68,
+              "vela_A_per_um": 2.2212067611263366e-15,
+              "sentaurus_A_per_um": 2.1629695198e-15,
+              "absolute_relative_error": 0.02692467036323363,
+              "absolute_log_error_dex": 0.011538587272596601,
+              "numerical_status": "resolved",
+              "four_terminal_kcl_residual_A_per_um": 4.1313848977058124e-18,
+              "id_to_kcl_residual_ratio": 537.6421747486633,
+              "silicon_srh_integral_A_per_um": null,
+              "resolved_by_kcl": true,
+              "deep_off_acceptance": "pass"
+            },
+            {
+              "bias_V": -0.52,
+              "vela_A_per_um": 4.619047376460659e-14,
+              "sentaurus_A_per_um": 4.28231613291e-14,
+              "absolute_relative_error": 0.07863297176097006,
+              "absolute_log_error_dex": 0.03287369171237664,
+              "numerical_status": "resolved",
+              "four_terminal_kcl_residual_A_per_um": 9.48678108376807e-17,
+              "id_to_kcl_residual_ratio": 486.89300782579164,
+              "silicon_srh_integral_A_per_um": null
+            },
+            {
+              "bias_V": -0.36,
+              "vela_A_per_um": 3.811885402504135e-12,
+              "sentaurus_A_per_um": 3.55356782721e-12,
+              "absolute_relative_error": 0.07269245666740135,
+              "absolute_log_error_dex": 0.03047522660987667,
+              "numerical_status": "resolved",
+              "four_terminal_kcl_residual_A_per_um": 9.624748373382324e-16,
+              "id_to_kcl_residual_ratio": 3960.5039577409375,
+              "silicon_srh_integral_A_per_um": null
+            },
+            {
+              "bias_V": -0.2,
+              "vela_A_per_um": 3.4613789404969276e-10,
+              "sentaurus_A_per_um": 3.24296345753e-10,
+              "absolute_relative_error": 0.06735058406525606,
+              "absolute_log_error_dex": 0.028307092073930562,
+              "numerical_status": "resolved",
+              "four_terminal_kcl_residual_A_per_um": 1.6096242392175224e-13,
+              "id_to_kcl_residual_ratio": 2150.426699699545,
+              "silicon_srh_integral_A_per_um": null
+            },
+            {
+              "bias_V": -0.04,
+              "vela_A_per_um": 3.1549809584324444e-08,
+              "sentaurus_A_per_um": 2.97693349194e-08,
+              "absolute_relative_error": 0.05980901722342984,
+              "absolute_log_error_dex": 0.025227610322411387,
+              "numerical_status": "resolved",
+              "four_terminal_kcl_residual_A_per_um": 1.4312597284371547e-11,
+              "id_to_kcl_residual_ratio": 2204.3385248304894,
+              "silicon_srh_integral_A_per_um": null
+            },
+            {
+              "bias_V": 0.12,
+              "vela_A_per_um": 2.3505342289831137e-06,
+              "sentaurus_A_per_um": 2.25398350903e-06,
+              "absolute_relative_error": 0.042835592880918774,
+              "absolute_log_error_dex": 0.018215845595621616,
+              "numerical_status": "resolved",
+              "four_terminal_kcl_residual_A_per_um": 9.714325345976042e-10,
+              "id_to_kcl_residual_ratio": 2419.657717102067,
+              "silicon_srh_integral_A_per_um": null
+            },
+            {
+              "bias_V": 0.28,
+              "vela_A_per_um": 3.9666872445631245e-05,
+              "sentaurus_A_per_um": 3.92970755664e-05,
+              "absolute_relative_error": 0.009410290050881813,
+              "absolute_log_error_dex": 0.004067727670837407,
+              "numerical_status": "resolved",
+              "four_terminal_kcl_residual_A_per_um": 1.5481930885609776e-08,
+              "id_to_kcl_residual_ratio": 2562.1398738125754,
+              "silicon_srh_integral_A_per_um": null
+            },
+            {
+              "bias_V": 0.44,
+              "vela_A_per_um": 0.0001355738012746959,
+              "sentaurus_A_per_um": 0.000136001393612,
+              "absolute_relative_error": 0.0031440290863782036,
+              "absolute_log_error_dex": 0.001367585475728017,
+              "numerical_status": "resolved",
+              "four_terminal_kcl_residual_A_per_um": 5.2170492188288484e-08,
+              "id_to_kcl_residual_ratio": 2598.6682430634655,
+              "silicon_srh_integral_A_per_um": null
+            },
+            {
+              "bias_V": 0.6,
+              "vela_A_per_um": 0.000261954793069122,
+              "sentaurus_A_per_um": 0.000264290477403,
+              "absolute_relative_error": 0.008837565230609684,
+              "absolute_log_error_dex": 0.003855166157336054,
+              "numerical_status": "resolved",
+              "four_terminal_kcl_residual_A_per_um": 1.0060509688752971e-07,
+              "id_to_kcl_residual_ratio": 2603.7924635366267,
+              "silicon_srh_integral_A_per_um": null
+            },
+            {
+              "bias_V": 0.76,
+              "vela_A_per_um": 0.0004022504501299259,
+              "sentaurus_A_per_um": 0.000407175318994,
+              "absolute_relative_error": 0.012095204778722585,
+              "absolute_log_error_dex": 0.005284906528054911,
+              "numerical_status": "resolved",
+              "four_terminal_kcl_residual_A_per_um": 1.550965057536825e-07,
+              "id_to_kcl_residual_ratio": 2593.5494044512034,
+              "silicon_srh_integral_A_per_um": null
+            },
+            {
+              "bias_V": 0.92,
+              "vela_A_per_um": 0.0005483654003334995,
+              "sentaurus_A_per_um": 0.000556661027804,
+              "absolute_relative_error": 0.01490247575481666,
+              "absolute_log_error_dex": 0.006520772400926855,
+              "numerical_status": "resolved",
+              "four_terminal_kcl_residual_A_per_um": 2.1092440227055984e-07,
+              "id_to_kcl_residual_ratio": 2599.8196246164666,
+              "silicon_srh_integral_A_per_um": null
+            },
+            {
+              "bias_V": 1.08,
+              "vela_A_per_um": 0.0006967786606250576,
+              "sentaurus_A_per_um": 0.000708407117184,
+              "absolute_relative_error": 0.016414934684968827,
+              "absolute_log_error_dex": 0.007188074179469872,
+              "numerical_status": "resolved",
+              "four_terminal_kcl_residual_A_per_um": 2.723108725511477e-07,
+              "id_to_kcl_residual_ratio": 2558.7618081396395,
+              "silicon_srh_integral_A_per_um": null
+            },
+            {
+              "bias_V": 1.24,
+              "vela_A_per_um": 0.0008441457696085074,
+              "sentaurus_A_per_um": 0.000859781742167,
+              "absolute_relative_error": 0.018185978826537483,
+              "absolute_log_error_dex": 0.007970770082162737,
+              "numerical_status": "resolved",
+              "four_terminal_kcl_residual_A_per_um": 3.562271459038334e-07,
+              "id_to_kcl_residual_ratio": 2369.6840044761548,
+              "silicon_srh_integral_A_per_um": null
+            },
+            {
+              "bias_V": 1.4,
+              "vela_A_per_um": 0.000988987469235618,
+              "sentaurus_A_per_um": 0.00100906605515,
+              "absolute_relative_error": 0.01989818784598533,
+              "absolute_log_error_dex": 0.008728807817693696,
+              "numerical_status": "resolved",
+              "four_terminal_kcl_residual_A_per_um": 4.3468442367943485e-07,
+              "id_to_kcl_residual_ratio": 2275.1849741111564,
+              "silicon_srh_integral_A_per_um": null
+            },
+            {
+              "bias_V": 1.56,
+              "vela_A_per_um": 0.001130102497909571,
+              "sentaurus_A_per_um": 0.00115502845489,
+              "absolute_relative_error": 0.021580383474451154,
+              "absolute_log_error_dex": 0.009474848629787758,
+              "numerical_status": "resolved",
+              "four_terminal_kcl_residual_A_per_um": 5.214845946424302e-07,
+              "id_to_kcl_residual_ratio": 2167.08702331745,
+              "silicon_srh_integral_A_per_um": null
+            },
+            {
+              "bias_V": 1.72,
+              "vela_A_per_um": 0.0012665286818746148,
+              "sentaurus_A_per_um": 0.00129672226467,
+              "absolute_relative_error": 0.023284541044777365,
+              "absolute_log_error_dex": 0.010231938434781984,
+              "numerical_status": "resolved",
+              "four_terminal_kcl_residual_A_per_um": 6.154040350596655e-07,
+              "id_to_kcl_residual_ratio": 2058.044162404331,
+              "silicon_srh_integral_A_per_um": null
+            },
+            {
+              "bias_V": 1.88,
+              "vela_A_per_um": 0.0013974584813899926,
+              "sentaurus_A_per_um": 0.00143320604937,
+              "absolute_relative_error": 0.024942378659175462,
+              "absolute_log_error_dex": 0.010969718772308124,
+              "numerical_status": "resolved",
+              "four_terminal_kcl_residual_A_per_um": 7.122687402465221e-07,
+              "id_to_kcl_residual_ratio": 1961.9820475433482,
+              "silicon_srh_integral_A_per_um": null
+            },
+            {
+              "bias_V": 2.04,
+              "vela_A_per_um": 0.0015222841652864846,
+              "sentaurus_A_per_um": 0.00156340100874,
+              "absolute_relative_error": 0.026299614253577065,
+              "absolute_log_error_dex": 0.011574657941206823,
+              "numerical_status": "resolved",
+              "four_terminal_kcl_residual_A_per_um": 8.082084022750496e-07,
+              "id_to_kcl_residual_ratio": 1883.5292493883535,
+              "silicon_srh_integral_A_per_um": null
+            },
+            {
+              "bias_V": 2.2,
+              "vela_A_per_um": 0.001640383227942299,
+              "sentaurus_A_per_um": 0.00168607324102,
+              "absolute_relative_error": 0.027098474708050352,
+              "absolute_log_error_dex": 0.011931115730236641,
+              "numerical_status": "resolved",
+              "four_terminal_kcl_residual_A_per_um": 9.019086595541482e-07,
+              "id_to_kcl_residual_ratio": 1818.7908615415781,
+              "silicon_srh_integral_A_per_um": null
+            }
+          ],
+          "metrics": {
+            "deep_off": {
+              "max_relative_error": 0.02692467036323363,
+              "max_absolute_log_error_dex": 0.011538587272596601,
+              "median_absolute_log_error_dex": 0.004763437881331711
+            },
+            "transition": {
+              "max_relative_error": 0.07863297176097006,
+              "max_absolute_log_error_dex": 0.03287369171237664,
+              "median_absolute_log_error_dex": 0.028307092073930562
+            },
+            "on": {
+              "max_relative_error": 0.027098474708050352,
+              "max_absolute_log_error_dex": 0.011931115730236641,
+              "median_absolute_log_error_dex": 0.007970770082162737
+            }
+          }
+        },
+        {
+          "name": "idvd",
+          "completed_points": 21,
+          "candidate_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_srh_density_coupling_sentaurus_default_2026-08-23\\full_21_point_curves\\runs\\dg\\dg_idvd_curve_comparison_candidate.csv",
+          "aligned_csv": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dg_srh_density_coupling_sentaurus_default_2026-08-23\\full_21_point_curves\\dg_idvd_aligned.csv",
+          "aligned": [
+            {
+              "bias_V": 0.0,
+              "vela_A_per_um": 1.3487941758105864e-26,
+              "sentaurus_A_per_um": 1.05222660117e-18,
+              "absolute_relative_error": 0.9999999871815236,
+              "absolute_log_error_dex": 7.892163594958085
+            },
+            {
+              "bias_V": 0.1,
+              "vela_A_per_um": 0.0002214661049895338,
+              "sentaurus_A_per_um": 0.000226278453874,
+              "absolute_relative_error": 0.021267375669562785,
+              "absolute_log_error_dex": 0.009335934997238393
+            },
+            {
+              "bias_V": 0.2,
+              "vela_A_per_um": 0.0003721044549270954,
+              "sentaurus_A_per_um": 0.000381128302526,
+              "absolute_relative_error": 0.023676666201636987,
+              "absolute_log_error_dex": 0.010406331073330222
+            },
+            {
+              "bias_V": 0.3,
+              "vela_A_per_um": 0.0004639719195572097,
+              "sentaurus_A_per_um": 0.000475537820085,
+              "absolute_relative_error": 0.0243217259264951,
+              "absolute_log_error_dex": 0.010693365559441226
+            },
+            {
+              "bias_V": 0.4,
+              "vela_A_per_um": 0.0005143314517606482,
+              "sentaurus_A_per_um": 0.000526531813316,
+              "absolute_relative_error": 0.023171176454687685,
+              "absolute_log_error_dex": 0.010181534032470019
+            },
+            {
+              "bias_V": 0.5,
+              "vela_A_per_um": 0.0005417508311242359,
+              "sentaurus_A_per_um": 0.000553683686146,
+              "absolute_relative_error": 0.021551754766019122,
+              "absolute_log_error_dex": 0.009462141292373438
+            },
+            {
+              "bias_V": 0.6,
+              "vela_A_per_um": 0.0005603187731799963,
+              "sentaurus_A_per_um": 0.000571914636028,
+              "absolute_relative_error": 0.020275513367760588,
+              "absolute_log_error_dex": 0.008896037325853978
+            },
+            {
+              "bias_V": 0.7,
+              "vela_A_per_um": 0.0005755503835006683,
+              "sentaurus_A_per_um": 0.000586840188357,
+              "absolute_relative_error": 0.01923829533205661,
+              "absolute_log_error_dex": 0.008436500183012008
+            },
+            {
+              "bias_V": 0.8,
+              "vela_A_per_um": 0.0005888805667253827,
+              "sentaurus_A_per_um": 0.000599829346452,
+              "absolute_relative_error": 0.01825315782126942,
+              "absolute_log_error_dex": 0.008000486977898458
+            },
+            {
+              "bias_V": 0.9,
+              "vela_A_per_um": 0.0006008518222457708,
+              "sentaurus_A_per_um": 0.000611507902732,
+              "absolute_relative_error": 0.017425908052245264,
+              "absolute_log_error_dex": 0.007634691323185283
+            },
+            {
+              "bias_V": 1.0,
+              "vela_A_per_um": 0.0006119169619533538,
+              "sentaurus_A_per_um": 0.000622314854558,
+              "absolute_relative_error": 0.016708411390937046,
+              "absolute_log_error_dex": 0.007317675915969879
+            },
+            {
+              "bias_V": 1.1,
+              "vela_A_per_um": 0.0006223183380728147,
+              "sentaurus_A_per_um": 0.000632443746546,
+              "absolute_relative_error": 0.016009974845168102,
+              "absolute_log_error_dex": 0.0070093040505399
+            },
+            {
+              "bias_V": 1.2,
+              "vela_A_per_um": 0.0006321637684158286,
+              "sentaurus_A_per_um": 0.000641999938182,
+              "absolute_relative_error": 0.015321138182700075,
+              "absolute_log_error_dex": 0.006705385016079202
+            },
+            {
+              "bias_V": 1.3,
+              "vela_A_per_um": 0.0006415554202079145,
+              "sentaurus_A_per_um": 0.000651037036904,
+              "absolute_relative_error": 0.014563866813438436,
+              "absolute_log_error_dex": 0.0063715174053000645
+            },
+            {
+              "bias_V": 1.4,
+              "vela_A_per_um": 0.0006505487002996838,
+              "sentaurus_A_per_um": 0.00065957148438,
+              "absolute_relative_error": 0.01367976677887715,
+              "absolute_log_error_dex": 0.005982057734994939
+            },
+            {
+              "bias_V": 1.5,
+              "vela_A_per_um": 0.0006591899861207796,
+              "sentaurus_A_per_um": 0.00066771906093,
+              "absolute_relative_error": 0.012773448158483153,
+              "absolute_log_error_dex": 0.005583172634998856
+            },
+            {
+              "bias_V": 1.6,
+              "vela_A_per_um": 0.0006675151065367006,
+              "sentaurus_A_per_um": 0.000675629303417,
+              "absolute_relative_error": 0.012009835629185736,
+              "absolute_log_error_dex": 0.005247378874662978
+            },
+            {
+              "bias_V": 1.7,
+              "vela_A_per_um": 0.0006755716893936824,
+              "sentaurus_A_per_um": 0.000683350558521,
+              "absolute_relative_error": 0.011383423969322097,
+              "absolute_log_error_dex": 0.004972112044063337
+            },
+            {
+              "bias_V": 1.8,
+              "vela_A_per_um": 0.0006834262934837724,
+              "sentaurus_A_per_um": 0.000690899222169,
+              "absolute_relative_error": 0.010816235487669485,
+              "absolute_log_error_dex": 0.004723020333960548
+            },
+            {
+              "bias_V": 1.9,
+              "vela_A_per_um": 0.0006911100718876512,
+              "sentaurus_A_per_um": 0.000698287371628,
+              "absolute_relative_error": 0.010278432679679561,
+              "absolute_log_error_dex": 0.004486965790213571
+            },
+            {
+              "bias_V": 2.0,
+              "vela_A_per_um": 0.0006986413623619927,
+              "sentaurus_A_per_um": 0.000705525753105,
+              "absolute_relative_error": 0.009757816369862254,
+              "absolute_log_error_dex": 0.004258576966787331
+            }
+          ],
+          "metrics": {
+            "max_relative_error": 0.0243217259264951,
+            "median_relative_error": 0.016359193118052576,
+            "endpoint_relative_error": 0.009757816369862254
+          }
+        }
+      ],
+      "acceptance": {
+        "main_curve_pass": true,
+        "main_gates": {
+          "idvg_transition": true,
+          "idvg_on": true,
+          "idvd_full": true
+        },
+        "deep_off": {
+          "policy": "separate log-current plus KCL-resolution branch",
+          "points": [
+            {
+              "bias_V": -1.0,
+              "absolute_log_error_dex": 0.004264747146933701,
+              "id_to_kcl_residual_ratio": 378.2727555442414,
+              "status": "pass"
+            },
+            {
+              "bias_V": -0.84,
+              "absolute_log_error_dex": 0.004763437881331711,
+              "id_to_kcl_residual_ratio": 377.24090697621426,
+              "status": "pass"
+            },
+            {
+              "bias_V": -0.68,
+              "absolute_log_error_dex": 0.011538587272596601,
+              "id_to_kcl_residual_ratio": 537.6421747486633,
+              "status": "pass"
+            }
+          ],
+          "pass": true
+        },
+        "overall_pass": true
+      },
+      "evidence": {
+        "report": "D:\\code-repo\\vela-tcad\\docs\\validation\\transportmodels_dg_srh_density_coupling_2026-08-23.json",
+        "report_sha256": "ff1c5119201a41da485189a4f87d81942cff70016051bb326670757f442fb524",
+        "completed_points": 42,
+        "main_curve_pass": true,
+        "deep_off_pass": true,
+        "configuration_contract_violations": [],
+        "configuration_contract_pass": true,
+        "runner": {
+          "path": "D:\\code-repo\\vela-tcad\\build-release\\vela_example_runner.exe",
+          "sha256": "2cc86fa83fc0ec70e74b45314ca7e8bd201972a38adda37255e452e2fdba745e"
+        }
+      }
+    }
+  },
+  "acceptance": {
+    "overall_pass": false
+  },
+  "artifacts": {
+    "png": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_dg_fixed_contract_v1_2026-08-24\\transportmodels_dd_dg_fixed_contract_comparison.png",
+    "svg": "D:\\code-repo\\vela-tcad\\build-release\\reference_tcad\\transportmodels_sentaurus2022\\vela_baseline\\dd_dg_fixed_contract_v1_2026-08-24\\transportmodels_dd_dg_fixed_contract_comparison.svg"
+  },
+  "serialization": {
+    "nonfinite_values_replaced_with_null": [
+      "$.branches.dg.curves[0].aligned[0].silicon_srh_integral_A_per_um",
+      "$.branches.dg.curves[0].aligned[1].silicon_srh_integral_A_per_um",
+      "$.branches.dg.curves[0].aligned[2].silicon_srh_integral_A_per_um",
+      "$.branches.dg.curves[0].aligned[3].silicon_srh_integral_A_per_um",
+      "$.branches.dg.curves[0].aligned[4].silicon_srh_integral_A_per_um",
+      "$.branches.dg.curves[0].aligned[5].silicon_srh_integral_A_per_um",
+      "$.branches.dg.curves[0].aligned[6].silicon_srh_integral_A_per_um",
+      "$.branches.dg.curves[0].aligned[7].silicon_srh_integral_A_per_um",
+      "$.branches.dg.curves[0].aligned[8].silicon_srh_integral_A_per_um",
+      "$.branches.dg.curves[0].aligned[9].silicon_srh_integral_A_per_um",
+      "$.branches.dg.curves[0].aligned[10].silicon_srh_integral_A_per_um",
+      "$.branches.dg.curves[0].aligned[11].silicon_srh_integral_A_per_um",
+      "$.branches.dg.curves[0].aligned[12].silicon_srh_integral_A_per_um",
+      "$.branches.dg.curves[0].aligned[13].silicon_srh_integral_A_per_um",
+      "$.branches.dg.curves[0].aligned[14].silicon_srh_integral_A_per_um",
+      "$.branches.dg.curves[0].aligned[15].silicon_srh_integral_A_per_um",
+      "$.branches.dg.curves[0].aligned[16].silicon_srh_integral_A_per_um",
+      "$.branches.dg.curves[0].aligned[17].silicon_srh_integral_A_per_um",
+      "$.branches.dg.curves[0].aligned[18].silicon_srh_integral_A_per_um",
+      "$.branches.dg.curves[0].aligned[19].silicon_srh_integral_A_per_um",
+      "$.branches.dg.curves[0].aligned[20].silicon_srh_integral_A_per_um"
+    ],
+    "reason": "source evidence did not provide a finite value"
+  }
+}

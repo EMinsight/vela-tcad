@@ -687,6 +687,13 @@ add_test(NAME sentaurus_import_tools
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/regression/test_sentaurus_import_tools.py)
 vela_set_windows_msys2_test_path(sentaurus_import_tools)
 
+add_test(NAME transportmodels_fixed_contract
+    COMMAND ${Python3_EXECUTABLE} -m unittest
+            tests.regression.test_transportmodels_fixed_contract)
+set_tests_properties(transportmodels_fixed_contract PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+vela_set_windows_msys2_test_path(transportmodels_fixed_contract)
+
 add_test(NAME slot_ldmos_bvds_preparation
     COMMAND ${Python3_EXECUTABLE} -m unittest
             tests.regression.test_prepare_slot_ldmos_bvds)
