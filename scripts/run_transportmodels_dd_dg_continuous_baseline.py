@@ -51,6 +51,23 @@ def patch_manifest(
 ) -> dict[str, Any]:
     overlay = load_overlay(overlay_path)
     base_path = (overlay_path.parent / overlay["base_contract"]).resolve()
+
+    def adaptive_sweep(sweep: dict[str, Any], start: float, stop: float,
+                       nominal_step: float) -> None:
+        sweep.pop("bias_points", None)
+        sweep.update({
+            "start": start,
+            "stop": stop,
+            "step": nominal_step,
+            "initial_step": nominal_step,
+            "min_step": overlay["adaptive_sweep"]["min_step_V"],
+            "max_step": nominal_step,
+            "shrink_factor": overlay["adaptive_sweep"]["shrink_factor"],
+            "growth_factor": overlay["adaptive_sweep"]["growth_factor"],
+            "max_retries": overlay["adaptive_sweep"]["max_retries"],
+            "stop_on_failure": overlay["adaptive_sweep"]["stop_on_failure"],
+        })
+
     for stage in manifest["stages"]:
         if "external_initial_state" in stage:
             raise ValueError(f"{stage['name']}: external restart is forbidden")
@@ -71,21 +88,19 @@ def patch_manifest(
             exact = exact_curve_biases(stage["branch"], curve)
             nominal_step = exact[1] - exact[0]
             sweep = config["sweep"]
-            sweep.pop("bias_points", None)
-            sweep.update({
-                "start": exact[0],
-                "stop": exact[-1],
-                "step": nominal_step,
-                "initial_step": nominal_step,
-                "min_step": overlay["adaptive_sweep"]["min_step_V"],
-                "max_step": nominal_step,
-                "shrink_factor": overlay["adaptive_sweep"]["shrink_factor"],
-                "growth_factor": overlay["adaptive_sweep"]["growth_factor"],
-                "max_retries": overlay["adaptive_sweep"]["max_retries"],
-                "stop_on_failure": overlay["adaptive_sweep"]["stop_on_failure"],
-            })
+            adaptive_sweep(sweep, exact[0], exact[-1], nominal_step)
             stage["execution_lattice"] = "adaptive_nominal_targets"
             stage["nominal_bias_points"] = exact
+        elif stage["name"].endswith("_idvd_equilibrium"):
+            init = overlay["idvd_initialization"]
+            adaptive_sweep(
+                config["sweep"], init["gate_start_V"], init["gate_stop_V"],
+                init["gate_step_V"],
+            )
+            stage["execution_lattice"] = "adaptive_idvd_gate_initialization"
+            stage["initialization_bias_points"] = [
+                init["gate_start_V"], init["gate_stop_V"]
+            ]
         violations = fixed.validate_config(config, stage["branch"], base_path)
         if violations:
             raise ValueError(f"{stage['name']}: fixed contract violations: {violations}")
@@ -190,6 +205,13 @@ def main() -> int:
     )
     manifest = patch_manifest(manifest, output, args.overlay.resolve())
     manifest = workflow.execute(manifest, args.runner.resolve(), output, None)
+    expected_comparisons = {
+        f"{branch}_{curve}_curve"
+        for branch in ("dd", "dg") for curve in ("idvg", "idvd")
+    }
+    if set(manifest.get("comparisons", {})) != expected_comparisons:
+        manifest["comparison_status"] = "incomplete"
+        workflow.write_json(output / "workflow_manifest.json", manifest)
     write_summary(manifest, output)
     print(json.dumps({
         "status": manifest.get("status"),

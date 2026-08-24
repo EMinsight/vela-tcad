@@ -24,6 +24,12 @@
     "min_step_V": 1e-5,
     "stop_on_failure": true
   },
+  "idvd_initialization": {
+    "gate_start_V": 0.0,
+    "gate_stop_V": 1.0,
+    "gate_step_V": 0.1,
+    "description": "Cold equilibrium at Vg=0 V and Vd=0 V, followed in the same process by a monotone gate ramp to Vg=1 V before the drain sweep. This avoids an unsupported direct cold jump to strong inversion while retaining previous-state-only continuation."
+  },
   "rules": {
     "one_process_per_curve": true,
     "immutable_curve_config": true,
