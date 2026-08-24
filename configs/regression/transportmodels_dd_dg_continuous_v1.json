@@ -25,10 +25,17 @@
     "stop_on_failure": true
   },
   "idvd_initialization": {
-    "gate_start_V": 0.0,
-    "gate_stop_V": 1.0,
-    "gate_step_V": 0.1,
-    "description": "Cold equilibrium at Vg=0 V and Vd=0 V, followed in the same process by a monotone gate ramp to Vg=1 V before the drain sweep. This avoids an unsupported direct cold jump to strong inversion while retaining previous-state-only continuation."
+    "dd": {
+      "mode": "direct_equilibrium",
+      "gate_bias_V": 1.0
+    },
+    "dg": {
+      "mode": "continuous_gate_ramp",
+      "gate_start_V": -1.0,
+      "gate_stop_V": 1.0,
+      "gate_step_V": 0.1
+    },
+    "description": "DD retains its verified direct Vg=1 V equilibrium. DG starts from its verified Vg=-1 V cold equilibrium and, in the same process, monotonically ramps the gate to Vg=1 V before the drain sweep. Each branch uses only its immediately preceding accepted state."
   },
   "rules": {
     "one_process_per_curve": true,

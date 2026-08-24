@@ -126,8 +126,15 @@ class TransportModelsFixedContractTest(unittest.TestCase):
         )
         self.assertTrue(overlay["rules"]["previous_accepted_state_only"])
         self.assertTrue(overlay["rules"]["pointwise_reclosure_forbidden"])
-        self.assertEqual(0.0, overlay["idvd_initialization"]["gate_start_V"])
-        self.assertEqual(1.0, overlay["idvd_initialization"]["gate_stop_V"])
+        self.assertEqual(
+            "direct_equilibrium", overlay["idvd_initialization"]["dd"]["mode"]
+        )
+        self.assertEqual(
+            -1.0, overlay["idvd_initialization"]["dg"]["gate_start_V"]
+        )
+        self.assertEqual(
+            1.0, overlay["idvd_initialization"]["dg"]["gate_stop_V"]
+        )
         for branch in ("dd", "dg"):
             config = fixed.apply_contract(self.base, branch)
             fixed.deep_merge(config["solver"], overlay["solver_numerics"])

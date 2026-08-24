@@ -92,15 +92,20 @@ def patch_manifest(
             stage["execution_lattice"] = "adaptive_nominal_targets"
             stage["nominal_bias_points"] = exact
         elif stage["name"].endswith("_idvd_equilibrium"):
-            init = overlay["idvd_initialization"]
-            adaptive_sweep(
-                config["sweep"], init["gate_start_V"], init["gate_stop_V"],
-                init["gate_step_V"],
-            )
-            stage["execution_lattice"] = "adaptive_idvd_gate_initialization"
-            stage["initialization_bias_points"] = [
-                init["gate_start_V"], init["gate_stop_V"]
-            ]
+            init = overlay["idvd_initialization"][stage["branch"]]
+            if init["mode"] == "continuous_gate_ramp":
+                adaptive_sweep(
+                    config["sweep"], init["gate_start_V"], init["gate_stop_V"],
+                    init["gate_step_V"],
+                )
+                stage["execution_lattice"] = "adaptive_idvd_gate_initialization"
+                stage["initialization_bias_points"] = [
+                    init["gate_start_V"], init["gate_stop_V"]
+                ]
+            elif init["mode"] != "direct_equilibrium":
+                raise ValueError(
+                    f"{stage['name']}: unsupported initialization {init['mode']}"
+                )
         violations = fixed.validate_config(config, stage["branch"], base_path)
         if violations:
             raise ValueError(f"{stage['name']}: fixed contract violations: {violations}")
