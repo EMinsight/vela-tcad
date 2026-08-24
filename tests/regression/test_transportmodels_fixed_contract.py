@@ -16,6 +16,7 @@ sys.path.insert(0, str(REPO / "scripts"))
 
 import transportmodels_fixed_contract as fixed  # noqa: E402
 import run_transportmodels_dd_contact_basin_regression as dd_basin  # noqa: E402
+import run_transportmodels_dd_dg_continuous_baseline as continuous  # noqa: E402
 
 
 class TransportModelsFixedContractTest(unittest.TestCase):
@@ -117,6 +118,31 @@ class TransportModelsFixedContractTest(unittest.TestCase):
     def test_completed_contact_basin_resume_has_no_sweep_bounds(self) -> None:
         self.assertIsNone(dd_basin.execution_bounds([]))
         self.assertEqual((-1.0, 2.2), dd_basin.execution_bounds([-1.0, 2.2]))
+
+    def test_continuous_overlay_enables_contact_basin_for_both_branches(self) -> None:
+        overlay = continuous.load_overlay()
+        self.assertEqual(
+            "contact_basin", overlay["solver_numerics"]["quasi_fermi_reference"]
+        )
+        self.assertTrue(overlay["rules"]["previous_accepted_state_only"])
+        self.assertTrue(overlay["rules"]["pointwise_reclosure_forbidden"])
+        for branch in ("dd", "dg"):
+            config = fixed.apply_contract(self.base, branch)
+            fixed.deep_merge(config["solver"], overlay["solver_numerics"])
+            self.assertEqual(
+                "contact_basin", config["solver"]["quasi_fermi_reference"]
+            )
+
+    def test_continuous_nominal_lattices_match_fixed_contract(self) -> None:
+        contract = fixed.load_contract()["bias_contract"]
+        self.assertEqual(
+            contract["idvg"]["gate_bias_V"],
+            continuous.exact_curve_biases("dd", "idvg"),
+        )
+        self.assertEqual(
+            contract["idvd"]["drain_bias_V"],
+            continuous.exact_curve_biases("dg", "idvd"),
+        )
 
     def test_contact_basin_failure_returns_nonzero(self) -> None:
         self.assertEqual(0, dd_basin.acceptance_exit_code({"overall_pass": True}))
