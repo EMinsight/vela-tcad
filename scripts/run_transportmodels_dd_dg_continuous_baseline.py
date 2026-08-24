@@ -11,7 +11,9 @@ intentionally unsupported.
 from __future__ import annotations
 
 import argparse
+import csv
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -174,6 +176,7 @@ def write_summary(manifest: dict[str, Any], run_dir: Path) -> None:
         "rules": manifest["continuous_contract"]["rules"],
         "stages": rows,
         "comparisons": manifest.get("comparisons", {}),
+        "strict_acceptance": manifest.get("strict_acceptance"),
     }
     workflow.write_json(run_dir / "continuous_baseline_summary.json", summary)
     lines = [
@@ -192,9 +195,157 @@ def write_summary(manifest: dict[str, Any], run_dir: Path) -> None:
             f"| {row['name']} | {row['branch']} | {row['status']} | "
             f"{row['predecessor'] or '-'} | `{row['config_sha256']}` |"
         )
+    strict = summary.get("strict_acceptance") or {}
+    if strict:
+        lines.extend(["", "## Fixed-contract acceptance", ""])
+        for branch, result in strict["branches"].items():
+            idvg = result["idvg"]
+            idvd = result["idvd"]
+            lines.append(
+                f"- {branch.upper()}: overall=`{result['pass']}`; "
+                f"Id-Vg transition={idvg['transition_max_log_error_dex']:.6f} dex; "
+                f"Id-Vg on={100 * idvg['on_max_relative_error']:.3f}%; "
+                f"Id-Vd={100 * idvd['nonzero_max_relative_error']:.3f}%; "
+                f"Id-Vd@2V={100 * idvd['endpoint_relative_error']:.3f}%"
+            )
     (run_dir / "continuous_baseline_summary.md").write_text(
         "\n".join(lines) + "\n", encoding="utf-8"
     )
+
+
+def read_csv(path: Path) -> list[dict[str, str]]:
+    with path.open(newline="", encoding="utf-8-sig") as handle:
+        return list(csv.DictReader(handle))
+
+
+def terminal_kcl_by_bias(
+    manifest: dict[str, Any], curve_stage: dict[str, Any]
+) -> dict[float, float]:
+    stages = {stage["name"]: stage for stage in manifest["stages"]}
+    seed_name = curve_stage["comparison_seed"]["stage"]
+    result: dict[float, float] = {}
+    for stage in (stages[seed_name], curve_stage):
+        config = workflow.load_json(Path(stage["config"]))
+        path = Path(
+            config["sweep"]["diagnostics"]["terminal_balance"]["csv_file"]
+        )
+        grouped: dict[float, list[float]] = {}
+        for row in read_csv(path):
+            bias = round(float(row["bias_V"]), 12)
+            grouped.setdefault(bias, []).append(
+                float(row["current_total_A_per_um"])
+            )
+        result.update({bias: abs(math.fsum(values)) for bias, values in grouped.items()})
+    return result
+
+
+def aligned_curve(
+    stage: dict[str, Any], manifest: dict[str, Any]
+) -> list[dict[str, float]]:
+    comparison = manifest["comparisons"][stage["name"]]
+    reference_rows = read_csv(Path(stage["reference"]))
+    candidate_rows = read_csv(Path(comparison["candidate"]))
+    reference = {
+        round(float(row["bias_V"]), 12): abs(float(row["current_total"]))
+        for row in reference_rows
+    }
+    candidate = {
+        round(float(row["bias_V"]), 12): abs(
+            float(row["current_total_A_per_um"])
+        )
+        for row in candidate_rows
+    }
+    expected = [round(float(value), 12) for value in (
+        stage["comparison_seed"]["reference_biases"]
+    )]
+    if sorted(reference) != expected or sorted(candidate) != expected:
+        raise ValueError(f"{stage['name']}: reference/candidate lattice mismatch")
+    return [{
+        "bias_V": bias,
+        "reference_A_per_um": reference[bias],
+        "candidate_A_per_um": candidate[bias],
+        "relative_error": abs(candidate[bias] - reference[bias])
+        / max(reference[bias], 1.0e-300),
+        "log_error_dex": abs(
+            math.log10(max(candidate[bias], 1.0e-300))
+            - math.log10(max(reference[bias], 1.0e-300))
+        ),
+    } for bias in expected]
+
+
+def apply_strict_acceptance(
+    manifest: dict[str, Any], run_dir: Path
+) -> dict[str, Any]:
+    limits = fixed.load_contract()["acceptance"]
+    stages = {stage["name"]: stage for stage in manifest["stages"]}
+    branches: dict[str, Any] = {}
+    for branch in ("dd", "dg"):
+        idvg_stage = stages[f"{branch}_idvg_curve"]
+        idvd_stage = stages[f"{branch}_idvd_curve"]
+        idvg = aligned_curve(idvg_stage, manifest)
+        idvd = aligned_curve(idvd_stage, manifest)
+        kcl = terminal_kcl_by_bias(manifest, idvg_stage)
+        deep = []
+        for row in idvg[:3]:
+            residual = kcl.get(row["bias_V"], math.inf)
+            ratio = row["candidate_A_per_um"] / residual if residual > 0 else math.inf
+            deep.append({
+                **row,
+                "four_terminal_kcl_residual_A_per_um": residual,
+                "id_to_kcl_ratio": ratio,
+                "pass": (
+                    row["log_error_dex"]
+                    <= limits["idvg_transition_max_absolute_log_error_dex"]
+                    and ratio >= limits["deep_off_min_id_to_kcl_ratio"]
+                ),
+            })
+        transition = idvg[3:8]
+        on = idvg[8:]
+        nonzero_idvd = [row for row in idvd if row["bias_V"] > 0.0]
+        idvg_metrics = {
+            "deep_off": deep,
+            "deep_off_pass": all(row["pass"] for row in deep),
+            "transition_max_log_error_dex": max(
+                row["log_error_dex"] for row in transition
+            ),
+            "on_max_relative_error": max(row["relative_error"] for row in on),
+        }
+        idvd_metrics = {
+            "excluded_zero_bias_from_relative_error": True,
+            "nonzero_points": len(nonzero_idvd),
+            "nonzero_max_relative_error": max(
+                row["relative_error"] for row in nonzero_idvd
+            ),
+            "endpoint_relative_error": idvd[-1]["relative_error"],
+        }
+        gates = {
+            "deep_off": idvg_metrics["deep_off_pass"],
+            "idvg_transition": idvg_metrics["transition_max_log_error_dex"]
+            <= limits["idvg_transition_max_absolute_log_error_dex"],
+            "idvg_on": idvg_metrics["on_max_relative_error"]
+            <= limits["idvg_on_max_absolute_relative_error"],
+            "idvd_nonzero": idvd_metrics["nonzero_max_relative_error"]
+            <= limits["idvd_max_absolute_relative_error"],
+            "idvd_endpoint": idvd_metrics["endpoint_relative_error"]
+            <= limits["idvd_2V_max_absolute_relative_error"],
+        }
+        branches[branch] = {
+            "pass": all(gates.values()),
+            "gates": gates,
+            "idvg": idvg_metrics,
+            "idvd": idvd_metrics,
+        }
+    report = {
+        "schema": "vela.transportmodels.dd_dg.strict_acceptance.v1",
+        "limits": limits,
+        "branches": branches,
+        "overall_pass": all(result["pass"] for result in branches.values()),
+    }
+    workflow.write_json(run_dir / "strict_acceptance.json", report)
+    manifest["strict_acceptance"] = report
+    manifest["comparison_status"] = "pass" if report["overall_pass"] else "fail"
+    workflow.write_json(run_dir / "workflow_manifest.json", manifest)
+    return report
 
 
 def main() -> int:
@@ -203,8 +354,31 @@ def main() -> int:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--runner", type=Path, default=DEFAULT_RUNNER)
     parser.add_argument("--overlay", type=Path, default=DEFAULT_OVERLAY)
+    parser.add_argument("--postprocess-existing", action="store_true")
     args = parser.parse_args()
     output = args.output_dir.resolve()
+    if args.postprocess_existing:
+        manifest_path = output / "workflow_manifest.json"
+        if not manifest_path.is_file():
+            parser.error("--postprocess-existing requires workflow_manifest.json")
+        manifest = workflow.load_json(manifest_path)
+        expected_comparisons = {
+            f"{branch}_{curve}_curve"
+            for branch in ("dd", "dg") for curve in ("idvg", "idvd")
+        }
+        if set(manifest.get("comparisons", {})) != expected_comparisons:
+            parser.error("existing manifest does not contain all four comparisons")
+        apply_strict_acceptance(manifest, output)
+        write_summary(manifest, output)
+        print(json.dumps({
+            "status": manifest.get("status"),
+            "comparison_status": manifest.get("comparison_status"),
+            "strict_acceptance": str((output / "strict_acceptance.json").resolve()),
+        }, indent=2))
+        return 0 if (
+            manifest.get("status") == "pass"
+            and manifest.get("comparison_status") == "pass"
+        ) else 1
     if output.exists() and any(output.iterdir()):
         parser.error("--output-dir must not exist or must be empty; reuse is forbidden")
     if not args.runner.is_file():
@@ -222,6 +396,8 @@ def main() -> int:
     if set(manifest.get("comparisons", {})) != expected_comparisons:
         manifest["comparison_status"] = "incomplete"
         workflow.write_json(output / "workflow_manifest.json", manifest)
+    else:
+        apply_strict_acceptance(manifest, output)
     write_summary(manifest, output)
     print(json.dumps({
         "status": manifest.get("status"),
