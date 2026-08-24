@@ -1,0 +1,389 @@
+{
+  "surface": "report",
+  "manifest": {
+    "version": 1,
+    "surface": "report",
+    "title": "TransportModels DD 深关断 Id–Vg 差异根因调查",
+    "description": "Sentaurus 2022 SP2 三点空间场、Vela 同状态公式回放及 contact_basin 因果 A/B。",
+    "generatedAt": "2026-08-24T10:11:32+08:00",
+    "sources": [
+      {
+        "id": "formula_replay",
+        "label": "DD deep-off fixed-state formula replay",
+        "path": "build-release/reference_tcad/transportmodels_sentaurus2022/reports/transportmodels_dd_deep_off_formula_replay_20260824/bias_summary.csv",
+        "query": {
+          "sql": "SELECT * FROM (VALUES (-1.00,0.008414923816078711,1.0187187865298792,0.4000357393746259,2.0031295004267524),(-0.84,0.008372397645980632,1.0166868314172128,0.3925094057810702,1.8958905144475766),(-0.68,0.00832473224940093,1.0164671616054084,0.3886415881538202,1.5782737132684028)) AS t(gate_bias_V,density_p95_dex,srh_ratio,mobility_p95_dex,sg_p95_dex)",
+          "language": "Python/C++ production probes",
+          "description": "Sentaurus TDR fields are held immutable and replayed through Vela density, mobility, SRH, SG, residual, and feedback-substitution probes.",
+          "executed_at": "2026-08-24T10:00:00+08:00",
+          "tables_used": [
+            "Sentaurus pp6 TDR exports",
+            "Vela production probe CSVs"
+          ],
+          "filters": [
+            "DD only",
+            "Vd=1.1 V",
+            "Vg in {-1.00,-0.84,-0.68} V",
+            "3315-node official TransportModels mesh"
+          ],
+          "metric_definitions": [
+            "density p95 dex = 95th percentile of absolute log10 density error at common silicon nodes",
+            "SRH ratio = |Vela SRH integral on Sentaurus state| / |Sentaurus exported SRH integral|",
+            "SG p95 dex is a localization diagnostic based on Sentaurus nodal current projection, not a discretization identity",
+            "QF drop ULP = |phin1-phin0| / max(ulp(phin0),ulp(phin1)) on drain-cut edges"
+          ]
+        }
+      },
+      {
+        "id": "contact_basin_ab",
+        "label": "contact_basin three-point causal A/B",
+        "path": "build-release/reference_tcad/transportmodels_sentaurus2022/reports/transportmodels_dd_deep_off_contact_basin_ab_20260824/comparison.csv",
+        "query": {
+          "sql": "SELECT * FROM (VALUES (-1.00,1.63468406431e-15,1.4872982353687249e-15,1.6644261791304386e-15,0.09016166007802041,0.01819441167244315,8.459578289255505,1264.9148327726207),(-0.84,1.62231726668e-15,1.4874372924327333e-15,1.6477848220217685e-15,0.08314031849225925,0.015698258204381147,2.513440657388097,2.210158800833445),(-0.68,1.73863786439e-15,1.4875731539651873e-15,1.7802110335609674e-15,0.1444031074940949,0.023911344635044678,3.8342424695082884,2.6267723664209464)) AS t(gate_bias_V,sentaurus_Id,baseline_Id,contact_basin_Id,baseline_relative_error,contact_basin_relative_error,baseline_kcl_ratio,contact_basin_kcl_ratio)",
+          "language": "Vela configuration A/B",
+          "description": "The frozen DD contract is rerun from -1.00 to -0.68 V with the sole causal change solver.quasi_fermi_reference=contact_basin.",
+          "executed_at": "2026-08-24T10:06:00+08:00",
+          "tables_used": [
+            "Vela fixed DD baseline",
+            "Sentaurus 2022 SP2 dd_idvg.csv"
+          ],
+          "filters": [
+            "same mesh, material, mobility, SRH, bias direction, and initial state",
+            "Vg points -1.00,-0.84,-0.68 V"
+          ],
+          "metric_definitions": [
+            "relative error = |Id_vela-Id_sentaurus|/|Id_sentaurus|",
+            "Id/KCL = |drain current|/|four-terminal KCL residual|",
+            "resolved threshold = Id/KCL >= 10"
+          ]
+        }
+      },
+      {
+        "id": "sentaurus_deck",
+        "label": "Sentaurus TransportModels pp6 DD deck",
+        "path": "build-release/reference_tcad/transportmodels_sentaurus2022/run02/full_raw/pp6_des.cmd",
+        "query": {
+          "sql": "SELECT 'T-2022.03-SP2' AS sentaurus_release, 'pp6_des.cmd' AS source_deck, 1.1 AS drain_bias_V",
+          "language": "Sentaurus Device command",
+          "description": "Official DD deck and positive gate sweep used to generate the reference curve and diagnostic snapshots.",
+          "filters": [
+            "T-2022.03-SP2",
+            "Fermi",
+            "OldSlotboom",
+            "DopingDep+Enormal+GradQuasiFermi mobility",
+            "DopingDep TempDependence SRH"
+          ]
+        }
+      }
+    ],
+    "cards": [
+      {
+        "id": "baseline_error",
+        "description": "原冻结配置在三个深关断点中的最大 Id 相对误差。",
+        "dataset": "kpis",
+        "sourceId": "contact_basin_ab",
+        "metrics": [
+          {"label": "原配置最大误差", "field": "max_baseline_error", "format": "percent"}
+        ]
+      },
+      {
+        "id": "contact_error",
+        "description": "仅启用 contact_basin 后三个点中的最大 Id 相对误差。",
+        "dataset": "kpis",
+        "sourceId": "contact_basin_ab",
+        "metrics": [
+          {"label": "contact_basin 最大误差", "field": "max_contact_error", "format": "percent"}
+        ]
+      },
+      {
+        "id": "resolved_kcl",
+        "description": "-1 V 点启用分区参考后的 Id/KCL 比，解析门槛为 10。",
+        "dataset": "kpis",
+        "sourceId": "contact_basin_ab",
+        "metrics": [
+          {"label": "-1 V Id/KCL", "field": "m1_kcl_ratio", "format": "number"}
+        ]
+      },
+      {
+        "id": "srh_gap",
+        "description": "修正后 Vela SRH 在固定 Sentaurus 状态上的最大幅值差。",
+        "dataset": "kpis",
+        "sourceId": "formula_replay",
+        "metrics": [
+          {"label": "固定状态 SRH 最大差", "field": "max_srh_gap", "format": "percent"}
+        ]
+      }
+    ],
+    "charts": [
+      {
+        "id": "error_chart",
+        "title": "DD 深关断 Id 相对误差",
+        "subtitle": "同一材料、网格与正向偏压路径；蓝色仅增加 contact_basin 分区准费米参考",
+        "intent": "comparison",
+        "question": "分区准费米参考能否消除三个深关断点的主要 Id 差异？",
+        "rationale": "三个离散偏压点适合使用分组柱状图而非趋势线。",
+        "comparisonContext": {"baseline": "quasi_fermi_reference=none", "grain": "gate-bias point", "unit": "relative error"},
+        "type": "bar",
+        "dataset": "error_chart_points",
+        "sourceId": "contact_basin_ab",
+        "encodings": {
+          "x": {"field": "bias_label", "type": "ordinal", "label": "Gate voltage"},
+          "y": {"field": "relative_error", "type": "quantitative", "format": "percent", "label": "Relative error"},
+          "color": {"field": "configuration", "type": "nominal", "label": "Configuration"}
+        },
+        "xAxisTitle": "Gate voltage",
+        "yAxisTitle": "Relative error",
+        "valueFormat": "percent",
+        "layout": "full",
+        "labels": {"values": "all"},
+        "legend": {"position": "bottom", "sort": "spec"},
+        "palette": {"kind": "categorical", "name": "neutral-blue"},
+        "settings": {"groupMode": "grouped", "showValues": true, "sort": "custom"},
+        "surface": {"surface": "card", "viewMode": "both"}
+      },
+      {
+        "id": "kcl_chart",
+        "title": "四端连续性解析度",
+        "subtitle": "纵轴为 log10(Id/|KCL|)；参考线 1 对应硬门槛 Id/|KCL|=10",
+        "intent": "comparison",
+        "question": "分区参考是否同时改善端口电流的数值守恒？",
+        "rationale": "对数变换避免 -1 V 的大幅改善压扁另外两点。",
+        "comparisonContext": {"baseline": "resolution threshold log10=1", "grain": "gate-bias point", "unit": "log10 ratio"},
+        "type": "bar",
+        "dataset": "kcl_chart_points",
+        "sourceId": "contact_basin_ab",
+        "encodings": {
+          "x": {"field": "bias_label", "type": "ordinal", "label": "Gate voltage"},
+          "y": {"field": "kcl_log10", "type": "quantitative", "format": "number", "label": "log10(Id/|KCL|)"},
+          "color": {"field": "configuration", "type": "nominal", "label": "Configuration"}
+        },
+        "xAxisTitle": "Gate voltage",
+        "yAxisTitle": "log10(Id/|KCL|)",
+        "valueFormat": "number",
+        "layout": "full",
+        "labels": {"values": "all"},
+        "legend": {"position": "bottom", "sort": "spec"},
+        "palette": {"kind": "categorical", "name": "neutral-blue"},
+        "referenceLines": [
+          {"axis": "y", "value": 1, "label": "resolved threshold", "color": "neutral", "lineStyle": "dashed"}
+        ],
+        "settings": {"groupMode": "grouped", "showValues": true, "sort": "custom"},
+        "surface": {"surface": "card", "viewMode": "both"}
+      },
+      {
+        "id": "formula_chart",
+        "title": "同状态公式差异分解",
+        "subtitle": "p95 绝对对数误差；SRH 另以积分比审计，SG 投影只用于定位而非离散恒等式",
+        "intent": "comparison",
+        "question": "在固定 Sentaurus 状态上，密度、迁移率和 SG 通量哪一层差异最大？",
+        "rationale": "三类同单位 dex 指标按偏压分组比较。",
+        "comparisonContext": {"grain": "gate-bias point", "unit": "dex"},
+        "type": "bar",
+        "dataset": "formula_chart_points",
+        "sourceId": "formula_replay",
+        "encodings": {
+          "x": {"field": "bias_label", "type": "ordinal", "label": "Gate voltage"},
+          "y": {"field": "p95_dex", "type": "quantitative", "format": "number", "label": "p95 absolute error (dex)"},
+          "color": {"field": "formula_layer", "type": "nominal", "label": "Formula layer"}
+        },
+        "xAxisTitle": "Gate voltage",
+        "yAxisTitle": "p95 absolute error (dex)",
+        "valueFormat": "number",
+        "layout": "full",
+        "labels": {"values": "all"},
+        "legend": {"position": "bottom", "sort": "spec"},
+        "palette": {"kind": "categorical", "name": "blue-orange-pink"},
+        "settings": {"groupMode": "grouped", "showValues": true, "sort": "custom"},
+        "surface": {"surface": "card", "viewMode": "both"}
+      }
+    ],
+    "tables": [
+      {
+        "id": "ab_table",
+        "title": "三点 contact_basin 因果 A/B",
+        "subtitle": "Id 单位 A/µm；解析要求 Id/|KCL|≥10",
+        "dataset": "ab_points",
+        "sourceId": "contact_basin_ab",
+        "defaultSort": {"field": "gate_bias_V", "direction": "asc"},
+        "density": "dense",
+        "layout": "full",
+        "columns": [
+          {"field": "gate_bias_V", "label": "Vg (V)", "format": "number"},
+          {"field": "sentaurus_Id", "label": "Sentaurus Id", "format": "number"},
+          {"field": "baseline_Id", "label": "Vela none Id", "format": "number"},
+          {"field": "contact_basin_Id", "label": "Vela basin Id", "format": "number"},
+          {"field": "baseline_relative_error", "label": "none error", "format": "percent"},
+          {"field": "contact_basin_relative_error", "label": "basin error", "format": "percent"},
+          {"field": "baseline_kcl_ratio", "label": "none Id/KCL", "format": "number"},
+          {"field": "contact_basin_kcl_ratio", "label": "basin Id/KCL", "format": "number"}
+        ]
+      },
+      {
+        "id": "formula_table",
+        "title": "固定状态公式回放关键量",
+        "subtitle": "Sentaurus TDR → Vela 生产算子；QF drop 为漏端切面中位数",
+        "dataset": "formula_points",
+        "sourceId": "formula_replay",
+        "defaultSort": {"field": "gate_bias_V", "direction": "asc"},
+        "density": "dense",
+        "layout": "full",
+        "columns": [
+          {"field": "gate_bias_V", "label": "Vg (V)", "format": "number"},
+          {"field": "density_p95_dex", "label": "n p95 (dex)", "format": "number"},
+          {"field": "srh_ratio", "label": "SRH ratio", "format": "number"},
+          {"field": "exact_density_srh_effect", "label": "exact n,p SRH effect", "format": "percent"},
+          {"field": "mobility_p95_dex", "label": "mobility p95 (dex)", "format": "number"},
+          {"field": "sg_p95_dex", "label": "SG p95 (dex)", "format": "number"},
+          {"field": "drain_qf_drop_ulp", "label": "drain QF drop (ULP)", "format": "number"},
+          {"field": "mobility_substitution_effect", "label": "Sent µ cut-current effect", "format": "percent"}
+        ]
+      }
+    ],
+    "blocks": [
+      {"id": "title", "type": "markdown", "body": "# TransportModels DD 深关断 Id–Vg 差异根因调查"},
+      {"id": "executive_summary", "type": "markdown", "body": "## Executive Summary\n\nDD 深关断差异的主因已定位为漏端电子准费米势的数值表示，而不是 SRH 或材料参数。当前冻结配置未启用已经实现的分区准费米参考，使漏端电流被压缩为 float64 单 ULP 的数值平台。启用 `contact_basin` 后，三个点均恢复到接近 Sentaurus 的电流；后两个点的四端连续性仍未解析，因此还不能把曲线误差改善视为最终验收通过。"},
+      {"id": "headline_metrics", "type": "metric-strip", "cardIds": ["baseline_error", "contact_error", "resolved_kcl", "srh_gap"]},
+      {"id": "causal_heading", "type": "markdown", "body": "## 因果 A/B 结果\n\n只改变 `solver.quasi_fermi_reference`：从默认 `none` 切换为 `contact_basin`。网格、材料、SRH、迁移率、偏压方向和初始状态保持一致。", "sourceId": "contact_basin_ab"},
+      {"id": "error_block", "type": "chart", "chartId": "error_chart"},
+      {"id": "kcl_block", "type": "chart", "chartId": "kcl_chart"},
+      {"id": "ab_table_block", "type": "table", "tableId": "ab_table"},
+      {"id": "formula_heading", "type": "markdown", "body": "## 同状态公式回放\n\n电子浓度 p95 约 0.008 dex；Vela SRH 积分是 Sentaurus 的 1.016–1.019 倍，替换原始 Sentaurus n、p 对 SRH 的影响小于 0.04%。迁移率替换只让漏端切面电流变化约 3.5%–6.5%，不足以解释原始 8%–14% 的平台误差。", "sourceId": "formula_replay"},
+      {"id": "formula_chart_block", "type": "chart", "chartId": "formula_chart"},
+      {"id": "formula_table_block", "type": "table", "tableId": "formula_table"},
+      {"id": "root_cause", "type": "markdown", "body": "## 根因与代码证据\n\n当前基线结果在漏端节点保存的 `electron_qf_reference_V` 为 0；漏端 SG 切面中位准费米压降恰为 2.220446049250313e-16 V，即 1.1 V 附近一个 float64 ULP。SG 回放电流与原曲线在机器精度内相等，证明平台来自该量化。求解器中的 `contact_basin` 会按输运连通区为源端分配 0 V、漏端分配 1.1 V；A/B 结果验证这一配置消除了主要误差。", "sourceId": "formula_replay"},
+      {"id": "remaining", "type": "markdown", "body": "## 未解决问题与下一步\n\n1. 将 `contact_basin` 固化进 DD/DG 固定契约并增加漏端参考值回归测试。\n2. 对 -0.84 V 和 -0.68 V 收紧电子/空穴连续性绝对残差，并启用全局连续性闭合硬门槛；目标 Id/|KCL|≥10。\n3. 在 KCL 达标后重算完整 21 点 DD 曲线，再评估剩余物理误差。\n4. Sentaurus TDR 的 `ContactCurrentFlux` 与正式 `.plt TotalCurrent` 在前三点相差 6.8%–44%；报告以 `.plt` 为端口曲线真值，只把 TDR 接触通量用于同状态局部诊断。"},
+      {"id": "method", "type": "markdown", "body": "## 方法与可复现性\n\nSentaurus 使用 T-2022.03-SP2 官方 pp6 DD 算例：先将 drain 升至 1.1 V，再由 gate=-1 V 正向扫压。诊断脚本只向门扫加入三个 Plot 快照，不改变 Physics、Math 或 Solve 顺序。Vela 回放不执行非线性更新；固定输入 Sentaurus 的电势和准费米势，并调用生产 density、mobility、SRH、SG、residual 与 feedback-substitution 探针。", "sourceId": "sentaurus_deck"}
+    ]
+  },
+  "snapshot": {
+    "version": 1,
+    "generatedAt": "2026-08-24T10:11:32+08:00",
+    "status": "ready",
+    "datasets": {
+      "kpis": [
+        {
+          "max_baseline_error": 0.1444031074940949,
+          "max_contact_error": 0.023911344635044678,
+          "m1_kcl_ratio": 1264.9148327726207,
+          "max_srh_gap": 0.0187187865298792
+        }
+      ],
+      "ab_points": [
+        {
+          "gate_bias_V": -1.0,
+          "bias_label": "-1.00 V",
+          "sentaurus_Id": 1.63468406431e-15,
+          "baseline_Id": 1.4872982353687249e-15,
+          "contact_basin_Id": 1.6644261791304386e-15,
+          "baseline_relative_error": 0.09016166007802041,
+          "contact_basin_relative_error": 0.01819441167244315,
+          "baseline_kcl_ratio": 8.459578289255505,
+          "contact_basin_kcl_ratio": 1264.9148327726207,
+          "baseline_kcl_log10": 0.927348713959336,
+          "contact_basin_kcl_log10": 3.10206128527305,
+          "contact_basin_srh": -1.6560899351469518e-15
+        },
+        {
+          "gate_bias_V": -0.84,
+          "bias_label": "-0.84 V",
+          "sentaurus_Id": 1.62231726668e-15,
+          "baseline_Id": 1.4874372924327333e-15,
+          "contact_basin_Id": 1.6477848220217685e-15,
+          "baseline_relative_error": 0.08314031849225925,
+          "contact_basin_relative_error": 0.015698258204381147,
+          "baseline_kcl_ratio": 2.513440657388097,
+          "contact_basin_kcl_ratio": 2.210158800833445,
+          "baseline_kcl_log10": 0.400268635944388,
+          "contact_basin_kcl_log10": 0.344423479046196,
+          "contact_basin_srh": -1.641321968243385e-15
+        },
+        {
+          "gate_bias_V": -0.68,
+          "bias_label": "-0.68 V",
+          "sentaurus_Id": 1.73863786439e-15,
+          "baseline_Id": 1.4875731539651873e-15,
+          "contact_basin_Id": 1.7802110335609674e-15,
+          "baseline_relative_error": 0.1444031074940949,
+          "contact_basin_relative_error": 0.023911344635044678,
+          "baseline_kcl_ratio": 3.8342424695082884,
+          "contact_basin_kcl_ratio": 2.6267723664209464,
+          "baseline_kcl_log10": 0.583679573289001,
+          "contact_basin_kcl_log10": 0.41942243887259,
+          "contact_basin_srh": -1.6367118380187218e-15
+        }
+      ],
+      "error_chart_points": [
+        {"gate_bias_V": -1.0, "bias_label": "-1.00 V", "configuration": "none", "relative_error": 0.09016166007802041, "sentaurus_Id": 1.63468406431e-15, "vela_Id": 1.4872982353687249e-15, "kcl_ratio": 8.459578289255505},
+        {"gate_bias_V": -1.0, "bias_label": "-1.00 V", "configuration": "contact_basin", "relative_error": 0.01819441167244315, "sentaurus_Id": 1.63468406431e-15, "vela_Id": 1.6644261791304386e-15, "kcl_ratio": 1264.9148327726207},
+        {"gate_bias_V": -0.84, "bias_label": "-0.84 V", "configuration": "none", "relative_error": 0.08314031849225925, "sentaurus_Id": 1.62231726668e-15, "vela_Id": 1.4874372924327333e-15, "kcl_ratio": 2.513440657388097},
+        {"gate_bias_V": -0.84, "bias_label": "-0.84 V", "configuration": "contact_basin", "relative_error": 0.015698258204381147, "sentaurus_Id": 1.62231726668e-15, "vela_Id": 1.6477848220217685e-15, "kcl_ratio": 2.210158800833445},
+        {"gate_bias_V": -0.68, "bias_label": "-0.68 V", "configuration": "none", "relative_error": 0.1444031074940949, "sentaurus_Id": 1.73863786439e-15, "vela_Id": 1.4875731539651873e-15, "kcl_ratio": 3.8342424695082884},
+        {"gate_bias_V": -0.68, "bias_label": "-0.68 V", "configuration": "contact_basin", "relative_error": 0.023911344635044678, "sentaurus_Id": 1.73863786439e-15, "vela_Id": 1.7802110335609674e-15, "kcl_ratio": 2.6267723664209464}
+      ],
+      "kcl_chart_points": [
+        {"gate_bias_V": -1.0, "bias_label": "-1.00 V", "configuration": "none", "kcl_log10": 0.927348713959336, "kcl_ratio": 8.459578289255505, "relative_error": 0.09016166007802041},
+        {"gate_bias_V": -1.0, "bias_label": "-1.00 V", "configuration": "contact_basin", "kcl_log10": 3.10206128527305, "kcl_ratio": 1264.9148327726207, "relative_error": 0.01819441167244315},
+        {"gate_bias_V": -0.84, "bias_label": "-0.84 V", "configuration": "none", "kcl_log10": 0.400268635944388, "kcl_ratio": 2.513440657388097, "relative_error": 0.08314031849225925},
+        {"gate_bias_V": -0.84, "bias_label": "-0.84 V", "configuration": "contact_basin", "kcl_log10": 0.344423479046196, "kcl_ratio": 2.210158800833445, "relative_error": 0.015698258204381147},
+        {"gate_bias_V": -0.68, "bias_label": "-0.68 V", "configuration": "none", "kcl_log10": 0.583679573289001, "kcl_ratio": 3.8342424695082884, "relative_error": 0.1444031074940949},
+        {"gate_bias_V": -0.68, "bias_label": "-0.68 V", "configuration": "contact_basin", "kcl_log10": 0.41942243887259, "kcl_ratio": 2.6267723664209464, "relative_error": 0.023911344635044678}
+      ],
+      "formula_chart_points": [
+        {"gate_bias_V": -1.0, "bias_label": "-1.00 V", "formula_layer": "electron density", "p95_dex": 0.008414923816078711, "srh_ratio": 1.0187187865298792, "drain_qf_drop_ulp": 1.0},
+        {"gate_bias_V": -1.0, "bias_label": "-1.00 V", "formula_layer": "electron mobility", "p95_dex": 0.4000357393746259, "srh_ratio": 1.0187187865298792, "drain_qf_drop_ulp": 1.0},
+        {"gate_bias_V": -1.0, "bias_label": "-1.00 V", "formula_layer": "SG line-current diagnostic", "p95_dex": 2.0031295004267524, "srh_ratio": 1.0187187865298792, "drain_qf_drop_ulp": 1.0},
+        {"gate_bias_V": -0.84, "bias_label": "-0.84 V", "formula_layer": "electron density", "p95_dex": 0.008372397645980632, "srh_ratio": 1.0166868314172128, "drain_qf_drop_ulp": 1.0},
+        {"gate_bias_V": -0.84, "bias_label": "-0.84 V", "formula_layer": "electron mobility", "p95_dex": 0.3925094057810702, "srh_ratio": 1.0166868314172128, "drain_qf_drop_ulp": 1.0},
+        {"gate_bias_V": -0.84, "bias_label": "-0.84 V", "formula_layer": "SG line-current diagnostic", "p95_dex": 1.8958905144475766, "srh_ratio": 1.0166868314172128, "drain_qf_drop_ulp": 1.0},
+        {"gate_bias_V": -0.68, "bias_label": "-0.68 V", "formula_layer": "electron density", "p95_dex": 0.00832473224940093, "srh_ratio": 1.0164671616054084, "drain_qf_drop_ulp": 1.0},
+        {"gate_bias_V": -0.68, "bias_label": "-0.68 V", "formula_layer": "electron mobility", "p95_dex": 0.3886415881538202, "srh_ratio": 1.0164671616054084, "drain_qf_drop_ulp": 1.0},
+        {"gate_bias_V": -0.68, "bias_label": "-0.68 V", "formula_layer": "SG line-current diagnostic", "p95_dex": 1.5782737132684028, "srh_ratio": 1.0164671616054084, "drain_qf_drop_ulp": 1.0}
+      ],
+      "formula_points": [
+        {
+          "gate_bias_V": -1.0,
+          "bias_label": "-1.00 V",
+          "density_p95_dex": 0.008414923816078711,
+          "srh_ratio": 1.0187187865298792,
+          "exact_density_srh_effect": 0.0003198102872854389,
+          "mobility_p95_dex": 0.4000357393746259,
+          "qf_drive_p95_dex": 1.7284887386017629,
+          "sg_p95_dex": 2.0031295004267524,
+          "drain_qf_drop_ulp": 1.0,
+          "drain_qf_drop_V": 2.220446049250313e-16,
+          "mobility_substitution_effect": 0.065276216551867,
+          "sentaurus_tdr_drain_vs_curve_difference": 0.44259782294842953
+        },
+        {
+          "gate_bias_V": -0.84,
+          "bias_label": "-0.84 V",
+          "density_p95_dex": 0.008372397645980632,
+          "srh_ratio": 1.0166868314172128,
+          "exact_density_srh_effect": 0.00035976765826761526,
+          "mobility_p95_dex": 0.3925094057810702,
+          "qf_drive_p95_dex": 1.811322172242611,
+          "sg_p95_dex": 1.8958905144475766,
+          "drain_qf_drop_ulp": 1.0,
+          "drain_qf_drop_V": 2.220446049250313e-16,
+          "mobility_substitution_effect": -0.035137648020693,
+          "sentaurus_tdr_drain_vs_curve_difference": 0.31951311101562563
+        },
+        {
+          "gate_bias_V": -0.68,
+          "bias_label": "-0.68 V",
+          "density_p95_dex": 0.00832473224940093,
+          "srh_ratio": 1.0164671616054084,
+          "exact_density_srh_effect": 0.00034565726357449445,
+          "mobility_p95_dex": 0.3886415881538202,
+          "qf_drive_p95_dex": 1.7524491945617857,
+          "sg_p95_dex": 1.5782737132684028,
+          "drain_qf_drop_ulp": 1.0,
+          "drain_qf_drop_V": 2.220446049250313e-16,
+          "mobility_substitution_effect": -0.035016852551419,
+          "sentaurus_tdr_drain_vs_curve_difference": 0.06786754080464351
+        }
+      ]
+    }
+  },
+  "sources": []
+}

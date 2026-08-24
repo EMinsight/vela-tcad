@@ -13,12 +13,13 @@ import os
 from pathlib import Path
 from typing import Any, Iterable
 
+import transportmodels_fixed_contract as fixed
+
 
 REPO = Path(__file__).resolve().parents[1]
 REF = REPO / "build-release/reference_tcad/transportmodels_sentaurus2022"
 BASELINE = REF / "vela_baseline/dd_dg_srh_corrected_cold_regression_2026-08-23"
 GENERATED = BASELINE / "generated_corrected"
-OLD_CONFIG = REF / "vela_baseline/vela_fermi_bgn_ab_2026-08-21/dg_on/config.json"
 OUTPUT = REF / "vela_baseline/dg_quantum_contract_regression_2026-08-23"
 RUN_DIR = OUTPUT / "runs/dg"
 WORKFLOW_SCRIPT = REPO / "scripts/run_transportmodels_dd_dg_workflow.py"
@@ -71,7 +72,7 @@ def patch_configs(workflow, manifest: dict[str, Any], quantum: dict[str, Any]) -
     for stage in manifest["stages"]:
         path = Path(stage["config"])
         config = json.loads(path.read_text(encoding="utf-8"))
-        config["solver"]["electron_quantum_potential"] = json.loads(json.dumps(quantum))
+        config = fixed.apply_contract(config, "dg")
         config["solver"]["verbose"] = False
         diagnostics = config["sweep"].setdefault("diagnostics", {})
         diagnostics["srh_balance"] = {
@@ -90,8 +91,8 @@ def patch_configs(workflow, manifest: dict[str, Any], quantum: dict[str, Any]) -
         path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
         stage["config_sha256"] = workflow.sha256(path)
     manifest["quantum_contract"] = {
-        "source": str(OLD_CONFIG.resolve()),
-        "source_sha256": sha256(OLD_CONFIG),
+        "source": str(fixed.DEFAULT_CONTRACT.resolve()),
+        "source_sha256": fixed.sha256(fixed.DEFAULT_CONTRACT),
         "payload_sha256": hashlib.sha256(
             json.dumps(quantum, sort_keys=True).encode("utf-8")
         ).hexdigest(),
@@ -106,9 +107,7 @@ def patch_configs(workflow, manifest: dict[str, Any], quantum: dict[str, Any]) -
 
 def materialize() -> tuple[Any, dict[str, Any]]:
     workflow = load_workflow()
-    old_quantum = json.loads(OLD_CONFIG.read_text(encoding="utf-8"))["solver"][
-        "electron_quantum_potential"
-    ]
+    old_quantum = fixed.load_contract()["dg_quantum_contract"]
     manifest = workflow.materialize(
         GENERATED,
         RUN_DIR,
@@ -203,9 +202,7 @@ def materialize_idvd_resume(bridge_step_V: float) -> tuple[Any, dict[str, Any], 
         quantum_outer_acceleration="none",
         quantum_outer_relaxation=1.0,
     )
-    old_quantum = json.loads(OLD_CONFIG.read_text(encoding="utf-8"))["solver"][
-        "electron_quantum_potential"
-    ]
+    old_quantum = fixed.load_contract()["dg_quantum_contract"]
     patch_configs(workflow, manifest, old_quantum)
     manifest["resume"] = {
         "restart_bias_V": restart_bias,

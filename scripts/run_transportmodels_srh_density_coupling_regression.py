@@ -13,6 +13,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+import transportmodels_fixed_contract as fixed
+
 
 REPO = Path(__file__).resolve().parents[1]
 REF = REPO / "build-release/reference_tcad/transportmodels_sentaurus2022"
@@ -61,8 +63,7 @@ def run_three_points(runner: Path) -> dict[str, Any]:
     original_config = strict.strict_config
 
     def patched_config(bias: float, run_dir: Path, variant: str):
-        config = original_config(bias, run_dir, variant)
-        config["solver"]["srh_density_coupling"] = "sentaurus_default"
+        config = fixed.apply_contract(original_config(bias, run_dir, variant), "dg")
         config["_comment"] += "; SRH uses Sentaurus-default classical density"
         return config
 
@@ -83,7 +84,9 @@ def run_three_points(runner: Path) -> dict[str, Any]:
 def run_five_points(runner: Path) -> dict[str, Any]:
     run_dir = OUTPUT / "five_key_vg_points"
     run_dir.mkdir(parents=True, exist_ok=True)
-    config = json.loads(BASE_CONFIG.read_text(encoding="utf-8"))
+    config = fixed.apply_contract(
+        json.loads(BASE_CONFIG.read_text(encoding="utf-8")), "dg"
+    )
     config["_comment"] = (
         "Five key DG Id-Vg points with explicit srh_density_coupling="
         "sentaurus_default and analytic generalized Fermi-SRH Jacobian"
@@ -221,7 +224,9 @@ def run_full_curves(runner: Path) -> dict[str, Any]:
     stages: list[dict[str, Any]] = []
     for spec in curve_specs:
         name = spec["name"]
-        config = json.loads(Path(spec["source_config"]).read_text(encoding="utf-8"))
+        config = fixed.apply_contract(
+            json.loads(Path(spec["source_config"]).read_text(encoding="utf-8")), "dg"
+        )
         config["_comment"] = (
             "Complete 21-point DG curve with analytic Sentaurus-default "
             "classical-density SRH coupling"
@@ -300,7 +305,9 @@ def run_full_curves(runner: Path) -> dict[str, Any]:
 
     if len(stages) == 2 and all(stage["returncode"] == 0 for stage in stages):
         prefix_biases = (-0.68, -0.52, -0.36, -0.20, -0.04, 0.12, 0.28)
-        prefix_config = json.loads(BASE_CONFIG.read_text(encoding="utf-8"))
+        prefix_config = fixed.apply_contract(
+            json.loads(BASE_CONFIG.read_text(encoding="utf-8")), "dg"
+        )
         prefix_config["_comment"] = (
             "Strict-seed Id-Vg prefix proving convergence from the hard-gated "
             "-0.68 V state into the transition branch"
