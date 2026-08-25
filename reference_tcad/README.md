@@ -105,5 +105,9 @@ ctest --test-dir build --output-on-failure -R sentaurus
   diode translated to Sentaurus O-2018.06-SP2, with a full 0--1 V reference
   curve and a full 0--1 V two-stage Vela thermionic-Robin acceptance chain
   using voltage continuation followed by pseudo-arclength continuation.
+- `transportmodels_sentaurus2022`: Sentaurus T-2022.03-SP2 50 nm NMOS
+  TransportModels inputs for matched DD/electron-DG Id-Vg and Id-Vd runs,
+  including SDE/SDevice sources, neutral mesh/doping inputs, frozen Vela
+  contracts, and the strict 12-stage continuous-scan configurations.
 
 See `docs/validation/` for the hand-written validation summaries.
