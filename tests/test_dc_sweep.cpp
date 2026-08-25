@@ -1785,6 +1785,29 @@ TEST_CASE("DCSweep: VTK transport diagnostics include mobility decomposition fie
     REQUIRE(content.find("HoleMobilityLimiter") != std::string::npos);
     REQUIRE(content.find("CellSurfaceNormalField") != std::string::npos);
     REQUIRE(content.find("SurfaceNormalField") != std::string::npos);
+    REQUIRE(content.find("ElectronGradQuasiFermiVector") != std::string::npos);
+    REQUIRE(content.find("HoleGradQuasiFermiVector") != std::string::npos);
+    REQUIRE(content.find("ElectronEparallel") != std::string::npos);
+    REQUIRE(content.find("HoleEparallel") != std::string::npos);
+    REQUIRE(content.find("ElectronEnormal") != std::string::npos);
+    REQUIRE(content.find("HoleEnormal") != std::string::npos);
+    REQUIRE(content.find("ElectronCurrentDensityVector") != std::string::npos);
+    REQUIRE(content.find("HoleCurrentDensityVector") != std::string::npos);
+    REQUIRE(content.find("TotalCurrentDensityVector") != std::string::npos);
+    REQUIRE(content.find("SentaurusElectronCurrentDensityVector") != std::string::npos);
+    REQUIRE(content.find("SentaurusHoleCurrentDensityVector") != std::string::npos);
+    REQUIRE(content.find("SentaurusTotalCurrentDensityVector") != std::string::npos);
+    REQUIRE(content.find("SentaurusElectronEparallel") != std::string::npos);
+    REQUIRE(content.find("SentaurusHoleEparallel") != std::string::npos);
+    REQUIRE(content.find("ElectronMobilityCm2PerVs") != std::string::npos);
+    REQUIRE(content.find("HoleMobilityCm2PerVs") != std::string::npos);
+    REQUIRE(content.find("SRHRecombinationCm3PerS") != std::string::npos);
+    REQUIRE(content.find("SpaceCharge") != std::string::npos);
+    REQUIRE(content.find("BandGap") != std::string::npos);
+    REQUIRE(content.find("BandgapNarrowing") != std::string::npos);
+    REQUIRE(content.find("ElectronAffinity") != std::string::npos);
+    REQUIRE(content.find("ConductionBandEnergy") != std::string::npos);
+    REQUIRE(content.find("ValenceBandEnergy") != std::string::npos);
 }
 
 TEST_CASE("DCSweep: contact-edge diagnostics are opt-in and write per-edge rows",

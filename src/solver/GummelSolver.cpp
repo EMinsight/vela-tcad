@@ -973,8 +973,9 @@ void writeDDSolutionVTK(const std::string& filename,
     writer.addNodeScalar("NetDoping", netDop);
 
     const auto nodeCells = detail::buildNodeCellMap(mesh);
-    const Real fieldFactor = scaling.unitSystem().fieldFromCoordinateDeltaFactor();
-    const Real scaleToVcm = scaling.unitSystem().electricFieldVPerMPerInternal() / 100.0;
+    const PhysicalUnitSystem& units = scaling.unitSystem();
+    const Real fieldFactor = units.fieldFromCoordinateDeltaFactor();
+    const Real scaleToVcm = units.electricFieldVPerMPerInternal() / 100.0;
     const std::vector<Point2> electricFieldGradient_V_m =
         detail::computeNodeWeightedLeastSquaresGradients(
             mesh, nodeCells, [&](Index node) { return sol.psi(static_cast<int>(node)); });
@@ -1015,21 +1016,36 @@ void writeDDSolutionVTK(const std::string& filename,
 
     std::vector<Real> electricField_V_cm(N, 0.0);
     std::vector<Point3> electricFieldVector_V_cm(N, Point3::Zero());
+    std::vector<Point3> electronQfGradientVector_V_cm(N, Point3::Zero());
+    std::vector<Point3> holeQfGradientVector_V_cm(N, Point3::Zero());
     for (Index i = 0; i < N; ++i) {
         electricField_V_cm[i] = electricField_V_m[i] * scaleToVcm;
         electricFieldVector_V_cm[i] = Point3{
             -electricFieldGradient_V_m[i].x() * fieldFactor * scaleToVcm,
             -electricFieldGradient_V_m[i].y() * fieldFactor * scaleToVcm,
             0.0};
+        electronQfGradientVector_V_cm[i] = Point3{
+            -electronQfGradientVector_V_m[i].x() * fieldFactor * scaleToVcm,
+            -electronQfGradientVector_V_m[i].y() * fieldFactor * scaleToVcm,
+            0.0};
+        holeQfGradientVector_V_cm[i] = Point3{
+            -holeQfGradientVector_V_m[i].x() * fieldFactor * scaleToVcm,
+            -holeQfGradientVector_V_m[i].y() * fieldFactor * scaleToVcm,
+            0.0};
     }
     writer.addNodeScalar("ElectricField", electricField_V_cm);
     writer.addNodeVector("ElectricFieldVector", electricFieldVector_V_cm);
+    writer.addNodeVector(
+        "ElectronGradQuasiFermiVector", electronQfGradientVector_V_cm);
+    writer.addNodeVector(
+        "HoleGradQuasiFermiVector", holeQfGradientVector_V_cm);
 
     const Real Vt = constants::kb * temperature_K / constants::q;
     const std::unique_ptr<BandgapNarrowing> bgn =
         makeBandgapNarrowingModel(bandgapNarrowingConfig);
     const auto edgeCells = detail::buildEdgeCellMap(mesh);
     MobilityModelConfig resolvedMobilityConfig = mobilityConfig;
+    std::vector<Real> nodeSurfaceNormalField_V_cm(N, 0.0);
     if (isSurfaceMobilityModel(resolvedMobilityConfig)) {
         detail::updateSurfaceMobilityCellGeometry(
             resolvedMobilityConfig, mesh, edgeCells, sol.psi,
@@ -1041,7 +1057,6 @@ void writeDDSolutionVTK(const std::string& filename,
         // direct comparison with Sentaurus eEnormal vertex data.
         std::vector<Real> cellSurfaceNormalField_V_cm(
             mesh.numCells(), std::numeric_limits<Real>::quiet_NaN());
-        std::vector<Real> nodeSurfaceNormalField_V_cm(N, 0.0);
         std::vector<Real> nodeSurfaceNormalWeight(N, 0.0);
         for (Index cellId = 0; cellId < mesh.numCells(); ++cellId) {
             if (cellId >= resolvedMobilityConfig.surface.cellNormalFields.size())
@@ -1068,6 +1083,8 @@ void writeDDSolutionVTK(const std::string& filename,
         writer.addNodeScalar(
             "SurfaceNormalField", nodeSurfaceNormalField_V_cm);
     }
+    writer.addNodeScalar("ElectronEnormal", nodeSurfaceNormalField_V_cm);
+    writer.addNodeScalar("HoleEnormal", nodeSurfaceNormalField_V_cm);
     const RecombinationModel recombination(recombinationConfig);
     const std::unique_ptr<ImpactIonizationModel> impact =
         makeImpactIonizationModel(impactIonizationConfig);
@@ -1123,10 +1140,23 @@ void writeDDSolutionVTK(const std::string& filename,
     }
 
     std::vector<Real> srh(N, 0.0);
+    std::vector<Real> srh_cm3_s(N, 0.0);
+    std::vector<Real> spaceCharge_cm3(N, 0.0);
+    std::vector<Real> bandGap_eV(N, std::numeric_limits<Real>::quiet_NaN());
+    std::vector<Real> bandgapNarrowing_eV(
+        N, std::numeric_limits<Real>::quiet_NaN());
+    std::vector<Real> electronAffinity_eV(
+        N, std::numeric_limits<Real>::quiet_NaN());
+    std::vector<Real> conductionBandEnergy_eV(
+        N, std::numeric_limits<Real>::quiet_NaN());
+    std::vector<Real> valenceBandEnergy_eV(
+        N, std::numeric_limits<Real>::quiet_NaN());
     std::vector<Real> bandToBandGeneration(N, 0.0);
     std::vector<Real> avalanche(N, 0.0);
     std::vector<Real> electronMobility(N, 0.0);
     std::vector<Real> holeMobility(N, 0.0);
+    std::vector<Real> electronMobility_cm2_V_s(N, 0.0);
+    std::vector<Real> holeMobility_cm2_V_s(N, 0.0);
     std::vector<Real> electronLowFieldMobility(N, 0.0);
     std::vector<Real> holeLowFieldMobility(N, 0.0);
     std::vector<Real> electronHighFieldDrive_V_cm(N, 0.0);
@@ -1230,6 +1260,24 @@ void writeDDSolutionVTK(const std::string& filename,
         const Real n = sol.n(row);
         const Real p = sol.p(row);
         const Real deltaEg = bgn->deltaEg(doping.totalImpurity(i), n, p);
+        spaceCharge_cm3[i] = units.internalConcentrationToM3(
+            p - n + doping.netDoping(i)) / 1.0e6;
+        bandgapNarrowing_eV[i] = deltaEg;
+        if (nodeMaterials[i].bandgap_eV.has_value() &&
+            nodeMaterials[i].electron_affinity_eV.has_value()) {
+            const Real affinity =
+                *nodeMaterials[i].electron_affinity_eV + 0.5 * deltaEg;
+            const Real materialBandgap = *nodeMaterials[i].bandgap_eV;
+            const Real transportBandgap = materialBandgap - deltaEg;
+            electronAffinity_eV[i] = affinity;
+            bandGap_eV[i] = materialBandgap;
+            // Vela uses zero as the global band-energy origin. Sentaurus
+            // band energies are compared after removing their arbitrary
+            // constant origin.
+            conductionBandEnergy_eV[i] = -sol.psi(row) - affinity;
+            valenceBandEnergy_eV[i] =
+                conductionBandEnergy_eV[i] - transportBandgap;
+        }
         const Real ni = effectiveIntrinsicDensity(nodeMaterials[i].ni, Vt, deltaEg);
         // Match the cancellation-free source used by CoupledDDAssembler.
         // Re-forming n*p-ni^2 from rounded output densities can create a
@@ -1251,6 +1299,8 @@ void writeDDSolutionVTK(const std::string& filename,
             srhState.electronDegeneracy, srhState.holeDegeneracy,
             recombination.srhDopingConcentration(
                 doping.donors(i), doping.acceptors(i)));
+        srh_cm3_s[i] =
+            srh[i] * units.concentrationM3PerInternal() / 1.0e6;
         bandToBandGeneration[i] = transportNodeAreas[i] > 0.0
             ? bandToBandSourceIntegrals[i] / transportNodeAreas[i]
             : 0.0;
@@ -1299,6 +1349,10 @@ void writeDDSolutionVTK(const std::string& filename,
         holeMobility[i] = detail::nodeMobility(
             nodeCells, mesh, doping, *mobility, cellMaterials, i,
             CarrierType::Hole, holeMobilityField, &resolvedMobilityConfig);
+        electronMobility_cm2_V_s[i] =
+            units.internalMobilityToM2PerVS(electronMobility[i]) * 1.0e4;
+        holeMobility_cm2_V_s[i] =
+            units.internalMobilityToM2PerVS(holeMobility[i]) * 1.0e4;
         if (electronLowFieldMobility[i] > 0.0)
             electronMobilityLimiter[i] = electronMobility[i] / electronLowFieldMobility[i];
         if (holeLowFieldMobility[i] > 0.0)
@@ -1422,6 +1476,13 @@ void writeDDSolutionVTK(const std::string& filename,
     const PathIonizationAnalysis pathIonization = analyzeIonizationPaths(
         static_cast<std::size_t>(N), sol.psi, pathIonizationSamples);
     writer.addNodeScalar("SRHRecombination", srh);
+    writer.addNodeScalar("SRHRecombinationCm3PerS", srh_cm3_s);
+    writer.addNodeScalar("SpaceCharge", spaceCharge_cm3);
+    writer.addNodeScalar("BandGap", bandGap_eV);
+    writer.addNodeScalar("BandgapNarrowing", bandgapNarrowing_eV);
+    writer.addNodeScalar("ElectronAffinity", electronAffinity_eV);
+    writer.addNodeScalar("ConductionBandEnergy", conductionBandEnergy_eV);
+    writer.addNodeScalar("ValenceBandEnergy", valenceBandEnergy_eV);
     writer.addNodeScalar("Band2BandGeneration", bandToBandGeneration);
     writer.addNodeScalar("AvalancheGeneration", avalanche);
     writer.addNodeVector("J_n_drift", electronDriftCurrentDensity_A_cm2);
@@ -1433,6 +1494,60 @@ void writeDDSolutionVTK(const std::string& filename,
     writer.addNodeVector("ElectronCurrentDensityVector", electronCurrentDensity_A_cm2);
     writer.addNodeVector("HoleCurrentDensityVector", holeCurrentDensity_A_cm2);
     writer.addNodeVector("TotalCurrentDensityVector", totalCurrentDensity_A_cm2);
+    std::vector<Point3> sentaurusElectronCurrentDensity_A_cm2(
+        N, Point3::Zero());
+    std::vector<Point3> sentaurusHoleCurrentDensity_A_cm2(
+        N, Point3::Zero());
+    std::vector<Point3> sentaurusTotalCurrentDensity_A_cm2(
+        N, Point3::Zero());
+    std::vector<Real> sentaurusElectronEparallel_V_cm(N, 0.0);
+    std::vector<Real> sentaurusHoleEparallel_V_cm(N, 0.0);
+    for (Index node = 0; node < N; ++node) {
+        // At the VTK boundary n/p, mobility and GradQuasiFermi are already in
+        // cm^-3, cm^2/(V*s), and V/cm. Reconstruct conventional current in
+        // A/cm^2 directly in those output units. The legacy current vectors
+        // above retain their historical internal-unit diagnostic semantics.
+        sentaurusElectronCurrentDensity_A_cm2[node] =
+            electronQfGradientVector_V_cm[node] *
+            (constants::q * electronMobility_cm2_V_s[node] *
+             units.internalConcentrationToM3(sol.n(static_cast<int>(node))) / 1.0e6);
+        sentaurusHoleCurrentDensity_A_cm2[node] =
+            holeQfGradientVector_V_cm[node] *
+            (constants::q * holeMobility_cm2_V_s[node] *
+             units.internalConcentrationToM3(sol.p(static_cast<int>(node))) / 1.0e6);
+        sentaurusTotalCurrentDensity_A_cm2[node] =
+            sentaurusElectronCurrentDensity_A_cm2[node] +
+            sentaurusHoleCurrentDensity_A_cm2[node];
+        const Real electronCurrentMagnitude =
+            sentaurusElectronCurrentDensity_A_cm2[node].norm();
+        const Real holeCurrentMagnitude =
+            sentaurusHoleCurrentDensity_A_cm2[node].norm();
+        if (electronCurrentMagnitude > 0.0) {
+            sentaurusElectronEparallel_V_cm[node] = std::abs(
+                electricFieldVector_V_cm[node].dot(
+                    sentaurusElectronCurrentDensity_A_cm2[node]) /
+                electronCurrentMagnitude);
+        }
+        if (holeCurrentMagnitude > 0.0) {
+            sentaurusHoleEparallel_V_cm[node] = std::abs(
+                electricFieldVector_V_cm[node].dot(
+                    sentaurusHoleCurrentDensity_A_cm2[node]) /
+                holeCurrentMagnitude);
+        }
+    }
+    writer.addNodeVector(
+        "SentaurusElectronCurrentDensityVector",
+        sentaurusElectronCurrentDensity_A_cm2);
+    writer.addNodeVector(
+        "SentaurusHoleCurrentDensityVector",
+        sentaurusHoleCurrentDensity_A_cm2);
+    writer.addNodeVector(
+        "SentaurusTotalCurrentDensityVector",
+        sentaurusTotalCurrentDensity_A_cm2);
+    writer.addNodeScalar(
+        "SentaurusElectronEparallel", sentaurusElectronEparallel_V_cm);
+    writer.addNodeScalar(
+        "SentaurusHoleEparallel", sentaurusHoleEparallel_V_cm);
     writer.addNodeVector(
         "NodeReconstructedElectronCurrentDensityVector",
         electronCurrentDensity_A_cm2);
@@ -1444,6 +1559,8 @@ void writeDDSolutionVTK(const std::string& filename,
         totalCurrentDensity_A_cm2);
     writer.addNodeScalar("ElectronMobility", electronMobility);
     writer.addNodeScalar("HoleMobility", holeMobility);
+    writer.addNodeScalar("ElectronMobilityCm2PerVs", electronMobility_cm2_V_s);
+    writer.addNodeScalar("HoleMobilityCm2PerVs", holeMobility_cm2_V_s);
     writer.addNodeScalar(
         "NodeReconstructedElectronMobility", electronMobility);
     writer.addNodeScalar(
@@ -1473,6 +1590,8 @@ void writeDDSolutionVTK(const std::string& filename,
     writer.addNodeScalar("HoleLowFieldMobility", holeLowFieldMobility);
     writer.addNodeScalar("ElectronHighFieldDrive", electronHighFieldDrive_V_cm);
     writer.addNodeScalar("HoleHighFieldDrive", holeHighFieldDrive_V_cm);
+    writer.addNodeScalar("ElectronEparallel", electronHighFieldDrive_V_cm);
+    writer.addNodeScalar("HoleEparallel", holeHighFieldDrive_V_cm);
     writer.addNodeScalar("ElectronMobilityLimiter", electronMobilityLimiter);
     writer.addNodeScalar("HoleMobilityLimiter", holeMobilityLimiter);
 }
